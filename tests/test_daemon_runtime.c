@@ -656,7 +656,7 @@ static bool runtime_test_mac_ad_hoc_sign(const char *path) {
     pid_t child = fork();
     if (child == 0) {
         execl("/usr/bin/codesign", "codesign", "--force", "--sign", "-", "--timestamp=none",
-              "--identifier", "org.deusdata.hyp.foreign-test", path, (char *)NULL);
+              "--identifier", "org.example.hyp.foreign-test", path, (char *)NULL);
         _exit(127);
     }
     int status = 0;

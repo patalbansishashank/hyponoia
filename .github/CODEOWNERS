@@ -9,53 +9,53 @@
 # approval for the matching path.
 
 # Default owner gate: every pull request crosses the project owner's desk.
-* @DeusData
+* @patalbansishashank
 
 # Security-sensitive and authority-sensitive surfaces.
-/.github/ @DeusData
-/scripts/ @DeusData
-/Makefile.hyp @DeusData
-/SECURITY.md @DeusData
-/docs/SECURITY-DISCLOSURE.md @DeusData
-/CONTRIBUTING.md @DeusData
-/CODE_OF_CONDUCT.md @DeusData
-/DCO @DeusData
-/LICENSE @DeusData
-/MAINTAINERS.md @DeusData
+/.github/ @patalbansishashank
+/scripts/ @patalbansishashank
+/Makefile.hyp @patalbansishashank
+/SECURITY.md @patalbansishashank
+/docs/SECURITY-DISCLOSURE.md @patalbansishashank
+/CONTRIBUTING.md @patalbansishashank
+/CODE_OF_CONDUCT.md @patalbansishashank
+/DCO @patalbansishashank
+/LICENSE @patalbansishashank
+/MAINTAINERS.md @patalbansishashank
 
 # Release and distribution surfaces.
-/pkg/ @DeusData
-/install.sh @DeusData
-/install.ps1 @DeusData
-/server.json @DeusData
-/glama.json @DeusData
-/flake.nix @DeusData
-/flake.lock @DeusData
-/THIRD_PARTY.md @DeusData
-/vendored/ @DeusData
-/internal/hyp/vendored/ @DeusData
+/pkg/ @patalbansishashank
+/install.sh @patalbansishashank
+/install.ps1 @patalbansishashank
+/server.json @patalbansishashank
+/glama.json @patalbansishashank
+/flake.nix @patalbansishashank
+/flake.lock @patalbansishashank
+/THIRD_PARTY.md @patalbansishashank
+/vendored/ @patalbansishashank
+/internal/hyp/vendored/ @patalbansishashank
 
 # Core product surfaces.
-/src/foundation/ @DeusData
-/src/store/ @DeusData
-/src/cypher/ @DeusData
-/src/graph_buffer/ @DeusData
-/src/mcp/ @DeusData
-/src/cli/ @DeusData
-/src/discover/ @DeusData
-/src/watcher/ @DeusData
-/src/pipeline/ @DeusData
-/src/git/ @DeusData
-/src/semantic/ @DeusData
-/src/simhash/ @DeusData
-/src/traces/ @DeusData
-/src/ui/ @DeusData
+/src/foundation/ @patalbansishashank
+/src/store/ @patalbansishashank
+/src/cypher/ @patalbansishashank
+/src/graph_buffer/ @patalbansishashank
+/src/mcp/ @patalbansishashank
+/src/cli/ @patalbansishashank
+/src/discover/ @patalbansishashank
+/src/watcher/ @patalbansishashank
+/src/pipeline/ @patalbansishashank
+/src/git/ @patalbansishashank
+/src/semantic/ @patalbansishashank
+/src/simhash/ @patalbansishashank
+/src/traces/ @patalbansishashank
+/src/ui/ @patalbansishashank
 
 # Extraction, language support, and graph UI.
-/internal/hyp/ @DeusData
-/tools/ @DeusData
-/graph-ui/ @DeusData
+/internal/hyp/ @patalbansishashank
+/tools/ @patalbansishashank
+/graph-ui/ @patalbansishashank
 
 # Test and reproduction infrastructure.
-/tests/ @DeusData
-/test-infrastructure/ @DeusData
+/tests/ @patalbansishashank
+/test-infrastructure/ @patalbansishashank

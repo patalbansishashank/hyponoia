@@ -1146,7 +1146,7 @@ def main():
                         "--sign",
                         "-",
                         "--identifier",
-                        "com.deusdata.hyp.daemon-smoke-conflict",
+                        "com.example.hyp.daemon-smoke-conflict",
                         str(conflict_binary),
                     ],
                     stdout=subprocess.PIPE,
