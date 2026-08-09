@@ -6,8 +6,14 @@
 
 #include "foundation/compat.h"
 #include "foundation/compat_fs.h"
+#include "foundation/constants.h" /* HYP_SZ_4K — containment scratch buffers */
 #include "foundation/platform.h"
 #include "foundation/sha256.h"
+#ifdef _WIN32
+#include "foundation/win_utf8.h" /* hyp_utf8_to_wide + <windows.h> */
+#include <limits.h>              /* INT_MAX — CompareStringOrdinal length cast */
+#include <wchar.h>
+#endif
 
 #include <stdlib.h>
 
@@ -783,6 +789,91 @@ bool hyp_workspace_manifest_allows(const char *cache_dir, const char *home_dir,
             continue;
         }
         if (hyp_path_within_root(m.entries[i], candidate)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+/* ── Path containment ────────────────────────────────────────────
+ *
+ * Moved here from src/mcp/mcp.c. workspace.h has always been where
+ * hyp_path_within_root is DECLARED, and workspace.c calls it three times
+ * (ws_match_visit, hyp_workspace_root_allowed, hyp_workspace_manifest_allows),
+ * so keeping the body in the MCP layer made src/foundation depend on src/mcp —
+ * a backwards edge that no foundation-only link could satisfy. The code below
+ * is unchanged; only its home is. */
+
+/* Canonicalize `path` (resolve symlinks/junctions and `..`) into `out`
+ * (>= HYP_SZ_4K bytes); returns true on success. Isolating the per-OS resolver
+ * keeps hyp_path_within_root's control flow unconditional: the previous `#ifdef`
+ * opened the `if (...) {` brace in one branch and a different one in the other,
+ * sharing a single close brace — legal C, but it splits the function's braces
+ * across preprocessor branches, which defeats source-level tooling that parses
+ * without the preprocessor (and left this function unindexed in the graph). */
+static bool resolve_canonical_path(const char *path, char *out, size_t out_sz) {
+    /* hyp_canonical_path: realpath on POSIX; an opened handle plus
+     * GetFinalPathNameByHandleW on Windows.  The old bare _fullpath was ANSI
+     * (CJK-locale corruption, #973), accepted nonexistent paths, and lexical
+     * expansion alone did not resolve junctions for containment checks. */
+    if (!hyp_canonical_path(path, out, out_sz)) {
+        return false;
+    }
+#ifdef _WIN32
+    hyp_normalize_path_sep(out);
+#endif
+    return true;
+}
+
+static bool canonical_path_has_root(const char *root_path, const char *candidate_path) {
+#ifdef _WIN32
+    wchar_t *wide_root = hyp_utf8_to_wide(root_path);
+    wchar_t *wide_candidate = hyp_utf8_to_wide(candidate_path);
+    bool contained = false;
+    if (wide_root && wide_candidate) {
+        size_t root_len = wcslen(wide_root);
+        size_t candidate_len = wcslen(wide_candidate);
+        bool prefix_equal = root_len <= candidate_len && root_len <= INT_MAX &&
+                            CompareStringOrdinal(wide_candidate, (int)root_len, wide_root,
+                                                 (int)root_len, TRUE) == CSTR_EQUAL;
+        bool root_ends_separator =
+            root_len > 0 && (wide_root[root_len - 1] == L'/' || wide_root[root_len - 1] == L'\\');
+        bool boundary = root_ends_separator || root_len == candidate_len ||
+                        (root_len < candidate_len &&
+                         (wide_candidate[root_len] == L'/' || wide_candidate[root_len] == L'\\'));
+        contained = prefix_equal && boundary;
+    }
+    free(wide_root);
+    free(wide_candidate);
+    return contained;
+#else
+    size_t root_len = strlen(root_path);
+    size_t candidate_len = strlen(candidate_path);
+    bool prefix_equal =
+        root_len <= candidate_len && strncmp(candidate_path, root_path, root_len) == 0;
+    bool root_ends_separator = root_len > 0 && root_path[root_len - 1] == '/';
+    bool boundary = root_ends_separator || root_len == candidate_len ||
+                    (root_len < candidate_len && candidate_path[root_len] == '/');
+    return prefix_equal && boundary;
+#endif
+}
+
+/* True only when abs_path, after realpath/_fullpath resolution (which collapses
+ * `..` and resolves symlinks/junctions), stays within root_path. This is the
+ * single containment guard every MCP file-read sink must pass before reading a
+ * file into a tool response: both the snippet path (resolve_snippet_source) and
+ * the search path (attach_result_source) route through it, so a result whose
+ * indexed path escapes the project root — via a `..` segment, or a symlink /
+ * Windows junction picked up during discovery — is never read back out. */
+bool hyp_path_within_root(const char *root_path, const char *abs_path) {
+    if (!root_path || !abs_path) {
+        return false;
+    }
+    char real_root[HYP_SZ_4K];
+    char real_file[HYP_SZ_4K];
+    if (resolve_canonical_path(root_path, real_root, sizeof(real_root)) &&
+        resolve_canonical_path(abs_path, real_file, sizeof(real_file))) {
+        if (canonical_path_has_root(real_root, real_file)) {
             return true;
         }
     }
