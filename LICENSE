@@ -1,8 +1,7 @@
 MIT License
   
-  Copyright (c) 2025 DeusData
-  Copyright (c) 2026 patalbansishashank
-  
+  Copyright (c) 2026 Creative Desi
+
   Permission is hereby granted, free of charge, to any person obtaining a copy
   of this software and associated documentation files (the "Software"), to deal
   in the Software without restriction, including without limitation the rights
@@ -20,4 +19,10 @@ MIT License
   LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
   OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
   SOFTWARE.
+
+  ---
+
+  Portions of this Software are derived from codebase-memory-mcp,
+  Copyright (c) 2025 DeusData, licensed under the MIT License. That copyright
+  notice is retained here as those terms require.
   
