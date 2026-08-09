@@ -1,16 +1,8 @@
 # Hyponoia -- v0.3.0 Language Benchmark
 
-## Research citation
-
-The design and benchmarks of the engine this project is built on are described
-in the preprint [*Codebase-Memory: Tree-Sitter-Based Knowledge Graphs for LLM
-Code Exploration via MCP*](https://arxiv.org/abs/2603.27277) (arXiv:2603.27277).
-Evaluated across 31 real-world repositories: 83% answer quality, 10x fewer
-tokens, and 2.1x fewer tool calls than file-by-file exploration.
-
-Those are the paper's measured numbers on the paper's corpus, not a measurement
-of this repository at its current revision. The per-language results below are
-ours.
+> **Provenance.** These are inherited measurements taken against v0.3.0 of the
+> engine on the platform and date recorded below. They have not been re-run at
+> this repository's current revision. Our own numbers are still to be measured.
 
 ## Methodology
 

@@ -23,4 +23,3 @@
 - Source code (GitHub): https://github.com/patalbansishashank/hyponoia
 - Latest release: https://github.com/patalbansishashank/hyponoia/releases/latest
 - Benchmark report: https://github.com/patalbansishashank/hyponoia/blob/main/docs/BENCHMARK.md
-- Research paper: https://arxiv.org/abs/2603.27277

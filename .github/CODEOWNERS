@@ -1,61 +1,15 @@
-# Binding ownership policy for hyponoia.
+# Binding ownership policy for Hyponoia.
 #
-# This repository is user-owned, so ownership is expressed with individual
-# GitHub handles rather than organization teams.
+# One maintainer owns everything, so one rule says everything. The 40 per-path
+# rules this replaced all named the same person, which described a review
+# structure that does not exist.
 #
-# CODEOWNERS is the binding merge gate, not the reviewer directory.
-# Advisory area reviewers are recorded in MAINTAINERS.md. A handle appears in
-# this file only when that person is authorized to satisfy binding code-owner
-# approval for the matching path.
+# When someone else takes an area, add their path below this line — more
+# specific paths win over the catch-all:
+#
+#   /src/mcp/       @their-handle
+#   /internal/hyp/  @their-handle
+#
+# See MAINTAINERS.md.
 
-# Default owner gate: every pull request crosses the project owner's desk.
 * @patalbansishashank
-
-# Security-sensitive and authority-sensitive surfaces.
-/.github/ @patalbansishashank
-/scripts/ @patalbansishashank
-/Makefile.hyp @patalbansishashank
-/SECURITY.md @patalbansishashank
-/docs/SECURITY-DISCLOSURE.md @patalbansishashank
-/CONTRIBUTING.md @patalbansishashank
-/CODE_OF_CONDUCT.md @patalbansishashank
-/DCO @patalbansishashank
-/LICENSE @patalbansishashank
-/MAINTAINERS.md @patalbansishashank
-
-# Release and distribution surfaces.
-/pkg/ @patalbansishashank
-/install.sh @patalbansishashank
-/install.ps1 @patalbansishashank
-/server.json @patalbansishashank
-/glama.json @patalbansishashank
-/flake.nix @patalbansishashank
-/flake.lock @patalbansishashank
-/THIRD_PARTY.md @patalbansishashank
-/vendored/ @patalbansishashank
-/internal/hyp/vendored/ @patalbansishashank
-
-# Core product surfaces.
-/src/foundation/ @patalbansishashank
-/src/store/ @patalbansishashank
-/src/cypher/ @patalbansishashank
-/src/graph_buffer/ @patalbansishashank
-/src/mcp/ @patalbansishashank
-/src/cli/ @patalbansishashank
-/src/discover/ @patalbansishashank
-/src/watcher/ @patalbansishashank
-/src/pipeline/ @patalbansishashank
-/src/git/ @patalbansishashank
-/src/semantic/ @patalbansishashank
-/src/simhash/ @patalbansishashank
-/src/traces/ @patalbansishashank
-/src/ui/ @patalbansishashank
-
-# Extraction, language support, and graph UI.
-/internal/hyp/ @patalbansishashank
-/tools/ @patalbansishashank
-/graph-ui/ @patalbansishashank
-
-# Test and reproduction infrastructure.
-/tests/ @patalbansishashank
-/test-infrastructure/ @patalbansishashank

@@ -56,13 +56,14 @@ can fix it before public disclosure:
 
 1. **Do NOT open a public issue, PR, or social-media post** for security
    vulnerabilities.
-2. Use GitHub's [private vulnerability reporting](https://github.com/patalbansishashank/hyponoia/security/advisories/new)
-   (the repository's **Security → Report a vulnerability** button). This is the
-   only reporting channel: it keeps everything in one place and starts a private
-   advisory automatically.
-3. Include: description, reproduction steps, affected version, and potential
+2. **Preferred:** use GitHub's [private vulnerability reporting](https://github.com/patalbansishashank/hyponoia/security/advisories/new)
+   (the repository's **Security → Report a vulnerability** button). This keeps
+   everything in one place and starts a private advisory automatically.
+3. **Alternative:** email mail@creative.desi — use this if you do not have a
+   GitHub account, or if the reporting form above is unavailable to you.
+4. Include: description, reproduction steps, affected version, and potential
    impact.
-4. Include your **GitHub handle and a contact email**. We use these to credit
+5. Include your **GitHub handle and a contact email**. We use these to credit
    you and to invite you (read-only) to privately verify the fix before its
    release — see step 4 of the
    [handling process](docs/SECURITY-DISCLOSURE.md#what-happens-after-you-report).

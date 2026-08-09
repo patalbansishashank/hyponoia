@@ -73,12 +73,6 @@
         "@type": "Person",
         "name": "patalbansishashank",
         "url": "https://github.com/patalbansishashank"
-      },
-      "citation": {
-        "@type": "ScholarlyArticle",
-        "name": "Codebase-Memory: Tree-Sitter-Based Knowledge Graphs for LLM Code Exploration via MCP",
-        "identifier": "arXiv:2603.27277",
-        "url": "https://arxiv.org/abs/2603.27277"
       }
     }
     </script>
@@ -284,36 +278,6 @@
         }
         .screenshot .caption { margin-top: 12px; font-size: 0.875rem; color: var(--text-secondary); }
 
-        /* Research callout */
-        .research {
-            display: flex;
-            align-items: center;
-            gap: 20px;
-            flex-wrap: wrap;
-            background: var(--surface);
-            border: 1px solid var(--border);
-            border-left: 3px solid var(--accent);
-            border-radius: 8px;
-            padding: 20px 24px;
-            margin: 8px 0 0;
-        }
-        .research .arxiv-badge {
-            display: inline-flex;
-            align-items: center;
-            gap: 8px;
-            flex-shrink: 0;
-            font-family: 'SF Mono', monospace;
-            font-size: 0.8rem;
-            font-weight: 700;
-            color: #b31b1b;
-            background: #fff;
-            border-radius: 6px;
-            padding: 8px 12px;
-            text-decoration: none;
-        }
-        .research p { font-size: 0.92rem; margin: 0; }
-        .research .label { color: var(--accent); font-weight: 700; }
-
         /* Sections */
         section { padding: 56px 0; border-top: 1px solid var(--border); }
         section h2 { font-size: 1.75rem; margin-bottom: 8px; scroll-margin-top: 72px; }
@@ -462,18 +426,6 @@
              alt="3D knowledge-graph visualization of the Hyponoia graph showing thousands of nodes and edges">
         <p class="caption">Built-in 3D graph visualization (UI variant) — explore your knowledge graph at <code>localhost:9749</code>.</p>
     </div>
-
-    <aside class="research" aria-label="Research">
-        <a class="arxiv-badge" href="https://arxiv.org/abs/2603.27277" rel="noopener">arXiv:2603.27277</a>
-        <p>
-            <span class="label">Research preprint.</span>
-            The design and benchmarks are described in the preprint
-            <a href="https://arxiv.org/abs/2603.27277"><em>Codebase-Memory: Tree-Sitter-Based Knowledge Graphs
-            for LLM Code Exploration via MCP</em></a>. Evaluated across 31 real-world repositories:
-            <strong>83% answer quality, 10× fewer tokens, and 2.1× fewer tool calls</strong> versus
-            file-by-file exploration.
-        </p>
-    </aside>
 
     <section id="what-is-it">
         <h2>What is Hyponoia?</h2>
@@ -666,12 +618,7 @@
                 <tr style="font-weight: 700;"><td>Total</td><td>~3,400</td><td>~412,000</td><td class="win">~121x</td></tr>
             </tbody>
         </table>
-        <p class="muted" style="font-size: 0.9rem;">
-            A separate evaluation across 31 real-world repositories, described in the preprint, reported 83% answer quality,
-            10x fewer tokens, and 2.1x fewer tool calls versus file-by-file exploration.
-        </p>
-        <p><cite>Source: <a href="https://arxiv.org/abs/2603.27277">“Codebase-Memory: Tree-Sitter-Based Knowledge
-            Graphs for LLM Code Exploration via MCP”</a>, arXiv:2603.27277 — and the
+        <p><cite>Source: the
             <a href="https://github.com/patalbansishashank/hyponoia/blob/main/docs/BENCHMARK.md">project benchmark report</a>.</cite></p>
     </section>
 
@@ -828,8 +775,7 @@
             Open source, MIT licensed.
             <a href="https://github.com/patalbansishashank/hyponoia">GitHub</a> &middot;
             <a href="https://github.com/patalbansishashank/hyponoia/releases/latest">Releases</a> &middot;
-            <a href="https://github.com/patalbansishashank/hyponoia/blob/main/docs/BENCHMARK.md">Benchmarks</a> &middot;
-            <a href="https://arxiv.org/abs/2603.27277">Paper</a>
+            <a href="https://github.com/patalbansishashank/hyponoia/blob/main/docs/BENCHMARK.md">Benchmarks</a>
         </p>
     </div>
 </footer>

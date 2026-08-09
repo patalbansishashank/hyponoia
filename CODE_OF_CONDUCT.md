@@ -37,7 +37,7 @@ This Code of Conduct applies within all community spaces, and also applies when 
 
 ## Enforcement
 
-Instances of abusive, harassing, or otherwise unacceptable behavior may be reported privately to the maintainer, [@patalbansishashank](https://github.com/patalbansishashank). If you need a confidential channel, use the repository's [private reporting form](https://github.com/patalbansishashank/hyponoia/security/advisories/new) — it is labelled for security reports, but it is the private channel available on this repository and conduct reports sent through it are treated the same way. All complaints will be reviewed and investigated promptly and fairly.
+Instances of abusive, harassing, or otherwise unacceptable behavior may be reported to the maintainer responsible for enforcement at mail@creative.desi. All complaints will be reviewed and investigated promptly and fairly.
 
 All community leaders are obligated to respect the privacy and security of the reporter of any incident.
 
