@@ -9550,7 +9550,73 @@ static int cli_install_activate(void *opaque) {
     return CLI_OK;
 }
 
+/* `--help` on a mutating subcommand must be inert.
+ *
+ * Before this existed, install's flag loop simply ignored anything it did not
+ * recognise, so `install --help` fell through the parser and ran a REAL
+ * install: it copied the binary into ~/.local/bin, rewrote agent configuration
+ * files, and appended to the user's shell rc. Asking a command what it does
+ * must never be the same as telling it to do it. The scan below runs before
+ * parse_auto_answer() and before every other statement in the command, so a
+ * help request cannot reach a single side effect. */
+static bool cli_wants_help(int argc, char **argv) {
+    for (int i = 0; i < argc; i++) {
+        if (!argv[i]) {
+            continue;
+        }
+        if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static void print_install_help(void) {
+    printf("Usage: hyponoia install [options]\n\n");
+    printf("Installs the running binary to ~/.local/bin and configures every\n");
+    printf("detected agent client to use it.\n\n");
+    printf("Options:\n");
+    printf("  --dry-run        Report what would change; write nothing\n");
+    printf("  --plan           Print the machine-readable install receipt and exit\n");
+    printf("  --force          Replace an existing binary at the target without asking\n");
+    printf("  --dir=<path>     Install into <path> instead of ~/.local/bin\n");
+    printf("  --skip-config    Install the binary only; leave agent configs alone\n");
+    printf("  --reset-indexes  Delete existing indexes (default: keep them)\n");
+    printf("  -y, --yes        Answer yes to every prompt\n");
+    printf("  -n, --no         Answer no to every prompt\n");
+    printf("  -h, --help       Print this help and exit without installing\n");
+}
+
+static void print_uninstall_help(void) {
+    printf("Usage: hyponoia uninstall [options]\n\n");
+    printf("Removes the installed binary and the agent configuration entries that\n");
+    printf("point at it.\n\n");
+    printf("Options:\n");
+    printf("  --dry-run     Report what would be removed; delete nothing\n");
+    printf("  --dir=<path>  Uninstall from <path> instead of ~/.local/bin\n");
+    printf("  -y, --yes     Answer yes to every prompt\n");
+    printf("  -n, --no      Answer no to every prompt\n");
+    printf("  -h, --help    Print this help and exit without uninstalling\n");
+}
+
+static void print_update_help(void) {
+    printf("Usage: hyponoia update [options]\n\n");
+    printf("Downloads the latest release and replaces the installed binary.\n\n");
+    printf("Options:\n");
+    printf("  --dry-run     Report what would change; download and write nothing\n");
+    printf("  --standard    Update to the standard variant without asking\n");
+    printf("  --ui          Update to the UI variant without asking\n");
+    printf("  --force       Reinstall even when already at the latest version\n");
+    printf("  -y, --yes     Answer yes to every prompt\n");
+    printf("  -n, --no      Answer no to every prompt\n");
+    printf("  -h, --help    Print this help and exit without updating\n");
+}
+
 int hyp_cmd_install(int argc, char **argv) {
+    if (cli_wants_help(argc, argv)) {
+        print_install_help();
+        return CLI_OK;
+    }
     parse_auto_answer(argc, argv);
     bool dry_run = false;
     bool force = false;
@@ -11125,6 +11191,10 @@ static int cli_uninstall_activate(void *opaque) {
 }
 
 int hyp_cmd_uninstall(int argc, char **argv) {
+    if (cli_wants_help(argc, argv)) {
+        print_uninstall_help();
+        return CLI_OK;
+    }
     parse_auto_answer(argc, argv);
     bool dry_run = false;
     const char *requested_bin_dir = NULL;
@@ -11737,6 +11807,10 @@ static bool check_already_latest(void) {
 #endif /* HYP_CLI_ENABLE_TEST_API */
 
 int hyp_cmd_update(int argc, char **argv) {
+    if (cli_wants_help(argc, argv)) {
+        print_update_help();
+        return CLI_OK;
+    }
     parse_auto_answer(argc, argv);
 
     bool dry_run = false;
