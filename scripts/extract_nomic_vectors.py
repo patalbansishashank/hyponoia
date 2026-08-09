@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 """
-Extract token embeddings from nomic-embed-code (7B) for static lookup table.
+Extract token embeddings from an embedding model for the static lookup table.
 
 Loads the full model, filters the vocabulary to code-relevant tokens,
 runs full inference on each token, applies simulated attention, quantizes
 to int8, and outputs files compatible with vendored/unixcoder/ format.
 
 Usage:
-    pip3.9 install torch transformers sentence-transformers
-    python3.9 scripts/extract_nomic_vectors.py [--output-dir vendored/nomic]
+    pip install torch transformers
+    python scripts/extract_nomic_vectors.py [--output-dir vendored/nomic]
 
 Output:
     code_vectors.bin   — [int32 count][int32 dim] + count×dim int8
@@ -17,10 +17,16 @@ Output:
     code_vectors.h     — C header: defines + inline accessor
     code_vectors_blob.S — assembler .incbin
 
-One-time extraction. ~2-3h on GPU, ~6-10h on M3 Pro CPU (float16, ~14GB RAM).
+One-time extraction. The model is selected by --profile; see MODEL_PROFILES.
+The "~2-3h on GPU" this file used to claim was for the 7B nomic model. For
+Qwen3-Embedding-0.6B on the RX 6900 XT the whole thing is under a minute,
+measured: ~16s of forward passes (230,849 padded positions at 0.881
+GFLOP/position, 14.4k positions/s) plus 25.1s of CPU simulated attention.
+runs/EMBED-SWAP/F-extractor.json has the numbers and what is still unverified.
 """
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -42,15 +48,110 @@ os.environ.setdefault("MKL_NUM_THREADS", str(NUM_THREADS))
 from transformers import AutoModel, AutoTokenizer
 
 
+# ── Model profiles ─────────────────────────────────────────────────────
+#
+# A profile fixes model id, input prefix, pooling, padding side and dtype
+# TOGETHER. Any one of them wrong yields vectors of the right SHAPE and the
+# wrong CONTENT — the one failure this table cannot detect at runtime, because
+# semantic.c only ever checks PRETRAINED_DIM. Hence a named profile rather than
+# five independent flags.
+
+MODEL_PROFILES = {
+    # Qwen3-Embedding-0.6B. Every field below is from the published model repo,
+    # not from inference:
+    #   1_Pooling/config.json          -> pooling_mode_lasttoken: true
+    #                                     (mean pooling is WRONG for this model)
+    #   README.md transformers example -> AutoTokenizer(..., padding_side='left')
+    #   config_sentence_transformers.json -> prompts.document == ""
+    #                                     (documents take no instruction prefix)
+    #   config.json                    -> hidden_size 1024, 28 layers, use_cache true
+    # The tokenizer appends <|endoftext|> (151643) itself under the default
+    # add_special_tokens=True — verified: tok("foo") -> ['foo', '<|endoftext|>'].
+    # Last-token pooling therefore reads the EOS hidden state, as trained.
+    #
+    # dtype float32, not float16: this is the configuration already validated on
+    # this card in runs/GPU/rocm.json, the checkpoint is published in bfloat16
+    # (whose exponent range float16 does not cover), and the output is int8-
+    # quantized to +-127 regardless. float16 would buy ~20s on a one-shot run
+    # in exchange for a silent-NaN risk. Bad trade.
+    "qwen3": {
+        "model_name": "Qwen/Qwen3-Embedding-0.6B",
+        "prefix": "",
+        "pooling": "last",
+        "padding_side": "left",
+        "dtype": "float32",
+        "trust_remote_code": False,
+    },
+    # nomic-embed-code (7B), the model the current vendored/nomic table came
+    # from. Kept verbatim so that table can be REGENERATED for track E's
+    # identity test. Not for the swap.
+    "nomic": {
+        "model_name": "nomic-ai/nomic-embed-code",
+        "prefix": "search_query: ",
+        "pooling": "mean",
+        "padding_side": "right",
+        "dtype": "float16",
+        "trust_remote_code": True,
+    },
+}
+DEFAULT_PROFILE = "qwen3"
+
+
 # ── Configuration ──────────────────────────────────────────────────────
 
-MODEL_NAME = "nomic-ai/nomic-embed-code"
 OUTPUT_DIM = 768          # Target dimension (Matryoshka truncation if model outputs more)
 SIM_ATTENTION_K = 32      # Top-K neighbors for simulated attention
 SIM_ATTENTION_ITERS = 3   # Number of simulated attention iterations
 SIM_ATTENTION_ALPHA = 0.3 # Blend ratio: (1-α)×original + α×neighbor_mean
-BATCH_SIZE = 32           # Tokens per inference batch (sized for thread saturation)
-CHECKPOINT_EVERY = 500    # Save checkpoint every N tokens
+
+# BATCH_SIZE: was 32, sized for a 7B model on long inputs. This workload is
+# ~40.9k identifier fragments (measured with the real Qwen3 tokenizer: mean 2.70
+# BPE pieces, max 9, plus the EOS the tokenizer appends) through a 0.6B model.
+#
+# MEASURED on the RX 6900 XT (gfx1030, torch 2.13.0+rocm7.1) with the real
+# Qwen3-Embedding-0.6B architecture — 28 layers, hidden 1024, intermediate 3072,
+# 0.881 GFLOP/position — and the real token strings. 20 s of GPU:
+#
+#   batch    pos/s   TFLOP/s   peak VRAM   padded positions   est. full run
+#      32     3,952     3.48      2.43 GB       166,868           42.2 s
+#     128    10,342     9.11      2.47 GB       194,612           18.8 s
+#     512    14,360    12.65      2.64 GB       230,849           16.1 s   <--
+#    1024    14,038    12.37      2.95 GB       252,353           18.0 s
+#    2048    13,834    12.19      3.48 GB       273,742           19.8 s
+#    4096    13,089    11.53      4.86 GB       297,973           22.8 s
+#
+# Two effects pull against each other. Small batches are launch-bound: at 32 the
+# GEMMs have ~128 rows and reach 15% of the card's 23.04 TFLOP/s fp32 peak.
+# Device throughput saturates at ~14.4k positions/s by 512 (55% of peak) and
+# does not improve after that — while padding waste keeps growing, because every
+# batch pads to its own longest member and a bigger batch is likelier to contain
+# a 9-piece token. So the curve has a real minimum and 512 is it: 2.6x faster
+# than 32, and going further UP costs time rather than saving it.
+#
+# The spec expected "one to two orders of magnitude". The measured answer is 16x
+# (32 -> 512), at the bottom of that range; 3,200 would be 40% SLOWER than 512.
+# VRAM never binds: 2.64 GB of the card's 17.2 GB, nowhere near the 7.9 GB where
+# runs/GPU/rocm.json recorded caching-allocator OOM warnings.
+BATCH_SIZE = 512
+
+# CHECKPOINT_EVERY: raised from 500. It is also now a FLOOR in tokens rather
+# than a modulo — the old `done % CHECKPOINT_EVERY < batch_size` test degenerates
+# to "every batch" the moment batch_size >= CHECKPOINT_EVERY, which any sane
+# batch for this workload makes true.
+#
+# 500 was chosen against a believed 2-3 h runtime. Measured, the forward stage is
+# 16.1 s, and a checkpoint is a rewrite of the whole filled prefix. At batch 512
+# the two settings cost:
+#
+#   every=500:   79 writes, 4.97 GB fsync'd  ->  ~14 s on a 16.1 s stage
+#   every=4096:   9 writes, 0.57 GB fsync'd  ->   ~1.6 s, <=4096 tokens at risk
+#
+# (measured atomic write throughput on this volume: 275-400 MB/s.) Balancing
+# write cost against expected re-work puts the optimum near 6,100 tokens; the
+# curve is flat either side, so 4096 is chosen as a whole multiple of the batch.
+# Use --checkpoint-every to lower it for the slow paths (the nomic 7B profile, or
+# CPU), where minutes of re-work matter more than half a gigabyte of I/O.
+CHECKPOINT_EVERY = 4096
 
 
 # ── Token filtering ───────────────────────────────────────────────────
@@ -117,6 +218,27 @@ def simulated_attention(vectors: np.ndarray, k: int, iterations: int,
 
     vectors: (N, D) float32 unit-normalized
     Returns: (N, D) float32 unit-normalized
+
+    COST, MEASURED at the real N=40,856 x 768 with K=32 and 3 iterations
+    (Ryzen 9 5950X, numpy 2.5 on OpenBLAS):
+
+        25.12 s total   |   11.71 s matmul   |   13.20 s python loop
+        1.06 GB peak RSS, zero VRAM — this stage never touches the GPU.
+
+    So this is NOT the bottleneck and it is NOT a 6.7 GB dense-matrix problem:
+    the N x N similarity matrix is never materialised. It is already chunked at
+    2048 rows, so the largest live slab is 2048 x 40,856 fp32 = 334 MB.
+
+    The obvious "fix" — hoisting the per-row loop into a whole-chunk
+    argpartition plus a (2048, 32, 768) gather — was implemented and measured:
+    37.43 s and 2.03 GB, i.e. 1.5x SLOWER and 2x the memory, because the 201 MB
+    gather buffer leaves cache while the per-row 32 x 768 buffer stays in L2.
+    Left alone deliberately; do not "optimise" this without measuring.
+
+    One real hazard: the matmul leg is BLAS-bound. Measured 536 GFLOP/s on a
+    pip numpy (bundled OpenBLAS) and 6.1 GFLOP/s on this distro's numpy linked
+    against reference cblas — a 88x difference that turns 11.7 s into ~17 min.
+    Run this in the venv, not against the system numpy.
     """
     n, d = vectors.shape
     result = vectors.copy()
@@ -166,90 +288,220 @@ def simulated_attention(vectors: np.ndarray, k: int, iterations: int,
     return result
 
 
+# ── Pooling ──────────────────────────────────────────────────────────
+
+def last_token_pool(last_hidden_states, attention_mask):
+    """Last-token pooling, the mode Qwen3-Embedding was trained with.
+
+    1_Pooling/config.json in the model repo sets pooling_mode_lasttoken: true.
+    Mean-pooling this model produces vectors of the correct shape that are not
+    what it emits — nothing downstream would notice.
+
+    Handles either padding side, so a caller that forgets padding_side='left'
+    still gets the right token rather than a pad embedding.
+    """
+    left_padded = bool(
+        (attention_mask[:, -1].sum() == attention_mask.shape[0]).item()
+    )
+    if left_padded:
+        return last_hidden_states[:, -1]
+    lengths = attention_mask.sum(dim=1) - 1
+    idx = torch.arange(last_hidden_states.shape[0],
+                       device=last_hidden_states.device)
+    return last_hidden_states[idx, lengths]
+
+
+def mean_token_pool(last_hidden_states, attention_mask):
+    """Mean pooling over non-padding positions (nomic-embed-code's mode)."""
+    mask = (
+        attention_mask.unsqueeze(-1)
+        .expand(last_hidden_states.size())
+        .to(last_hidden_states.dtype)
+    )
+    summed = torch.sum(last_hidden_states * mask, dim=1)
+    counts = torch.clamp(mask.sum(dim=1), min=1e-9)
+    return summed / counts
+
+
+POOLERS = {"last": last_token_pool, "mean": mean_token_pool}
+
+
+# ── Checkpointing ────────────────────────────────────────────────────
+
+def checkpoint_fingerprint(profile_name: str, model_name: str,
+                           tokens: list, dim: int) -> str:
+    """Identify exactly which run a checkpoint belongs to.
+
+    A checkpoint is a prefix of an output array whose row i means "the vector
+    for tokens[i]". Resume it against a different token list and every row
+    silently refers to the wrong token — right shape, wrong content, and no
+    downstream check can catch it. Track D is actively changing the vocabulary
+    filter, so a stale checkpoint in the output dir is a live hazard, not a
+    hypothetical one.
+    """
+    h = hashlib.sha256()
+    for part in (profile_name, model_name, str(dim), str(len(tokens))):
+        h.update(part.encode("utf-8"))
+        h.update(b"\0")
+    h.update("\n".join(tokens).encode("utf-8"))
+    return h.hexdigest()
+
+
+def save_checkpoint(path: str, vectors: np.ndarray, fingerprint: str):
+    """Write a checkpoint atomically.
+
+    np.savez straight onto `path` is not safe here: the process being killed
+    mid-write is the exact event checkpointing exists for, and it would leave a
+    truncated zip that np.load refuses — losing the whole run instead of the
+    last interval. Write to a sibling temp file, then rename; rename within a
+    directory is atomic, so `path` is always either the previous good
+    checkpoint or the new one.
+
+    Uncompressed on purpose. Measured on the full 40,856 x 768 array:
+    np.savez 0.02 s / 126 MB against np.savez_compressed 1.65 s / 116 MB.
+    Unit-norm float32 barely compresses; 80x the CPU for 8% of the bytes.
+    """
+    tmp = path + ".tmp.npz"
+    try:
+        with open(tmp, "wb") as f:
+            np.savez(f, vectors=vectors, fingerprint=np.array(fingerprint),
+                     count=np.array(vectors.shape[0]))
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, path)
+    except BaseException:
+        if os.path.exists(tmp):
+            os.remove(tmp)
+        raise
+
+
+def load_checkpoint(path: str, fingerprint: str, total: int, dim: int):
+    """Return (vectors, count) from a checkpoint, or (None, 0) if unusable.
+
+    Refuses rather than guesses. A checkpoint that does not match the current
+    run is deleted, not resumed.
+    """
+    if not path or not os.path.exists(path):
+        return None, 0
+    try:
+        with np.load(path, allow_pickle=False) as data:
+            got = str(data["fingerprint"].item())
+            vecs = np.asarray(data["vectors"], dtype=np.float32)
+    except Exception as exc:                      # truncated, corrupt, old format
+        print(f"  checkpoint {path} unreadable ({exc.__class__.__name__}); "
+              f"starting fresh")
+        return None, 0
+    if got != fingerprint:
+        print(f"  checkpoint {path} belongs to a DIFFERENT run "
+              f"(fingerprint {got[:12]}… != {fingerprint[:12]}…); ignoring it")
+        return None, 0
+    if vecs.ndim != 2 or vecs.shape[1] != dim or vecs.shape[0] > total:
+        print(f"  checkpoint {path} has shape {vecs.shape}, expected "
+              f"(<={total}, {dim}); ignoring it")
+        return None, 0
+    return vecs, vecs.shape[0]
+
+
 # ── Extraction ───────────────────────────────────────────────────────
 
 def extract_embeddings(model, tokenizer, tokens: list, device: str,
-                       batch_size: int = 64,
-                       checkpoint_path: str = None) -> np.ndarray:
+                       profile: dict, profile_name: str,
+                       batch_size: int = BATCH_SIZE,
+                       checkpoint_path: str = None,
+                       checkpoint_every: int = CHECKPOINT_EVERY) -> np.ndarray:
     """Run full model inference on each token string. Returns (N, D) float32."""
 
-    # Check for checkpoint
-    start_idx = 0
-    all_vecs = []
-    if checkpoint_path and os.path.exists(checkpoint_path):
-        data = np.load(checkpoint_path)
-        all_vecs = list(data["vectors"])
-        start_idx = len(all_vecs)
-        print(f"  resuming from checkpoint: {start_idx}/{len(tokens)} tokens")
+    total = len(tokens)
+    hidden = int(model.config.hidden_size)
+    dim = min(hidden, OUTPUT_DIM)
+    pool = POOLERS[profile["pooling"]]
+    prefix = profile["prefix"]
+
+    fingerprint = checkpoint_fingerprint(
+        profile_name, profile["model_name"], tokens, dim
+    )
+
+    # One preallocated (total, dim) buffer instead of a growing python list:
+    # 40,856 x 768 float32 is 125 MB, so it costs nothing, and it makes a
+    # checkpoint a slice rather than a rebuild of the whole array.
+    out = np.zeros((total, dim), dtype=np.float32)
+    resumed, start_idx = load_checkpoint(checkpoint_path, fingerprint, total, dim)
+    if start_idx:
+        out[:start_idx] = resumed
+        print(f"  resuming from checkpoint: {start_idx}/{total} tokens")
 
     model.eval()
-    total = len(tokens)
     t0 = time.time()
+    last_ckpt = start_idx
+    batch_start = start_idx
 
-    with torch.no_grad():
-        for batch_start in range(start_idx, total, batch_size):
-            batch_end = min(batch_start + batch_size, total)
-            batch_tokens = tokens[batch_start:batch_end]
+    def _checkpoint(done):
+        if checkpoint_path:
+            save_checkpoint(checkpoint_path, out[:done], fingerprint)
 
-            # nomic-embed-code requires search_query or search_document prefix
-            # For single tokens, we use the token as-is (query mode)
-            texts = [f"search_query: {t}" for t in batch_tokens]
+    try:
+        with torch.no_grad():
+            for batch_start in range(start_idx, total, batch_size):
+                batch_end = min(batch_start + batch_size, total)
+                batch_tokens = tokens[batch_start:batch_end]
 
-            encoded = tokenizer(
-                texts,
-                padding=True,
-                truncation=True,
-                max_length=64,
-                return_tensors="pt"
-            ).to(device)
+                texts = [prefix + t for t in batch_tokens] if prefix \
+                    else list(batch_tokens)
 
-            outputs = model(**encoded)
+                encoded = tokenizer(
+                    texts,
+                    padding=True,
+                    truncation=True,
+                    max_length=64,
+                    return_tensors="pt"
+                ).to(device)
 
-            # Mean pooling over non-padding tokens
-            attention_mask = encoded["attention_mask"]
-            token_embeddings = outputs.last_hidden_state
-            input_mask_expanded = (
-                attention_mask.unsqueeze(-1)
-                .expand(token_embeddings.size())
-                .float()
-            )
-            sum_embeddings = torch.sum(
-                token_embeddings * input_mask_expanded, dim=1
-            )
-            sum_mask = torch.clamp(input_mask_expanded.sum(dim=1), min=1e-9)
-            mean_pooled = sum_embeddings / sum_mask
+                # use_cache=False: config.json ships use_cache true, so the
+                # forward would otherwise build a KV cache we never read —
+                # 28 layers x 2 x (B x S) x 1024 x 4 B, which at batch 1024 is
+                # ~2.4 GB of VRAM allocated and immediately discarded, and at
+                # batch 4096 is ~9.4 GB, i.e. an OOM on this 16 GB card.
+                outputs = model(**encoded, use_cache=False)
 
-            # Truncate to OUTPUT_DIM if model outputs more (Matryoshka)
-            if mean_pooled.shape[1] > OUTPUT_DIM:
-                mean_pooled = mean_pooled[:, :OUTPUT_DIM]
+                pooled = pool(outputs.last_hidden_state,
+                              encoded["attention_mask"])
 
-            # L2 normalize
-            mean_pooled = torch.nn.functional.normalize(mean_pooled, p=2, dim=1)
+                # Matryoshka: truncate to OUTPUT_DIM, THEN L2-normalise.
+                # This is equivalent to the canonical normalise -> truncate ->
+                # renormalise, because normalisation is multiplication by a
+                # positive scalar and truncation is a coordinate projection P:
+                #   normalize(P(v/||v||)) == normalize(P(v)/||v||) == normalize(P(v))
+                # so the order here is not a shortcut, it is the same vector.
+                if pooled.shape[1] > dim:
+                    pooled = pooled[:, :dim]
+                pooled = torch.nn.functional.normalize(pooled.float(), p=2, dim=1)
 
-            vecs = mean_pooled.cpu().numpy()
-            all_vecs.extend(vecs)
+                out[batch_start:batch_end] = pooled.cpu().numpy()
 
-            # Progress
-            done = batch_end
-            elapsed = time.time() - t0
-            rate = (done - start_idx) / elapsed if elapsed > 0 else 0
-            eta = (total - done) / rate if rate > 0 else 0
-            print(
-                f"  [{done:>6}/{total}] "
-                f"{rate:.1f} tok/s  "
-                f"ETA {eta / 60:.0f}m",
-                flush=True
-            )
-
-            # Checkpoint
-            if checkpoint_path and (done % CHECKPOINT_EVERY < batch_size):
-                np.savez_compressed(
-                    checkpoint_path,
-                    vectors=np.array(all_vecs, dtype=np.float32)
+                done = batch_end
+                elapsed = time.time() - t0
+                rate = (done - start_idx) / elapsed if elapsed > 0 else 0
+                eta = (total - done) / rate if rate > 0 else 0
+                print(
+                    f"  [{done:>6}/{total}] "
+                    f"{rate:.1f} tok/s  "
+                    f"ETA {eta / 60:.0f}m",
+                    flush=True
                 )
 
+                # checkpoint_every as a floor in tokens. The old
+                # `done % CHECKPOINT_EVERY < batch_size` silently becomes
+                # "every batch" once batch_size >= CHECKPOINT_EVERY.
+                if done - last_ckpt >= checkpoint_every and done < total:
+                    _checkpoint(done)
+                    last_ckpt = done
+    except KeyboardInterrupt:
+        _checkpoint(batch_start)
+        print(f"\n  interrupted; checkpointed {batch_start}/{total} tokens")
+        raise
+
     print()
-    return np.array(all_vecs, dtype=np.float32)
+    return out
 
 
 # ── Output generation ────────────────────────────────────────────────
@@ -354,7 +606,12 @@ _PRETRAINED_VECTOR_BLOB_LEN:
 # ── Main ─────────────────────────────────────────────────────────────
 
 def main():
-    parser = argparse.ArgumentParser(description="Extract nomic-embed-code token embeddings")
+    parser = argparse.ArgumentParser(description="Extract token embeddings for the static table")
+    parser.add_argument("--profile", default=DEFAULT_PROFILE,
+                        choices=sorted(MODEL_PROFILES),
+                        help=f"Model profile (default: {DEFAULT_PROFILE}). "
+                             "Fixes model, prefix, pooling, padding side and "
+                             "dtype together — see MODEL_PROFILES.")
     parser.add_argument("--output-dir", default="vendored/nomic",
                         help="Output directory (default: vendored/nomic)")
     parser.add_argument("--device", default=None,
@@ -365,9 +622,16 @@ def main():
                         help=f"Batch size (default: {BATCH_SIZE})")
     parser.add_argument("--checkpoint", default=None,
                         help="Checkpoint file path (auto: <output-dir>/checkpoint.npz)")
+    parser.add_argument("--checkpoint-every", type=int, default=CHECKPOINT_EVERY,
+                        help=f"Checkpoint at least every N tokens "
+                             f"(default: {CHECKPOINT_EVERY}); lower it for slow "
+                             f"runs where re-work costs more than the I/O")
     args = parser.parse_args()
 
     batch_size = args.batch_size
+    profile_name = args.profile
+    profile = MODEL_PROFILES[profile_name]
+    model_name = profile["model_name"]
 
     # Auto-detect device
     # Prefer CPU for 7B models on Apple Silicon — MPS shares unified memory
@@ -385,8 +649,12 @@ def main():
 
     print(f"device={device}")
     print(f"threads={torch.get_num_threads()}")
-    print(f"model={MODEL_NAME}")
+    print(f"profile={profile_name}")
+    print(f"model={model_name}")
+    print(f"pooling={profile['pooling']}  padding_side={profile['padding_side']}  "
+          f"dtype={profile['dtype']}  prefix={profile['prefix']!r}")
     print(f"output_dim={OUTPUT_DIM}")
+    print(f"batch_size={batch_size}  checkpoint_every={args.checkpoint_every}")
     print()
 
     # Create output dir
@@ -398,17 +666,30 @@ def main():
     # ── Step 1: Load model + tokenizer ──
     print("step 1: loading model + tokenizer...")
     t0 = time.time()
-    tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME, trust_remote_code=True)
+    # padding_side comes from the profile: last-token pooling wants left
+    # padding, mean pooling does not care. Qwen3 is a native transformers
+    # architecture (model_type "qwen3", requires transformers>=4.51), so it
+    # needs no remote code — only the nomic profile opts into that.
+    tokenizer = AutoTokenizer.from_pretrained(
+        model_name,
+        trust_remote_code=profile["trust_remote_code"],
+        padding_side=profile["padding_side"],
+    )
     model = AutoModel.from_pretrained(
-        MODEL_NAME,
-        trust_remote_code=True,
-        dtype=torch.float16,             # 7B×2B = ~14GB (vs 28GB float32)
+        model_name,
+        trust_remote_code=profile["trust_remote_code"],
+        dtype=getattr(torch, profile["dtype"]),
         low_cpu_mem_usage=True,          # Stream weights, no 2x peak during load
     )
     model = model.to(device)
     print(f"  loaded in {time.time() - t0:.1f}s")
     print(f"  hidden_size={model.config.hidden_size}")
     print(f"  vocab_size={tokenizer.vocab_size}")
+    print(f"  padding_side={tokenizer.padding_side}")
+    if model.config.hidden_size < OUTPUT_DIM:
+        sys.exit(f"FATAL: hidden_size {model.config.hidden_size} < OUTPUT_DIM "
+                 f"{OUTPUT_DIM}; the C side hardcodes HYP_SEM_DIM=768 and this "
+                 f"would silently emit short vectors.")
     print()
 
     # ── Step 2: Filter vocabulary ──
@@ -443,21 +724,23 @@ def main():
     t0 = time.time()
     vectors = extract_embeddings(
         model, tokenizer, filtered_tokens, device,
-        batch_size=batch_size, checkpoint_path=checkpoint_path
+        profile, profile_name,
+        batch_size=batch_size, checkpoint_path=checkpoint_path,
+        checkpoint_every=args.checkpoint_every
     )
     elapsed = time.time() - t0
     print(f"  extracted {vectors.shape[0]} vectors × {vectors.shape[1]}d in {elapsed:.0f}s")
 
-    # Truncate to OUTPUT_DIM if needed
-    if vectors.shape[1] > OUTPUT_DIM:
-        print(f"  truncating {vectors.shape[1]}d -> {OUTPUT_DIM}d (Matryoshka)")
-        vectors = vectors[:, :OUTPUT_DIM]
-        # Re-normalize after truncation
-        norms = np.linalg.norm(vectors, axis=1, keepdims=True)
-        norms = np.maximum(norms, 1e-8)
-        vectors = vectors / norms
-
-    print(f"  final shape: {vectors.shape}")
+    # Matryoshka truncation already happened per batch, before the L2
+    # normalisation, which is the same vector as truncate-then-renormalise
+    # (see extract_embeddings). Qwen3-Embedding is 1024d native and MRL-trained
+    # down to 32d, so 768 is inside its supported range and this is exactly why
+    # HYP_SEM_DIM / PRETRAINED_DIM stay at 768 and no C changes are needed.
+    assert vectors.shape[1] == min(int(model.config.hidden_size), OUTPUT_DIM)
+    norms = np.linalg.norm(vectors, axis=1)
+    print(f"  final shape: {vectors.shape} "
+          f"(native {model.config.hidden_size}d -> {vectors.shape[1]}d)")
+    print(f"  unit-norm check: min {norms.min():.6f} max {norms.max():.6f}")
 
     # Mean-center to fix anisotropy (transformer embeddings cluster tightly,
     # making all cosine similarities ~0.95+). Subtracting the corpus mean
@@ -510,7 +793,8 @@ def main():
     bin_size = os.path.getsize(str(out_dir / "code_vectors.bin"))
     print()
     print("=" * 60)
-    print(f"  model:      {MODEL_NAME}")
+    print(f"  model:      {model_name}  (profile {profile_name}, "
+          f"{profile['pooling']}-pooling)")
     print(f"  tokens:     {len(filtered_tokens)}")
     print(f"  dimensions: {dim}")
     print(f"  blob size:  {bin_size / (1024*1024):.1f} MB")
