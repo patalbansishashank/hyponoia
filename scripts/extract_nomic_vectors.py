@@ -73,57 +73,199 @@ BATCH_SIZE = 32           # Tokens per inference batch (sized for thread saturat
 CHECKPOINT_EVERY = 500    # Save checkpoint every N tokens
 
 
-# ── Token filtering ───────────────────────────────────────────────────
+# ── Vocabulary selection ──────────────────────────────────────────────
+#
+# The tokenizer's vocabulary is used ONLY as a source of candidate STRINGS.
+# Vectors come from running each candidate through the full model
+# (extract_embeddings, below) — no row is ever read out of the model's own
+# embedding matrix. Two consequences drive every rule in this section:
+#
+#   * a candidate does not have to be a token of the target tokenizer, so the
+#     vocabulary is a starting point and not a ceiling (see CODE_SUPPLEMENT);
+#   * getting a marker rule wrong LOSES candidates, it never produces a wrong
+#     vector for a candidate that survives. The failure mode is a quietly
+#     smaller table, which is why _assert_vocabulary_sane exists.
+#
+# What the runtime can actually look up (src/semantic/semantic.c):
+# hyp_sem_random_index() and build_src_entry() do an EXACT string match against
+# PRETRAINED_TOKENS. On the corpus path every key first goes through
+# hyp_sem_tokenize() (semantic.c:166), which lowercases, splits on
+# ". / _ - space ( ) , :" and on camelCase boundaries, and drops every
+# non-alphanumeric character. Its output alphabet is therefore exactly
+# ^[a-z0-9]+$ — an entry outside that shape can never be reached on the corpus
+# path, so it must not spend a 768-byte row.
 
-def is_code_relevant(token_str: str) -> bool:
-    """Filter vocabulary to code-relevant tokens.
+# Admissible cleaned form. Lowercase because the runtime lowercases before it
+# looks anything up: MAX_SIZE, MaxSize and maxSize all arrive as ["max","size"],
+# so a case-preserving table could not be queried with a capitalised key at all.
+# Letter-leading because relaxing that to allow digit-leading strings was
+# measured to admit 1,697 numeric BPE fragments ("0000000000", "00000080") in
+# order to cover 0.031% of sub-token occurrences on a 3.86M-token C corpus.
+# No underscore, because the runtime splits on it.
+ADMISSIBLE_TOKEN = re.compile(r"[a-z][a-z0-9]*\Z")
 
-    Goal: keep tokens that our runtime camelCase/snake_case splitter would
-    produce from identifiers. Reject BPE noise, punctuation combos, and
-    non-Latin scripts.
+# Below this a string carries no stable meaning — "t" from every *_t typedef,
+# "i"/"n"/"p" from loop and pointer variables — and the deterministic sparse
+# random vector it falls back to is the better representation, because it
+# supplies identity without dragging unrelated declarations together.
+MIN_TOKEN_LEN = 2
+
+# Subword markers, by tokenizer family. Byte-level BPE (the GPT-2
+# byte<->unicode map, used by the whole Qwen line and therefore by both
+# nomic-embed-code and Qwen3-Embedding-0.6B) renders byte 0x20 as Ġ, 0x0A as
+# Ċ, 0x09 as ĉ, 0x0D as č. SentencePiece uses ▁. WordPiece uses a "##"
+# continuation PREFIX, which is not a character strip — leaving it unhandled
+# rejects every continuation token, measured at 14.2% of the admitted set on a
+# real WordPiece vocabulary.
+BPE_MARKERS = "\u0120\u2581\u010a\u0109\u010d"  # Ġ ▁ Ċ ĉ č
+WORDPIECE_MARKER = "##"
+
+# These words must not appear as strings in the shipped binary. Four of them
+# fail scripts/security-strings.sh outright ("wget|netcat|ncat|telnet"); the
+# rest were removed for the antivirus and VirusTotal release gates, which admit
+# zero malicious AND zero suspicious verdicts (SECURITY.md). They were last
+# removed by hand-editing the generated artifacts (commit 8967d7cd), which left
+# 11 empty strings in code_tokens.txt and 11 orphaned vectors in the blob, and
+# which any regeneration silently undoes. Encoding the list here is what makes
+# it survive the next extraction. Each falls back to a sparse random vector.
+VOCAB_DENYLIST = frozenset({
+    "wget", "curl", "netcat", "ncat", "telnet",
+    "passwd", "shadow", "exploit", "hack", "inject", "malware",
+})
+
+# Identifier atoms a byte-level BPE vocabulary provably CANNOT contain. Those
+# tokenizers pre-split on the GPT-2 regex, whose \p{L}+ and \p{N}{1,3} branches
+# never merge a letter with a digit — measured across BPE, WordPiece and
+# Unigram vocabularies, essentially no admitted entry contains one. So "uint64",
+# "utf8" and "sha256" are unreachable by enumerating any vocabulary, while
+# hyp_sem_tokenize emits them constantly ("uint64_t" -> ["uint64", "t"]). On
+# llvm-project lld/ELF that class is 5.60% of sub-token occurrences with ZERO
+# of it in the current table, and these 64 strings recover 1.94 points of it
+# (78.91% -> 80.85% occurrence coverage) for 48 KB of a 30 MB blob. 56 of the
+# 64 were observed in a 3.86M-token C corpus; the other 8 complete families
+# whose siblings were.
+CODE_SUPPLEMENT = (
+    # fixed-width integer and float atoms
+    "u8", "u16", "u32", "u64", "u128", "i8", "i16", "i32", "i64", "i128",
+    "f32", "f64", "int8", "int16", "int32", "int64", "int128",
+    "uint8", "uint16", "uint32", "uint64", "uint128", "float32", "float64",
+    # architectures
+    "x86", "x64", "amd64", "arm64", "aarch64", "i386", "riscv64", "ppc64",
+    # text encodings
+    "utf8", "utf16", "utf32", "latin1", "base32", "base64",
+    # digests and checksums
+    "md5", "sha1", "sha256", "sha384", "sha512", "crc32", "crc64",
+    "blake2", "blake3", "xxh3", "xxh64",
+    # platform, protocol and version atoms
+    "win32", "win64", "ipv4", "ipv6", "v1", "v2", "v3",
+    "log2", "log10", "exp2", "atan2", "cpp11", "cpp14", "cpp17", "cpp20",
+)
+
+# Strings any usable code or text vocabulary must yield. If one is missing the
+# marker rules above are wrong for the tokenizer in play and the table is
+# quietly short — the exact failure this script cannot otherwise see. Every
+# entry was checked to be present in all three offline reference vocabularies
+# (ByteLevel BPE, WordPiece, Unigram); deliberately no code-specific words —
+# "buffer" and "pointer" are absent from XLM-R's 250k multilingual vocabulary,
+# which is a property of that vocabulary and not a defect to alarm on.
+VOCAB_PROBES = ("return", "string", "index", "error", "value",
+                "function", "memory", "length", "name", "size")
+
+
+def surface_form(token_str: str) -> str:
+    """Strip subword markers from a raw vocabulary entry.
+
+    Handles all three families a HuggingFace tokenizer can present, because the
+    target model is being swapped and the wrong guess here is silent.
     """
     s = token_str.strip()
-    if not s:
-        return False
-
-    # Remove BPE markers (Ġ = space prefix, ▁ = sentencepiece, Ċ/ċ = newline in Qwen)
-    clean = s.lstrip("\u0120\u2581")  # Ġ, ▁
-    if not clean:
-        return False
-
-    # Skip special tokens
-    if clean.startswith("<") and clean.endswith(">"):
-        return False
-    if clean.startswith("[") and clean.endswith("]"):
-        return False
-
-    # Strip leading/trailing underscores (common in BPE) but keep content
-    inner = clean.strip("_")
-    if not inner:
-        return False
-
-    # STRICT: must be purely alphanumeric + underscores (identifier-shaped)
-    # This rejects BPE noise like "!");ċ", "!!!!ċċ", etc.
-    if not re.match(r'^[a-zA-Z][a-zA-Z0-9_]*$', inner):
-        return False
-
-    # Must be at least 2 chars of actual content
-    if len(inner) < 2:
-        return False
-
-    return True
+    if s.startswith(WORDPIECE_MARKER):
+        s = s[len(WORDPIECE_MARKER):]
+    return s.lstrip(BPE_MARKERS)
 
 
 def clean_token(token_str: str) -> str:
-    """Normalize a BPE token to the form our runtime tokenizer produces."""
-    s = token_str.strip()
-    # Strip BPE space markers
-    s = s.lstrip("\u0120\u2581")
-    # Strip leading/trailing underscores
-    s = s.strip("_")
-    # Lowercase (our runtime tokenizer lowercases)
-    s = s.lower()
-    return s
+    """Normalize a vocabulary entry to the form the runtime will look up."""
+    # Outer underscores only: hyp_sem_tokenize treats "_" as a delimiter, so
+    # "_Bool" and "__builtin_expect" reach the table as "bool" / "builtin".
+    return surface_form(token_str).strip("_").lower()
+
+
+def is_code_relevant(token_str: str) -> bool:
+    """True if this vocabulary entry earns a row in the baked-in table.
+
+    Decided on the CLEANED form rather than the raw entry, so the rule that
+    admits a string and the string that actually ships cannot disagree. Special
+    tokens ("<|endoftext|>", "[CLS]") and BPE punctuation noise are rejected by
+    the shape rule itself rather than by separate early exits — two gates that
+    have to agree is how the "##" gap survived.
+    """
+    cleaned = clean_token(token_str)
+    if len(cleaned) < MIN_TOKEN_LEN:
+        return False
+    if not ADMISSIBLE_TOKEN.fullmatch(cleaned):
+        return False
+    if cleaned in VOCAB_DENYLIST:
+        return False
+    return True
+
+
+def _assert_vocabulary_sane(selected: list, raw_vocab_size: int, from_vocab: int):
+    """Fail loudly rather than ship a quietly-truncated table."""
+    if not selected:
+        raise SystemExit("vocabulary selection produced nothing")
+    share = from_vocab / max(raw_vocab_size, 1)
+    if not 0.10 <= share <= 0.90:
+        raise SystemExit(
+            f"vocabulary selection admitted {from_vocab}/{raw_vocab_size} "
+            f"({share:.1%}) of the raw vocabulary, outside the 10-90% band "
+            f"observed across BPE, WordPiece and Unigram tokenizers. The "
+            f"marker rules are probably wrong for this tokenizer."
+        )
+    chosen = set(selected)
+    missing = [p for p in VOCAB_PROBES if p not in chosen]
+    if missing:
+        raise SystemExit(f"vocabulary is missing basic probe tokens: {missing}")
+    banned = chosen & VOCAB_DENYLIST
+    if banned:
+        raise SystemExit(f"denylisted tokens reached the table: {sorted(banned)}")
+    bad = [t for t in selected if not ADMISSIBLE_TOKEN.fullmatch(t)]
+    if bad:
+        raise SystemExit(
+            f"tokens the runtime can never query reached the table: {bad[:10]}")
+
+
+def select_vocabulary(vocab: dict) -> list:
+    """Pick the token strings that get a baked-in vector, in table order.
+
+    `vocab` is tokenizer.get_vocab(): {token_string: token_id}. Dedup keeps the
+    lowest token id, which is arbitrary but harmless: two entries that clean to
+    the same string produce byte-identical inference input and therefore the
+    same vector.
+    """
+    seen = set()
+    selected = []
+    for tok_str, _tok_id in sorted(vocab.items(), key=lambda kv: kv[1]):
+        if not is_code_relevant(tok_str):
+            continue
+        cleaned = clean_token(tok_str)
+        if cleaned in seen:
+            continue
+        seen.add(cleaned)
+        selected.append(cleaned)
+
+    from_vocab = len(selected)
+    for extra in CODE_SUPPLEMENT:
+        if extra in seen or extra in VOCAB_DENYLIST:
+            continue
+        seen.add(extra)
+        selected.append(extra)
+
+    selected.sort()
+    _assert_vocabulary_sane(selected, len(vocab), from_vocab)
+    print(f"  from vocabulary: {from_vocab}   "
+          f"code supplement: {len(selected) - from_vocab}")
+    return selected
 
 
 # ── Simulated attention ──────────────────────────────────────────────
@@ -540,21 +682,9 @@ def main():
     vocab = tokenizer.get_vocab()
     print(f"  raw vocabulary: {len(vocab)} tokens")
 
-    # Filter and deduplicate
-    seen = set()
-    filtered_tokens = []
-    for tok_str, tok_id in sorted(vocab.items(), key=lambda x: x[1]):
-        if not is_code_relevant(tok_str):
-            continue
-        clean = clean_token(tok_str)
-        if not clean or clean in seen:
-            continue
-        if len(clean) < 2:
-            continue
-        seen.add(clean)
-        filtered_tokens.append(clean)
-
-    filtered_tokens.sort()
+    # Filter, deduplicate, supplement and sanity-check — see the vocabulary
+    # selection section at the top of this file.
+    filtered_tokens = select_vocabulary(vocab)
     print(f"  code-relevant (deduplicated): {len(filtered_tokens)} tokens")
 
     # Show sample
