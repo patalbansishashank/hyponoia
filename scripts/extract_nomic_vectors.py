@@ -64,6 +64,15 @@ MODEL_PROFILES = {
     #   README.md transformers example -> AutoTokenizer(..., padding_side='left')
     #   config_sentence_transformers.json -> prompts.document == ""
     #                                     (documents take no instruction prefix)
+    #
+    # On that empty prefix, because it looks like an omission and is not: a
+    # vocabulary token is a DOCUMENT, not a query. Nothing downstream plays the
+    # query role — semantic.c compares these vectors against other vectors from
+    # this same table — so the asymmetry the instruction encodes has no other
+    # side. Prepending the query instruction would also add one shared direction
+    # to all ~40.9k vectors, which is the anisotropy the mean-centering step
+    # below then has to remove, and would spend ~85% of every forward pass
+    # re-encoding a 15-piece constant in front of a mean-2.70-piece token.
     #   config.json                    -> hidden_size 1024, 28 layers, use_cache true
     # The tokenizer appends <|endoftext|> (151643) itself under the default
     # add_special_tokens=True — verified: tok("foo") -> ['foo', '<|endoftext|>'].
@@ -234,6 +243,12 @@ def simulated_attention(vectors: np.ndarray, k: int, iterations: int,
     37.43 s and 2.03 GB, i.e. 1.5x SLOWER and 2x the memory, because the 201 MB
     gather buffer leaves cache while the per-row 32 x 768 buffer stays in L2.
     Left alone deliberately; do not "optimise" this without measuring.
+
+    Because it is cheap, K / alpha / iterations are a quality lever that costs
+    almost nothing to move. Measured at N=40,909: K=32 iters=3 is 24.0 s,
+    K=128 iters=3 is 28.2 s (+17% — the per-row cost is the O(N) argpartition,
+    not the K-row gather), K=32 iters=6 is 48.8 s (linear). Anyone tuning these
+    against a retrieval benchmark is not constrained by this stage's runtime.
 
     One real hazard: the matmul leg is BLAS-bound. Measured 536 GFLOP/s on a
     pip numpy (bundled OpenBLAS) and 6.1 GFLOP/s on this distro's numpy linked
