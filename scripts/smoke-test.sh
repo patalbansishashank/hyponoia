@@ -1826,13 +1826,13 @@ echo "OK 8w: OpenClaw MCP (client-default enabled policy preserved)"
 for OPENCLAW_CONTEXT in \
   "$FAKE_HOME/.openclaw/workspace/AGENTS.md" \
   "$FAKE_HOME/.openclaw/workspace/TOOLS.md"; do
-  if ! grep -q '^## Codebase Knowledge Graph (hyponoia)$' "$OPENCLAW_CONTEXT" 2>/dev/null ||
+  if ! grep -q '^## Codebase Knowledge Graph (Hyponoia)$' "$OPENCLAW_CONTEXT" 2>/dev/null ||
      ! grep -q 'subagent' "$OPENCLAW_CONTEXT" 2>/dev/null; then
     echo "FAIL 8w-i: OpenClaw durable context missing in $OPENCLAW_CONTEXT"
     exit 1
   fi
 done
-OPENCLAW_COMPACTION=$(json_get "$FAKE_HOME/.openclaw/openclaw.json" "str('Codebase Knowledge Graph (hyponoia)' in d['agents']['defaults']['compaction']['postCompactionSections'])")
+OPENCLAW_COMPACTION=$(json_get "$FAKE_HOME/.openclaw/openclaw.json" "str('Codebase Knowledge Graph (Hyponoia)' in d['agents']['defaults']['compaction']['postCompactionSections'])")
 if [ "$OPENCLAW_COMPACTION" != "True" ]; then
   echo "FAIL 8w-i: OpenClaw compaction reinjection missing"
   exit 1
@@ -2598,7 +2598,7 @@ import json, sys
 d = json.load(sys.stdin)
 has_mcp = 'hyponoia' in d.get('mcp', {}).get('servers', {})
 sections = d.get('agents', {}).get('defaults', {}).get('compaction', {}).get('postCompactionSections', [])
-sys.exit(1 if has_mcp or 'Codebase Knowledge Graph (hyponoia)' in sections else 0)
+sys.exit(1 if has_mcp or 'Codebase Knowledge Graph (Hyponoia)' in sections else 0)
 " 2>/dev/null; then
   if grep -q 'hyponoia:start' "$FAKE_HOME/.openclaw/workspace/AGENTS.md" 2>/dev/null ||
      grep -q 'hyponoia:start' "$FAKE_HOME/.openclaw/workspace/TOOLS.md" 2>/dev/null; then

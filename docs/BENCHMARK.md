@@ -1,5 +1,17 @@
 # Hyponoia -- v0.3.0 Language Benchmark
 
+## Research citation
+
+The design and benchmarks of the engine this project is built on are described
+in the preprint [*Codebase-Memory: Tree-Sitter-Based Knowledge Graphs for LLM
+Code Exploration via MCP*](https://arxiv.org/abs/2603.27277) (arXiv:2603.27277).
+Evaluated across 31 real-world repositories: 83% answer quality, 10x fewer
+tokens, and 2.1x fewer tool calls than file-by-file exploration.
+
+Those are the paper's measured numbers on the paper's corpus, not a measurement
+of this repository at its current revision. The per-language results below are
+ours.
+
 ## Methodology
 
 - **63 languages** (27 programming + 8 config/markup), 12 questions each (4 for config languages)

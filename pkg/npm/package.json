@@ -1,7 +1,7 @@
 {
   "name": "hyponoia",
   "version": "0.8.1",
-  "description": "Fast code intelligence for AI coding agents — installs a verified native runtime set",
+  "description": "Code context engine for AI coding agents — indexes repositories into a queryable graph and returns exact code spans instead of whole files",
   "mcpName": "io.github.patalbansishashank/hyponoia",
   "license": "MIT",
   "repository": {

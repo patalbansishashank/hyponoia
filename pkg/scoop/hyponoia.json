@@ -1,6 +1,6 @@
 {
   "version": "0.8.1",
-  "description": "Fast code intelligence engine — native executable with verified runtime assets",
+  "description": "Code context engine for AI coding agents — indexes repositories into a queryable graph and returns exact code spans instead of whole files",
   "homepage": "https://github.com/patalbansishashank/hyponoia",
   "license": "MIT",
   "architecture": {

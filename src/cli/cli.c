@@ -2075,7 +2075,7 @@ int hyp_remove_openclaw_mcp_owned(const char *binary_path, const char *config_pa
 }
 
 static const char hyp_openclaw_compaction_section[] =
-    "Codebase Knowledge Graph (hyponoia)";
+    "Codebase Knowledge Graph (Hyponoia)";
 
 static int hyp_upsert_openclaw_compaction(const char *config_path) {
     static const char *const path[] = {"agents", "defaults", "compaction"};
@@ -2687,7 +2687,7 @@ hyp_detected_agents_t hyp_detect_agents(const char *home_dir) {
 static const char agent_instructions_content[] =
     "# Hyponoia\n"
     "\n"
-    "## Codebase Knowledge Graph (hyponoia)\n"
+    "## Codebase Knowledge Graph (Hyponoia)\n"
     "\n"
     "This project uses hyponoia to maintain a knowledge graph of the codebase.\n"
     "ALWAYS prefer MCP graph tools over grep/glob/file-search for code discovery.\n"
@@ -3093,7 +3093,7 @@ static const char crush_context_content[] =
  * exact same discovery priority, expressed as runnable `hyponoia
  * cli` commands (usable via Aider's /run or auto-approved shell). */
 static const char aider_instructions_content[] =
-    "# Codebase Knowledge Graph (hyponoia)\n"
+    "# Codebase Knowledge Graph (Hyponoia)\n"
     "\n"
     "This project uses hyponoia to maintain a knowledge graph of the codebase.\n"
     "Aider has no MCP support, so invoke the graph through the CLI (e.g. via /run).\n"

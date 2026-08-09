@@ -1,4 +1,4 @@
-# hyponoia
+# Hyponoia
 
 mcp-name: io.github.patalbansishashank/hyponoia
 

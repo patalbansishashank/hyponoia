@@ -1,4 +1,4 @@
-# Contributing to hyponoia
+# Contributing to Hyponoia
 
 Contributions are welcome. This guide covers setup, testing, and PR guidelines.
 

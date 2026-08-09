@@ -1,10 +1,4 @@
-# hyponoia
-
-> **Fork notice** — hyponoia is a fork of [DeusData/codebase-memory-mcp](https://github.com/DeusData/codebase-memory-mcp),
-> created and maintained by the upstream authors under the MIT license (see [LICENSE](LICENSE)).
-> The engine, the 158 tree-sitter grammars, the Hybrid LSP layer, and the benchmarks described
-> below are their work; hyponoia renames the project and builds on top of it. Upstream is tracked
-> as the `upstream` git remote so their fixes can be cherry-picked.
+# Hyponoia
 
 [![GitHub Release](https://img.shields.io/github/v/release/patalbansishashank/hyponoia?style=flat&color=blue)](https://github.com/patalbansishashank/hyponoia/releases/latest)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
@@ -18,23 +12,24 @@
 [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/patalbansishashank/hyponoia/badge)](https://scorecard.dev/viewer/?uri=github.com/patalbansishashank/hyponoia)
 [![SLSA 3](https://slsa.dev/images/gh-badge-level3.svg)](https://slsa.dev)
 [![VirusTotal](https://img.shields.io/badge/VirusTotal-scanned_every_release-brightgreen?logo=virustotal)](https://github.com/patalbansishashank/hyponoia/releases/latest)
-[![arXiv](https://img.shields.io/badge/arXiv-2603.27277-b31b1b?logo=arxiv)](https://arxiv.org/abs/2603.27277)
 
-**The fastest and most efficient code intelligence engine for AI coding agents.** Full-indexes an average repository in milliseconds, the Linux kernel (28M LOC, 75K files) in 3 minutes. Answers structural queries in under 1ms. Ships as a native executable with a small verified runtime-asset set for macOS, Linux, and Windows — download, run `install`, done.
+**A code context engine for AI coding agents.** Hyponoia indexes your repositories into a persistent knowledge graph and answers structural questions against it in under a millisecond — so an agent asks where the code is instead of reading around until it finds out. It holds codebases far larger than any context window, queries across many repositories at once, and hands back the exact spans, with line numbers, rather than whole files.
+
+The name is Greek — ὑπόνοια, *hyponoia*: the meaning underneath the surface text. That is the job.
+
+Full-indexes an average repository in milliseconds, the Linux kernel (28M LOC, 75K files) in 3 minutes. Ships as a native executable with a small verified runtime-asset set for macOS, Linux, and Windows — download, run `install`, done.
 
 High-quality parsing through [tree-sitter](https://tree-sitter.github.io/tree-sitter/) AST analysis across all 158 languages, enhanced with [**Hybrid LSP** semantic type resolution](#hybrid-lsp) for Python, TypeScript / JavaScript / JSX / TSX, PHP, C#, Go, C, C++, Java, Kotlin, Rust, and Perl — producing a persistent knowledge graph of functions, classes, call chains, HTTP routes, and cross-service links. 15 MCP tools. No language runtime, hosted service, or API key. Plug and play across 43 supported automatic/conditional client surfaces.
-
-> **Research** — The design and benchmarks behind this project are described in the preprint [*Codebase-Memory: Tree-Sitter-Based Knowledge Graphs for LLM Code Exploration via MCP*](https://arxiv.org/abs/2603.27277) (arXiv:2603.27277). Evaluated across 31 real-world repositories: 83% answer quality, 10× fewer tokens, 2.1× fewer tool calls vs. file-by-file exploration.
 
 > **Security & Trust** — This tool reads your codebase and writes to your agent configuration files. That is what it is designed to do. If you prefer to audit before running, the [full source is here](https://github.com/patalbansishashank/hyponoia). Release archives are signed and checksummed; every distinct extracted member and unpacked UI asset is submitted to VirusTotal, while the downloadable `.tar.gz`/`.zip` containers themselves are not. The release notes record the measured engine count and exact 0/N result; publication requires at least 50 decisive engine results with zero malicious and zero suspicious verdicts. All processing happens 100% locally; your code never leaves your machine. Found a security issue? We want to know — see [SECURITY.md](SECURITY.md). Security is Priority #1 for us.
 
 <p align="center">
-  <img src="docs/graph-ui-screenshot.png" alt="Graph visualization UI showing the hyponoia knowledge graph" width="800">
+  <img src="docs/graph-ui-screenshot.png" alt="Graph visualization UI showing the Hyponoia knowledge graph" width="800">
   <br>
   <em>Built-in 3D graph visualization (UI variant) — explore your knowledge graph at localhost:9749</em>
 </p>
 
-## Why hyponoia
+## Why Hyponoia
 
 - **Extreme indexing speed** — Linux kernel (28M LOC, 75K files) in 3 minutes. RAM-first pipeline: LZ4 compression, in-memory SQLite, fused Aho-Corasick pattern matching. Memory released after indexing.
 - **Plug and play** — native executable plus authenticated release-owned assets for macOS (arm64/amd64), Linux (arm64/amd64), and Windows (amd64). The native install needs no Docker, language runtime, or API keys. Download → `install` → restart agent → done.
@@ -262,14 +257,14 @@ The result is similar in spirit to graphify's `graphify-out/` directory, but as 
 
 ## How It Works
 
-hyponoia is a **structural analysis backend** — it builds and queries the knowledge graph. It does **not** include an LLM. Instead, it relies on your MCP client (Claude Code, or any MCP-compatible agent) to be the intelligence layer.
+Hyponoia is a **structural analysis backend** — it builds and queries the knowledge graph. It does **not** include an LLM. Instead, it relies on your MCP client (Claude Code, or any MCP-compatible agent) to be the intelligence layer.
 
 ```
 You: "what calls ProcessOrder?"
 
 Agent calls: trace_path(function_name="ProcessOrder", direction="inbound")
 
-hyponoia: executes graph query, returns structured results
+Hyponoia: executes graph query, returns structured results
 
 Agent: presents the call chain in plain English
 ```
@@ -292,11 +287,11 @@ Benchmarked on Apple M3 Pro:
 
 **RAM-first pipeline**: All indexing runs in memory (LZ4 HC compressed read, in-memory SQLite, single dump at end). Memory is released back to the OS after indexing completes.
 
-**Token efficiency**: Five structural queries consumed ~3,400 tokens via hyponoia versus ~412,000 tokens via file-by-file grep exploration — a **99.2% reduction**.
+**Token efficiency**: Five structural queries consumed ~3,400 tokens via Hyponoia versus ~412,000 tokens via file-by-file grep exploration — a **99.2% reduction**.
 
 ## Troubleshooting & Diagnostics
 
-hyponoia runs **100% locally and collects no telemetry** — your code, queries, environment, and usage never leave your machine. That privacy guarantee also means that when you hit something we can't reproduce on our side (a slow memory climb over hours, a performance regression, a leak that only appears after days of real use), **we have no data at all unless you choose to send it.** Here is how to capture it yourself.
+Hyponoia runs **100% locally and collects no telemetry** — your code, queries, environment, and usage never leave your machine. That privacy guarantee also means that when you hit something we can't reproduce on our side (a slow memory climb over hours, a performance regression, a leak that only appears after days of real use), **we have no data at all unless you choose to send it.** Here is how to capture it yourself.
 
 ### Capture a diagnostics log
 
@@ -556,7 +551,7 @@ documents neither a suitable hook nor a custom-agent surface. Those surfaces are
 not approximated with invented augmentation. Kimi plugins, Amp plugins, and
 GitLab experimental global skills remain opt-in.
 
-OpenClaw reinjects the `Codebase Knowledge Graph (hyponoia)` AGENTS
+OpenClaw reinjects the `Codebase Knowledge Graph (Hyponoia)` AGENTS
 section after compaction and places the same guidance in `TOOLS.md`, the bootstrap
 files inherited by its subagents. Automatic augmentation covers the active/default
 workspace. Separate `agents.list[].workspace` directories require making that
@@ -738,7 +733,7 @@ SQLite databases stored at `~/.cache/hyponoia/`. Persists across restarts (WAL m
 
 Tree-sitter alone gives a syntactic AST. That handles naming, structure, and call sites well, but it can't tell you that `user.profile.display_name()` resolves to `Profile.display_name` declared three modules away — tree-sitter doesn't track imports, generics, inheritance, or stdlib types.
 
-hyponoia ships a **lightweight C implementation of language type-resolution algorithms, structurally inspired by and compatible with major language servers** (tsserver / typescript-go, pyright, gopls, Roslyn, Eclipse JDT, rust-analyzer), embedded directly into the native executable. No language server process, no per-project setup, no API key. We call this layer **Hybrid LSP**: it runs alongside tree-sitter on every parse and refines invocation resolution (`CALLS` / `RESOLVED_CALLS`) and callable-value resolution (`CALL_REFERENCE`, with ambiguous values retained as `USAGE`) using type information, so the resulting graph mirrors what an IDE "Go to Definition" would resolve.
+Hyponoia ships a **lightweight C implementation of language type-resolution algorithms, structurally inspired by and compatible with major language servers** (tsserver / typescript-go, pyright, gopls, Roslyn, Eclipse JDT, rust-analyzer), embedded directly into the native executable. No language server process, no per-project setup, no API key. We call this layer **Hybrid LSP**: it runs alongside tree-sitter on every parse and refines invocation resolution (`CALLS` / `RESOLVED_CALLS`) and callable-value resolution (`CALL_REFERENCE`, with ambiguous values retained as `USAGE`) using type information, so the resulting graph mirrors what an IDE "Go to Definition" would resolve.
 
 **Languages with full Hybrid LSP:**
 

@@ -1,7 +1,7 @@
 # Security Disclosure & Handling Process
 
 This document explains **how security reports are handled** for
-hyponoia — what happens after you report a vulnerability, what you
+Hyponoia — what happens after you report a vulnerability, what you
 can expect from us, and how disclosure and credit work.
 
 For **how to report** a vulnerability and **what is in scope**, see

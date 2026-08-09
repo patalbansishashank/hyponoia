@@ -2,7 +2,7 @@
 
 ## Transparency & Disclaimer
 
-hyponoia interacts deeply with your filesystem. It reads source files across your entire codebase, writes to agent configuration files, and spawns background processes. This is inherent to what it does — not a bug.
+Hyponoia interacts deeply with your filesystem. It reads source files across your entire codebase, writes to agent configuration files, and spawns background processes. This is inherent to what it does — not a bug.
 
 **If you are uncomfortable with these access patterns**, please audit the source code before running. The full source is available in this repository. Release archives produced by the current release pipeline are verifiably built from this source and can be independently verified via SLSA Build Level 3 provenance, Sigstore signatures, and SHA-256 checksums (see [Verification](#verification) below). Each archive contains a native executable and its authenticated release-owned runtime assets.
 

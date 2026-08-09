@@ -1,4 +1,4 @@
-# hyponoia
+# Hyponoia
 
 [![npm](https://img.shields.io/npm/v/hyponoia?style=flat&color=blue)](https://www.npmjs.com/package/hyponoia)
 [![GitHub Release](https://img.shields.io/github/v/release/patalbansishashank/hyponoia?style=flat&color=blue)](https://github.com/patalbansishashank/hyponoia/releases/latest)

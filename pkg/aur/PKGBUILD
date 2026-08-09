@@ -2,7 +2,7 @@
 pkgname=hyponoia
 pkgver=0.8.1
 pkgrel=1
-pkgdesc="Fast code intelligence engine — native executable with verified integration asset"
+pkgdesc="Code context engine for AI coding agents — indexes repositories into a queryable graph and returns exact code spans instead of whole files"
 arch=('x86_64' 'aarch64')
 url="https://github.com/patalbansishashank/hyponoia"
 license=('MIT')

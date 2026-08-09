@@ -1,5 +1,5 @@
 class Hyponoia < Formula
-  desc "Fast code intelligence engine for AI coding agents"
+  desc "Code context engine for AI coding agents"
   homepage "https://github.com/patalbansishashank/hyponoia"
   version "0.8.1"
   license "MIT"

@@ -3706,7 +3706,7 @@ TEST(cli_openclaw_compaction_preserves_user_owned_section) {
     hyp_install_agent_configs(tmpdir, "/usr/local/bin/hyponoia", false, false);
     char *installed = read_test_file_alloc(config_path);
     bool installed_owned =
-        installed && strstr(installed, "Codebase Knowledge Graph (hyponoia)");
+        installed && strstr(installed, "Codebase Knowledge Graph (Hyponoia)");
     bool retained_existing =
         installed && strstr(installed, "Hyponoia") && strstr(installed, "User Notes");
     free(installed);
@@ -3717,7 +3717,7 @@ TEST(cli_openclaw_compaction_preserves_user_owned_section) {
     bool preserved_user =
         uninstalled && strstr(uninstalled, "Hyponoia") && strstr(uninstalled, "User Notes");
     bool removed_owned =
-        uninstalled && !strstr(uninstalled, "Codebase Knowledge Graph (hyponoia)");
+        uninstalled && !strstr(uninstalled, "Codebase Knowledge Graph (Hyponoia)");
     free(uninstalled);
 
     const size_t cache_env_index = sizeof(env_names) / sizeof(env_names[0]) - 1;
@@ -3794,7 +3794,7 @@ TEST(cli_openclaw_uninstall_removes_compaction_when_workspace_is_ambiguous) {
     write_test_file(config_path,
                     "{\"$include\":[\"one.json\",\"two.json\"],\"agents\":{\"defaults\":{"
                     "\"compaction\":{\"postCompactionSections\":["
-                    "\"Codebase Knowledge Graph (hyponoia)\"]}}}}\n");
+                    "\"Codebase Knowledge Graph (Hyponoia)\"]}}}}\n");
 
     char *saved_home = save_test_env("HOME");
     char *saved_path = save_test_env("PATH");
@@ -3803,7 +3803,7 @@ TEST(cli_openclaw_uninstall_removes_compaction_when_workspace_is_ambiguous) {
     char *argv[] = {"uninstall", "--yes"};
     int rc = cli_test_cmd_uninstall(2, argv);
     char *after = read_test_file_alloc(config_path);
-    bool removed = after && !strstr(after, "Codebase Knowledge Graph (hyponoia)");
+    bool removed = after && !strstr(after, "Codebase Knowledge Graph (Hyponoia)");
 
     free(after);
     restore_test_env("HOME", saved_home);
@@ -5356,7 +5356,7 @@ TEST(cli_agent_reinstall_preserves_foreign_policy_entries) {
             preserved = preserved && data && strstr(data, "/opt/user-tool") &&
                         strstr(data, "\"enabled\":false") &&
                         strstr(data, "\"userField\":\"openclaw\"") &&
-                        strstr(data, "Codebase Knowledge Graph (hyponoia)");
+                        strstr(data, "Codebase Knowledge Graph (Hyponoia)");
         } else {
             preserved = preserved && data && strcmp(data, originals[i]) == 0;
         }
@@ -5564,7 +5564,7 @@ TEST(cli_existing_agents_install_durable_child_context) {
     snprintf(path, sizeof(path), "%s/.openclaw/workspace/TOOLS.md", tmpdir);
     files_ok = files_ok && test_file_contains_all(path, durable, 4);
     const char *const compaction[] = {"postCompactionSections",
-                                      "Codebase Knowledge Graph (hyponoia)"};
+                                      "Codebase Knowledge Graph (Hyponoia)"};
     snprintf(path, sizeof(path), "%s/.openclaw/openclaw.json", tmpdir);
     files_ok = files_ok && test_file_contains_all(path, compaction, 2);
     snprintf(path, sizeof(path), "%s/.kiro/steering/hyponoia.md", tmpdir);
@@ -11544,7 +11544,7 @@ TEST(cli_agent_instructions_content) {
     ASSERT(strstr(instr, "missed-coverage range") != NULL);
     ASSERT(strstr(instr, "must not call or claim MCP access") != NULL);
     ASSERT(strstr(instr, "# Hyponoia\n") != NULL);
-    ASSERT(strstr(instr, "## Codebase Knowledge Graph (hyponoia)\n") != NULL);
+    ASSERT(strstr(instr, "## Codebase Knowledge Graph (Hyponoia)\n") != NULL);
     PASS();
 }
 
