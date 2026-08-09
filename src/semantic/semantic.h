@@ -35,6 +35,15 @@
 /* 768 = nomic-embed-code embedding dimension.  Matches PRETRAINED_DIM. */
 enum { HYP_SEM_DIM = 768 };
 
+/* rotsq.h declares its own 768 and only a comment tied the two together, so a
+ * dimension change could move one and not the other: hyp_rsq_encode would then
+ * read HYP_RSQ_IN_DIM floats out of a HYP_SEM_DIM vector. semantic.c asserts
+ * the third side of the triangle (PRETRAINED_DIM == HYP_SEM_DIM). */
+/* Both operands are cast to int: they are members of two distinct anonymous
+ * enums and -Werror=enum-compare rejects the bare comparison. */
+_Static_assert((int)HYP_RSQ_IN_DIM == (int)HYP_SEM_DIM,
+               "rotational-quantizer input dimension must equal HYP_SEM_DIM");
+
 /* Random Indexing: non-zero entries per sparse random vector. */
 enum { HYP_SEM_SPARSE_NNZE = 8 };
 

@@ -35,7 +35,33 @@ enum {
     CORPUS_INIT_CAP = 4096,
     DOC_TOKENS_INIT = 64,
     RI_SEED_BASE = 0x52494E44, /* "RIND" */
+    /* [int32 count][int32 dim] prefix written by the extractor; the same 8 is
+     * hardcoded in pretrained_vec_at() in the generated code_vectors.h. */
+    PRETRAINED_BLOB_HEADER_BYTES = 8,
 };
+
+/* ── Pretrained table shape: fail at build time, not at read time ──
+ *
+ * pretrained_vec_at(i) returns BLOB + 8 + i*PRETRAINED_DIM and every consumer
+ * then reads HYP_SEM_DIM int8 from it (sem_vec_add_int8_scaled, the dense
+ * branches of the pass-1/pass-2 accumulators). Nothing bounds that read. If a
+ * new model shipped a table with PRETRAINED_DIM < HYP_SEM_DIM, every lookup
+ * would stride into the NEXT token's row and the final token would read past
+ * the end of .rodata — silent corruption plus an out-of-bounds read, with the
+ * `d < HYP_SEM_DIM && d < PRETRAINED_DIM` guard at the one site that has it
+ * quietly leaving the tail of the vector at zero instead.
+ *
+ * Qwen3-Embedding-0.6B emits 1024 and scripts/extract_nomic_vectors.py
+ * Matryoshka-truncates to OUTPUT_DIM=768 (see the truncation at the end of
+ * extract_embeddings and again in main), which is exactly why the swap needs no
+ * C change. This assert is what makes "exactly why" checkable rather than
+ * remembered: raise OUTPUT_DIM without raising HYP_SEM_DIM, or the reverse, and
+ * the build stops here. */
+_Static_assert(PRETRAINED_DIM == HYP_SEM_DIM,
+               "pretrained table dimension must equal HYP_SEM_DIM: regenerate the "
+               "vectors at HYP_SEM_DIM, do not widen one side alone");
+_Static_assert(PRETRAINED_TOKEN_COUNT > 0,
+               "pretrained token table is empty — code_tokens.h was not generated");
 
 /* Default signal weights for hyp_sem_combined_score.  Must sum to ~1.0;
  * proximity is a multiplier applied on top. */
@@ -394,6 +420,32 @@ static _Atomic int g_pretrained_ready = 0;
 static hyp_mutex_t g_pretrained_mtx;
 static _Atomic int g_pretrained_mtx_init = 0;
 
+/* The vector blob is a separate file from the header that describes it, and the
+ * build does not force them to agree: Makefile.hyp names code_vectors.bin only
+ * as a prerequisite of the assembler object, so dropping in a new .bin without
+ * regenerating code_vectors.h links cleanly and then misreads every row. The
+ * count and dim are in the blob's own 8-byte prefix, so check them once and
+ * refuse the table rather than read out of bounds. Little-endian is assembled
+ * from bytes because the extractor writes '<ii' regardless of host order. */
+static bool pretrained_blob_matches_header(void) {
+    const unsigned char *b = PRETRAINED_VECTOR_BLOB;
+    uint32_t count = (uint32_t)b[0] | ((uint32_t)b[1] << 8) | ((uint32_t)b[2] << 16) |
+                     ((uint32_t)b[3] << 24);
+    uint32_t dim = (uint32_t)b[4] | ((uint32_t)b[5] << 8) | ((uint32_t)b[6] << 16) |
+                   ((uint32_t)b[7] << 24);
+    size_t expect_len = (size_t)PRETRAINED_BLOB_HEADER_BYTES +
+                        ((size_t)PRETRAINED_TOKEN_COUNT * (size_t)PRETRAINED_DIM);
+    if (count == (uint32_t)PRETRAINED_TOKEN_COUNT && dim == (uint32_t)PRETRAINED_DIM &&
+        (size_t)PRETRAINED_VECTOR_BLOB_LEN == expect_len) {
+        return true;
+    }
+    hyp_log_error("semantic.pretrained_blob_mismatch", "detail",
+                  "code_vectors.bin disagrees with code_vectors.h",
+                  "action", "pretrained vectors disabled; every token falls back to "
+                            "the hashed random-index vector");
+    return false;
+}
+
 /* Thread-safe lazy init of the pretrained token lookup map.
  * Uses double-checked locking: fast path reads an atomic flag. */
 static void ensure_pretrained_map(void) {
@@ -416,13 +468,18 @@ static void ensure_pretrained_map(void) {
     }
     hyp_mutex_lock(&g_pretrained_mtx);
     if (!atomic_load_explicit(&g_pretrained_ready, memory_order_acquire)) {
+        /* Left deliberately EMPTY on mismatch: hyp_ht_get then misses for every
+         * token and both call sites already take the sparse fallback, so a
+         * botched swap degrades loudly in the log and safely at runtime. */
         g_pretrained_map = hyp_ht_create(PRETRAINED_TOKEN_COUNT);
-        char idx_buf[HYP_SZ_16];
-        for (int i = 0; i < PRETRAINED_TOKEN_COUNT; i++) {
-            const char *tok = PRETRAINED_TOKENS[i];
-            if (tok && tok[0]) {
-                snprintf(idx_buf, sizeof(idx_buf), "%d", i);
-                hyp_ht_set(g_pretrained_map, strdup(tok), strdup(idx_buf));
+        if (pretrained_blob_matches_header()) {
+            char idx_buf[HYP_SZ_16];
+            for (int i = 0; i < PRETRAINED_TOKEN_COUNT; i++) {
+                const char *tok = PRETRAINED_TOKENS[i];
+                if (tok && tok[0]) {
+                    snprintf(idx_buf, sizeof(idx_buf), "%d", i);
+                    hyp_ht_set(g_pretrained_map, strdup(tok), strdup(idx_buf));
+                }
             }
         }
         atomic_store_explicit(&g_pretrained_ready, MAP_READY, memory_order_release);

@@ -105,6 +105,20 @@ Semantic vector search uses static token embeddings derived from the
 See `vendored/nomic/NOTICE` for the exact derivation procedure
 (per-token inference + int8 quantization via `scripts/extract_nomic_vectors.py`).
 
+These embeddings are being replaced by ones derived from the
+**Qwen3-Embedding-0.6B** model, whose licence and attribution are already in
+place in `vendored/qwen3/`:
+
+- **Model:** [Qwen/Qwen3-Embedding-0.6B](https://huggingface.co/Qwen/Qwen3-Embedding-0.6B)
+- **License:** Apache License 2.0
+- **Publisher:** Qwen team, Alibaba Group
+
+Both entries are listed on purpose: `vendored/qwen3/` carries the licence for
+the table that is arriving, and `vendored/nomic/` keeps the licence for the
+table that is still linked into the binary. See `docs/EMBEDDING-SWAP.md` — the
+nomic entry above is deleted in the same commit that deletes its vectors, and
+not before.
+
 ## Hybrid LSP — Reference Language Servers
 
 The Hybrid LSP layer (`internal/hyp/lsp/`) is an original C implementation

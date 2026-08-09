@@ -269,7 +269,11 @@ else
 fi
 
 # Every top-level vendored library requires an explicit review decision.
-KNOWN_VENDORED="mimalloc nomic sqlite3 tre xxhash yyjson"
+# qwen3: Apache-2.0 licence + NOTICE for Qwen3-Embedding-0.6B, ahead of the
+# token table that replaces nomic's. Reviewed: data and text only, no code, so
+# the dangerous-call scans below have nothing to find. nomic stays listed until
+# its vectors are actually deleted — see docs/EMBEDDING-SWAP.md.
+KNOWN_VENDORED="mimalloc nomic qwen3 sqlite3 tre xxhash yyjson"
 while IFS= read -r -d '' libdir; do
     libname="$(basename "$libdir")"
     found=false
