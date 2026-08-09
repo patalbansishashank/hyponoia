@@ -8257,6 +8257,15 @@ static int vs_build_keyword_vectors(hyp_store_t *s, const char *project, const c
         float kw_f[VS_VEC_DIM];
         memset(kw_f, 0, sizeof(kw_f));
         if (!vs_load_enriched_vector(s, project, keywords[k], kw_f)) {
+            /* Vocabulary miss. Falling back to a deterministic hash vector is
+             * legitimate — it keeps unseen tokens comparable — but the results
+             * it produces are scored against hash noise, not meaning, so the
+             * miss must never be invisible. It once hid a CLI quoting bug for
+             * a full day: `--semantic-query '["shuffle"]'` shipped the literal
+             * 11-character string as ONE keyword, missed the vocabulary, and
+             * every score came from a hash of the query's own punctuation. */
+            hyp_log_warn("vector_search.vocab_miss", "keyword", keywords[k], "project", project,
+                         "fallback", "hash_vector");
             vs_fill_sparse_random(keywords[k], kw_f);
         }
         if (vs_normalize_and_quantize(kw_f, kw_vecs[actual_kw])) {

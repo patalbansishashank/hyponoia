@@ -158,14 +158,22 @@ def main():
     for rel, (repo, exact) in LIBS.items():
         check_upstream(rel, os.path.join(ROOT, rel), repo, exact_path=exact)
 
-    # Special: nomic = canonical Apache-2.0 text; sqlite3 = first-party notice
-    fname, ours = local_license(os.path.join(ROOT, "vendored/nomic"))
+    # Special: nomic and qwen3 = canonical Apache-2.0 text; sqlite3 = first-party
+    # notice. Neither model repository ships a LICENSE file — nomic-embed-code
+    # and Qwen3-Embedding-0.6B both declare apache-2.0 only in the model card's
+    # front matter — so the upstream-byte-identity check has no upstream file to
+    # compare against and the canonical apache.org text is the reference.
     apache = subprocess.run(
         ["curl", "-fsSL", "https://www.apache.org/licenses/LICENSE-2.0.txt"],
         capture_output=True, text=True).stdout
-    results["vendored/nomic"] = (
-        "IDENTICAL" if ours == apache else "DIFFERS",
-        "apache.org canonical LICENSE-2.0.txt")
+    for model_dir in ("vendored/nomic", "vendored/qwen3",
+                      "vendored/qwen3-oldvocab"):
+        if not os.path.isdir(os.path.join(ROOT, model_dir)):
+            continue
+        fname, ours = local_license(os.path.join(ROOT, model_dir))
+        results[model_dir] = (
+            "IDENTICAL" if ours == apache else "DIFFERS",
+            "apache.org canonical LICENSE-2.0.txt")
     results["vendored/sqlite3"] = ("FIRST-PARTY-NOTICE",
                                    "own public-domain notice (sqlite has no upstream LICENSE)")
 
