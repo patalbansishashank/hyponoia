@@ -36,17 +36,23 @@ quantization. See scripts/extract_nomic_vectors.py for the exact extraction
 procedure and docs/EMBEDDING-SWAP.md for the swap. No other part of the model
 is redistributed.
 
-  Tokens:     PENDING — fill in when the extraction output lands
+  Tokens:     40928
   Dimensions: 768 (Matryoshka truncation of the model's 1024)
+  Pooling:    last-token, left padding, no instruction prefix (document side),
+              float32 inference — the settings the upstream model repo
+              specifies; see MODEL_PROFILES["qwen3"] in the extraction script
 
 STATUS
 ------
-The vectors are NOT in this directory yet. The licence and this notice are in
-place ahead of them so the attribution obligation lands with the decision
-rather than with the 31 MB blob, and so vendored/nomic/ — which is upstream
-codebase-memory-mcp's directory, not ours — is never edited in place.
-vendored/nomic/LICENSE and vendored/nomic/NOTICE stay exactly as they are
-until nomic's vectors are actually deleted from the tree.
+The vectors are IN this directory: code_vectors.bin, code_tokens.txt,
+code_tokens.h, code_vectors.h and code_vectors_blob.S were extracted from the
+revision pinned above. They are not yet wired into the build — Makefile.hyp and
+src/semantic/semantic.c still reference vendored/nomic/ — so both directories
+are present and both attributions are required.
+
+vendored/nomic/ is upstream codebase-memory-mcp's directory, not ours, and is
+never edited in place. vendored/nomic/LICENSE and vendored/nomic/NOTICE stay
+exactly as they are until nomic's vectors are actually deleted from the tree.
 
 Attribution requested by the model card
 ---------------------------------------

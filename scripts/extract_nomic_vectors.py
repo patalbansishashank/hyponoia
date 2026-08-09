@@ -267,9 +267,43 @@ WORDPIECE_MARKER = "##"
 # 11 empty strings in code_tokens.txt and 11 orphaned vectors in the blob, and
 # which any regeneration silently undoes. Encoding the list here is what makes
 # it survive the next extraction. Each falls back to a sparse random vector.
+#
+# "phishing" and "trojan" were added when the Qwen3 extraction landed: the
+# Qwen3 vocabulary contains them and nomic's did not, so they are new strings
+# in the binary that the original list had no reason to name. The test applied
+# was occurrence count, MEASURED, not the word's connotation. Counted the way
+# hyp_sem_tokenize actually sees code — case-insensitive and across camelCase
+# boundaries, because "evexPayload0" reaches this table as "payload":
+#
+#              lld/ELF (benchmark corpus)        hyponoia src/
+#   phishing     0                                0
+#   trojan       0                                0
+#   payload      6  (evexPayload0 x5 in           297  (189 as the bare
+#                    Arch/X86_64.cpp, plus             lowercase word, the
+#                    "payloads" in a comment)          rest camelCased)
+#
+# phishing and trojan cost nothing anywhere we care about, against a real
+# AV/VirusTotal gate risk — exactly the trade this list exists to make.
+#
+# "payload" is DELIBERATELY NOT HERE and must not be added. It is an ordinary
+# identifier in linkers and network code, heavily used in our own C source and
+# present in the benchmark corpus too; denying it would degrade retrieval on
+# real code to buy protection against a gate that does not pattern-match it.
+# security-strings.sh's DANGEROUS_CMDS is "wget|netcat|ncat|/dev/tcp|telnet"
+# and matches none of these three.
+#
+# A note on method, because it flipped one of these numbers: `grep -w payload`
+# reports ZERO for lld/ELF and would have made "payload" look as free to deny
+# as the other two. It is not zero — the corpus spells it evexPayload0, which
+# the runtime lowercases and splits into ["evex", "payload", ...]. Any future
+# argument about this list must count the way the tokenizer reads, not the way
+# grep -w does. Adding a word here is not free either: it drops a row, changes
+# every artifact hash, and — if done after a baseline is measured —
+# invalidates the before/after comparison outright.
 VOCAB_DENYLIST = frozenset({
     "wget", "curl", "netcat", "ncat", "telnet",
     "passwd", "shadow", "exploit", "hack", "inject", "malware",
+    "phishing", "trojan",
 })
 
 # Identifier atoms a byte-level BPE vocabulary provably CANNOT contain. Those

@@ -5,7 +5,25 @@ Regenerates every artifact that does NOT require the embedding model, using the
 real writer stage of scripts/extract_nomic_vectors.py, and compares the result
 byte-for-byte against what is committed.
 
-    python3 scripts/verify-vector-artifacts.py [vendored/nomic]
+    python3 scripts/verify-vector-artifacts.py [DIR] [--profile P]
+                                               [--header-guard-prefix X]
+
+The generated headers carry two things that are NOT functions of the artifacts:
+the model provenance banner and the include-guard prefix. Both come from the
+extraction that produced them, so the verifier has to be told which extraction
+that was or it reports drift against its own defaults — which it did for
+vendored/qwen3 until this was added, making the check in
+docs/EMBEDDING-SWAP.md unrunnable for the one directory the swap ships from.
+
+Both are inferred from the directory name and both can be overridden:
+
+    vendored/nomic  -> profile nomic, guard prefix CBM   (what is committed)
+    vendored/qwen3  -> profile qwen3, guard prefix HYP   (ditto)
+
+i.e. a directory whose name is a known model profile selects it, and CBM is
+kept only for nomic because that is the historic prefix its committed headers
+carry. The resolved values are printed, so a wrong inference is visible in the
+output rather than silently folded into a pass or a fail.
 
 Why this exists
 ---------------
@@ -30,6 +48,7 @@ Exit 0 = every reproducible artifact is byte-identical. Exit 1 = drift.
 The model is never loaded; torch/transformers are stubbed for import only.
 """
 
+import argparse
 import hashlib
 import importlib.util
 import struct
@@ -38,7 +57,20 @@ import types
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-TARGET = Path(sys.argv[1]) if len(sys.argv) > 1 else Path("vendored/nomic")
+
+_parser = argparse.ArgumentParser(
+    description="Byte-identity check for the generated vector artifacts")
+_parser.add_argument("directory", nargs="?", default="vendored/nomic",
+                     help="artifact directory (default: vendored/nomic)")
+_parser.add_argument("--profile", default=None,
+                     help="model profile whose provenance the headers should "
+                          "carry (default: inferred from the directory name)")
+_parser.add_argument("--header-guard-prefix", default=None,
+                     help="include-guard prefix (default: CBM for "
+                          "vendored/nomic, HYP otherwise)")
+_args = _parser.parse_args()
+
+TARGET = Path(_args.directory)
 if not TARGET.is_absolute():
     TARGET = ROOT / TARGET
 
@@ -70,6 +102,23 @@ _spec = importlib.util.spec_from_file_location(
     "extract_nomic_vectors", ROOT / "scripts" / "extract_nomic_vectors.py")
 extractor = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(extractor)
+
+# Resolve the two things the artifacts cannot tell us about themselves. A
+# directory named after a known profile selects it; anything else keeps the
+# extractor's module default rather than guessing. The guard prefix follows the
+# same rule the extractor's own HEADER_GUARD_PREFIX comment states: CBM is
+# historic and belongs to the committed vendored/nomic headers, HYP is what a
+# freshly generated directory gets.
+PROFILE = _args.profile or (
+    TARGET.name if TARGET.name in extractor.MODEL_PROFILES else None)
+if PROFILE is not None:
+    if PROFILE not in extractor.MODEL_PROFILES:
+        sys.exit(f"unknown --profile {PROFILE!r}; known profiles: "
+                 f"{sorted(extractor.MODEL_PROFILES)}")
+    extractor.apply_profile_identity(extractor.MODEL_PROFILES[PROFILE])
+
+GUARD_PREFIX = _args.header_guard_prefix or (
+    "CBM" if TARGET.name == "nomic" else "HYP")
 
 
 def sha256(path: Path) -> str:
@@ -110,6 +159,9 @@ def main() -> int:
     print(f"target        : {TARGET.relative_to(ROOT)}")
     print(f"tokens        : {len(tokens)}")
     print(f"blob header   : count={count} dim={dim}  ({actual_bytes} bytes)")
+    print(f"profile       : {PROFILE or '(extractor default)'}  "
+          f"-> {extractor.MODEL_NAME}")
+    print(f"guard prefix  : {GUARD_PREFIX}")
     print(f"model loaded  : NO — writer stage only")
     print()
 
@@ -127,7 +179,7 @@ def main() -> int:
         out.mkdir()
         extractor.write_artifacts(
             out, tokens, dequantized, dim,
-            guard_prefix=extractor.HEADER_GUARD_PREFIX,
+            guard_prefix=GUARD_PREFIX,
             incbin_path=f"{TARGET.relative_to(ROOT).as_posix()}/code_vectors.bin",
         )
         print()
