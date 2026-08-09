@@ -1,4 +1,4 @@
-# codebase-memory-mcp setup script (Windows)
+# hyponoia setup script (Windows)
 # Default: download pre-built native Windows binary
 # -FromSource: build from source inside WSL (requires Go + gcc in WSL)
 
@@ -9,9 +9,9 @@ param(
 
 $ErrorActionPreference = "Stop"
 
-$Repo = "DeusData/codebase-memory-mcp"
-$BinaryName = "codebase-memory-mcp"
-$InstallDir = Join-Path $env:LOCALAPPDATA "codebase-memory-mcp"
+$Repo = "patalbansishashank/hyponoia"
+$BinaryName = "hyponoia"
+$InstallDir = Join-Path $env:LOCALAPPDATA "hyponoia"
 
 # --- Helpers ---
 
@@ -55,7 +55,7 @@ function Write-SettingsJson($Path, $Settings) {
 
 function Configure-ClaudeCode($McpConfig) {
     Write-Host ""
-    $answer = Read-Host "Configure Claude Code to use codebase-memory-mcp? [y/N]"
+    $answer = Read-Host "Configure Claude Code to use hyponoia? [y/N]"
 
     if ($answer -match '^[Yy]$') {
         $settingsPath = Join-Path $env:USERPROFILE ".claude\settings.json"
@@ -71,14 +71,14 @@ function Configure-ClaudeCode($McpConfig) {
             $settings["mcpServers"] = [ordered]@{}
         }
 
-        $settings["mcpServers"]["codebase-memory-mcp"] = $McpConfig
+        $settings["mcpServers"]["hyponoia"] = $McpConfig
         Write-SettingsJson $settingsPath $settings
         Write-Ok "Updated $settingsPath"
     } else {
         Write-Host ""
         Write-Host "  Add this to your .mcp.json or %USERPROFILE%\.claude\settings.json:" -ForegroundColor White
         Write-Host ""
-        $snippet = @{ mcpServers = @{ "codebase-memory-mcp" = $McpConfig } }
+        $snippet = @{ mcpServers = @{ "hyponoia" = $McpConfig } }
         $snippet | ConvertTo-Json -Depth 10 | Write-Host
     }
 }
@@ -130,7 +130,7 @@ if ($Help) {
 }
 
 Write-Host ""
-Write-Host "codebase-memory-mcp installer (Windows)" -ForegroundColor White
+Write-Host "hyponoia installer (Windows)" -ForegroundColor White
 Write-Host ""
 
 if ($FromSource) {
@@ -198,7 +198,7 @@ if ($FromSource) {
 
     # Clone or update
     Write-Host ""
-    $sourceDir = "/home/$wslUser/.local/share/codebase-memory-mcp"
+    $sourceDir = "/home/$wslUser/.local/share/hyponoia"
     try {
         Invoke-WSL "test -d $sourceDir/.git" | Out-Null
         Write-Host "Updating source..." -ForegroundColor White
@@ -213,7 +213,7 @@ if ($FromSource) {
     Write-Host ""
     Write-Host "Building binary (this may take a minute)..." -ForegroundColor White
     $wslBinaryPath = "/home/$wslUser/.local/bin/$BinaryName"
-    Invoke-WSL "mkdir -p /home/$wslUser/.local/bin && cd $sourceDir && scripts/build.sh && cp build/c/codebase-memory-mcp build/c/cbm-integrations.json /home/$wslUser/.local/bin/"
+    Invoke-WSL "mkdir -p /home/$wslUser/.local/bin && cd $sourceDir && scripts/build.sh && cp build/c/hyponoia build/c/hyp-integrations.json /home/$wslUser/.local/bin/"
     Write-Ok "Built to $wslBinaryPath (inside WSL)"
 
     # Verify
@@ -238,16 +238,16 @@ if ($FromSource) {
     Write-Ok "Done! Restart Claude Code and verify with /mcp"
     Write-Host ""
     Write-Host "  To uninstall:" -ForegroundColor White
-    Write-Host "    wsl.exe -- rm $wslBinaryPath /home/$wslUser/.local/bin/cbm-integrations.json"
+    Write-Host "    wsl.exe -- rm $wslBinaryPath /home/$wslUser/.local/bin/hyp-integrations.json"
     Write-Host "    wsl.exe -- rm -rf $sourceDir"
-    Write-Host "    wsl.exe -- rm -rf ~/.cache/codebase-memory-mcp/"
+    Write-Host "    wsl.exe -- rm -rf ~/.cache/hyponoia/"
 
 } else {
     # --- Download pre-built native Windows binary ---
     Write-Host "Fetching latest release..." -ForegroundColor White
 
     $releaseUrl = "https://api.github.com/repos/$Repo/releases/latest"
-    $release = Invoke-RestMethod -Uri $releaseUrl -Headers @{ "User-Agent" = "codebase-memory-mcp-setup" }
+    $release = Invoke-RestMethod -Uri $releaseUrl -Headers @{ "User-Agent" = "hyponoia-setup" }
     $tag = $release.tag_name
 
     if (-not $tag) {
@@ -257,7 +257,7 @@ if ($FromSource) {
     }
     Write-Ok "Latest release: $tag"
 
-    $asset = "codebase-memory-mcp-windows-amd64.zip"
+    $asset = "hyponoia-windows-amd64.zip"
     $downloadUrl = "https://github.com/$Repo/releases/download/$tag/$asset"
 
     Write-Host "Downloading $asset..." -ForegroundColor White
@@ -322,5 +322,5 @@ if ($FromSource) {
     Write-Host ""
     Write-Host "  To uninstall:" -ForegroundColor White
     Write-Host "    Remove-Item -Recurse -Force '$InstallDir'"
-    Write-Host "    Remove-Item -Recurse -Force `"$env:LOCALAPPDATA\codebase-memory-mcp`"  # graph database"
+    Write-Host "    Remove-Item -Recurse -Force `"$env:LOCALAPPDATA\hyponoia`"  # graph database"
 }

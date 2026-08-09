@@ -10,8 +10,8 @@
  * the expected total. Before the fix, counts plateau at the cap.
  */
 #include "test_framework.h"
-#include "cbm.h"
-#include "lang_specs.h" /* cbm_ts_language — direct-parse GLR cap regression (#913) */
+#include "hyp.h"
+#include "lang_specs.h" /* hyp_ts_language — direct-parse GLR cap regression (#913) */
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -30,9 +30,9 @@ extern void mi_free(void *);
 
 /* ── Helpers ───────────────────────────────────────────────────── */
 
-static CBMFileResult *extract(const char *src, CBMLanguage lang, const char *proj,
+static HYPFileResult *extract(const char *src, HYPLanguage lang, const char *proj,
                               const char *path) {
-    CBMFileResult *r = cbm_extract_file(src, (int)strlen(src), lang, proj, path, 0, NULL, NULL);
+    HYPFileResult *r = hyp_extract_file(src, (int)strlen(src), lang, proj, path, 0, NULL, NULL);
     return r;
 }
 
@@ -65,7 +65,7 @@ TEST(js_calls_exceed_512) {
         p += snprintf(p, (size_t)(buf_sz - (size_t)(p - src)), "}\n");
     }
 
-    CBMFileResult *r = extract(src, CBM_LANG_JAVASCRIPT, "test", "many_calls.js");
+    HYPFileResult *r = extract(src, HYP_LANG_JAVASCRIPT, "test", "many_calls.js");
     ASSERT_NOT_NULL(r);
     ASSERT_FALSE(r->has_error);
 
@@ -80,7 +80,7 @@ TEST(js_calls_exceed_512) {
     printf("    calls extracted: %d / %d expected\n", matched, CALL_COUNT);
     ASSERT_EQ(matched, CALL_COUNT);
 
-    cbm_free_result(r);
+    hyp_free_result(r);
     free(src);
     PASS();
 }
@@ -103,7 +103,7 @@ TEST(python_calls_exceed_512) {
         p += snprintf(p, (size_t)(buf_sz - (size_t)(p - src)), "    func_%d()\n", i);
     }
 
-    CBMFileResult *r = extract(src, CBM_LANG_PYTHON, "test", "many_calls.py");
+    HYPFileResult *r = extract(src, HYP_LANG_PYTHON, "test", "many_calls.py");
     ASSERT_NOT_NULL(r);
     ASSERT_FALSE(r->has_error);
 
@@ -117,7 +117,7 @@ TEST(python_calls_exceed_512) {
     printf("    calls extracted: %d / %d expected\n", matched, CALL_COUNT);
     ASSERT_EQ(matched, CALL_COUNT);
 
-    cbm_free_result(r);
+    hyp_free_result(r);
     free(src);
     PASS();
 }
@@ -141,7 +141,7 @@ TEST(go_calls_exceed_1024) {
     }
     p += snprintf(p, (size_t)(buf_sz - (size_t)(p - src)), "}\n");
 
-    CBMFileResult *r = extract(src, CBM_LANG_GO, "test", "many_calls.go");
+    HYPFileResult *r = extract(src, HYP_LANG_GO, "test", "many_calls.go");
     ASSERT_NOT_NULL(r);
     ASSERT_FALSE(r->has_error);
 
@@ -155,7 +155,7 @@ TEST(go_calls_exceed_1024) {
     printf("    calls extracted: %d / %d expected\n", matched, CALL_COUNT);
     ASSERT_EQ(matched, CALL_COUNT);
 
-    cbm_free_result(r);
+    hyp_free_result(r);
     free(src);
     PASS();
 }
@@ -183,7 +183,7 @@ TEST(express_routes_exceed_512) {
     }
     p += snprintf(p, (size_t)(buf_sz - (size_t)(p - src)), "\napp.listen(3000);\n");
 
-    CBMFileResult *r = extract(src, CBM_LANG_JAVASCRIPT, "test", "routes.js");
+    HYPFileResult *r = extract(src, HYP_LANG_JAVASCRIPT, "test", "routes.js");
     ASSERT_NOT_NULL(r);
     ASSERT_FALSE(r->has_error);
 
@@ -198,7 +198,7 @@ TEST(express_routes_exceed_512) {
     printf("    route calls extracted: %d / %d expected\n", get_calls, ROUTE_COUNT);
     ASSERT_EQ(get_calls, ROUTE_COUNT);
 
-    cbm_free_result(r);
+    hyp_free_result(r);
     free(src);
     PASS();
 }
@@ -222,14 +222,14 @@ TEST(ts_imports_exceed_512) {
     }
     p += snprintf(p, (size_t)(buf_sz - (size_t)(p - src)), "console.log('done');\n");
 
-    CBMFileResult *r = extract(src, CBM_LANG_TYPESCRIPT, "test", "many_imports.ts");
+    HYPFileResult *r = extract(src, HYP_LANG_TYPESCRIPT, "test", "many_imports.ts");
     ASSERT_NOT_NULL(r);
     ASSERT_FALSE(r->has_error);
 
     printf("    imports extracted: %d / %d expected\n", r->imports.count, IMPORT_COUNT);
     ASSERT_GTE(r->imports.count, IMPORT_COUNT);
 
-    cbm_free_result(r);
+    hyp_free_result(r);
     free(src);
     PASS();
 }
@@ -259,7 +259,7 @@ TEST(js_deeply_nested_calls) {
     }
     p += snprintf(p, (size_t)(buf_sz - (size_t)(p - src)), ";\n}\n");
 
-    CBMFileResult *r = extract(src, CBM_LANG_JAVASCRIPT, "test", "nested_calls.js");
+    HYPFileResult *r = extract(src, HYP_LANG_JAVASCRIPT, "test", "nested_calls.js");
     ASSERT_NOT_NULL(r);
     ASSERT_FALSE(r->has_error);
 
@@ -273,7 +273,7 @@ TEST(js_deeply_nested_calls) {
     printf("    nested calls extracted: %d / %d expected\n", matched, DEPTH);
     ASSERT_EQ(matched, DEPTH);
 
-    cbm_free_result(r);
+    hyp_free_result(r);
     free(src);
     PASS();
 }
@@ -295,7 +295,7 @@ TEST(yaml_vars_exceed_256) {
         p += snprintf(p, (size_t)(buf_sz - (size_t)(p - src)), "key_%d: value_%d\n", i, i);
     }
 
-    CBMFileResult *r = extract(src, CBM_LANG_YAML, "test", "many_keys.yaml");
+    HYPFileResult *r = extract(src, HYP_LANG_YAML, "test", "many_keys.yaml");
     ASSERT_NOT_NULL(r);
     ASSERT_FALSE(r->has_error);
 
@@ -309,15 +309,15 @@ TEST(yaml_vars_exceed_256) {
     printf("    YAML vars extracted: %d / %d expected\n", var_count, VAR_COUNT);
     ASSERT_EQ(var_count, VAR_COUNT);
 
-    cbm_free_result(r);
+    hyp_free_result(r);
     free(src);
     PASS();
 }
 
 /* ═══════════════════════════════════════════════════════════════════
- * Test: tree-sitter runtime allocator is bound to cbm's allocator (#424)
+ * Test: tree-sitter runtime allocator is bound to hyp's allocator (#424)
  *
- * cbm_init() must bind the vendored tree-sitter runtime to mimalloc via
+ * hyp_init() must bind the vendored tree-sitter runtime to mimalloc via
  * ts_set_allocator(). Otherwise the runtime allocates through its overridable
  * ts_current_malloc/free defaults (plain malloc/free); under the production
  * MI_OVERRIDE=1 build (esp. Windows static-MinGW + --allow-multiple-definition)
@@ -328,9 +328,9 @@ TEST(yaml_vars_exceed_256) {
  * ═══════════════════════════════════════════════════════════════════ */
 
 TEST(ts_allocator_bound_to_mimalloc_issue424) {
-    cbm_init();
-#if defined(CBM_BIND_TS_ALLOCATOR) && CBM_BIND_TS_ALLOCATOR
-    /* Production build: cbm_init must have bound the ts runtime to mimalloc so
+    hyp_init();
+#if defined(HYP_BIND_TS_ALLOCATOR) && HYP_BIND_TS_ALLOCATOR
+    /* Production build: hyp_init must have bound the ts runtime to mimalloc so
      * ts_malloc and ts_free can never resolve to different allocators (#424). */
     ASSERT_TRUE(ts_current_malloc == mi_malloc);
     ASSERT_TRUE(ts_current_free == mi_free);
@@ -383,9 +383,9 @@ TEST(cpp_large_templated_header_no_crash_issue424) {
     }
     snprintf(p, (size_t)(buf_sz - (size_t)(p - src)), "}\n");
 
-    CBMFileResult *r = extract(src, CBM_LANG_CPP, "test", "templated.hpp");
+    HYPFileResult *r = extract(src, HYP_LANG_CPP, "test", "templated.hpp");
     ASSERT_NOT_NULL(r); /* no crash is the real assertion */
-    cbm_free_result(r);
+    hyp_free_result(r);
     free(src);
     PASS();
 }
@@ -396,7 +396,7 @@ TEST(cpp_large_templated_header_no_crash_issue424) {
  * Indexing real OSS crashed in the LSP RESOLVE walks (distinct from the
  * extraction-walk caps above): elasticsearch → SIGSEGV under deep recursive
  * java_resolve_calls_in_node frames (bind_lambda_args), bitcoin → SIGSEGV
- * under deep c_resolve_calls_in_node frames (cbm_type_substitute via
+ * under deep c_resolve_calls_in_node frames (hyp_type_substitute via
  * c_adl_resolve), microsoft/TypeScript → SIGBUS under an unbounded
  * lookup_member_type cycle. The walks now carry depth guards; these
  * reproductions fork a child so a regression cannot kill the test runner
@@ -410,15 +410,15 @@ TEST(cpp_large_templated_header_no_crash_issue424) {
 #include <unistd.h>
 #endif
 
-/* Run cbm_extract_file in a forked child; true if the child died by signal.
+/* Run hyp_extract_file in a forked child; true if the child died by signal.
  * Mirrors tests/test_lang_contract.c. On Windows run in-process (a genuine
  * crash there aborts the runner — hard, visible failure). */
-static bool so_extract_crashes(const char *content, CBMLanguage lang, const char *relpath) {
+static bool so_extract_crashes(const char *content, HYPLanguage lang, const char *relpath) {
 #if defined(_WIN32)
-    CBMFileResult *r =
-        cbm_extract_file(content, (int)strlen(content), lang, "so", relpath, 0, NULL, NULL);
+    HYPFileResult *r =
+        hyp_extract_file(content, (int)strlen(content), lang, "so", relpath, 0, NULL, NULL);
     if (r) {
-        cbm_free_result(r);
+        hyp_free_result(r);
     }
     return false;
 #else
@@ -428,10 +428,10 @@ static bool so_extract_crashes(const char *content, CBMLanguage lang, const char
         return false;
     }
     if (pid == 0) {
-        CBMFileResult *r =
-            cbm_extract_file(content, (int)strlen(content), lang, "so", relpath, 0, NULL, NULL);
+        HYPFileResult *r =
+            hyp_extract_file(content, (int)strlen(content), lang, "so", relpath, 0, NULL, NULL);
         if (r) {
-            cbm_free_result(r);
+            hyp_free_result(r);
         }
         _exit(0);
     }
@@ -452,14 +452,14 @@ static void so_parse_alarm_exit(int sig) {
 #endif
 
 /* Parse `content` with tree-sitter DIRECTLY in a forked child — bypassing
- * cbm_extract_file's Perl pre-parse nesting guard — returning true if the child
+ * hyp_extract_file's Perl pre-parse nesting guard — returning true if the child
  * died by signal. This is the crash-isolating regression for the vendored GLR
- * stack-merge recursion cap (CBM_TS_STACK_MERGE_MAX_DEPTH, ts_runtime/src/stack.c):
+ * stack-merge recursion cap (HYP_TS_STACK_MERGE_MAX_DEPTH, ts_runtime/src/stack.c):
  * the extract-level guard skips pathologically nested Perl before it reaches the
  * parser, so only a direct parse exercises the cap. Windows runs in-process (a
  * real crash aborts the runner — a visible failure), mirroring so_extract_crashes. */
-static bool so_parse_crashes(const char *content, CBMLanguage lang) {
-    const TSLanguage *ts_lang = cbm_ts_language(lang);
+static bool so_parse_crashes(const char *content, HYPLanguage lang) {
+    const TSLanguage *ts_lang = hyp_ts_language(lang);
     if (!ts_lang) {
         return false;
     }
@@ -482,7 +482,7 @@ static bool so_parse_crashes(const char *content, CBMLanguage lang) {
     }
     if (pid == 0) {
         /* Deterministic ceiling. Falsification data (2026-07-18, macOS
-         * ASan): with CBM_TS_STACK_MERGE_MAX_DEPTH deleted outright, this
+         * ASan): with HYP_TS_STACK_MERGE_MAX_DEPTH deleted outright, this
          * branch stayed GREEN both unbounded (220s full grind, no crash)
          * and bounded — instrumentation shows the recursive merge path is
          * never even entered here (max depth 0 through the whole window).
@@ -533,7 +533,7 @@ TEST(lsp_java_deep_nesting_no_crash) {
     memset(p, ')', DEPTH);
     p += DEPTH;
     snprintf(p, sz - (size_t)(p - src), "; } }\n");
-    ASSERT_FALSE(so_extract_crashes(src, CBM_LANG_JAVA, "X.java"));
+    ASSERT_FALSE(so_extract_crashes(src, HYP_LANG_JAVA, "X.java"));
     free(src);
     PASS();
 }
@@ -554,7 +554,7 @@ TEST(lsp_cpp_deep_expression_no_crash) {
     memset(p, ')', DEPTH);
     p += DEPTH;
     snprintf(p, sz - (size_t)(p - src), "; }\n");
-    ASSERT_FALSE(so_extract_crashes(src, CBM_LANG_CPP, "deep.cpp"));
+    ASSERT_FALSE(so_extract_crashes(src, HYP_LANG_CPP, "deep.cpp"));
     free(src);
     PASS();
 }
@@ -579,7 +579,7 @@ TEST(lsp_python_deep_expression_no_crash) {
     memset(p, ')', DEPTH);
     p += DEPTH;
     snprintf(p, sz - (size_t)(p - src), "\n    return value\n");
-    ASSERT_FALSE(so_extract_crashes(src, CBM_LANG_PYTHON, "deep_expr.py"));
+    ASSERT_FALSE(so_extract_crashes(src, HYP_LANG_PYTHON, "deep_expr.py"));
     free(src);
     PASS();
 }
@@ -591,7 +591,7 @@ TEST(lsp_perl_deep_expression_no_crash) {
      * ts_runtime/src/stack.c) recurses once per nesting level while merging the
      * ambiguous parse-stack heads that Perl's `f(...)` grammar produces, blowing
      * a small (1 MB Windows) stack during the parse, before any LSP walk runs.
-     * The CBM_PERL_MAX_PARSE_NESTING pre-parse guard in cbm_extract_file skips
+     * The HYP_PERL_MAX_PARSE_NESTING pre-parse guard in hyp_extract_file skips
      * such input so it never reaches tree-sitter. See
      * lsp_java_deep_nesting_no_crash on the depth choice. */
     const int DEPTH = 30000;
@@ -608,7 +608,7 @@ TEST(lsp_perl_deep_expression_no_crash) {
     memset(p, ')', DEPTH);
     p += DEPTH;
     snprintf(p, sz - (size_t)(p - src), "; }\n");
-    ASSERT_FALSE(so_extract_crashes(src, CBM_LANG_PERL, "deep.pl"));
+    ASSERT_FALSE(so_extract_crashes(src, HYP_LANG_PERL, "deep.pl"));
     free(src);
     PASS();
 }
@@ -616,14 +616,14 @@ TEST(lsp_perl_deep_expression_no_crash) {
 TEST(perl_glr_deep_parse_recursion_capped) {
     /* Issue #913 — the proper fix for what lsp_perl_deep_expression_no_crash's
      * pre-parse guard only works around. Parse deeply nested ambiguous Perl
-     * f(f(f(...f(1)...))) DIRECTLY (past the CBM_PERL_MAX_PARSE_NESTING guard,
+     * f(f(f(...f(1)...))) DIRECTLY (past the HYP_PERL_MAX_PARSE_NESTING guard,
      * which would otherwise skip it). Perl's paren-optional call grammar makes
      * each level ambiguous, so tree-sitter's GLR parser merges the ambiguous
      * parse-stack heads recursively — stack_node_add_link in
      * ts_runtime/src/stack.c, once per nesting level — overflowing the native
      * stack (a ~1 MB Windows stack, and even an 8 MB POSIX stack at this depth)
      * during the parse, before any extraction runs. The
-     * CBM_TS_STACK_MERGE_MAX_DEPTH cap stops merging past the bound: the
+     * HYP_TS_STACK_MERGE_MAX_DEPTH cap stops merging past the bound: the
      * ambiguity is left on the GLR stack instead of merged — a valid parse,
      * never a wrong one — so the parse returns cleanly instead of crashing.
      * Depth mirrors lsp_perl_deep_expression_no_crash. */
@@ -641,7 +641,7 @@ TEST(perl_glr_deep_parse_recursion_capped) {
     memset(p, ')', DEPTH);
     p += DEPTH;
     snprintf(p, sz - (size_t)(p - src), "; }\n");
-    ASSERT_FALSE(so_parse_crashes(src, CBM_LANG_PERL));
+    ASSERT_FALSE(so_parse_crashes(src, HYP_LANG_PERL));
     free(src);
     PASS();
 }
@@ -650,7 +650,7 @@ TEST(lsp_java_lambda_args_exceed_params_no_crash) {
     /* A call with MORE arguments than the resolved method's declared params:
      * bind_lambda_args indexed the NULL-terminated signature param_types array
      * by the call-site argument index, reading past the terminator — a garbage
-     * CBMType* then got dereferenced (elasticsearch SIGSEGV, java_lsp.c:2364
+     * HYPType* then got dereferenced (elasticsearch SIGSEGV, java_lsp.c:2364
      * via :2722; same OOB family as #427). */
     const char *src = "class A {\n"
                       "    void run(Runnable r) {}\n"
@@ -658,7 +658,7 @@ TEST(lsp_java_lambda_args_exceed_params_no_crash) {
                       "        run(() -> {}, () -> {}, () -> {}, () -> {}, () -> {}, () -> {});\n"
                       "    }\n"
                       "}\n";
-    ASSERT_FALSE(so_extract_crashes(src, CBM_LANG_JAVA, "A.java"));
+    ASSERT_FALSE(so_extract_crashes(src, HYP_LANG_JAVA, "A.java"));
     PASS();
 }
 
@@ -671,18 +671,18 @@ TEST(lsp_ts_cyclic_types_no_crash) {
                       "declare const c: C;\n"
                       "function useIt(p: C) { return p.missing_member; }\n"
                       "const y = c.also_missing;\n";
-    ASSERT_FALSE(so_extract_crashes(src, CBM_LANG_TYPESCRIPT, "cycle.ts"));
+    ASSERT_FALSE(so_extract_crashes(src, HYP_LANG_TYPESCRIPT, "cycle.ts"));
     PASS();
 }
 
 /* ─── Deeply-nested calls drive the per-language LSP resolve walkers into
  * per-nesting-level native recursion. Unguarded, these SIGSEGV and take down
- * the whole index. Each walker now has a walk_depth cap (CBM_LSP_MAX_WALK_DEPTH,
+ * the whole index. Each walker now has a walk_depth cap (HYP_LSP_MAX_WALK_DEPTH,
  * env-overridable) that skips the too-deep subtree — graceful degradation.
  * These mirror lsp_java_deep_nesting_no_crash: same fixture shape, one per
  * previously-unguarded walker (py_resolve_calls_in, resolve_calls_in_node[go],
  * php_resolve_calls_in_node, kt_resolve_calls_in_node). RED proof: run the
- * suite with CBM_LSP_MAX_WALK_DEPTH set huge (disabling only these caps) and
+ * suite with HYP_LSP_MAX_WALK_DEPTH set huge (disabling only these caps) and
  * each of these four SIGSEGVs — proving the guard, not the fixture, is what
  * keeps them green. ─── */
 
@@ -702,7 +702,7 @@ TEST(lsp_python_deep_nesting_no_crash) {
     memset(p, ')', DEPTH);
     p += DEPTH;
     snprintf(p, sz - (size_t)(p - src), "\n");
-    ASSERT_FALSE(so_extract_crashes(src, CBM_LANG_PYTHON, "deep.py"));
+    ASSERT_FALSE(so_extract_crashes(src, HYP_LANG_PYTHON, "deep.py"));
     free(src);
     PASS();
 }
@@ -723,7 +723,7 @@ TEST(lsp_go_deep_nesting_no_crash) {
     memset(p, ')', DEPTH);
     p += DEPTH;
     snprintf(p, sz - (size_t)(p - src), " }\n");
-    ASSERT_FALSE(so_extract_crashes(src, CBM_LANG_GO, "deep.go"));
+    ASSERT_FALSE(so_extract_crashes(src, HYP_LANG_GO, "deep.go"));
     free(src);
     PASS();
 }
@@ -744,7 +744,7 @@ TEST(lsp_php_deep_nesting_no_crash) {
     memset(p, ')', DEPTH);
     p += DEPTH;
     snprintf(p, sz - (size_t)(p - src), "; }\n");
-    ASSERT_FALSE(so_extract_crashes(src, CBM_LANG_PHP, "deep.php"));
+    ASSERT_FALSE(so_extract_crashes(src, HYP_LANG_PHP, "deep.php"));
     free(src);
     PASS();
 }
@@ -765,7 +765,7 @@ TEST(lsp_kotlin_deep_nesting_no_crash) {
     memset(p, ')', DEPTH);
     p += DEPTH;
     snprintf(p, sz - (size_t)(p - src), " }\n");
-    ASSERT_FALSE(so_extract_crashes(src, CBM_LANG_KOTLIN, "deep.kt"));
+    ASSERT_FALSE(so_extract_crashes(src, HYP_LANG_KOTLIN, "deep.kt"));
     free(src);
     PASS();
 }
@@ -780,7 +780,7 @@ TEST(lsp_kotlin_deep_nesting_no_crash) {
  * RUN_TEST entries are exactly the ones the single suite carried; the
  * before/after test-count parity is asserted in the shard runner. */
 SUITE(stack_overflow_a) {
-    cbm_init();
+    hyp_init();
 
     RUN_TEST(ts_allocator_bound_to_mimalloc_issue424);
     RUN_TEST(cpp_large_templated_header_no_crash_issue424);
@@ -790,11 +790,11 @@ SUITE(stack_overflow_a) {
     RUN_TEST(lsp_python_deep_expression_no_crash);
     RUN_TEST(lsp_perl_deep_expression_no_crash);
 
-    cbm_shutdown();
+    hyp_shutdown();
 }
 
 SUITE(stack_overflow_b) {
-    cbm_init();
+    hyp_init();
 
     RUN_TEST(perl_glr_deep_parse_recursion_capped);
     RUN_TEST(lsp_ts_cyclic_types_no_crash);
@@ -803,11 +803,11 @@ SUITE(stack_overflow_b) {
     RUN_TEST(lsp_php_deep_nesting_no_crash);
     RUN_TEST(lsp_kotlin_deep_nesting_no_crash);
 
-    cbm_shutdown();
+    hyp_shutdown();
 }
 
 SUITE(stack_overflow_c) {
-    cbm_init();
+    hyp_init();
 
     RUN_TEST(js_calls_exceed_512);
     RUN_TEST(python_calls_exceed_512);
@@ -817,5 +817,5 @@ SUITE(stack_overflow_c) {
     RUN_TEST(js_deeply_nested_calls);
     RUN_TEST(yaml_vars_exceed_256);
 
-    cbm_shutdown();
+    hyp_shutdown();
 }

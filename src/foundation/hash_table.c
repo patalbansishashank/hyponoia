@@ -1,5 +1,5 @@
 /*
- * hash_table.c — CBMHashTable backed by Verstable.
+ * hash_table.c — HYPHashTable backed by Verstable.
  *
  * Public API in hash_table.h is unchanged. Internals are a Verstable
  * template instantiation (const char* → void*). Verstable is a 2024
@@ -9,7 +9,7 @@
  * in vendored/verstable/verstable.h.
  *
  * Why swap the prior Robin Hood implementation: cumulative profiling
- * showed cbm_ht_get is a hot path in resolve_file_calls's per-call
+ * showed hyp_ht_get is a hot path in resolve_file_calls's per-call
  * registry resolution. Verstable's 4-bit hash-fragment metadata
  * sidesteps most key comparisons during chain walks, which the prior
  * implementation could not.
@@ -24,33 +24,33 @@
 #include <string.h>
 
 /* Instantiate a Verstable map of (const char* → void*). The single
- * include below generates static inline functions named cbm_vt_init,
- * cbm_vt_cleanup, cbm_vt_get, cbm_vt_insert, etc., plus the cbm_vt
+ * include below generates static inline functions named hyp_vt_init,
+ * hyp_vt_cleanup, hyp_vt_get, hyp_vt_insert, etc., plus the hyp_vt
  * struct itself. */
-#define NAME cbm_vt
+#define NAME hyp_vt
 #define KEY_TY const char *
 #define VAL_TY void *
 #define HASH_FN vt_hash_string
 #define CMPR_FN vt_cmpr_string
-#include "../../internal/cbm/vendored/verstable/verstable.h"
+#include "../../internal/hyp/vendored/verstable/verstable.h"
 
-/* The opaque CBMHashTable struct holds the Verstable instance + a
+/* The opaque HYPHashTable struct holds the Verstable instance + a
  * count cache (Verstable's _size traversal is O(buckets) so we keep
  * our own atomic-free counter). */
-struct CBMHashTable {
-    cbm_vt vt;
+struct HYPHashTable {
+    hyp_vt vt;
 };
 
-CBMHashTable *cbm_ht_create(uint32_t initial_capacity) {
-    CBMHashTable *ht = (CBMHashTable *)calloc(CBM_ALLOC_ONE, sizeof(*ht));
+HYPHashTable *hyp_ht_create(uint32_t initial_capacity) {
+    HYPHashTable *ht = (HYPHashTable *)calloc(HYP_ALLOC_ONE, sizeof(*ht));
     if (!ht)
         return NULL;
-    cbm_vt_init(&ht->vt);
+    hyp_vt_init(&ht->vt);
     if (initial_capacity > 0) {
         /* Reserve enough buckets for the requested entries. Verstable
          * computes the minimum bucket count internally. */
-        if (!cbm_vt_reserve(&ht->vt, (size_t)initial_capacity)) {
-            cbm_vt_cleanup(&ht->vt);
+        if (!hyp_vt_reserve(&ht->vt, (size_t)initial_capacity)) {
+            hyp_vt_cleanup(&ht->vt);
             free(ht);
             return NULL;
         }
@@ -58,14 +58,14 @@ CBMHashTable *cbm_ht_create(uint32_t initial_capacity) {
     return ht;
 }
 
-void cbm_ht_free(CBMHashTable *ht) {
+void hyp_ht_free(HYPHashTable *ht) {
     if (!ht)
         return;
-    cbm_vt_cleanup(&ht->vt);
+    hyp_vt_cleanup(&ht->vt);
     free(ht);
 }
 
-void *cbm_ht_set(CBMHashTable *ht, const char *key, void *value) {
+void *hyp_ht_set(HYPHashTable *ht, const char *key, void *value) {
     if (!ht || !key)
         return NULL;
     /* Capture previous value (if any) before overwriting.
@@ -73,66 +73,66 @@ void *cbm_ht_set(CBMHashTable *ht, const char *key, void *value) {
      * to the (now updated) entry — we have to peek first to surface
      * the prior value to the caller (back-compat with our API). */
     void *prev = NULL;
-    cbm_vt_itr itr = cbm_vt_get(&ht->vt, key);
-    if (!cbm_vt_is_end(itr)) {
+    hyp_vt_itr itr = hyp_vt_get(&ht->vt, key);
+    if (!hyp_vt_is_end(itr)) {
         prev = itr.data->val;
     }
-    (void)cbm_vt_insert(&ht->vt, key, value);
+    (void)hyp_vt_insert(&ht->vt, key, value);
     return prev;
 }
 
-void *cbm_ht_get(const CBMHashTable *ht, const char *key) {
+void *hyp_ht_get(const HYPHashTable *ht, const char *key) {
     if (!ht || !key)
         return NULL;
-    cbm_vt_itr itr = cbm_vt_get(&ht->vt, key);
-    if (cbm_vt_is_end(itr))
+    hyp_vt_itr itr = hyp_vt_get(&ht->vt, key);
+    if (hyp_vt_is_end(itr))
         return NULL;
     return itr.data->val;
 }
 
-bool cbm_ht_has(const CBMHashTable *ht, const char *key) {
+bool hyp_ht_has(const HYPHashTable *ht, const char *key) {
     if (!ht || !key)
         return false;
-    cbm_vt_itr itr = cbm_vt_get(&ht->vt, key);
-    return !cbm_vt_is_end(itr);
+    hyp_vt_itr itr = hyp_vt_get(&ht->vt, key);
+    return !hyp_vt_is_end(itr);
 }
 
-const char *cbm_ht_get_key(const CBMHashTable *ht, const char *key) {
+const char *hyp_ht_get_key(const HYPHashTable *ht, const char *key) {
     if (!ht || !key)
         return NULL;
-    cbm_vt_itr itr = cbm_vt_get(&ht->vt, key);
-    if (cbm_vt_is_end(itr))
+    hyp_vt_itr itr = hyp_vt_get(&ht->vt, key);
+    if (hyp_vt_is_end(itr))
         return NULL;
     return itr.data->key;
 }
 
-void *cbm_ht_delete(CBMHashTable *ht, const char *key) {
+void *hyp_ht_delete(HYPHashTable *ht, const char *key) {
     if (!ht || !key)
         return NULL;
-    cbm_vt_itr itr = cbm_vt_get(&ht->vt, key);
-    if (cbm_vt_is_end(itr))
+    hyp_vt_itr itr = hyp_vt_get(&ht->vt, key);
+    if (hyp_vt_is_end(itr))
         return NULL;
     void *prev = itr.data->val;
-    (void)cbm_vt_erase(&ht->vt, key);
+    (void)hyp_vt_erase(&ht->vt, key);
     return prev;
 }
 
-uint32_t cbm_ht_count(const CBMHashTable *ht) {
+uint32_t hyp_ht_count(const HYPHashTable *ht) {
     if (!ht)
         return 0;
-    return (uint32_t)cbm_vt_size(&ht->vt);
+    return (uint32_t)hyp_vt_size(&ht->vt);
 }
 
-void cbm_ht_foreach(const CBMHashTable *ht, cbm_ht_iter_fn fn, void *userdata) {
+void hyp_ht_foreach(const HYPHashTable *ht, hyp_ht_iter_fn fn, void *userdata) {
     if (!ht || !fn)
         return;
-    for (cbm_vt_itr itr = cbm_vt_first(&ht->vt); !cbm_vt_is_end(itr); itr = cbm_vt_next(itr)) {
+    for (hyp_vt_itr itr = hyp_vt_first(&ht->vt); !hyp_vt_is_end(itr); itr = hyp_vt_next(itr)) {
         fn(itr.data->key, itr.data->val, userdata);
     }
 }
 
-void cbm_ht_clear(CBMHashTable *ht) {
+void hyp_ht_clear(HYPHashTable *ht) {
     if (!ht)
         return;
-    cbm_vt_clear(&ht->vt);
+    hyp_vt_clear(&ht->vt);
 }

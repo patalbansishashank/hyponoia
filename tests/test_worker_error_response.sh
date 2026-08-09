@@ -10,7 +10,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # Linux containers use build/linux-arm64 / build/linux-amd64). Honour the binary
 # the caller built, exactly as test_parent_watchdog.sh and test_worker_watchdog.sh
 # do; the build/c default keeps a bare manual invocation working.
-BINARY="${CBM_TEST_BINARY:-${ROOT}/build/c/codebase-memory-mcp}"
+BINARY="${HYP_TEST_BINARY:-${ROOT}/build/c/hyponoia}"
 if [[ ! -x "${BINARY}" && -x "${BINARY}.exe" ]]; then
   BINARY="${BINARY}.exe"
 fi
@@ -37,7 +37,7 @@ fi
 
 tmpdir="$(mktemp -d)"
 cleanup() {
-  CBM_CACHE_DIR="${tmpdir}/cache-supervisor" \
+  HYP_CACHE_DIR="${tmpdir}/cache-supervisor" \
     "${BINARY}" daemon stop >/dev/null 2>&1 || true
   rm -rf "${tmpdir}"
 }
@@ -47,7 +47,7 @@ missing="${tmpdir}/repository-does-not-exist"
 response="${tmpdir}/worker.response"
 args="{\"repo_path\":\"${missing}\",\"mode\":\"fast\"}"
 
-if ! CBM_CACHE_DIR="${tmpdir}/cache-worker" \
+if ! HYP_CACHE_DIR="${tmpdir}/cache-worker" \
   "${BINARY}" cli --index-worker \
   --index-worker-build "${BUILD_FINGERPRINT}" \
   index_repository "${args}" \
@@ -64,7 +64,7 @@ if [[ ! -s "${response}" ]] || ! grep -q 'Pipeline failed' "${response}"; then
 fi
 
 set +e
-CBM_CACHE_DIR="${tmpdir}/cache-supervisor" \
+HYP_CACHE_DIR="${tmpdir}/cache-supervisor" \
   "${BINARY}" cli index_repository --repo-path "${missing}" --mode fast \
   >"${tmpdir}/supervisor.out" 2>"${tmpdir}/supervisor.err"
 cli_rc=$?

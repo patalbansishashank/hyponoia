@@ -1,6 +1,6 @@
-#ifndef CBM_TESTS_REPRO_RUNNER_H
-#define CBM_TESTS_REPRO_RUNNER_H
+#ifndef HYP_TESTS_REPRO_RUNNER_H
+#define HYP_TESTS_REPRO_RUNNER_H
 
-int cbm_suite_enabled(const char *name);
+int hyp_suite_enabled(const char *name);
 
 #endif

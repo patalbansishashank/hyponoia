@@ -1,7 +1,7 @@
 """GREEN regression guard — non-ASCII runtime and repo paths work on Windows.
 
 Guards the fix for issue #636 / #357 (landed on main via #700) at the product
-surface (real codebase-memory-mcp process, real SQLite DB, real stdio). Two
+surface (real hyponoia process, real SQLite DB, real stdio). Two
 byte-identical TypeScript fixtures are indexed: one under an ASCII parent path,
 one under a non-ASCII parent path. The invariant under test:
 
@@ -14,7 +14,7 @@ copy extracted functions/classes/methods. Root cause: each pipeline pass read
 source bytes with plain fopen(path, "rb") (src/pipeline/pass_definitions.c,
 pass_calls.c, …); on Windows fopen() interprets the UTF-8 path in the active ANSI
 code page, so a non-ASCII path could not be opened and the parser received
-nothing. #700 routed the per-pass reads through cbm_fopen (→ _wfopen with a wide
+nothing. #700 routed the per-pass reads through hyp_fopen (→ _wfopen with a wide
 path, src/foundation/compat_fs.c), so non-ASCII paths now parse identically.
 
 This Windows guard also exercises native runtime publication beyond legacy
@@ -24,7 +24,7 @@ Exit code: 0 == invariant holds (green), 1 == invariant violated (regression),
 2 == environment/setup error.
 
 Usage:
-    python test_non_ascii_path.py <path-to-codebase-memory-mcp[.exe]>
+    python test_non_ascii_path.py <path-to-hyponoia[.exe]>
 """
 import json
 import os
@@ -107,21 +107,21 @@ def verify_relocated_runtime(binary, work):
     relocated = os.path.join(runtime_dir, os.path.basename(binary))
     shutil.copy2(binary, relocated)
 
-    integration = os.path.join(source_dir, "cbm-integrations.json")
+    integration = os.path.join(source_dir, "hyp-integrations.json")
     if not os.path.isfile(integration):
-        return "setup: source runtime is missing cbm-integrations.json"
-    shutil.copy2(integration, os.path.join(runtime_dir, "cbm-integrations.json"))
+        return "setup: source runtime is missing hyp-integrations.json"
+    shutil.copy2(integration, os.path.join(runtime_dir, "hyp-integrations.json"))
     packs = []
     for name in os.listdir(source_dir):
-        if name.startswith("cbm-ui-") and name.endswith(".pack"):
+        if name.startswith("hyp-ui-") and name.endswith(".pack"):
             source = os.path.join(source_dir, name)
             if os.path.isfile(source):
                 shutil.copy2(source, os.path.join(runtime_dir, name))
                 packs.append(name)
 
     env = os.environ.copy()
-    env.pop("CBM_ASSETS_DIR", None)
-    env.pop("CBM_UI_ASSETS_DIR", None)
+    env.pop("HYP_ASSETS_DIR", None)
+    env.pop("HYP_UI_ASSETS_DIR", None)
     env["HOME"] = os.path.join(work, "runtime_home")
     env["USERPROFILE"] = env["HOME"]
     env["APPDATA"] = os.path.join(work, "runtime_appdata")
@@ -129,7 +129,7 @@ def verify_relocated_runtime(binary, work):
     env["XDG_CONFIG_HOME"] = os.path.join(work, "runtime_xdg_config")
     env["XDG_CACHE_HOME"] = os.path.join(work, "runtime_xdg_cache")
     env["XDG_DATA_HOME"] = os.path.join(work, "runtime_xdg_data")
-    env["CBM_CACHE_DIR"] = os.path.join(work, "runtime_cache")
+    env["HYP_CACHE_DIR"] = os.path.join(work, "runtime_cache")
     for inherited_config in (
             "CLAUDE_CONFIG_DIR", "CODEX_HOME", "COPILOT_HOME",
             "CRUSH_GLOBAL_CONFIG", "OPENCLAW_CONFIG_PATH", "OPENCLAW_HOME",
@@ -139,7 +139,7 @@ def verify_relocated_runtime(binary, work):
     for directory in (
             env["HOME"], env["APPDATA"], env["LOCALAPPDATA"],
             env["XDG_CONFIG_HOME"], env["XDG_CACHE_HOME"],
-            env["XDG_DATA_HOME"], env["CBM_CACHE_DIR"]):
+            env["XDG_DATA_HOME"], env["HYP_CACHE_DIR"]):
         os.makedirs(directory, exist_ok=True)
 
     def stop_runtime_daemon():
@@ -170,7 +170,7 @@ def verify_relocated_runtime(binary, work):
         *("segment_%02d_%s" % (i, "x" * 32) for i in range(7)),
         "bin",
     )
-    installed = os.path.join(target, "codebase-memory-mcp.exe")
+    installed = os.path.join(target, "hyponoia.exe")
     if len(os.path.abspath(installed)) <= 260:
         return fail("setup: intended long install path is only %d characters" % len(
             os.path.abspath(installed)))
@@ -191,9 +191,9 @@ def verify_relocated_runtime(binary, work):
     installed_extended = windows_extended_path(installed)
     if not os.path.isfile(installed_extended):
         return fail("long-path install did not publish %r" % installed)
-    integration_installed = os.path.join(target, "cbm-integrations.json")
+    integration_installed = os.path.join(target, "hyp-integrations.json")
     if not os.path.isfile(windows_extended_path(integration_installed)):
-        return fail("long-path install omitted cbm-integrations.json")
+        return fail("long-path install omitted hyp-integrations.json")
     for name in packs:
         if not os.path.isfile(windows_extended_path(os.path.join(target, name))):
             return fail("long-path install omitted UI pack %s" % name)
@@ -208,7 +208,7 @@ def verify_relocated_runtime(binary, work):
     # but make the bytes visibly foreign. A UTF-8-aware existence check sees
     # this target and honors --no; the legacy narrow stat() treated it as absent
     # and silently replaced it.
-    sentinel = b"cbm-long-path-existing-target-must-be-preserved\n"
+    sentinel = b"hyp-long-path-existing-target-must-be-preserved\n"
     with open(installed_extended, "wb") as stream:
         stream.write(sentinel)
     keep = run_product(
@@ -316,7 +316,7 @@ def main():
         print("FAIL: binary not found: %s" % binary)
         return 2
 
-    work = tempfile.mkdtemp(prefix="cbm_win_nonascii_")
+    work = tempfile.mkdtemp(prefix="hyp_win_nonascii_")
     failures = []
     runtime_error = None
     try:
@@ -365,7 +365,7 @@ def main():
               (len(failures), len(NON_ASCII_SEGMENTS), ", ".join(failures)))
         print("Invariant violated: byte-identical fixtures under non-ASCII paths "
               "must extract the same definitions as the ASCII baseline (fixed by "
-              "#700 — has the cbm_fopen routing in the pass readers regressed?).")
+              "#700 — has the hyp_fopen routing in the pass readers regressed?).")
         return 1
     print("\nGREEN: Unicode/extended-length runtime operations passed and all "
           "non-ASCII repo variants matched the ASCII baseline.")

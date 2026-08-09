@@ -135,11 +135,11 @@ for relative, source in (
         "VIBE_HOME",
         "GLAB_CONFIG_DIR",
         "KIMI_CODE_HOME",
-        "CBM_CONTINUE_CONFIG_PATH",
-        "CBM_TRAE_CONFIG_PATH",
-        "CBM_ROO_CONFIG_PATH",
-        "CBM_CODY_CONFIG_PATH",
-        "CBM_TEST_WINDOWS_USER_PATH_RUN_ID",
+        "HYP_CONTINUE_CONFIG_PATH",
+        "HYP_TRAE_CONFIG_PATH",
+        "HYP_ROO_CONFIG_PATH",
+        "HYP_CODY_CONFIG_PATH",
+        "HYP_TEST_WINDOWS_USER_PATH_RUN_ID",
     ):
         require(
             f"-u {variable}" in source,
@@ -165,22 +165,22 @@ for relative, source in (
 for name in ("LICENSE", "install.sh", "THIRD_PARTY_NOTICES.md"):
     require(name in smoke_local, f"smoke-local.sh archive must include {name}")
 require(
-    "codebase-memory-mcp${SUFFIX}-${OS}-${ARCH}.tar.gz" in smoke_local
+    "hyponoia${SUFFIX}-${OS}-${ARCH}.tar.gz" in smoke_local
     and "UI_PACK_NAME" in smoke_local
-    and "^cbm-ui-[0-9a-f]{64}\\.pack$" in smoke_local,
+    and "^hyp-ui-[0-9a-f]{64}\\.pack$" in smoke_local,
     "smoke-local.sh must create the selected exact variant with a hash-shaped UI pack",
 )
 require(
-    "codebase-memory-mcp${SUFFIX}-${OS}-${ARCH}-portable.tar.gz" in smoke_local
+    "hyponoia${SUFFIX}-${OS}-${ARCH}-portable.tar.gz" in smoke_local
     and 'ARCHIVE_MEMBERS+=("$UI_PACK_NAME")' in smoke_local,
     "smoke-local.sh must create the Linux portable selected variant with the same member set",
 )
 require(
-    '"$FIXTURE_DIR/codebase-memory-mcp-${OS}-${ARCH}.tar.gz"' not in smoke_local,
+    '"$FIXTURE_DIR/hyponoia-${OS}-${ARCH}.tar.gz"' not in smoke_local,
     "smoke-local.sh must not disguise a six-member UI archive under a standard name",
 )
 require(
-    'CBM_CACHE_DIR="$WORK_DIR/cache"' in smoke_local
+    'HYP_CACHE_DIR="$WORK_DIR/cache"' in smoke_local
     and 'SMOKE_TEMP_ROOT="$SMOKE_TEMP_DIR"' in smoke_local,
     "smoke-local.sh must isolate daemon/cache and temporary state from live user sessions",
 )
@@ -199,25 +199,25 @@ require(
 # six-file UI bundle (one native binary), then runs the full smoke from a
 # protected profile-rooted directory/cache.
 for name in (
-    "codebase-memory-mcp.exe",
+    "hyponoia.exe",
     "LICENSE",
     "install.ps1",
     "THIRD_PARTY_NOTICES.md",
 ):
     require(name in vm_smoke, f"vm-smoke.sh archive must include {name}")
 require(
-    "codebase-memory-mcp.payload.exe" not in vm_smoke,
+    "hyponoia.payload.exe" not in vm_smoke,
     "vm-smoke.sh must not stage a Windows launcher/payload pair",
 )
 require("checksums.txt" in vm_smoke, "vm-smoke.sh must generate checksums.txt")
 require(
     "UI_PACK_NAME" in vm_smoke
-    and "^cbm-ui-[0-9a-f]{64}\\.pack$" in vm_smoke
+    and "^hyp-ui-[0-9a-f]{64}\\.pack$" in vm_smoke
     and 'ARCHIVE_MEMBERS+=("$UI_PACK_NAME")' in vm_smoke,
     "vm-smoke.sh must stage exactly one content-addressed pack only for UI",
 )
 require(
-    '"codebase-memory-mcp-windows-${SMOKE_ARCH}.zip"' not in vm_smoke,
+    '"hyponoia-windows-${SMOKE_ARCH}.zip"' not in vm_smoke,
     "vm-smoke.sh must not disguise a six-member UI zip under a standard name",
 )
 require(
@@ -229,7 +229,7 @@ require(
 require(
     "PROFILE_ROOT=" in vm_smoke
     and 'SMOKE_TEMP_ROOT="$SMOKE_DIR"' in vm_smoke
-    and 'CBM_CACHE_DIR="$(cygpath -m "$SMOKE_DIR/cache")"' in vm_smoke,
+    and 'HYP_CACHE_DIR="$(cygpath -m "$SMOKE_DIR/cache")"' in vm_smoke,
     "vm-smoke.sh must isolate smoke temp/cache below the protected user profile",
 )
 require(
@@ -244,7 +244,7 @@ require(
     "vm-smoke.sh must prepare, verify, and clean up an isolated Windows PATH key",
 )
 require(
-    'CBM_TEST_WINDOWS_USER_PATH_RUN_ID="$PATH_RUN_ID"' in vm_smoke
+    'HYP_TEST_WINDOWS_USER_PATH_RUN_ID="$PATH_RUN_ID"' in vm_smoke
     and 'SMOKE_DOWNLOAD_URL="http://127.0.0.1:$PORT"' in vm_smoke
     and vm_smoke.find("-Mode verify") > vm_smoke.find("scripts/smoke-test.sh"),
     "vm-smoke.sh must pass the run ID and loopback gate through the full smoke, then verify it",
@@ -256,18 +256,18 @@ require(
     "Windows PATH guard must compare the live raw value and registry kind without expanding it",
 )
 require(
-    'Software\\CodebaseMemoryMCP\\Smoke\\$RunId' in windows_path_guard
+    'Software\\Hyponoia\\Smoke\\$RunId' in windows_path_guard
     and "Assert-SmokePathValue" in windows_path_guard
     and "DeleteSubKeyTree" in windows_path_guard
     and "restore" not in windows_path_guard.lower(),
     "Windows PATH smoke must mutate and delete only its GUID-scoped scratch registry leaf",
 )
 require(
-    "CBM_TEST_WINDOWS_USER_PATH_RUN_ID" in cli_source
+    "HYP_TEST_WINDOWS_USER_PATH_RUN_ID" in cli_source
     and 'L"SMOKE_DOWNLOAD_URL"' in cli_source
-    and 'L"Software\\\\CodebaseMemoryMCP\\\\Smoke\\\\%ls"' in cli_source
+    and 'L"Software\\\\Hyponoia\\\\Smoke\\\\%ls"' in cli_source
     and "cli_windows_smoke_download_url_valid" in cli_source
-    and "CbmSmokeRunId" in cli_source,
+    and "HypSmokeRunId" in cli_source,
     "the Windows PATH test seam must be run-ID-only, sentinel-bound, and loopback-gated",
 )
 
@@ -291,19 +291,19 @@ for service in ("smoke-windows:",):
     )
     section = match.group("body") if match else ""
     require(
-        "codebase-memory-mcp-launcher" not in section
-        and "codebase-memory-mcp.payload.exe" not in section.replace(
-            "test ! -e build/win-cross/codebase-memory-mcp.payload.exe", ""
+        "hyponoia-launcher" not in section
+        and "hyponoia.payload.exe" not in section.replace(
+            "test ! -e build/win-cross/hyponoia.payload.exe", ""
         ),
         f"docker-compose {service[:-1]} must build ONE Windows binary, not a launcher/payload pair",
     )
     require(
-        "test ! -e build/win-cross/codebase-memory-mcp.payload.exe" in section,
+        "test ! -e build/win-cross/hyponoia.payload.exe" in section,
         f"docker-compose {service[:-1]} must assert no payload sibling is produced",
     )
 require(
-    "wine64 ./build/win-cross/codebase-memory-mcp.exe --version" in compose
-    and "wine64 cmd /c build/win-cross/codebase-memory-mcp.exe --version" in compose,
+    "wine64 ./build/win-cross/hyponoia.exe --version" in compose
+    and "wine64 cmd /c build/win-cross/hyponoia.exe --version" in compose,
     "docker-compose Windows cross-smoke must execute the runtime set's one executable through Wine and through a "
     "Wine Windows parent",
 )
@@ -382,7 +382,7 @@ require(
             "ARCHIVE_MEMBER_COUNT",
             "EXPECTED_MEMBER_COUNT=5",
             "EXPECTED_MEMBER_COUNT=6",
-            "^cbm-ui-[0-9a-f]{64}\\.pack$",
+            "^hyp-ui-[0-9a-f]{64}\\.pack$",
             "release archive contains unexpected member",
         )
     ),
@@ -392,14 +392,14 @@ unix_binary_publish = unix_installer.find('"$DLBIN" install "${INSTALL_ARGS[@]}"
 require(
     unix_binary_publish >= 0
     and "publish_required_sidecar" not in unix_installer
-    and 'for stale_pack in "$INSTALL_DIR"/cbm-ui-*.pack' not in unix_installer,
+    and 'for stale_pack in "$INSTALL_DIR"/hyp-ui-*.pack' not in unix_installer,
     "install.sh must delegate sidecar publication and stale-pack GC to the candidate's "
     "guarded native install",
 )
 require(
     "GetRandomFileName" in windows_installer
     and "[System.IO.FileMode]::CreateNew" in windows_installer
-    and windows_installer.count("New-CbmExclusiveSiblingTemp") == 2
+    and windows_installer.count("New-HypExclusiveSiblingTemp") == 2
     and '$Destination.new-$PID' not in windows_installer
     and '$InstallerDest.new' not in windows_installer,
     "install.ps1 must reserve an unpredictable sibling temp exclusively for the updater only",
@@ -407,9 +407,9 @@ require(
 
 cli_source = read("src/cli/cli.c")
 install_start = cli_source.find("static int cli_install_activate(void *opaque)")
-install_end = cli_source.find("int cbm_cmd_install(", install_start)
+install_end = cli_source.find("int hyp_cmd_install(", install_start)
 install_body = cli_source[install_start:install_end] if 0 <= install_start < install_end else ""
-runtime_stage = install_body.find("cbm_integration_assets_stage_install")
+runtime_stage = install_body.find("hyp_integration_assets_stage_install")
 binary_commit = install_body.find("cli_activation_transaction_commit_validated")
 runtime_gc = install_body.find("cli_gc_stale_ui_asset_packs")
 runtime_finalize = install_body.find("cli_install_runtime_finalize")
@@ -424,8 +424,8 @@ require(
     "release verification must feed the canonical extractor from an isolated archive directory",
 )
 require(
-    "cbm-release-scan-associations-v3" in release_extractor
-    and "cbm-release-scan-set-v2" in release_extractor
+    "hyp-release-scan-associations-v3" in release_extractor
+    and "hyp-release-scan-set-v2" in release_extractor
     and "files_equal(candidate, existing.path)" in release_extractor
     and "parse_pack_assets" in release_extractor
     and "PACK_NAME.fullmatch" in release_extractor
@@ -445,12 +445,12 @@ require(
     "all loopback release-fixture curl requests must bypass ambient proxies",
 )
 require(
-    "/tmp/cbm-curl12a.err" not in smoke_test
+    "/tmp/hyp-curl12a.err" not in smoke_test
     and 'CURL12_ERR="$DL_DIR/curl12a.err"' in smoke_test,
     "curl diagnostics must stay inside the per-smoke download directory",
 )
 require(
-    "CBM_TEST_WINDOWS_USER_PATH_RUN_ID=invalid" in smoke_test
+    "HYP_TEST_WINDOWS_USER_PATH_RUN_ID=invalid" in smoke_test
     and "invalid Windows PATH smoke seam fell back" in smoke_test,
     "Windows release smoke must prove malformed PATH-test gating fails closed",
 )
@@ -468,7 +468,7 @@ require(
 # command and touches nothing. Phase 14 now drives from the installed binary
 # everywhere, and 14a asserts the binary is byte-identical afterwards.
 require(
-    'UPDATE_DRIVER="$UPDATE_HOME/.local/bin/codebase-memory-mcp"' in smoke_test
+    'UPDATE_DRIVER="$UPDATE_HOME/.local/bin/hyponoia"' in smoke_test
     and 'STALE_CMD="$UPDATE_DRIVER"' in smoke_test,
     "Phase 14 must drive update from the installed binary on every platform",
 )
@@ -497,7 +497,7 @@ require(
 # Functional check: the helper must publish a live kernel-assigned port and
 # serve the exact expected artifact. This is intentionally build-free.
 if helper.is_file():
-    with tempfile.TemporaryDirectory(prefix="cbm-fixture-contract-") as temp:
+    with tempfile.TemporaryDirectory(prefix="hyp-fixture-contract-") as temp:
         temp_path = pathlib.Path(temp)
         fixture = temp_path / "fixture"
         fixture.mkdir()
@@ -600,7 +600,7 @@ if helper.is_file():
 # resolver to hang and require the port anyway, so the dependency cannot
 # return without turning this gate red on every platform.
 if helper.is_file():
-    with tempfile.TemporaryDirectory(prefix="cbm-fixture-dns-") as dns_temp:
+    with tempfile.TemporaryDirectory(prefix="hyp-fixture-dns-") as dns_temp:
         dns_root = pathlib.Path(dns_temp)
         dns_fixture = dns_root / "fixture"
         dns_fixture.mkdir()
@@ -658,7 +658,7 @@ if helper.is_file():
 # runtime sidecars at all, and its updater publisher never touches the foreign
 # predictable sibling.
 if os.name != "nt" and helper.is_file():
-    with tempfile.TemporaryDirectory(prefix="cbm-installer-temp-contract-") as install_temp:
+    with tempfile.TemporaryDirectory(prefix="hyp-installer-temp-contract-") as install_temp:
         install_root = pathlib.Path(install_temp)
         fixture = install_root / "fixture"
         stage = install_root / "stage"
@@ -671,35 +671,35 @@ if os.name != "nt" and helper.is_file():
         install_dir.mkdir()
         fake_home.mkdir()
 
-        candidate = stage / "codebase-memory-mcp"
+        candidate = stage / "hyponoia"
         candidate.write_text(
             "#!/usr/bin/env bash\n"
             "set -euo pipefail\n"
             "case \"${1:-}\" in\n"
-            "  --version) echo 'codebase-memory-mcp fixture';;\n"
+            "  --version) echo 'hyponoia fixture';;\n"
             "  install)\n"
             "    install_dir=''\n"
             "    for arg in \"$@\"; do\n"
             "      case \"$arg\" in --dir=*) install_dir=${arg#--dir=};; esac\n"
             "    done\n"
             "    test -n \"$install_dir\"\n"
-            "    cp \"$0\" \"$install_dir/codebase-memory-mcp\"\n"
-            "    chmod 755 \"$install_dir/codebase-memory-mcp\";;\n"
+            "    cp \"$0\" \"$install_dir/hyponoia\"\n"
+            "    chmod 755 \"$install_dir/hyponoia\";;\n"
             "  *) exit 2;;\n"
             "esac\n",
             encoding="utf-8",
         )
         candidate.chmod(0o755)
-        (stage / "cbm-integrations.json").write_bytes(b"{}\n")
+        (stage / "hyp-integrations.json").write_bytes(b"{}\n")
         (stage / "LICENSE").write_bytes(b"fixture license\n")
         (stage / "THIRD_PARTY_NOTICES.md").write_bytes(b"fixture notices\n")
 
-        archive_name = "codebase-memory-mcp-linux-amd64-portable.tar.gz"
+        archive_name = "hyponoia-linux-amd64-portable.tar.gz"
         archive_path = fixture / archive_name
         with tarfile.open(archive_path, "w:gz") as archive:
             for name in (
-                "codebase-memory-mcp",
-                "cbm-integrations.json",
+                "hyponoia",
+                "hyp-integrations.json",
                 "LICENSE",
                 "THIRD_PARTY_NOTICES.md",
             ):
@@ -736,7 +736,7 @@ if os.name != "nt" and helper.is_file():
             "foreign_updater=$3\n"
             "pid_file=$4\n"
             "installer=$5\n"
-            "ln -s \"$foreign_sidecar\" \"$install_dir/.cbm-integrations.json.$$\"\n"
+            "ln -s \"$foreign_sidecar\" \"$install_dir/.hyp-integrations.json.$$\"\n"
             "ln -s \"$foreign_updater\" \"$install_dir/.install.sh.$$\"\n"
             "printf '%s\\n' \"$$\" > \"$pid_file\"\n"
             "exec bash \"$installer\" --standard \"--dir=$install_dir\" --skip-config\n",
@@ -781,7 +781,7 @@ if os.name != "nt" and helper.is_file():
                     environment["PATH"] = (
                         str(fake_bin) + os.pathsep + environment.get("PATH", "")
                     )
-                    environment["CBM_DOWNLOAD_URL"] = f"http://127.0.0.1:{port}"
+                    environment["HYP_DOWNLOAD_URL"] = f"http://127.0.0.1:{port}"
                     installed = subprocess.run(
                         [
                             str(wrapper),
@@ -805,7 +805,7 @@ if os.name != "nt" and helper.is_file():
                     if wrapper_pid_file.is_file():
                         wrapper_pid = wrapper_pid_file.read_text(encoding="ascii").strip()
                         predictable_sidecar = (
-                            install_dir / f".cbm-integrations.json.{wrapper_pid}"
+                            install_dir / f".hyp-integrations.json.{wrapper_pid}"
                         )
                         predictable_updater = install_dir / f".install.sh.{wrapper_pid}"
                         require(
@@ -834,9 +834,9 @@ if os.name != "nt" and helper.is_file():
 # byte-exact deduplication and fail-closed malformed-pack cases run above via
 # test_release_archive_extractor_contract.sh. Keep the packaging-side digest
 # check here because it is a separate boundary before an archive exists.
-with tempfile.TemporaryDirectory(prefix="cbm-release-extract-") as extract_temp:
+with tempfile.TemporaryDirectory(prefix="hyp-release-extract-") as extract_temp:
     extract_root = pathlib.Path(extract_temp)
-    bad_pack_name = f"cbm-ui-{'0' * 64}.pack"
+    bad_pack_name = f"hyp-ui-{'0' * 64}.pack"
     bad_pack_bytes = b"content does not match the zero digest\n"
     # Packaging checks the content address before it touches the product binary.
     # No binary is staged deliberately: the digest error must win over the

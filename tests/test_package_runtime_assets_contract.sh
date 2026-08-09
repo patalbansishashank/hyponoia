@@ -2,7 +2,7 @@
 # Runtime-sidecar contract for release archives, package managers and source
 # installers. Release packaging executes the final staged binary against the
 # exact adjacent files it will archive; downstream packages must retain those
-# files either beside the executable or in ../share/codebase-memory-mcp.
+# files either beside the executable or in ../share/hyponoia.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -79,43 +79,43 @@ require(
 )
 
 
-homebrew = read("pkg/homebrew/Formula/codebase-memory-mcp.rb")
+homebrew = read("pkg/homebrew/Formula/hyponoia.rb")
 require(
     re.search(
-        r'\(share\s*/\s*["\']codebase-memory-mcp["\']\)\.install\s+'
-        r'["\']cbm-integrations\.json["\']',
+        r'\(share\s*/\s*["\']hyponoia["\']\)\.install\s+'
+        r'["\']hyp-integrations\.json["\']',
         homebrew,
     )
     is not None,
-    "Homebrew must install cbm-integrations.json in ../share/codebase-memory-mcp",
+    "Homebrew must install hyp-integrations.json in ../share/hyponoia",
 )
 require(
     re.search(
-        r'assert_path_exists\s+share\s*/\s*["\']codebase-memory-mcp/'
-        r'cbm-integrations\.json["\']',
+        r'assert_path_exists\s+share\s*/\s*["\']hyponoia/'
+        r'hyp-integrations\.json["\']',
         homebrew,
     )
     is not None,
     "Homebrew formula test must assert the installed integration asset",
 )
 require(
-    "codebase-memory-mcp install" in homebrew,
+    "hyponoia install" in homebrew,
     "Homebrew must retain the opt-in agent-configuration caveat",
 )
 
 aur = read("pkg/aur/PKGBUILD")
 require(
     re.search(
-        r'install\s+-Dm644\s+["\']\$\{srcdir\}/cbm-integrations\.json["\']'
-        r'\s*\\?\s*["\']\$\{pkgdir\}/usr/share/codebase-memory-mcp/'
-        r'cbm-integrations\.json["\']',
+        r'install\s+-Dm644\s+["\']\$\{srcdir\}/hyp-integrations\.json["\']'
+        r'\s*\\?\s*["\']\$\{pkgdir\}/usr/share/hyponoia/'
+        r'hyp-integrations\.json["\']',
         aur,
     )
     is not None,
-    "AUR must install cbm-integrations.json in /usr/share/codebase-memory-mcp",
+    "AUR must install hyp-integrations.json in /usr/share/hyponoia",
 )
 
-scoop = json.loads(read("pkg/scoop/codebase-memory-mcp.json"))
+scoop = json.loads(read("pkg/scoop/hyponoia.json"))
 scoop_post_install = scoop.get("post_install", [])
 if isinstance(scoop_post_install, str):
     scoop_post_install = [scoop_post_install]
@@ -125,7 +125,7 @@ require(
     "Scoop must not invoke the full native install command after extracting the package",
 )
 require(
-    scoop["architecture"]["64bit"].get("bin") == "codebase-memory-mcp.exe",
+    scoop["architecture"]["64bit"].get("bin") == "hyponoia.exe",
     "Scoop shim must target the executable inside the extracted package directory",
 )
 
@@ -139,7 +139,7 @@ require(
     re.search(r'-UnzipLocation\s+\$installDir\b', choco_install) is not None
     and re.search(
         r'\$binPath\s*=\s*Join-Path\s+\$installDir\s+'
-        r'["\']codebase-memory-mcp\.exe["\']',
+        r'["\']hyponoia\.exe["\']',
         choco_install,
         re.IGNORECASE,
     )
@@ -164,7 +164,7 @@ source_body = setup_sh.split("build_from_source() {", 1)[-1].split(
 require(
     re.search(
         r'cp\s+["\']\$source_path["\']\s+'
-        r'["\']\$\{INSTALL_DIR\}/cbm-integrations\.json["\']',
+        r'["\']\$\{INSTALL_DIR\}/hyp-integrations\.json["\']',
         asset_helper,
     )
     is not None,
@@ -172,11 +172,11 @@ require(
 )
 require(
     'install_integration_asset "$tmpdir"' in download_body,
-    "Unix release download must install cbm-integrations.json beside the binary",
+    "Unix release download must install hyp-integrations.json beside the binary",
 )
 require(
     'install_integration_asset "${SOURCE_DIR}/build/c"' in source_body,
-    "Unix source build must install cbm-integrations.json beside the binary",
+    "Unix source build must install hyp-integrations.json beside the binary",
 )
 
 setup_windows = read("scripts/setup-windows.ps1")
@@ -186,12 +186,12 @@ windows_source = setup_windows.split("if ($FromSource) {", 1)[-1].split(
 windows_download = setup_windows.split("} else {", 1)[-1]
 require(
     re.search(
-        r'cp\s+build/c/codebase-memory-mcp\s+build/c/cbm-integrations\.json\s+'
+        r'cp\s+build/c/hyponoia\s+build/c/hyp-integrations\.json\s+'
         r'/home/\$wslUser/\.local/bin/',
         windows_source,
     )
     is not None,
-    "Windows source build must copy cbm-integrations.json beside the WSL binary",
+    "Windows source build must copy hyp-integrations.json beside the WSL binary",
 )
 require(
     re.search(
@@ -205,17 +205,17 @@ require(
 
 glama = read("pkg/glama/Dockerfile")
 require(
-    re.search(r'tar\s+-xz\s+-C\s+/tmp[^\n]*cbm-integrations\.json', glama) is not None,
-    "Glama package extraction must retain cbm-integrations.json",
+    re.search(r'tar\s+-xz\s+-C\s+/tmp[^\n]*hyp-integrations\.json', glama) is not None,
+    "Glama package extraction must retain hyp-integrations.json",
 )
 require(
     re.search(
-        r'COPY\s+--from=fetch\s+/tmp/cbm-integrations\.json\s+'
-        r'/usr/local/share/codebase-memory-mcp/cbm-integrations\.json',
+        r'COPY\s+--from=fetch\s+/tmp/hyp-integrations\.json\s+'
+        r'/usr/local/share/hyponoia/hyp-integrations\.json',
         glama,
     )
     is not None,
-    "Glama must install cbm-integrations.json at the executable-relative share path",
+    "Glama must install hyp-integrations.json at the executable-relative share path",
 )
 
 
@@ -272,13 +272,13 @@ static int adjacent_path(const char *argv0, const char *leaf, char *out, size_t 
 }
 
 int main(int argc, char **argv) {
-    static const char product[] = "codebase-memory-mcp";
+    static const char product[] = "hyponoia";
     char path[4096];
     if (argc != 2 || strcmp(argv[1], "--verify-runtime-assets") != 0) {
         fprintf(stderr, "%s fixture accepts only the runtime-asset probe\n", product);
         return 64;
     }
-    if (!adjacent_path(argv[0], "cbm-integrations.json", path, sizeof(path)) ||
+    if (!adjacent_path(argv[0], "hyp-integrations.json", path, sizeof(path)) ||
         !file_contains(path, EXPECT_INTEGRATION)) {
         fprintf(stderr, "%s fixture rejected integration assets\n", product);
         return 65;
@@ -298,7 +298,7 @@ def valid_ui_pack(marker: str) -> bytes:
     path = b"/index.html"
     payload = ("<title>" + marker + "</title>").encode("ascii")
     header = bytearray(80)
-    header[:8] = b"CBMUIPK\0"
+    header[:8] = b"HYPUIPK\0"
     struct.pack_into("<HHIII", header, 8, 1, 80, 0, 1, 24)
     paths_offset = 80 + 24
     payload_offset = paths_offset + len(path)
@@ -328,17 +328,17 @@ host_is_windows = (
 host_goos = "windows" if host_is_windows else (
     "darwin" if host_system == "darwin" else "linux"
 )
-binary_name = "codebase-memory-mcp.exe" if host_goos == "windows" else "codebase-memory-mcp"
+binary_name = "hyponoia.exe" if host_goos == "windows" else "hyponoia"
 archive_suffix = ".zip" if host_goos == "windows" else ".tar.gz"
 compiler = shlex.split(os.environ.get("CC", "cc"))
 arch_flags = shlex.split(os.environ.get("ARCHFLAGS", ""))
-integration_marker = '\"format\":1,\"product\":\"codebase-memory-mcp\"'
+integration_marker = '\"format\":1,\"product\":\"hyponoia\"'
 pack_a = valid_ui_pack("fixture-pack-a")
 pack_b = valid_ui_pack("fixture-pack-b")
 pack_a_digest = hashlib.sha256(pack_a).hexdigest()
 pack_b_digest = hashlib.sha256(pack_b).hexdigest()
-pack_a_name = f"cbm-ui-{pack_a_digest}.pack"
-pack_b_name = f"cbm-ui-{pack_b_digest}.pack"
+pack_a_name = f"hyp-ui-{pack_a_digest}.pack"
+pack_b_name = f"hyp-ui-{pack_b_digest}.pack"
 
 
 def build_fixture(
@@ -390,7 +390,7 @@ def package_fixture(
         (build_dir / pack_name).write_bytes(pack_bytes)
     environment = os.environ.copy()
     environment["BUILD_DIR"] = str(build_dir)
-    archive_name = f"codebase-memory-mcp{'-ui' if variant == 'ui' else ''}-{host_goos}-fixture{archive_suffix}"
+    archive_name = f"hyponoia{'-ui' if variant == 'ui' else ''}-{host_goos}-fixture{archive_suffix}"
     packaged = subprocess.run(
         [
             str(bash_executable),
@@ -413,7 +413,7 @@ def package_fixture(
 
 
 if compiler:
-    with tempfile.TemporaryDirectory(prefix="cbm-package-association-") as temp:
+    with tempfile.TemporaryDirectory(prefix="hyp-package-association-") as temp:
         work = pathlib.Path(temp)
         standard, standard_archive = package_fixture(
             work, "standard-ok", "standard", integration_marker
@@ -433,7 +433,7 @@ if compiler:
                 standard_members
                 == {
                     binary_name,
-                    "cbm-integrations.json",
+                    "hyp-integrations.json",
                     "LICENSE",
                     "install.ps1" if host_goos == "windows" else "install.sh",
                     "THIRD_PARTY_NOTICES.md",
@@ -467,7 +467,7 @@ if compiler:
                 ui_members
                 == {
                     binary_name,
-                    "cbm-integrations.json",
+                    "hyp-integrations.json",
                     "LICENSE",
                     "install.ps1" if host_goos == "windows" else "install.sh",
                     "THIRD_PARTY_NOTICES.md",

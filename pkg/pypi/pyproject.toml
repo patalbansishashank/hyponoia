@@ -3,7 +3,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "codebase-memory-mcp"
+name = "hyponoia"
 version = "0.8.1"
 description = "Fast code intelligence for AI coding agents — installs a verified native runtime set"
 readme = "README.md"
@@ -24,12 +24,12 @@ classifiers = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/DeusData/codebase-memory-mcp"
-Repository = "https://github.com/DeusData/codebase-memory-mcp"
-Issues = "https://github.com/DeusData/codebase-memory-mcp/issues"
+Homepage = "https://github.com/patalbansishashank/hyponoia"
+Repository = "https://github.com/patalbansishashank/hyponoia"
+Issues = "https://github.com/patalbansishashank/hyponoia/issues"
 
 [project.scripts]
-codebase-memory-mcp = "codebase_memory_mcp:main"
+hyponoia = "hyponoia:main"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/codebase_memory_mcp"]
+packages = ["src/hyponoia"]

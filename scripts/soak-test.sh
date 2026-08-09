@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# soak-test.sh — Endurance test for codebase-memory-mcp.
+# soak-test.sh — Endurance test for hyponoia.
 #
 # Runs compressed workload cycles: queries, file mutations, reindexes, idle periods.
 # Reads the randomized diagnostics path emitted by the daemon (requires
-# CBM_DIAGNOSTICS=1).
+# HYP_DIAGNOSTICS=1).
 # Outputs metrics to soak-results/ and exits 0 (pass) or 1 (fail).
 #
 # Usage:
@@ -32,7 +32,7 @@ Arguments:
   --skip-crash-test   skip the crash-recovery phase (query-leak leg sets this)
 
 Environment:
-  CBM_SOAK_MODE   default | query-leak (#581 detector: never reindex/mutate
+  HYP_SOAK_MODE   default | query-leak (#581 detector: never reindex/mutate
                   after the initial index, so RSS growth = query-path leak)
   RESULTS_DIR     metrics output dir (default soak-results; soak-legs.sh owns
                   this per leg)
@@ -53,7 +53,7 @@ BINARY=$(cd "$(dirname "$BINARY")" && pwd)/$(basename "$BINARY")
 #   default     = original mixed workload (queries + mutations + periodic reindex
 #                 + crash-recovery). Unchanged from before this env var existed.
 #   query-leak  = #581 detector. After the initial index, NEVER reindex and NEVER
-#                 mutate files, so the mimalloc page-return path (cbm_mem_collect,
+#                 mutate files, so the mimalloc page-return path (hyp_mem_collect,
 #                 triggered by index_repository) is never invoked and cannot sweep
 #                 a query-only leak. Phase 3 then hammers a variety of READ tools
 #                 (search_graph / query_graph / trace_path / get_code_snippet /
@@ -61,12 +61,12 @@ BINARY=$(cd "$(dirname "$BINARY")" && pwd)/$(basename "$BINARY")
 #                 paths the bug report implicates. The RSS slope/ratio/ceiling
 #                 analysis below is the leak detector. The crash-recovery phase is
 #                 skipped in this mode because it reindexes (which would mask #581).
-CBM_SOAK_MODE="${CBM_SOAK_MODE:-default}"
+HYP_SOAK_MODE="${HYP_SOAK_MODE:-default}"
 
 RESULTS_DIR="${RESULTS_DIR:-soak-results}"
 mkdir -p "$RESULTS_DIR"
 
-# Isolate daemon coordination from interactive CBM sessions and give this run
+# Isolate daemon coordination from interactive HYP sessions and give this run
 # a deterministic host-side daemon log. Wine needs a Windows-form cache path
 # in the child environment while this Bash harness retains the host path.
 #
@@ -105,13 +105,13 @@ if [[ "$BINARY" == *.exe ]] && command -v cygpath >/dev/null 2>&1 &&
     # runners and dev machines alike — the Windows guard suites already run
     # their binaries from copies there for the same reason. Copy the binary
     # into a stamped root under USERPROFILE and cache beside it.
-    SOAK_WIN_ROOT=$(mktemp -d "$(cygpath "$USERPROFILE")/cbm-soak.XXXXXX")
+    SOAK_WIN_ROOT=$(mktemp -d "$(cygpath "$USERPROFILE")/hyp-soak.XXXXXX")
     if ! soak_stamp_windows_dir "$SOAK_WIN_ROOT"; then
         rm -rf -- "$SOAK_WIN_ROOT"
         exit 1
     fi
-    cp "$BINARY" "$SOAK_WIN_ROOT/codebase-memory-mcp.exe"
-    BINARY="$SOAK_WIN_ROOT/codebase-memory-mcp.exe"
+    cp "$BINARY" "$SOAK_WIN_ROOT/hyponoia.exe"
+    BINARY="$SOAK_WIN_ROOT/hyponoia.exe"
     SOAK_CACHE_DIR_HOST="$SOAK_WIN_ROOT/cache"
     mkdir -p "$SOAK_CACHE_DIR_HOST"
     SOAK_WIN_ROOT_W="$(cygpath -w "$SOAK_WIN_ROOT")"
@@ -123,7 +123,7 @@ if [[ "$BINARY" == *.exe ]] && command -v cygpath >/dev/null 2>&1 &&
         exit 1
     fi
 else
-    SOAK_CACHE_DIR_HOST=$(mktemp -d "${TMPDIR:-/tmp}/cbm-soak-cache.XXXXXX")
+    SOAK_CACHE_DIR_HOST=$(mktemp -d "${TMPDIR:-/tmp}/hyp-soak-cache.XXXXXX")
 fi
 SOAK_CACHE_DIR_VALUE="$SOAK_CACHE_DIR_HOST"
 if [[ "$BINARY" == *.exe ]] && command -v winepath >/dev/null 2>&1; then
@@ -131,7 +131,7 @@ if [[ "$BINARY" == *.exe ]] && command -v winepath >/dev/null 2>&1; then
 elif [[ "$BINARY" == *.exe ]] && command -v cygpath >/dev/null 2>&1; then
     SOAK_CACHE_DIR_VALUE=$(cygpath -w "$SOAK_CACHE_DIR_HOST")
 fi
-DAEMON_LOG="$SOAK_CACHE_DIR_HOST/logs/cbm-daemon.log"
+DAEMON_LOG="$SOAK_CACHE_DIR_HOST/logs/hyp-daemon.log"
 DIAG_FILE=""
 
 METRICS_CSV="$RESULTS_DIR/metrics.csv"
@@ -145,7 +145,7 @@ PASS=true
 
 DURATION_S=$((DURATION_MIN * 60))
 
-echo "=== soak-test: binary=$BINARY duration=${DURATION_MIN}m mode=${CBM_SOAK_MODE} ==="
+echo "=== soak-test: binary=$BINARY duration=${DURATION_MIN}m mode=${HYP_SOAK_MODE} ==="
 
 # ── Helper: generate realistic test project (~200 files) ─────────
 
@@ -181,7 +181,7 @@ soak_cleanup() {
     [ -z "${SERVER_IN:-}" ] || rm -f -- "$SERVER_IN"
     [ -z "${SERVER_OUT:-}" ] || rm -f -- "$SERVER_OUT"
     if [ -f "$DAEMON_LOG" ]; then
-        cp "$DAEMON_LOG" "$RESULTS_DIR/cbm-daemon.log" 2>/dev/null || true
+        cp "$DAEMON_LOG" "$RESULTS_DIR/hyp-daemon.log" 2>/dev/null || true
     fi
     rm -rf -- "$SOAK_PROJECT" "$SOAK_CACHE_DIR_HOST"
     [ -z "${SOAK_WIN_ROOT:-}" ] || rm -rf -- "$SOAK_WIN_ROOT"
@@ -196,23 +196,23 @@ soak_cleanup() {
 start_mcp_server() {
     local stderr_mode="$1"
     if $SOAK_NATIVE_WINDOWS; then
-        unset CBM_SOAK_SERVER CBM_SOAK_SERVER_PID || true
+        unset HYP_SOAK_SERVER HYP_SOAK_SERVER_PID || true
         if [ "$stderr_mode" = "append" ]; then
-            eval 'coproc CBM_SOAK_SERVER {
-                export CBM_CACHE_DIR="$SOAK_CACHE_DIR_VALUE"
-                export CBM_DIAGNOSTICS=1 CBM_LOG_LEVEL=info CBM_LOG_FORMAT=text
+            eval 'coproc HYP_SOAK_SERVER {
+                export HYP_CACHE_DIR="$SOAK_CACHE_DIR_VALUE"
+                export HYP_DIAGNOSTICS=1 HYP_LOG_LEVEL=info HYP_LOG_FORMAT=text
                 exec "$BINARY" 2>>"$RESULTS_DIR/server-stderr.log"
             }'
         else
-            eval 'coproc CBM_SOAK_SERVER {
-                export CBM_CACHE_DIR="$SOAK_CACHE_DIR_VALUE"
-                export CBM_DIAGNOSTICS=1 CBM_LOG_LEVEL=info CBM_LOG_FORMAT=text
+            eval 'coproc HYP_SOAK_SERVER {
+                export HYP_CACHE_DIR="$SOAK_CACHE_DIR_VALUE"
+                export HYP_DIAGNOSTICS=1 HYP_LOG_LEVEL=info HYP_LOG_FORMAT=text
                 exec "$BINARY" 2>"$RESULTS_DIR/server-stderr.log"
             }'
         fi
-        SERVER_PID=$CBM_SOAK_SERVER_PID
-        local server_read_fd="${CBM_SOAK_SERVER[0]}"
-        local server_write_fd="${CBM_SOAK_SERVER[1]}"
+        SERVER_PID=$HYP_SOAK_SERVER_PID
+        local server_read_fd="${HYP_SOAK_SERVER[0]}"
+        local server_write_fd="${HYP_SOAK_SERVER[1]}"
         exec 3>&"$server_write_fd"
         exec 4<&"$server_read_fd"
         # Only fd3/fd4 may retain the parent endpoints. Otherwise closing fd3
@@ -224,12 +224,12 @@ start_mcp_server() {
     fi
 
     if [ "$stderr_mode" = "append" ]; then
-        CBM_CACHE_DIR="$SOAK_CACHE_DIR_VALUE" CBM_DIAGNOSTICS=1 CBM_LOG_LEVEL=info \
-            CBM_LOG_FORMAT=text "$BINARY" < "$SERVER_IN" > "$SERVER_OUT" \
+        HYP_CACHE_DIR="$SOAK_CACHE_DIR_VALUE" HYP_DIAGNOSTICS=1 HYP_LOG_LEVEL=info \
+            HYP_LOG_FORMAT=text "$BINARY" < "$SERVER_IN" > "$SERVER_OUT" \
             2>>"$RESULTS_DIR/server-stderr.log" &
     else
-        CBM_CACHE_DIR="$SOAK_CACHE_DIR_VALUE" CBM_DIAGNOSTICS=1 CBM_LOG_LEVEL=info \
-            CBM_LOG_FORMAT=text "$BINARY" < "$SERVER_IN" > "$SERVER_OUT" \
+        HYP_CACHE_DIR="$SOAK_CACHE_DIR_VALUE" HYP_DIAGNOSTICS=1 HYP_LOG_LEVEL=info \
+            HYP_LOG_FORMAT=text "$BINARY" < "$SERVER_IN" > "$SERVER_OUT" \
             2>"$RESULTS_DIR/server-stderr.log" &
     fi
     SERVER_PID=$!
@@ -414,7 +414,7 @@ sys.exit(0 if ok else 1)
 }
 
 # Read the authoritative project key from index_repository's nested text JSON.
-# This mirrors the path canonicalization actually performed by CBM instead of
+# This mirrors the path canonicalization actually performed by HYP instead of
 # guessing from a host/MSYS spelling that can differ on macOS and Windows.
 mcp_response_project() {
     local response="$1"
@@ -515,7 +515,7 @@ refresh_diagnostics_paths() {
     local start_line snapshot_path trajectory_path
     start_line=$(grep '"event":"diagnostics.start"' "$DAEMON_LOG" 2>/dev/null | tail -n 1) || true
     [ -n "$start_line" ] || return 1
-    # The discovery record is JSON (a control record survives CBM_LOG_LEVEL
+    # The discovery record is JSON (a control record survives HYP_LOG_LEVEL
     # suppression); decode the two standard escapes temp paths can carry.
     snapshot_path=$(printf '%s\n' "$start_line" | sed -n 's/.*"snapshot":"\([^"]*\)".*/\1/p' |
         sed 's/\\\([\"\\/]\)/\1/g')
@@ -677,10 +677,10 @@ while [ "$(date +%s)" -lt "$END_TIME" ]; do
     NOW=$(date +%s)
     CYCLE=$((CYCLE + 1))
 
-    if [ "$CBM_SOAK_MODE" = "query-leak" ]; then
+    if [ "$HYP_SOAK_MODE" = "query-leak" ]; then
         # ── #581 query-only leak mode ────────────────────────────────
         # Pure read-query hammering: no mutation, no reindex — so
-        # cbm_mem_collect (mimalloc page return) is NEVER triggered and
+        # hyp_mem_collect (mimalloc page return) is NEVER triggered and
         # cannot sweep a query-only leak. Hammer a VARIETY of read tools to
         # exercise the store-open + WAL + alloc paths the report implicates.
         mcp_call search_graph "{\"project\":\"$PROJ_NAME\",\"name_pattern\":\".*Handle.*\"}" || PASS=false
@@ -747,7 +747,7 @@ CHURN_CYCLES=${SOAK_CLI_CHURN_CYCLES:-40}
 CHURN_FAILS=0
 churn_index=0
 while [ "$churn_index" -lt "$CHURN_CYCLES" ]; do
-    if ! CBM_CACHE_DIR="$SOAK_CACHE_DIR_VALUE" "$BINARY" cli list_projects '{}' \
+    if ! HYP_CACHE_DIR="$SOAK_CACHE_DIR_VALUE" "$BINARY" cli list_projects '{}' \
         >/dev/null 2>>"$RESULTS_DIR/cli-churn-stderr.log"; then
         CHURN_FAILS=$((CHURN_FAILS + 1))
     fi
@@ -763,10 +763,10 @@ collect_snapshot
 
 # ── Phase 5: Crash recovery test ────────────────────────────────
 # Skipped in query-leak mode: crash recovery re-indexes (Phase 5 calls
-# index_repository), which triggers cbm_mem_collect and would mask the #581
+# index_repository), which triggers hyp_mem_collect and would mask the #581
 # query-only leak the whole run is trying to surface.
 
-if [ "$SKIP_CRASH" != "--skip-crash-test" ] && [ "$CBM_SOAK_MODE" != "query-leak" ]; then
+if [ "$SKIP_CRASH" != "--skip-crash-test" ] && [ "$HYP_SOAK_MODE" != "query-leak" ]; then
     echo "--- Phase 5: crash recovery ---"
 
     # Hand an indexing request to the frontend, then kill it without consuming

@@ -39,18 +39,18 @@ windows_targets = ("windows-amd64", "windows-arm64")
 archive_names = tuple(
     sorted(
         [
-            f"codebase-memory-mcp{suffix}-{target}.tar.gz"
+            f"hyponoia{suffix}-{target}.tar.gz"
             for suffix in ("", "-ui")
             for target in unix_targets
         ]
         + [
-            f"codebase-memory-mcp{suffix}-{target}.zip"
+            f"hyponoia{suffix}-{target}.zip"
             for suffix in ("", "-ui")
             for target in windows_targets
         ]
     )
 )
-ui_archive_names = tuple(name for name in archive_names if name.startswith("codebase-memory-mcp-ui-"))
+ui_archive_names = tuple(name for name in archive_names if name.startswith("hyponoia-ui-"))
 expected_base_counts = {
     "archives": 16,
     "binaries": 16,
@@ -76,7 +76,7 @@ ui_count_args = [
 ]
 asset_payloads = {
     "/assets/app.css": b"body{color:#123}\n",
-    "/assets/app.js": b"globalThis.__CBM_UI__ = true;\n",
+    "/assets/app.js": b"globalThis.__HYP_UI__ = true;\n",
     "/index.html": b"<!doctype html><script src='/assets/app.js'></script>\n",
 }
 mime_ids = {".html": 1, ".js": 2, ".css": 3}
@@ -87,7 +87,7 @@ def fail(message: str) -> None:
 
 
 def is_ui(name: str) -> bool:
-    return name.startswith("codebase-memory-mcp-ui-")
+    return name.startswith("hyponoia-ui-")
 
 
 def make_pack(payloads: Dict[str, bytes]) -> bytes:
@@ -104,7 +104,7 @@ def make_pack(payloads: Dict[str, bytes]) -> bytes:
         "<8sHHIIIQQQQQQQ",
         pack,
         0,
-        b"CBMUIPK\0",
+        b"HYPUIPK\0",
         1,
         80,
         0,
@@ -173,11 +173,11 @@ def regular(name: str, data: bytes) -> Dict[str, object]:
 def archive_entries(name: str, mutation: Optional[str] = None) -> List[Dict[str, object]]:
     marker = name.encode("ascii")
     windows = name.endswith(".zip")
-    binary = "codebase-memory-mcp.exe" if windows else "codebase-memory-mcp"
+    binary = "hyponoia.exe" if windows else "hyponoia"
     installer = "install.ps1" if windows else "install.sh"
     entries = [
         regular(binary, b"binary bytes from " + marker + b"\n"),
-        regular("cbm-integrations.json", b'{"schema":1,"integrations":[]}\n'),
+        regular("hyp-integrations.json", b'{"schema":1,"integrations":[]}\n'),
         regular("LICENSE", b"shared release license\n"),
         regular(
             installer,
@@ -189,7 +189,7 @@ def archive_entries(name: str, mutation: Optional[str] = None) -> List[Dict[str,
     ]
     if is_ui(name):
         pack = mutate_pack(mutation) if mutation and mutation.startswith("bad_pack_") else valid_pack
-        entries.append(regular(f"cbm-ui-{hashlib.sha256(pack).hexdigest()}.pack", pack))
+        entries.append(regular(f"hyp-ui-{hashlib.sha256(pack).hexdigest()}.pack", pack))
     return entries
 
 
@@ -203,7 +203,7 @@ def write_archive(path: pathlib.Path, entries: List[Dict[str, object]]) -> None:
                 info.mtime = 1
                 if kind == "regular":
                     data = bytes(entry["data"])
-                    info.mode = 0o755 if name == "codebase-memory-mcp" else 0o644
+                    info.mode = 0o755 if name == "hyponoia" else 0o644
                     info.size = len(data)
                     archive.addfile(info, io.BytesIO(data))
                 elif kind == "directory":
@@ -226,7 +226,7 @@ def write_archive(path: pathlib.Path, entries: List[Dict[str, object]]) -> None:
                 info = zipfile.ZipInfo(name)
                 info.create_system = 3
                 if kind == "regular":
-                    mode = 0o755 if name == "codebase-memory-mcp.exe" else 0o644
+                    mode = 0o755 if name == "hyponoia.exe" else 0o644
                     info.external_attr = (stat.S_IFREG | mode) << 16
                     archive.writestr(info, bytes(entry["data"]))
                 elif kind == "directory":
@@ -252,31 +252,31 @@ def build_matrix(
     archive_dir.mkdir(parents=True)
     expected: Dict[Association, bytes] = {}
     targets = {
-        "bad_hash": "codebase-memory-mcp-ui-linux-amd64.tar.gz",
-        "bad_pack_magic": "codebase-memory-mcp-ui-linux-amd64.tar.gz",
-        "bad_pack_bounds": "codebase-memory-mcp-ui-linux-arm64.tar.gz",
-        "bad_pack_path": "codebase-memory-mcp-ui-darwin-amd64.tar.gz",
-        "bad_pack_mime": "codebase-memory-mcp-ui-darwin-arm64.tar.gz",
-        "directory": "codebase-memory-mcp-linux-amd64.tar.gz",
-        "extra_pack": "codebase-memory-mcp-ui-linux-arm64-portable.tar.gz",
-        "missing_pack": "codebase-memory-mcp-ui-windows-arm64.zip",
-        "nested_member": "codebase-memory-mcp-darwin-amd64.tar.gz",
-        "tar_symlink": "codebase-memory-mcp-linux-arm64.tar.gz",
-        "tar_duplicate": "codebase-memory-mcp-ui-linux-amd64-portable.tar.gz",
-        "zip_symlink": "codebase-memory-mcp-windows-amd64.zip",
-        "zip_directory": "codebase-memory-mcp-windows-arm64.zip",
-        "zip_duplicate": "codebase-memory-mcp-ui-windows-amd64.zip",
+        "bad_hash": "hyponoia-ui-linux-amd64.tar.gz",
+        "bad_pack_magic": "hyponoia-ui-linux-amd64.tar.gz",
+        "bad_pack_bounds": "hyponoia-ui-linux-arm64.tar.gz",
+        "bad_pack_path": "hyponoia-ui-darwin-amd64.tar.gz",
+        "bad_pack_mime": "hyponoia-ui-darwin-arm64.tar.gz",
+        "directory": "hyponoia-linux-amd64.tar.gz",
+        "extra_pack": "hyponoia-ui-linux-arm64-portable.tar.gz",
+        "missing_pack": "hyponoia-ui-windows-arm64.zip",
+        "nested_member": "hyponoia-darwin-amd64.tar.gz",
+        "tar_symlink": "hyponoia-linux-arm64.tar.gz",
+        "tar_duplicate": "hyponoia-ui-linux-amd64-portable.tar.gz",
+        "zip_symlink": "hyponoia-windows-amd64.zip",
+        "zip_directory": "hyponoia-windows-arm64.zip",
+        "zip_duplicate": "hyponoia-ui-windows-amd64.zip",
     }
     target = targets.get(mutation)
     for name in selected_names:
-        if mutation == "missing_archive" and name == "codebase-memory-mcp-linux-amd64.tar.gz":
+        if mutation == "missing_archive" and name == "hyponoia-linux-amd64.tar.gz":
             continue
         pack_mutation = mutation if name == target and mutation and mutation.startswith("bad_pack_") else None
         entries = archive_entries(name, pack_mutation)
         if name == target:
             if mutation == "bad_hash":
                 entries = [entry for entry in entries if not str(entry["name"]).endswith(".pack")]
-                entries.append(regular(f"cbm-ui-{'0' * 64}.pack", valid_pack))
+                entries.append(regular(f"hyp-ui-{'0' * 64}.pack", valid_pack))
             elif mutation in ("directory", "zip_directory"):
                 entries.append({"name": "nested/", "kind": "directory"})
             elif mutation in ("tar_duplicate", "zip_duplicate"):
@@ -286,7 +286,7 @@ def build_matrix(
                     "/assets/other.js": b"console.log('other')\n",
                     "/index.html": b"<!doctype html>other\n",
                 })
-                entries.append(regular(f"cbm-ui-{hashlib.sha256(second).hexdigest()}.pack", second))
+                entries.append(regular(f"hyp-ui-{hashlib.sha256(second).hexdigest()}.pack", second))
             elif mutation == "missing_pack":
                 entries = [entry for entry in entries if not str(entry["name"]).endswith(".pack")]
             elif mutation == "nested_member":
@@ -308,10 +308,10 @@ def build_matrix(
                     for asset_path, payload in asset_payloads.items():
                         expected[("pack_asset", name, member, asset_path)] = payload
     if mutation == "unexpected_archive":
-        unexpected = "codebase-memory-mcp-freebsd-amd64.tar.gz"
-        write_archive(archive_dir / unexpected, archive_entries("codebase-memory-mcp-linux-amd64.tar.gz"))
+        unexpected = "hyponoia-freebsd-amd64.tar.gz"
+        write_archive(archive_dir / unexpected, archive_entries("hyponoia-linux-amd64.tar.gz"))
     if mutation == "oversized_archive":
-        with (archive_dir / "codebase-memory-mcp-linux-amd64.tar.gz").open("r+b") as handle:
+        with (archive_dir / "hyponoia-linux-amd64.tar.gz").open("r+b") as handle:
             handle.truncate(512 * 1024 * 1024 + 1)
     return expected
 
@@ -367,7 +367,7 @@ def assert_clean_failure(case_root: pathlib.Path, mutation: str, message: str) -
 if len(archive_names) != 16 or len(ui_archive_names) != 8:
     fail("fixture matrix no longer describes 16 canonical archives / eight UI archives")
 
-with tempfile.TemporaryDirectory(prefix="cbm-release-scan-contract-") as temporary:
+with tempfile.TemporaryDirectory(prefix="hyp-release-scan-contract-") as temporary:
     work = pathlib.Path(temporary)
     valid = work / "valid"
     expected = build_matrix(valid / "archives")
@@ -379,7 +379,7 @@ with tempfile.TemporaryDirectory(prefix="cbm-release-scan-contract-") as tempora
         fail("scan bundle must publish exactly objects/ plus its two manifests")
 
     association_metadata, rows = parse_manifest(
-        output / "associations.tsv", "cbm-release-scan-associations-v3"
+        output / "associations.tsv", "hyp-release-scan-associations-v3"
     )
     expected_pack_assets = 8 * len(asset_payloads)
     expected_associations = 88 + expected_pack_assets
@@ -431,7 +431,7 @@ with tempfile.TemporaryDirectory(prefix="cbm-release-scan-contract-") as tempora
     if len(script_rows) != 8 or len({row["scan_path"] for row in script_rows}) != 1:
         fail("each pack's JavaScript association must reach one exact deduplicated script object")
 
-    scan_metadata, scan_rows = parse_manifest(output / "scan-set.tsv", "cbm-release-scan-set-v2")
+    scan_metadata, scan_rows = parse_manifest(output / "scan-set.tsv", "hyp-release-scan-set-v2")
     if scan_metadata != {
         "scan_objects": expected_metadata["scan_objects"],
         "associations": expected_associations,
@@ -457,7 +457,7 @@ with tempfile.TemporaryDirectory(prefix="cbm-release-scan-contract-") as tempora
     if ui_result.returncode != 0:
         fail(f"canonical UI-only matrix was rejected: {ui_result.stdout.strip()}")
     ui_metadata, ui_rows = parse_manifest(
-        ui_output / "associations.tsv", "cbm-release-scan-associations-v3"
+        ui_output / "associations.tsv", "hyp-release-scan-associations-v3"
     )
     ui_associations = 48 + expected_pack_assets
     if ui_metadata != {
@@ -480,10 +480,10 @@ with tempfile.TemporaryDirectory(prefix="cbm-release-scan-contract-") as tempora
 
     failure_cases = {
         "bad_hash": "UI pack digest does not match its filename",
-        "bad_pack_magic": "CBMUIPK header/offset contract failed",
-        "bad_pack_bounds": "CBMUIPK header/offset contract failed",
-        "bad_pack_path": "CBMUIPK asset path is invalid",
-        "bad_pack_mime": "CBMUIPK MIME/path contract failed",
+        "bad_pack_magic": "HYPUIPK header/offset contract failed",
+        "bad_pack_bounds": "HYPUIPK header/offset contract failed",
+        "bad_pack_path": "HYPUIPK asset path is invalid",
+        "bad_pack_mime": "HYPUIPK MIME/path contract failed",
         "directory": "non-regular archive member",
         "extra_pack": "exactly one UI pack",
         "missing_archive": "expected exact canonical 16 (all)",
@@ -578,8 +578,8 @@ for workflow_name, workflow, arguments in (
 
 notes = (root / "scripts/ci/append-vt-notes.sh").read_text(encoding="utf-8")
 for required in (
-    "cbm-security-verification:start",
-    "cbm-security-verification:end",
+    "hyp-security-verification:start",
+    "hyp-security-verification:end",
     "binaries/associations.tsv",
     "binaries/vt-results.tsv",
 ):

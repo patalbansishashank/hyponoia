@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# install.sh — One-line installer for codebase-memory-mcp.
+# install.sh — One-line installer for hyponoia.
 #
 # Usage:
-#   curl -fsSL https://raw.githubusercontent.com/DeusData/codebase-memory-mcp/main/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/patalbansishashank/hyponoia/main/install.sh | bash
 #   curl -fsSL ... | bash -s -- --ui          # Install the UI variant
 #   curl -fsSL ... | bash -s -- --dir /path   # Custom install directory
 #
 # Environment:
-#   CBM_DOWNLOAD_URL  Override base URL for downloads (for testing)
+#   HYP_DOWNLOAD_URL  Override base URL for downloads (for testing)
 
 # Wrap in main() to prevent partial execution from piped downloads.
 # If curl|bash is interrupted mid-transfer, bash would execute the partial
@@ -17,11 +17,11 @@ set -euo pipefail
 # called because the final line hasn't arrived yet.
 main() {
 
-REPO="DeusData/codebase-memory-mcp"
+REPO="patalbansishashank/hyponoia"
 INSTALL_DIR="$HOME/.local/bin"
 VARIANT="standard"
 SKIP_CONFIG=false
-CBM_DOWNLOAD_URL="${CBM_DOWNLOAD_URL:-https://github.com/${REPO}/releases/latest/download}"
+HYP_DOWNLOAD_URL="${HYP_DOWNLOAD_URL:-https://github.com/${REPO}/releases/latest/download}"
 
 # Security: every remote hop must remain HTTPS. Plain HTTP is accepted only
 # for an exact loopback authority used by local smoke tests, with redirects
@@ -30,12 +30,12 @@ is_loopback_http_url() {
     [[ "$1" =~ ^http://(localhost|127\.0\.0\.1|\[::1\])(:[0-9]+)?([/?\#].*)?$ ]]
 }
 
-if [[ "$CBM_DOWNLOAD_URL" == https://* ]]; then
-    CBM_DOWNLOAD_LOOPBACK=false
-elif is_loopback_http_url "$CBM_DOWNLOAD_URL"; then
-    CBM_DOWNLOAD_LOOPBACK=true
+if [[ "$HYP_DOWNLOAD_URL" == https://* ]]; then
+    HYP_DOWNLOAD_LOOPBACK=false
+elif is_loopback_http_url "$HYP_DOWNLOAD_URL"; then
+    HYP_DOWNLOAD_LOOPBACK=true
 else
-    echo "error: refusing non-HTTPS download URL: $CBM_DOWNLOAD_URL" >&2
+    echo "error: refusing non-HTTPS download URL: $HYP_DOWNLOAD_URL" >&2
     exit 1
 fi
 
@@ -43,7 +43,7 @@ download_file() {
     local url="$1"
     local destination="$2"
     local progress="$3"
-    if [ "$CBM_DOWNLOAD_LOOPBACK" = true ]; then
+    if [ "$HYP_DOWNLOAD_LOOPBACK" = true ]; then
         is_loopback_http_url "$url" || {
             echo "error: loopback download escaped its authority: $url" >&2
             return 1
@@ -135,11 +135,11 @@ detect_arch() {
 OS=$(detect_os)
 ARCH=$(detect_arch)
 
-echo "codebase-memory-mcp installer"
+echo "hyponoia installer"
 echo "  os:      $OS"
 echo "  arch:    $ARCH"
 echo "  variant: $VARIANT"
-echo "  target:  $INSTALL_DIR/codebase-memory-mcp"
+echo "  target:  $INSTALL_DIR/hyponoia"
 echo ""
 
 # Build download URL
@@ -156,12 +156,12 @@ PORTABLE=""
 [ "$OS" = "linux" ] && PORTABLE="-portable"
 
 if [ "$VARIANT" = "ui" ]; then
-    ARCHIVE="codebase-memory-mcp-ui-${OS}-${ARCH}${PORTABLE}.${EXT}"
+    ARCHIVE="hyponoia-ui-${OS}-${ARCH}${PORTABLE}.${EXT}"
 else
-    ARCHIVE="codebase-memory-mcp-${OS}-${ARCH}${PORTABLE}.${EXT}"
+    ARCHIVE="hyponoia-${OS}-${ARCH}${PORTABLE}.${EXT}"
 fi
 
-URL="${CBM_DOWNLOAD_URL}/${ARCHIVE}"
+URL="${HYP_DOWNLOAD_URL}/${ARCHIVE}"
 
 # Download
 DLDIR=$(mktemp -d)
@@ -170,9 +170,9 @@ trap 'rm -rf "$DLDIR"' EXIT
 echo "Downloading ${ARCHIVE}..."
 download_file "$URL" "$DLDIR/$ARCHIVE" true
 
-# Checksum verification is mandatory. Activation must never stop running CBM
+# Checksum verification is mandatory. Activation must never stop running HYP
 # sessions for a candidate whose published digest was not positively verified.
-CHECKSUM_URL="${CBM_DOWNLOAD_URL}/checksums.txt"
+CHECKSUM_URL="${HYP_DOWNLOAD_URL}/checksums.txt"
 download_file "$CHECKSUM_URL" "$DLDIR/checksums.txt" false || {
     echo "error: could not download checksums.txt" >&2
     exit 1
@@ -236,10 +236,10 @@ echo "Checksum verified."
 # content-addressed pack. Anything else is a release-integrity failure, not a
 # sidecar to ignore.
 if [ "$OS" = "windows" ]; then
-    ARCHIVE_BINARY="codebase-memory-mcp.exe"
+    ARCHIVE_BINARY="hyponoia.exe"
     ARCHIVE_INSTALLER="install.ps1"
 else
-    ARCHIVE_BINARY="codebase-memory-mcp"
+    ARCHIVE_BINARY="hyponoia"
     ARCHIVE_INSTALLER="install.sh"
 fi
 ARCHIVE_MEMBERS_FILE="$DLDIR/archive-members.txt"
@@ -267,13 +267,13 @@ while IFS= read -r member || [ -n "$member" ]; do
     ARCHIVE_MEMBER_COUNT=$((ARCHIVE_MEMBER_COUNT + 1))
     case "$member" in
         "$ARCHIVE_BINARY") BINARY_MEMBERS=$((BINARY_MEMBERS + 1)) ;;
-        cbm-integrations.json) INTEGRATION_MEMBERS=$((INTEGRATION_MEMBERS + 1)) ;;
+        hyp-integrations.json) INTEGRATION_MEMBERS=$((INTEGRATION_MEMBERS + 1)) ;;
         LICENSE) LICENSE_MEMBERS=$((LICENSE_MEMBERS + 1)) ;;
         "$ARCHIVE_INSTALLER") INSTALLER_MEMBERS=$((INSTALLER_MEMBERS + 1)) ;;
         THIRD_PARTY_NOTICES.md) NOTICE_MEMBERS=$((NOTICE_MEMBERS + 1)) ;;
         *)
             if [ "$VARIANT" = "ui" ] &&
-                [[ "$member" =~ ^cbm-ui-[0-9a-f]{64}\.pack$ ]]; then
+                [[ "$member" =~ ^hyp-ui-[0-9a-f]{64}\.pack$ ]]; then
                 UI_PACK_MEMBERS=$((UI_PACK_MEMBERS + 1))
                 UI_PACK_NAME="$member"
             else
@@ -304,7 +304,7 @@ else
     tar -xzf "$DLDIR/$ARCHIVE" -C "$DLDIR"
 fi
 
-for extracted_member in "$ARCHIVE_BINARY" cbm-integrations.json LICENSE \
+for extracted_member in "$ARCHIVE_BINARY" hyp-integrations.json LICENSE \
     "$ARCHIVE_INSTALLER" THIRD_PARTY_NOTICES.md; do
     if [ ! -f "$DLDIR/$extracted_member" ] || [ -L "$DLDIR/$extracted_member" ]; then
         echo "error: release member is not a regular file: $extracted_member" >&2
@@ -325,7 +325,7 @@ if [ "$VARIANT" = "ui" ]; then
         echo "error: UI asset pack not found after extraction" >&2
         exit 1
     fi
-    PACK_EXPECTED="${UI_PACK_NAME#cbm-ui-}"
+    PACK_EXPECTED="${UI_PACK_NAME#hyp-ui-}"
     PACK_EXPECTED="${PACK_EXPECTED%.pack}"
     if command -v sha256sum &>/dev/null; then
         PACK_ACTUAL=$(sha256sum "$DL_UI_PACK" | awk '{print $1}')
@@ -367,8 +367,8 @@ new_exclusive_sibling_temp() {
     mktemp "$directory/.${basename}.tmp.XXXXXX"
 }
 
-DEST="$INSTALL_DIR/codebase-memory-mcp"
-[ "$OS" = "windows" ] && DEST="$INSTALL_DIR/codebase-memory-mcp.exe"
+DEST="$INSTALL_DIR/hyponoia"
+[ "$OS" = "windows" ] && DEST="$INSTALL_DIR/hyponoia.exe"
 INSTALL_ARGS=(-y --force "--dir=$INSTALL_DIR")
 if [ "$SKIP_CONFIG" = true ]; then
     INSTALL_ARGS+=(--skip-config)
@@ -430,7 +430,7 @@ if ! echo "$PATH" | tr ':' '\n' | grep -qx "$INSTALL_DIR"; then
 fi
 
 echo ""
-echo "Done! Restart your coding agent to start using codebase-memory-mcp."
+echo "Done! Restart your coding agent to start using hyponoia."
 
 } # end main()
 

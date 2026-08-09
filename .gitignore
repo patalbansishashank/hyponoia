@@ -1,6 +1,6 @@
 # Binaries
 code-graph-mcp
-/codebase-memory-mcp
+/hyponoia
 bin/
 *.exe
 *.dll
@@ -13,7 +13,7 @@ bin/
 coverage.txt
 
 # Test fixture temp dirs (created by C test suite in CWD instead of /tmp/)
-cbm_*/
+hyp_*/
 cli-*/
 
 # IDE

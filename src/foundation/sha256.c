@@ -24,7 +24,7 @@ static const uint32_t K[64] = {
 #define SIG0(x) (ROTR(x, 7) ^ ROTR(x, 18) ^ ((x) >> 3))
 #define SIG1(x) (ROTR(x, 17) ^ ROTR(x, 19) ^ ((x) >> 10))
 
-static void sha256_transform(cbm_sha256_ctx *c, const uint8_t *data) {
+static void sha256_transform(hyp_sha256_ctx *c, const uint8_t *data) {
     uint32_t m[64];
     for (int i = 0, j = 0; i < 16; i++, j += 4) {
         m[i] = ((uint32_t)data[j] << 24) | ((uint32_t)data[j + 1] << 16) |
@@ -60,7 +60,7 @@ static void sha256_transform(cbm_sha256_ctx *c, const uint8_t *data) {
     c->state[7] += h;
 }
 
-void cbm_sha256_init(cbm_sha256_ctx *c) {
+void hyp_sha256_init(hyp_sha256_ctx *c) {
     c->bitlen = 0;
     c->buflen = 0;
     c->state[0] = 0x6a09e667;
@@ -73,7 +73,7 @@ void cbm_sha256_init(cbm_sha256_ctx *c) {
     c->state[7] = 0x5be0cd19;
 }
 
-void cbm_sha256_update(cbm_sha256_ctx *c, const void *data, size_t len) {
+void hyp_sha256_update(hyp_sha256_ctx *c, const void *data, size_t len) {
     const uint8_t *p = (const uint8_t *)data;
     for (size_t i = 0; i < len; i++) {
         c->buf[c->buflen++] = p[i];
@@ -85,7 +85,7 @@ void cbm_sha256_update(cbm_sha256_ctx *c, const void *data, size_t len) {
     }
 }
 
-void cbm_sha256_final(cbm_sha256_ctx *c, uint8_t out[CBM_SHA256_DIGEST_LEN]) {
+void hyp_sha256_final(hyp_sha256_ctx *c, uint8_t out[HYP_SHA256_DIGEST_LEN]) {
     c->bitlen += (uint64_t)c->buflen * 8;
 
     size_t i = c->buflen;
@@ -114,38 +114,38 @@ void cbm_sha256_final(cbm_sha256_ctx *c, uint8_t out[CBM_SHA256_DIGEST_LEN]) {
     }
 }
 
-void cbm_sha256_hex(const void *data, size_t len, char out[CBM_SHA256_HEX_LEN + 1]) {
-    uint8_t digest[CBM_SHA256_DIGEST_LEN];
-    cbm_sha256_ctx c;
-    cbm_sha256_init(&c);
-    cbm_sha256_update(&c, data, len);
-    cbm_sha256_final(&c, digest);
+void hyp_sha256_hex(const void *data, size_t len, char out[HYP_SHA256_HEX_LEN + 1]) {
+    uint8_t digest[HYP_SHA256_DIGEST_LEN];
+    hyp_sha256_ctx c;
+    hyp_sha256_init(&c);
+    hyp_sha256_update(&c, data, len);
+    hyp_sha256_final(&c, digest);
 
     static const char hex[] = "0123456789abcdef";
-    for (int i = 0; i < CBM_SHA256_DIGEST_LEN; i++) {
+    for (int i = 0; i < HYP_SHA256_DIGEST_LEN; i++) {
         out[i * 2] = hex[digest[i] >> 4];
         out[i * 2 + 1] = hex[digest[i] & 0x0f];
     }
-    out[CBM_SHA256_HEX_LEN] = '\0';
-    cbm_secure_zero(&c, sizeof(c));
-    cbm_secure_zero(digest, sizeof(digest));
+    out[HYP_SHA256_HEX_LEN] = '\0';
+    hyp_secure_zero(&c, sizeof(c));
+    hyp_secure_zero(digest, sizeof(digest));
 }
 
-void cbm_hmac_sha256(const void *key, size_t key_len, const void *data, size_t data_len,
-                     uint8_t out[CBM_SHA256_DIGEST_LEN]) {
+void hyp_hmac_sha256(const void *key, size_t key_len, const void *data, size_t data_len,
+                     uint8_t out[HYP_SHA256_DIGEST_LEN]) {
     enum { SHA256_BLOCK_LEN = 64 };
     const uint8_t *key_bytes = (const uint8_t *)key;
-    uint8_t normalized_key[CBM_SHA256_DIGEST_LEN];
+    uint8_t normalized_key[HYP_SHA256_DIGEST_LEN];
     uint8_t inner_pad[SHA256_BLOCK_LEN];
     uint8_t outer_pad[SHA256_BLOCK_LEN];
-    uint8_t inner_digest[CBM_SHA256_DIGEST_LEN];
+    uint8_t inner_digest[HYP_SHA256_DIGEST_LEN];
 
     if (key_len > SHA256_BLOCK_LEN) {
-        cbm_sha256_ctx key_hash;
-        cbm_sha256_init(&key_hash);
-        cbm_sha256_update(&key_hash, key, key_len);
-        cbm_sha256_final(&key_hash, normalized_key);
-        cbm_secure_zero(&key_hash, sizeof(key_hash));
+        hyp_sha256_ctx key_hash;
+        hyp_sha256_init(&key_hash);
+        hyp_sha256_update(&key_hash, key, key_len);
+        hyp_sha256_final(&key_hash, normalized_key);
+        hyp_secure_zero(&key_hash, sizeof(key_hash));
         key_bytes = normalized_key;
         key_len = sizeof(normalized_key);
     }
@@ -157,22 +157,22 @@ void cbm_hmac_sha256(const void *key, size_t key_len, const void *data, size_t d
         outer_pad[i] ^= key_bytes[i];
     }
 
-    cbm_sha256_ctx inner;
-    cbm_sha256_init(&inner);
-    cbm_sha256_update(&inner, inner_pad, sizeof(inner_pad));
-    cbm_sha256_update(&inner, data, data_len);
-    cbm_sha256_final(&inner, inner_digest);
+    hyp_sha256_ctx inner;
+    hyp_sha256_init(&inner);
+    hyp_sha256_update(&inner, inner_pad, sizeof(inner_pad));
+    hyp_sha256_update(&inner, data, data_len);
+    hyp_sha256_final(&inner, inner_digest);
 
-    cbm_sha256_ctx outer;
-    cbm_sha256_init(&outer);
-    cbm_sha256_update(&outer, outer_pad, sizeof(outer_pad));
-    cbm_sha256_update(&outer, inner_digest, sizeof(inner_digest));
-    cbm_sha256_final(&outer, out);
+    hyp_sha256_ctx outer;
+    hyp_sha256_init(&outer);
+    hyp_sha256_update(&outer, outer_pad, sizeof(outer_pad));
+    hyp_sha256_update(&outer, inner_digest, sizeof(inner_digest));
+    hyp_sha256_final(&outer, out);
 
-    cbm_secure_zero(&inner, sizeof(inner));
-    cbm_secure_zero(&outer, sizeof(outer));
-    cbm_secure_zero(normalized_key, sizeof(normalized_key));
-    cbm_secure_zero(inner_pad, sizeof(inner_pad));
-    cbm_secure_zero(outer_pad, sizeof(outer_pad));
-    cbm_secure_zero(inner_digest, sizeof(inner_digest));
+    hyp_secure_zero(&inner, sizeof(inner));
+    hyp_secure_zero(&outer, sizeof(outer));
+    hyp_secure_zero(normalized_key, sizeof(normalized_key));
+    hyp_secure_zero(inner_pad, sizeof(inner_pad));
+    hyp_secure_zero(outer_pad, sizeof(outer_pad));
+    hyp_secure_zero(inner_digest, sizeof(inner_digest));
 }

@@ -2,7 +2,7 @@
 
 ## Transparency & Disclaimer
 
-codebase-memory-mcp interacts deeply with your filesystem. It reads source files across your entire codebase, writes to agent configuration files, and spawns background processes. This is inherent to what it does — not a bug.
+hyponoia interacts deeply with your filesystem. It reads source files across your entire codebase, writes to agent configuration files, and spawns background processes. This is inherent to what it does — not a bug.
 
 **If you are uncomfortable with these access patterns**, please audit the source code before running. The full source is available in this repository. Release archives produced by the current release pipeline are verifiably built from this source and can be independently verified via SLSA Build Level 3 provenance, Sigstore signatures, and SHA-256 checksums (see [Verification](#verification) below). Each archive contains a native executable and its authenticated release-owned runtime assets.
 
@@ -17,7 +17,7 @@ contents, environment variables, usage metrics, or telemetry.
 The MCP server has one best-effort external runtime check: after MCP
 `initialize`, it starts a background update-check thread that requests release
 metadata from
-`https://api.github.com/repos/DeusData/codebase-memory-mcp/releases/latest`.
+`https://api.github.com/repos/patalbansishashank/hyponoia/releases/latest`.
 That request is used only to show an update notice when a newer release exists.
 It sends no project data; only standard HTTPS metadata, such as the destination
 host and the normal `curl` request headers, are visible to GitHub and the
@@ -29,7 +29,7 @@ check is ignored. The request is also bounded with `curl --max-time 5`; a
 process shutting down immediately while the check is still running may wait for
 that bounded background thread to finish.
 
-Explicit install, package-manager, and `codebase-memory-mcp update` flows are
+Explicit install, package-manager, and `hyponoia update` flows are
 separate user-initiated network operations that download release assets and
 checksums from GitHub.
 
@@ -56,7 +56,7 @@ can fix it before public disclosure:
 
 1. **Do NOT open a public issue, PR, or social-media post** for security
    vulnerabilities.
-2. **Preferred:** use GitHub's [private vulnerability reporting](https://github.com/DeusData/codebase-memory-mcp/security/advisories/new)
+2. **Preferred:** use GitHub's [private vulnerability reporting](https://github.com/patalbansishashank/hyponoia/security/advisories/new)
    (the repository's **Security → Report a vulnerability** button). This keeps
    everything in one place and starts a private advisory automatically.
 3. **Alternative:** email martin.vogel.tech@gmail.com.
@@ -81,7 +81,7 @@ can fix it before public disclosure:
 
 We follow **coordinated disclosure**: fixes are developed privately, validated
 across all supported platforms, released, and only then disclosed publicly via a
-[GitHub Security Advisory](https://github.com/DeusData/codebase-memory-mcp/security/advisories)
+[GitHub Security Advisory](https://github.com/patalbansishashank/hyponoia/security/advisories)
 with a **CVE** and credit to you. The full handling process — including how you
 can verify the fix before release — is documented in
 [`docs/SECURITY-DISCLOSURE.md`](docs/SECURITY-DISCLOSURE.md).
@@ -143,7 +143,7 @@ is no exception path in this release gate.
 
 ### Code-Level Defenses
 
-- **Shell injection prevention** — `cbm_validate_shell_arg()` rejects metacharacters before all `popen()`/`system()` calls
+- **Shell injection prevention** — `hyp_validate_shell_arg()` rejects metacharacters before all `popen()`/`system()` calls
 - **SQLite authorizer** — blocks `ATTACH`/`DETACH` at engine level (prevents file creation via SQL injection)
 - **CORS locked to localhost** — graph UI only accessible from localhost origins
 - **Path containment** — `realpath()` check prevents reading files outside project root
@@ -159,8 +159,8 @@ Users can independently verify any release archive and the runtime set it contai
 ```bash
 # SLSA Build Level 3 provenance for release archives
 gh attestation verify <downloaded-file> \
-  --repo DeusData/codebase-memory-mcp \
-  --signer-workflow DeusData/codebase-memory-mcp/.github/workflows/_build.yml
+  --repo patalbansishashank/hyponoia \
+  --signer-workflow patalbansishashank/hyponoia/.github/workflows/_build.yml
 
 # Sigstore cosign (keyless signature)
 cosign verify-blob --bundle <file>.bundle <file>

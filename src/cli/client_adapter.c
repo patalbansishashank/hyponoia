@@ -29,7 +29,7 @@ static void sb_append_len(adapter_sb_t *sb, const char *s, size_t add) {
         return;
     }
     if (sb->len + add + 1 > sb->cap) {
-        size_t want = sb->cap ? sb->cap : CBM_SZ_2K;
+        size_t want = sb->cap ? sb->cap : HYP_SZ_2K;
         while (want < sb->len + add + 1) {
             if (want > SIZE_MAX / PAIR_LEN) {
                 sb->failed = true;
@@ -91,7 +91,7 @@ static void sb_append_template(adapter_sb_t *sb, const char *text, const char *c
     }
 }
 
-bool cbm_client_adapter_escape_js(const char *in, char *out, size_t out_sz) {
+bool hyp_client_adapter_escape_js(const char *in, char *out, size_t out_sz) {
     if (!in || !out || out_sz == 0) {
         return false;
     }
@@ -134,25 +134,25 @@ bool cbm_client_adapter_escape_js(const char *in, char *out, size_t out_sz) {
 }
 
 /* The module scaffolding (spawn bridge, header note, plugin surface) comes
- * from the hash-verified cbm-integrations.json — those child-process-spawning
+ * from the hash-verified hyp-integrations.json — those child-process-spawning
  * bytes must not live inside the binary (AV surface) — while the tool list is
  * still generated from the live registry, so the adapter cannot drift from
  * the tools the server actually serves. No markers in the template: the
  * managed-block writer adds them and REJECTS content that already carries
  * them, so the body must stay marker-free. */
-char *cbm_client_adapter_pi(const char *binary_path) {
+char *hyp_client_adapter_pi(const char *binary_path) {
     if (!binary_path || !binary_path[0]) {
         return NULL;
     }
-    char bin[CBM_SZ_1K];
-    if (!cbm_client_adapter_escape_js(binary_path, bin, sizeof(bin))) {
+    char bin[HYP_SZ_1K];
+    if (!hyp_client_adapter_escape_js(binary_path, bin, sizeof(bin))) {
         return NULL;
     }
-    int count = cbm_mcp_tool_count();
+    int count = hyp_mcp_tool_count();
     if (count <= 0) {
         return NULL;
     }
-    const cbm_integration_template_t *tpl = cbm_integration_template("adapter_pi");
+    const hyp_integration_template_t *tpl = hyp_integration_template("adapter_pi");
     if (!tpl || !tpl->tool_line || !tpl->current.bin_mode ||
         strcmp(tpl->current.bin_mode, "js") != 0) {
         return NULL;
@@ -162,7 +162,7 @@ char *cbm_client_adapter_pi(const char *binary_path) {
      * subset, which is the drift this generator exists to prevent. */
     adapter_sb_t tools = {0};
     for (int i = 0; i < count; i++) {
-        const char *name = cbm_mcp_tool_name(i);
+        const char *name = hyp_mcp_tool_name(i);
         if (!name || !name[0]) {
             continue;
         }
@@ -187,15 +187,15 @@ char *cbm_client_adapter_pi(const char *binary_path) {
     return sb.buf;
 }
 
-char *cbm_client_adapter_opencode(const char *binary_path) {
+char *hyp_client_adapter_opencode(const char *binary_path) {
     if (!binary_path || !binary_path[0]) {
         return NULL;
     }
-    char bin[CBM_SZ_1K];
-    if (!cbm_client_adapter_escape_js(binary_path, bin, sizeof(bin))) {
+    char bin[HYP_SZ_1K];
+    if (!hyp_client_adapter_escape_js(binary_path, bin, sizeof(bin))) {
         return NULL;
     }
-    const cbm_integration_template_t *tpl = cbm_integration_template("adapter_opencode");
+    const hyp_integration_template_t *tpl = hyp_integration_template("adapter_opencode");
     if (!tpl || !tpl->current.bin_mode || strcmp(tpl->current.bin_mode, "js") != 0) {
         return NULL;
     }

@@ -7,7 +7,7 @@
 # bytes inside a native executable is unnecessary mixed-content with plausible
 # static-classifier overlap. That is a risk-reduction rationale, not feature
 # attribution for an opaque vendor verdict. Those bodies now live in
-# assets/cbm-integrations.json (hash-verified; the binary embeds only the
+# assets/hyp-integrations.json (hash-verified; the binary embeds only the
 # SHA-256), and this contract is the proof the removal STAYS removed: one
 # revived string literal would silently hand the next release its
 # malware-shaped surface back, and nothing else in CI would notice.
@@ -17,7 +17,7 @@
 #      node:child_process literal. Absence at source level makes absence a
 #      BUILD property of every artifact (standard, ui, all platforms) — not a
 #      reachability assumption about any one binary.
-#   2. ARTIFACT: when build/c/codebase-memory-mcp exists, its bytes are scanned
+#   2. ARTIFACT: when build/c/hyponoia exists, its bytes are scanned
 #      directly. scripts/ci/check-binary-composition.sh runs the script needles
 #      on every release variant (A6 and A7), so a
 #      missing local build here skips only a redundant leg, never the property.
@@ -61,7 +61,7 @@ def strip_comments(text):
 
 # A file may opt out only with a justified, at-the-case entry (O10): the
 # exact repo-relative path plus WHY. Empty on purpose — the templates live in
-# assets/cbm-integrations.json, and no production source needs script text.
+# assets/hyp-integrations.json, and no production source needs script text.
 ALLOWLIST = {
     # "src/foo/bar.c": "why this file legitimately embeds script text",
 }
@@ -75,9 +75,9 @@ SOURCE_NEEDLES = ["#!", "node:child_process"]
 # artifact leg and the release gate still cover whatever they contribute).
 SOURCE_GLOBS = [
     "src/**/*.c",
-    "internal/cbm/*.c",
-    "internal/cbm/lsp/*.c",
-    "internal/cbm/lsp/generated/*.c",
+    "internal/hyp/*.c",
+    "internal/hyp/lsp/*.c",
+    "internal/hyp/lsp/generated/*.c",
 ]
 
 failures = []
@@ -107,9 +107,9 @@ for must_scan in ("src/cli/cli.c", "src/cli/client_adapter.c"):
 composition = (root / "scripts/ci/check-binary-composition.sh").read_text(
     encoding="utf-8", errors="replace"
 )
-if "CBM_CHECK_UI_SCRIPTS_ABSENT" in composition:
+if "HYP_CHECK_UI_SCRIPTS_ABSENT" in composition:
     failures.append("binary composition gate still permits UI script-scan bypass")
-for required in ("A6-no-embedded-scripts", "A7-no-ui-asset-bytes", "CBMUIPK",
+for required in ("A6-no-embedded-scripts", "A7-no-ui-asset-bytes", "HYPUIPK",
                  "<!doctype html>", '<script type="module" crossorigin'):
     if required not in composition:
         failures.append(f"binary composition gate is missing {required!r}")
@@ -127,14 +127,14 @@ else:
 # supervisor tests. They must be compiled out of ordinary production builds,
 # while the broad source-matrix smoke explicitly opts into them so coverage is
 # preserved rather than silently deleted.
-cbm_source = (root / "internal/cbm/cbm.c").read_text(
+hyp_source = (root / "internal/hyp/hyp.c").read_text(
     encoding="utf-8", errors="replace"
 )
-if "#ifdef CBM_ENABLE_TEST_SEAMS\n/* Deterministic supervisor fault injection" not in cbm_source:
-    failures.append("internal crash/hang fault injector is not behind CBM_ENABLE_TEST_SEAMS")
-if "#ifdef CBM_ENABLE_TEST_SEAMS\n    cbm_test_fault_inject(rel_path);\n#endif" not in cbm_source:
-    failures.append("fault-injector call site is not behind CBM_ENABLE_TEST_SEAMS")
-for needle in ("CBM_TEST_CRASH_ON", "CBM_TEST_HANG_ON"):
+if "#ifdef HYP_ENABLE_TEST_SEAMS\n/* Deterministic supervisor fault injection" not in hyp_source:
+    failures.append("internal crash/hang fault injector is not behind HYP_ENABLE_TEST_SEAMS")
+if "#ifdef HYP_ENABLE_TEST_SEAMS\n    hyp_test_fault_inject(rel_path);\n#endif" not in hyp_source:
+    failures.append("fault-injector call site is not behind HYP_ENABLE_TEST_SEAMS")
+for needle in ("HYP_TEST_CRASH_ON", "HYP_TEST_HANG_ON"):
     if needle not in composition.split("SEAM_NEEDLES=(", 1)[-1].split(")", 1)[0]:
         failures.append(f"binary composition gate does not forbid {needle}")
 smoke_workflow = (root / ".github/workflows/smoke.yml").read_text(
@@ -147,7 +147,7 @@ if smoke_workflow.count("TEST_SEAMS=1") != 3:
 # because tests need it. One stub substitution keeps each link topology exact:
 # standard = no-I/O stub; UI = real parser + generated manifest; test/repro/TSan
 # = real parser + empty manifest. Linking either manifest twice is an error.
-makefile = (root / "Makefile.cbm").read_text(encoding="utf-8", errors="replace")
+makefile = (root / "Makefile.hyp").read_text(encoding="utf-8", errors="replace")
 for required in (
     "src/ui/asset_pack_stub.c",
     "TEST_PROD_SRCS = $(subst src/ui/asset_pack_stub.c,src/ui/asset_pack.c "
@@ -174,7 +174,7 @@ if failures:
     print(f"FAIL: {len(failures)} native-image byte-boundary violation(s):\n")
     for f in failures:
         print(f"  - {f}")
-    print("\nIntegration bodies belong in assets/cbm-integrations.json (verified by "
+    print("\nIntegration bodies belong in assets/hyp-integrations.json (verified by "
           "the embedded SHA-256), and frontend bytes belong in the verified UI pack, "
           "never in the binary. A justified exception needs "
           "an ALLOWLIST entry in this file.")
@@ -184,7 +184,7 @@ print(f"OK: {scanned} production source file(s) free of script literals")
 PY
 
 # ── Artifact leg ─────────────────────────────────────────────────────
-BINARY="build/c/codebase-memory-mcp"
+BINARY="build/c/hyponoia"
 if [ ! -f "$BINARY" ]; then
     # Not a silent green: name exactly why this leg may skip (O10). The source
     # leg above already proved the build property, and the release gate
@@ -195,7 +195,7 @@ fi
 
 fail=0
 for needle in '#!/usr/bin/env bash' '#!/bin/bash' '#!/bin/sh' 'node:child_process' \
-    'CBMUIPK' '<!doctype html>' '<html lang="en" class="dark">' \
+    'HYPUIPK' '<!doctype html>' '<html lang="en" class="dark">' \
     '<script type="module" crossorigin'; do
     if LC_ALL=C grep -a -q -F -e "$needle" "$BINARY"; then
         echo "FAIL: built binary contains '$needle' — sidecar bytes are embedded again"
@@ -204,7 +204,7 @@ for needle in '#!/usr/bin/env bash' '#!/bin/bash' '#!/bin/sh' 'node:child_proces
 done
 # Anti-vacuity canary, same as the release gate: proves the scan reads a real
 # artifact rather than a stub/truncated file where absence is meaningless.
-if ! LC_ALL=C grep -a -q -F -e 'codebase-memory-mcp' "$BINARY"; then
+if ! LC_ALL=C grep -a -q -F -e 'hyponoia' "$BINARY"; then
     echo "FAIL: canary string missing — $BINARY is not a readable product binary"
     fail=1
 fi

@@ -336,7 +336,7 @@ jobs:
           RELEASE_VERSION: ${{ inputs.version }}
         # A prerelease must never become npm `latest` — plain `npm install`
         # would serve the RC to everyone. Publish prereleases under the
-        # `next` dist-tag; testers opt in via `npm i codebase-memory-mcp@next`.
+        # `next` dist-tag; testers opt in via `npm i hyponoia@next`.
         run: |
           if [[ "$RELEASE_VERSION" == *-* ]]; then
             npm publish --access public --provenance --tag next

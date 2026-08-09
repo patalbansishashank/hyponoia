@@ -4,8 +4,8 @@
  * Provides: thread create/join, mutex, aligned allocation.
  * All have zero overhead on POSIX (thin inlines or macros).
  */
-#ifndef CBM_COMPAT_THREAD_H
-#define CBM_COMPAT_THREAD_H
+#ifndef HYP_COMPAT_THREAD_H
+#define HYP_COMPAT_THREAD_H
 
 #include <stddef.h>
 
@@ -20,7 +20,7 @@
 
 typedef struct {
     HANDLE handle;
-} cbm_thread_t;
+} hyp_thread_t;
 
 #else /* POSIX */
 
@@ -28,19 +28,19 @@ typedef struct {
 
 typedef struct {
     pthread_t handle;
-} cbm_thread_t;
+} hyp_thread_t;
 
 #endif
 
 /* Create a thread with the given stack size (0 = OS default).
  * fn receives arg. Returns 0 on success. */
-int cbm_thread_create(cbm_thread_t *t, size_t stack_size, void *(*fn)(void *), void *arg);
+int hyp_thread_create(hyp_thread_t *t, size_t stack_size, void *(*fn)(void *), void *arg);
 
 /* Wait for thread to finish. Returns 0 on success. */
-int cbm_thread_join(cbm_thread_t *t);
+int hyp_thread_join(hyp_thread_t *t);
 
 /* Detach thread so resources are freed on exit. Returns 0 on success. */
-int cbm_thread_detach(cbm_thread_t *t);
+int hyp_thread_detach(hyp_thread_t *t);
 
 /* ── Mutex ────────────────────────────────────────────────────── */
 
@@ -48,28 +48,28 @@ int cbm_thread_detach(cbm_thread_t *t);
 
 typedef struct {
     CRITICAL_SECTION cs;
-} cbm_mutex_t;
+} hyp_mutex_t;
 
 #else
 
 typedef struct {
     pthread_mutex_t mtx;
-} cbm_mutex_t;
+} hyp_mutex_t;
 
 #endif
 
-void cbm_mutex_init(cbm_mutex_t *m);
-void cbm_mutex_lock(cbm_mutex_t *m);
-void cbm_mutex_unlock(cbm_mutex_t *m);
-void cbm_mutex_destroy(cbm_mutex_t *m);
+void hyp_mutex_init(hyp_mutex_t *m);
+void hyp_mutex_lock(hyp_mutex_t *m);
+void hyp_mutex_unlock(hyp_mutex_t *m);
+void hyp_mutex_destroy(hyp_mutex_t *m);
 
 /* ── Aligned allocation ───────────────────────────────────────── */
 
 /* Allocate size bytes aligned to alignment boundary.
  * Returns 0 on success, non-zero on failure. *ptr receives the allocation. */
-int cbm_aligned_alloc(void **ptr, size_t alignment, size_t size);
+int hyp_aligned_alloc(void **ptr, size_t alignment, size_t size);
 
-/* Free memory from cbm_aligned_alloc. */
-void cbm_aligned_free(void *ptr);
+/* Free memory from hyp_aligned_alloc. */
+void hyp_aligned_free(void *ptr);
 
-#endif /* CBM_COMPAT_THREAD_H */
+#endif /* HYP_COMPAT_THREAD_H */

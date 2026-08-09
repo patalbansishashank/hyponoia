@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# codebase-memory-mcp setup script (macOS + Linux)
+# hyponoia setup script (macOS + Linux)
 # Default: download pre-built binary from GitHub Release
 # --from-source: build from source (requires Go + C compiler)
 
-REPO="DeusData/codebase-memory-mcp"
+REPO="patalbansishashank/hyponoia"
 INSTALL_DIR="$HOME/.local/bin"
-BINARY_NAME="codebase-memory-mcp"
-SOURCE_DIR="$HOME/.local/share/codebase-memory-mcp"
+BINARY_NAME="hyponoia"
+SOURCE_DIR="$HOME/.local/share/hyponoia"
 CLEANUP_DIR=""  # set by download_binary for EXIT trap
 
 # --- Colors ---
@@ -146,14 +146,14 @@ fetch() {
 
 install_integration_asset() {
     local source_dir="$1"
-    local source_path="${source_dir}/cbm-integrations.json"
+    local source_path="${source_dir}/hyp-integrations.json"
 
     if [ ! -f "$source_path" ]; then
-        die "Runtime asset missing from build or release: cbm-integrations.json"
+        die "Runtime asset missing from build or release: hyp-integrations.json"
     fi
 
-    cp "$source_path" "${INSTALL_DIR}/cbm-integrations.json"
-    chmod 644 "${INSTALL_DIR}/cbm-integrations.json"
+    cp "$source_path" "${INSTALL_DIR}/hyp-integrations.json"
+    chmod 644 "${INSTALL_DIR}/hyp-integrations.json"
 }
 
 download_binary() {
@@ -169,7 +169,7 @@ download_binary() {
     fi
     ok "Latest release: $tag"
 
-    local asset="codebase-memory-mcp-${platform}.tar.gz"
+    local asset="hyponoia-${platform}.tar.gz"
     local url="https://github.com/${REPO}/releases/download/${tag}/${asset}"
 
     echo "${BOLD}Downloading ${asset}...${RESET}"
@@ -213,7 +213,7 @@ build_from_source() {
     mkdir -p "$INSTALL_DIR"
 
     (cd "$SOURCE_DIR" && scripts/build.sh)
-    cp "${SOURCE_DIR}/build/c/codebase-memory-mcp" "${INSTALL_DIR}/${BINARY_NAME}"
+    cp "${SOURCE_DIR}/build/c/hyponoia" "${INSTALL_DIR}/${BINARY_NAME}"
     chmod +x "${INSTALL_DIR}/${BINARY_NAME}"
     install_integration_asset "${SOURCE_DIR}/build/c"
 
@@ -228,7 +228,7 @@ configure_claude() {
     local claude_config_dir="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
     local settings_file="${claude_config_dir}/settings.json"
 
-    printf "%s" "${BOLD}Configure Claude Code to use codebase-memory-mcp? [y/N] ${RESET}"
+    printf "%s" "${BOLD}Configure Claude Code to use hyponoia? [y/N] ${RESET}"
     read -r answer
     if [[ ! "$answer" =~ ^[Yy]$ ]]; then
         echo ""
@@ -236,7 +236,7 @@ configure_claude() {
         echo ""
         echo '  {'
         echo '    "mcpServers": {'
-        echo '      "codebase-memory-mcp": {'
+        echo '      "hyponoia": {'
         echo '        "type": "stdio",'
         echo "        \"command\": \"${binary_path}\""
         echo '      }'
@@ -258,10 +258,10 @@ JSONEOF
         if [ -f "$settings_file" ]; then
             local tmp
             tmp=$(mktemp)
-            jq --argjson entry "$mcp_entry" '.mcpServers["codebase-memory-mcp"] = $entry' "$settings_file" > "$tmp"
+            jq --argjson entry "$mcp_entry" '.mcpServers["hyponoia"] = $entry' "$settings_file" > "$tmp"
             mv "$tmp" "$settings_file"
         else
-            echo "{}" | jq --argjson entry "$mcp_entry" '.mcpServers["codebase-memory-mcp"] = $entry' > "$settings_file"
+            echo "{}" | jq --argjson entry "$mcp_entry" '.mcpServers["hyponoia"] = $entry' > "$settings_file"
         fi
         ok "Updated ${settings_file}"
     elif command -v python3 &>/dev/null; then
@@ -272,7 +272,7 @@ data = {}
 if os.path.exists(path):
     with open(path) as f:
         data = json.load(f)
-data.setdefault('mcpServers', {})['codebase-memory-mcp'] = json.loads('$mcp_entry')
+data.setdefault('mcpServers', {})['hyponoia'] = json.loads('$mcp_entry')
 with open(path, 'w') as f:
     json.dump(data, f, indent=2)
 print()
@@ -284,7 +284,7 @@ print()
         info "Add this to ${settings_file} manually:"
         echo ""
         echo '  "mcpServers": {'
-        echo '    "codebase-memory-mcp": {'
+        echo '    "hyponoia": {'
         echo '      "type": "stdio",'
         echo "      \"command\": \"${binary_path}\""
         echo '    }'
@@ -307,7 +307,7 @@ check_path() {
 # --- Main ---
 
 echo ""
-echo "${BOLD}codebase-memory-mcp installer${RESET}"
+echo "${BOLD}hyponoia installer${RESET}"
 echo ""
 
 if [ "$FROM_SOURCE" = true ]; then
@@ -347,6 +347,6 @@ ok "Done! Restart Claude Code and verify with /mcp"
 echo ""
 info "To uninstall:"
 info "  rm ${INSTALL_DIR}/${BINARY_NAME}"
-info "  rm ${INSTALL_DIR}/cbm-integrations.json"
+info "  rm ${INSTALL_DIR}/hyp-integrations.json"
 info "  rm -rf ${SOURCE_DIR}  # if built from source"
-info "  rm -rf ~/.cache/codebase-memory-mcp/  # graph database"
+info "  rm -rf ~/.cache/hyponoia/  # graph database"

@@ -35,60 +35,60 @@ enum {
     UI_PATH_CAP = 4096,
 };
 
-#define UI_PACK_MAX_BYTES ((size_t)CBM_SZ_64K * CBM_SZ_1K)
+#define UI_PACK_MAX_BYTES ((size_t)HYP_SZ_64K * HYP_SZ_1K)
 
 typedef struct {
     unsigned char *bytes;
     size_t length;
-    cbm_ui_asset_t *assets;
+    hyp_ui_asset_t *assets;
     size_t asset_count;
     char *paths;
 } ui_asset_snapshot_t;
 
 static ui_asset_snapshot_t g_snapshot;
-static atomic_int g_state = CBM_UI_ASSETS_COLD;
+static atomic_int g_state = HYP_UI_ASSETS_COLD;
 static atomic_bool g_cancel_requested = false;
 static char g_binary_path[UI_PATH_CAP];
 
-#ifdef CBM_CLI_ENABLE_TEST_API
+#ifdef HYP_CLI_ENABLE_TEST_API
 static bool g_test_manifest_set;
 static char g_test_pack_name[UI_PATH_CAP];
-static char g_test_sha256[CBM_SHA256_HEX_LEN + 1U];
+static char g_test_sha256[HYP_SHA256_HEX_LEN + 1U];
 static uint64_t g_test_size;
 #endif
 
 static const char *ui_manifest_name(void) {
-#ifdef CBM_CLI_ENABLE_TEST_API
+#ifdef HYP_CLI_ENABLE_TEST_API
     if (g_test_manifest_set) {
         return g_test_pack_name;
     }
 #endif
-    return CBM_UI_ASSET_PACK_NAME;
+    return HYP_UI_ASSET_PACK_NAME;
 }
 
 static const char *ui_manifest_sha256(void) {
-#ifdef CBM_CLI_ENABLE_TEST_API
+#ifdef HYP_CLI_ENABLE_TEST_API
     if (g_test_manifest_set) {
         return g_test_sha256;
     }
 #endif
-    return CBM_UI_ASSET_SHA256;
+    return HYP_UI_ASSET_SHA256;
 }
 
 static uint64_t ui_manifest_size(void) {
-#ifdef CBM_CLI_ENABLE_TEST_API
+#ifdef HYP_CLI_ENABLE_TEST_API
     if (g_test_manifest_set) {
         return g_test_size;
     }
 #endif
-    return CBM_UI_ASSET_SIZE;
+    return HYP_UI_ASSET_SIZE;
 }
 
 static bool ui_hex_sha256(const char *value) {
-    if (!value || strlen(value) != CBM_SHA256_HEX_LEN) {
+    if (!value || strlen(value) != HYP_SHA256_HEX_LEN) {
         return false;
     }
-    for (size_t index = 0; index < CBM_SHA256_HEX_LEN; index++) {
+    for (size_t index = 0; index < HYP_SHA256_HEX_LEN; index++) {
         char byte = value[index];
         if (!((byte >= '0' && byte <= '9') || (byte >= 'a' && byte <= 'f'))) {
             return false;
@@ -98,18 +98,18 @@ static bool ui_hex_sha256(const char *value) {
 }
 
 static bool ui_content_addressed_name(const char *name, const char *sha256) {
-    static const char prefix[] = "cbm-ui-";
+    static const char prefix[] = "hyp-ui-";
     static const char suffix[] = ".pack";
     if (!name || !sha256 || strncmp(name, prefix, sizeof(prefix) - 1U) != 0) {
         return false;
     }
-    size_t expected_length = (sizeof(prefix) - 1U) + CBM_SHA256_HEX_LEN + (sizeof(suffix) - 1U);
+    size_t expected_length = (sizeof(prefix) - 1U) + HYP_SHA256_HEX_LEN + (sizeof(suffix) - 1U);
     return strlen(name) == expected_length &&
-           strncmp(name + sizeof(prefix) - 1U, sha256, CBM_SHA256_HEX_LEN) == 0 &&
+           strncmp(name + sizeof(prefix) - 1U, sha256, HYP_SHA256_HEX_LEN) == 0 &&
            strcmp(name + expected_length - (sizeof(suffix) - 1U), suffix) == 0;
 }
 
-bool cbm_ui_assets_supported(void) {
+bool hyp_ui_assets_supported(void) {
     const char *name = ui_manifest_name();
     const char *sha256 = ui_manifest_sha256();
     uint64_t size = ui_manifest_size();
@@ -117,11 +117,11 @@ bool cbm_ui_assets_supported(void) {
            ui_content_addressed_name(name, sha256);
 }
 
-const char *cbm_ui_assets_current_pack_name(void) {
-    return cbm_ui_assets_supported() ? ui_manifest_name() : NULL;
+const char *hyp_ui_assets_current_pack_name(void) {
+    return hyp_ui_assets_supported() ? ui_manifest_name() : NULL;
 }
 
-void cbm_ui_assets_set_binary_path(const char *path) {
+void hyp_ui_assets_set_binary_path(const char *path) {
     if (!path) {
         g_binary_path[0] = '\0';
         return;
@@ -300,7 +300,7 @@ static bool ui_parse_pack(unsigned char *bytes, size_t length, ui_asset_snapshot
         paths_bytes > SIZE_MAX - file_count || payload_bytes > SIZE_MAX) {
         return false;
     }
-    cbm_ui_asset_t *assets = calloc(file_count, sizeof(*assets));
+    hyp_ui_asset_t *assets = calloc(file_count, sizeof(*assets));
     char *paths = malloc((size_t)paths_bytes + file_count);
     if (!assets || !paths) {
         free(assets);
@@ -344,20 +344,20 @@ static bool ui_parse_pack(unsigned char *bytes, size_t length, ui_asset_snapshot
         const char *mime = ui_mime_type(mime_id);
         bool index_asset = strcmp(stored_path, "/index.html") == 0;
         if (!mime || ui_expected_mime(stored_path) != mime_id ||
-            (index_asset ? cache_id != CBM_UI_ASSET_REVALIDATE
-                         : cache_id != CBM_UI_ASSET_IMMUTABLE) ||
+            (index_asset ? cache_id != HYP_UI_ASSET_REVALIDATE
+                         : cache_id != HYP_UI_ASSET_IMMUTABLE) ||
             (index_asset && has_index)) {
             free(assets);
             free(paths);
             return false;
         }
         has_index = has_index || index_asset;
-        assets[index] = (cbm_ui_asset_t){
+        assets[index] = (hyp_ui_asset_t){
             .path = stored_path,
             .data = bytes + (size_t)payload_offset + (size_t)data_offset,
             .size = (size_t)data_length,
             .content_type = mime,
-            .cache = (cbm_ui_asset_cache_t)cache_id,
+            .cache = (hyp_ui_asset_cache_t)cache_id,
         };
         previous_path = path_bytes;
         previous_length = path_length;
@@ -384,9 +384,9 @@ static bool ui_parse_pack(unsigned char *bytes, size_t length, ui_asset_snapshot
 static bool ui_read_regular_file(const char *path, unsigned char **bytes_out, size_t *length_out) {
     *bytes_out = NULL;
     *length_out = 0U;
-    cbm_path_info_t info;
+    hyp_path_info_t info;
     uint64_t expected = ui_manifest_size();
-    if (!path || cbm_path_info_utf8(path, &info) != 0 || !info.is_regular || info.is_symlink ||
+    if (!path || hyp_path_info_utf8(path, &info) != 0 || !info.is_regular || info.is_symlink ||
         info.size <= 0 || (uint64_t)info.size != expected || expected > UI_PACK_MAX_BYTES) {
         return false;
     }
@@ -395,7 +395,7 @@ static bool ui_read_regular_file(const char *path, unsigned char **bytes_out, si
         return false;
     }
 #ifdef _WIN32
-    wchar_t *wide = cbm_path_to_wide(path);
+    wchar_t *wide = hyp_path_to_wide(path);
     HANDLE file = wide ? CreateFileW(wide, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_DELETE, NULL,
                                      OPEN_EXISTING,
                                      FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OPEN_REPARSE_POINT, NULL)
@@ -417,7 +417,7 @@ static bool ui_read_regular_file(const char *path, unsigned char **bytes_out, si
     while (ok && offset < (size_t)expected &&
            !atomic_load_explicit(&g_cancel_requested, memory_order_acquire)) {
         DWORD chunk =
-            (DWORD)(((size_t)expected - offset) > CBM_SZ_64K ? CBM_SZ_64K
+            (DWORD)(((size_t)expected - offset) > HYP_SZ_64K ? HYP_SZ_64K
                                                              : ((size_t)expected - offset));
         DWORD got = 0U;
         ok = ReadFile(file, bytes + offset, chunk, &got, NULL) && got == chunk;
@@ -441,8 +441,8 @@ static bool ui_read_regular_file(const char *path, unsigned char **bytes_out, si
     while (ok && offset < (size_t)expected &&
            !atomic_load_explicit(&g_cancel_requested, memory_order_acquire)) {
         size_t chunk = (size_t)expected - offset;
-        if (chunk > CBM_SZ_64K) {
-            chunk = CBM_SZ_64K;
+        if (chunk > HYP_SZ_64K) {
+            chunk = HYP_SZ_64K;
         }
         ssize_t got = read(file, bytes + offset, chunk);
         if (got < 0 && errno == EINTR) {
@@ -469,27 +469,27 @@ static bool ui_read_regular_file(const char *path, unsigned char **bytes_out, si
 }
 
 static bool ui_verify_bytes(const unsigned char *bytes, size_t length) {
-    cbm_sha256_ctx hash;
-    cbm_sha256_init(&hash);
-    for (size_t offset = 0U; offset < length; offset += CBM_SZ_64K) {
+    hyp_sha256_ctx hash;
+    hyp_sha256_init(&hash);
+    for (size_t offset = 0U; offset < length; offset += HYP_SZ_64K) {
         if (atomic_load_explicit(&g_cancel_requested, memory_order_acquire)) {
             return false;
         }
         size_t chunk = length - offset;
-        if (chunk > CBM_SZ_64K) {
-            chunk = CBM_SZ_64K;
+        if (chunk > HYP_SZ_64K) {
+            chunk = HYP_SZ_64K;
         }
-        cbm_sha256_update(&hash, bytes + offset, chunk);
+        hyp_sha256_update(&hash, bytes + offset, chunk);
     }
-    uint8_t digest[CBM_SHA256_DIGEST_LEN];
-    cbm_sha256_final(&hash, digest);
+    uint8_t digest[HYP_SHA256_DIGEST_LEN];
+    hyp_sha256_final(&hash, digest);
     static const char hex_chars[] = "0123456789abcdef";
-    char hex[CBM_SHA256_HEX_LEN + 1U];
+    char hex[HYP_SHA256_HEX_LEN + 1U];
     for (size_t index = 0U; index < sizeof(digest); index++) {
         hex[index * 2U] = hex_chars[digest[index] >> 4U];
         hex[index * 2U + 1U] = hex_chars[digest[index] & 0x0fU];
     }
-    hex[CBM_SHA256_HEX_LEN] = '\0';
+    hex[HYP_SHA256_HEX_LEN] = '\0';
     return strcmp(hex, ui_manifest_sha256()) == 0;
 }
 
@@ -533,8 +533,8 @@ static bool ui_try_path(const char *path, ui_asset_snapshot_t *snapshot) {
     return true;
 }
 
-bool cbm_ui_assets_verify_file(const char *path) {
-    if (!cbm_ui_assets_supported() || !path || !path[0]) {
+bool hyp_ui_assets_verify_file(const char *path) {
+    if (!hyp_ui_assets_supported() || !path || !path[0]) {
         return false;
     }
     ui_asset_snapshot_t verified = {0};
@@ -545,12 +545,12 @@ bool cbm_ui_assets_verify_file(const char *path) {
 
 static bool ui_resolve_snapshot(const char *home, ui_asset_snapshot_t *snapshot) {
     static const char missing[] = "\x1f"
-                                  "CBM_UI_ASSETS_DIR_MISSING"
+                                  "HYP_UI_ASSETS_DIR_MISSING"
                                   "\x1f";
     char env_buffer[UI_PATH_CAP];
     char candidate[UI_PATH_CAP];
     const char *override =
-        cbm_safe_getenv("CBM_UI_ASSETS_DIR", env_buffer, sizeof(env_buffer), missing);
+        hyp_safe_getenv("HYP_UI_ASSETS_DIR", env_buffer, sizeof(env_buffer), missing);
     if (!override) {
         return false;
     }
@@ -560,16 +560,16 @@ static bool ui_resolve_snapshot(const char *home, ui_asset_snapshot_t *snapshot)
     char binary_directory[UI_PATH_CAP];
     if (ui_binary_directory(binary_directory)) {
         if (ui_candidate_path(binary_directory, candidate)) {
-            cbm_path_info_t info;
-            if (cbm_path_info_utf8(candidate, &info) == 0) {
+            hyp_path_info_t info;
+            if (hyp_path_info_utf8(candidate, &info) == 0) {
                 return ui_try_path(candidate, snapshot);
             }
         }
-        int written = snprintf(candidate, sizeof(candidate), "%s/../share/codebase-memory-mcp/%s",
+        int written = snprintf(candidate, sizeof(candidate), "%s/../share/hyponoia/%s",
                                binary_directory, ui_manifest_name());
         if (written > 0 && (size_t)written < sizeof(candidate)) {
-            cbm_path_info_t info;
-            if (cbm_path_info_utf8(candidate, &info) == 0) {
+            hyp_path_info_t info;
+            if (hyp_path_info_utf8(candidate, &info) == 0) {
                 return ui_try_path(candidate, snapshot);
             }
         }
@@ -578,18 +578,18 @@ static bool ui_resolve_snapshot(const char *home, ui_asset_snapshot_t *snapshot)
     return false;
 }
 
-bool cbm_ui_assets_warm(const char *home, char *err, size_t err_sz) {
-    if (!cbm_ui_assets_supported()) {
+bool hyp_ui_assets_warm(const char *home, char *err, size_t err_sz) {
+    if (!hyp_ui_assets_supported()) {
         return true;
     }
-    int expected = CBM_UI_ASSETS_COLD;
-    if (!atomic_compare_exchange_strong_explicit(&g_state, &expected, CBM_UI_ASSETS_LOADING,
+    int expected = HYP_UI_ASSETS_COLD;
+    if (!atomic_compare_exchange_strong_explicit(&g_state, &expected, HYP_UI_ASSETS_LOADING,
                                                  memory_order_acq_rel, memory_order_acquire)) {
-        if (expected == CBM_UI_ASSETS_READY) {
+        if (expected == HYP_UI_ASSETS_READY) {
             return true;
         }
-        const char *detail = expected == CBM_UI_ASSETS_LOADING     ? "load already in progress"
-                             : expected == CBM_UI_ASSETS_CANCELLED ? "load cancelled"
+        const char *detail = expected == HYP_UI_ASSETS_LOADING     ? "load already in progress"
+                             : expected == HYP_UI_ASSETS_CANCELLED ? "load cancelled"
                                                                    : "load previously failed";
         ui_fill_error(err, err_sz, detail);
         return false;
@@ -598,37 +598,37 @@ bool cbm_ui_assets_warm(const char *home, char *err, size_t err_sz) {
     bool loaded = ui_resolve_snapshot(home, &snapshot);
     if (atomic_load_explicit(&g_cancel_requested, memory_order_acquire)) {
         ui_snapshot_free(&snapshot);
-        atomic_store_explicit(&g_state, CBM_UI_ASSETS_CANCELLED, memory_order_release);
+        atomic_store_explicit(&g_state, HYP_UI_ASSETS_CANCELLED, memory_order_release);
         ui_fill_error(err, err_sz, "load cancelled");
         return false;
     }
     if (!loaded) {
         ui_snapshot_free(&snapshot);
-        atomic_store_explicit(&g_state, CBM_UI_ASSETS_FAILED, memory_order_release);
+        atomic_store_explicit(&g_state, HYP_UI_ASSETS_FAILED, memory_order_release);
         ui_fill_error(err, err_sz, "verified pack not found");
         return false;
     }
     g_snapshot = snapshot;
-    atomic_store_explicit(&g_state, CBM_UI_ASSETS_READY, memory_order_release);
+    atomic_store_explicit(&g_state, HYP_UI_ASSETS_READY, memory_order_release);
     return true;
 }
 
-void cbm_ui_assets_request_cancel(void) {
+void hyp_ui_assets_request_cancel(void) {
     atomic_store_explicit(&g_cancel_requested, true, memory_order_release);
-    int expected = CBM_UI_ASSETS_COLD;
-    (void)atomic_compare_exchange_strong_explicit(&g_state, &expected, CBM_UI_ASSETS_CANCELLED,
+    int expected = HYP_UI_ASSETS_COLD;
+    (void)atomic_compare_exchange_strong_explicit(&g_state, &expected, HYP_UI_ASSETS_CANCELLED,
                                                   memory_order_acq_rel, memory_order_acquire);
 }
 
-cbm_ui_assets_state_t cbm_ui_assets_state(void) {
-    if (!cbm_ui_assets_supported()) {
-        return CBM_UI_ASSETS_UNAVAILABLE;
+hyp_ui_assets_state_t hyp_ui_assets_state(void) {
+    if (!hyp_ui_assets_supported()) {
+        return HYP_UI_ASSETS_UNAVAILABLE;
     }
-    return (cbm_ui_assets_state_t)atomic_load_explicit(&g_state, memory_order_acquire);
+    return (hyp_ui_assets_state_t)atomic_load_explicit(&g_state, memory_order_acquire);
 }
 
-const cbm_ui_asset_t *cbm_ui_asset_lookup(const char *path) {
-    if (!path || cbm_ui_assets_state() != CBM_UI_ASSETS_READY) {
+const hyp_ui_asset_t *hyp_ui_asset_lookup(const char *path) {
+    if (!path || hyp_ui_assets_state() != HYP_UI_ASSETS_READY) {
         return NULL;
     }
     size_t low = 0U;
@@ -648,17 +648,17 @@ const cbm_ui_asset_t *cbm_ui_asset_lookup(const char *path) {
     return NULL;
 }
 
-bool cbm_ui_assets_stage_install(const char *install_dir,
-                                 cbm_activation_transaction_t **transaction_out, char *err,
+bool hyp_ui_assets_stage_install(const char *install_dir,
+                                 hyp_activation_transaction_t **transaction_out, char *err,
                                  size_t err_sz) {
     if (transaction_out) {
         *transaction_out = NULL;
     }
-    if (!cbm_ui_assets_supported()) {
+    if (!hyp_ui_assets_supported()) {
         return true;
     }
     if (!transaction_out || !install_dir || !install_dir[0] ||
-        !cbm_ui_assets_warm(NULL, err, err_sz)) {
+        !hyp_ui_assets_warm(NULL, err, err_sz)) {
         if (!install_dir || !install_dir[0]) {
             ui_fill_error(err, err_sz, "install directory unavailable");
         }
@@ -669,15 +669,15 @@ bool cbm_ui_assets_stage_install(const char *install_dir,
         ui_fill_error(err, err_sz, "install path is too long");
         return false;
     }
-    if (!cbm_mkdir_p(install_dir, UI_ASSETS_DIR_PERM)) {
+    if (!hyp_mkdir_p(install_dir, UI_ASSETS_DIR_PERM)) {
         ui_fill_error(err, err_sz, "cannot create the install directory");
         return false;
     }
-    cbm_activation_transaction_status_t status = cbm_activation_transaction_stage_bytes(
+    hyp_activation_transaction_status_t status = hyp_activation_transaction_stage_bytes(
         stored, g_snapshot.bytes, g_snapshot.length, transaction_out);
-    if (status != CBM_ACTIVATION_TRANSACTION_OK || !*transaction_out) {
+    if (status != HYP_ACTIVATION_TRANSACTION_OK || !*transaction_out) {
         if (*transaction_out) {
-            (void)cbm_activation_transaction_close(transaction_out);
+            (void)hyp_activation_transaction_close(transaction_out);
         }
         ui_fill_error(err, err_sz, "cannot stage the verified pack");
         return false;
@@ -687,58 +687,58 @@ bool cbm_ui_assets_stage_install(const char *install_dir,
 
 static bool ui_install_validator(const char *target_path, void *context) {
     (void)context;
-    return cbm_ui_assets_verify_file(target_path);
+    return hyp_ui_assets_verify_file(target_path);
 }
 
-cbm_activation_transaction_status_t cbm_ui_assets_commit_install(
-    cbm_activation_transaction_t *transaction) {
+hyp_activation_transaction_status_t hyp_ui_assets_commit_install(
+    hyp_activation_transaction_t *transaction) {
     if (!transaction) {
-        return CBM_ACTIVATION_TRANSACTION_INVALID_ARGUMENT;
+        return HYP_ACTIVATION_TRANSACTION_INVALID_ARGUMENT;
     }
-    cbm_activation_transaction_status_t status =
-        cbm_activation_transaction_commit(transaction, ui_install_validator, NULL);
+    hyp_activation_transaction_status_t status =
+        hyp_activation_transaction_commit(transaction, ui_install_validator, NULL);
 #ifndef _WIN32
-    if (status == CBM_ACTIVATION_TRANSACTION_OK) {
-        const char *target = cbm_activation_transaction_target_path(transaction);
+    if (status == HYP_ACTIVATION_TRANSACTION_OK) {
+        const char *target = hyp_activation_transaction_target_path(transaction);
         if (!target || chmod(target, UI_ASSET_FILE_PERM) != 0) {
-            cbm_activation_transaction_status_t rollback =
-                cbm_activation_transaction_rollback(transaction);
-            return rollback == CBM_ACTIVATION_TRANSACTION_OK
-                       ? CBM_ACTIVATION_TRANSACTION_IO
-                       : CBM_ACTIVATION_TRANSACTION_ROLLBACK_FAILED;
+            hyp_activation_transaction_status_t rollback =
+                hyp_activation_transaction_rollback(transaction);
+            return rollback == HYP_ACTIVATION_TRANSACTION_OK
+                       ? HYP_ACTIVATION_TRANSACTION_IO
+                       : HYP_ACTIVATION_TRANSACTION_ROLLBACK_FAILED;
         }
     }
 #endif
     return status;
 }
 
-cbm_activation_transaction_status_t cbm_ui_assets_commit_removal(
-    cbm_activation_transaction_t *transaction) {
+hyp_activation_transaction_status_t hyp_ui_assets_commit_removal(
+    hyp_activation_transaction_t *transaction) {
     if (!transaction) {
-        return CBM_ACTIVATION_TRANSACTION_INVALID_ARGUMENT;
+        return HYP_ACTIVATION_TRANSACTION_INVALID_ARGUMENT;
     }
-    cbm_activation_transaction_status_t status =
-        cbm_activation_transaction_commit(transaction, NULL, NULL);
-    const char *retained = cbm_activation_transaction_backup_path(transaction);
-    if (status != CBM_ACTIVATION_TRANSACTION_OK) {
+    hyp_activation_transaction_status_t status =
+        hyp_activation_transaction_commit(transaction, NULL, NULL);
+    const char *retained = hyp_activation_transaction_backup_path(transaction);
+    if (status != HYP_ACTIVATION_TRANSACTION_OK) {
         return status;
     }
-    if (retained && cbm_ui_assets_verify_file(retained)) {
-        return CBM_ACTIVATION_TRANSACTION_OK;
+    if (retained && hyp_ui_assets_verify_file(retained)) {
+        return HYP_ACTIVATION_TRANSACTION_OK;
     }
-    cbm_activation_transaction_status_t rollback =
-        cbm_activation_transaction_rollback(transaction);
-    return rollback == CBM_ACTIVATION_TRANSACTION_OK
-               ? CBM_ACTIVATION_TRANSACTION_VALIDATION_FAILED
-               : CBM_ACTIVATION_TRANSACTION_ROLLBACK_FAILED;
+    hyp_activation_transaction_status_t rollback =
+        hyp_activation_transaction_rollback(transaction);
+    return rollback == HYP_ACTIVATION_TRANSACTION_OK
+               ? HYP_ACTIVATION_TRANSACTION_VALIDATION_FAILED
+               : HYP_ACTIVATION_TRANSACTION_ROLLBACK_FAILED;
 }
 
-#ifdef CBM_CLI_ENABLE_TEST_API
-bool cbm_ui_assets_install(const char *install_dir, bool dry_run, char *err, size_t err_sz) {
-    if (!cbm_ui_assets_supported()) {
+#ifdef HYP_CLI_ENABLE_TEST_API
+bool hyp_ui_assets_install(const char *install_dir, bool dry_run, char *err, size_t err_sz) {
+    if (!hyp_ui_assets_supported()) {
         return true;
     }
-    if (!install_dir || !install_dir[0] || !cbm_ui_assets_warm(NULL, err, err_sz)) {
+    if (!install_dir || !install_dir[0] || !hyp_ui_assets_warm(NULL, err, err_sz)) {
         if (!install_dir || !install_dir[0]) {
             ui_fill_error(err, err_sz, "install directory unavailable");
         }
@@ -747,20 +747,20 @@ bool cbm_ui_assets_install(const char *install_dir, bool dry_run, char *err, siz
     if (dry_run) {
         return true;
     }
-    cbm_activation_transaction_t *transaction = NULL;
-    if (!cbm_ui_assets_stage_install(install_dir, &transaction, err, err_sz)) {
+    hyp_activation_transaction_t *transaction = NULL;
+    if (!hyp_ui_assets_stage_install(install_dir, &transaction, err, err_sz)) {
         return false;
     }
-    cbm_activation_transaction_status_t status = cbm_ui_assets_commit_install(transaction);
-    if (status != CBM_ACTIVATION_TRANSACTION_OK) {
-        (void)cbm_activation_transaction_close(&transaction);
+    hyp_activation_transaction_status_t status = hyp_ui_assets_commit_install(transaction);
+    if (status != HYP_ACTIVATION_TRANSACTION_OK) {
+        (void)hyp_activation_transaction_close(&transaction);
         ui_fill_error(err, err_sz, "cannot publish the verified pack");
         return false;
     }
-    status = cbm_activation_transaction_finalize(transaction);
+    status = hyp_activation_transaction_finalize(transaction);
     bool finalized =
-        status == CBM_ACTIVATION_TRANSACTION_OK || status == CBM_ACTIVATION_TRANSACTION_DEFERRED;
-    bool closed = cbm_activation_transaction_close(&transaction) == CBM_ACTIVATION_TRANSACTION_OK;
+        status == HYP_ACTIVATION_TRANSACTION_OK || status == HYP_ACTIVATION_TRANSACTION_DEFERRED;
+    bool closed = hyp_activation_transaction_close(&transaction) == HYP_ACTIVATION_TRANSACTION_OK;
     if (!finalized || !closed) {
         ui_fill_error(err, err_sz, "cannot finalize the verified pack");
         return false;
@@ -769,8 +769,8 @@ bool cbm_ui_assets_install(const char *install_dir, bool dry_run, char *err, siz
 }
 #endif
 
-bool cbm_ui_assets_remove(const char *install_dir, bool dry_run, char *err, size_t err_sz) {
-    if (!cbm_ui_assets_supported()) {
+bool hyp_ui_assets_remove(const char *install_dir, bool dry_run, char *err, size_t err_sz) {
+    if (!hyp_ui_assets_supported()) {
         return true;
     }
     char path[UI_PATH_CAP];
@@ -778,8 +778,8 @@ bool cbm_ui_assets_remove(const char *install_dir, bool dry_run, char *err, size
         ui_fill_error(err, err_sz, "uninstall path is too long");
         return false;
     }
-    cbm_path_info_t info;
-    if (cbm_path_info_utf8(path, &info) != 0) {
+    hyp_path_info_t info;
+    if (hyp_path_info_utf8(path, &info) != 0) {
         return true;
     }
     ui_asset_snapshot_t verified = {0};
@@ -791,24 +791,24 @@ bool cbm_ui_assets_remove(const char *install_dir, bool dry_run, char *err, size
     if (dry_run) {
         return true;
     }
-    cbm_activation_transaction_t *transaction = NULL;
-    cbm_activation_transaction_status_t status =
-        cbm_activation_transaction_stage_removal(path, &transaction);
-    if (status == CBM_ACTIVATION_TRANSACTION_OK && transaction) {
-        status = cbm_ui_assets_commit_removal(transaction);
+    hyp_activation_transaction_t *transaction = NULL;
+    hyp_activation_transaction_status_t status =
+        hyp_activation_transaction_stage_removal(path, &transaction);
+    if (status == HYP_ACTIVATION_TRANSACTION_OK && transaction) {
+        status = hyp_ui_assets_commit_removal(transaction);
     }
-    if (status != CBM_ACTIVATION_TRANSACTION_OK || !transaction) {
-        (void)cbm_activation_transaction_close(&transaction);
+    if (status != HYP_ACTIVATION_TRANSACTION_OK || !transaction) {
+        (void)hyp_activation_transaction_close(&transaction);
         ui_fill_error(err, err_sz,
-                      status == CBM_ACTIVATION_TRANSACTION_VALIDATION_FAILED
+                      status == HYP_ACTIVATION_TRANSACTION_VALIDATION_FAILED
                           ? "adjacent pack changed before removal; preserved"
                           : "cannot remove the owned adjacent pack");
         return false;
     }
-    status = cbm_activation_transaction_finalize(transaction);
+    status = hyp_activation_transaction_finalize(transaction);
     bool finalized =
-        status == CBM_ACTIVATION_TRANSACTION_OK || status == CBM_ACTIVATION_TRANSACTION_DEFERRED;
-    bool closed = cbm_activation_transaction_close(&transaction) == CBM_ACTIVATION_TRANSACTION_OK;
+        status == HYP_ACTIVATION_TRANSACTION_OK || status == HYP_ACTIVATION_TRANSACTION_DEFERRED;
+    bool closed = hyp_activation_transaction_close(&transaction) == HYP_ACTIVATION_TRANSACTION_OK;
     if (!finalized || !closed) {
         ui_fill_error(err, err_sz, "cannot finalize the owned adjacent pack removal");
         return false;
@@ -816,8 +816,8 @@ bool cbm_ui_assets_remove(const char *install_dir, bool dry_run, char *err, size
     return true;
 }
 
-bool cbm_ui_assets_stage_remove(const char *install_dir,
-                                cbm_activation_transaction_t **transaction_out,
+bool hyp_ui_assets_stage_remove(const char *install_dir,
+                                hyp_activation_transaction_t **transaction_out,
                                 bool *foreign_preserved_out, char *err, size_t err_sz) {
     if (transaction_out) {
         *transaction_out = NULL;
@@ -829,7 +829,7 @@ bool cbm_ui_assets_stage_remove(const char *install_dir,
         ui_fill_error(err, err_sz, "uninstall transaction output unavailable");
         return false;
     }
-    if (!cbm_ui_assets_supported()) {
+    if (!hyp_ui_assets_supported()) {
         return true;
     }
     char path[UI_PATH_CAP];
@@ -837,29 +837,29 @@ bool cbm_ui_assets_stage_remove(const char *install_dir,
         ui_fill_error(err, err_sz, "uninstall path is too long");
         return false;
     }
-    cbm_path_info_t info;
-    if (cbm_path_info_utf8(path, &info) != 0) {
+    hyp_path_info_t info;
+    if (hyp_path_info_utf8(path, &info) != 0) {
         return true;
     }
-    if (!info.is_regular || info.is_symlink || !cbm_ui_assets_verify_file(path)) {
+    if (!info.is_regular || info.is_symlink || !hyp_ui_assets_verify_file(path)) {
         if (foreign_preserved_out) {
             *foreign_preserved_out = true;
         }
         return true;
     }
-    cbm_activation_transaction_status_t status =
-        cbm_activation_transaction_stage_removal(path, transaction_out);
-    if (status != CBM_ACTIVATION_TRANSACTION_OK || !*transaction_out) {
-        ui_fill_error(err, err_sz, cbm_activation_transaction_status_message(status));
+    hyp_activation_transaction_status_t status =
+        hyp_activation_transaction_stage_removal(path, transaction_out);
+    if (status != HYP_ACTIVATION_TRANSACTION_OK || !*transaction_out) {
+        ui_fill_error(err, err_sz, hyp_activation_transaction_status_message(status));
         if (*transaction_out) {
-            (void)cbm_activation_transaction_close(transaction_out);
+            (void)hyp_activation_transaction_close(transaction_out);
         }
         return false;
     }
     /* Revalidate after the transaction captured target identity. Commit will
      * refuse if that identity changes before removal. */
-    if (!cbm_ui_assets_verify_file(path)) {
-        if (cbm_activation_transaction_close(transaction_out) != CBM_ACTIVATION_TRANSACTION_OK) {
+    if (!hyp_ui_assets_verify_file(path)) {
+        if (hyp_activation_transaction_close(transaction_out) != HYP_ACTIVATION_TRANSACTION_OK) {
             ui_fill_error(err, err_sz, "cannot clean up a changed pack removal transaction");
             return false;
         }
@@ -870,18 +870,18 @@ bool cbm_ui_assets_stage_remove(const char *install_dir,
     return true;
 }
 
-#ifdef CBM_CLI_ENABLE_TEST_API
-void cbm_ui_assets_set_manifest_for_testing(const char *name, const char *sha256, uint64_t size) {
+#ifdef HYP_CLI_ENABLE_TEST_API
+void hyp_ui_assets_set_manifest_for_testing(const char *name, const char *sha256, uint64_t size) {
     int name_written = snprintf(g_test_pack_name, sizeof(g_test_pack_name), "%s", name ? name : "");
     int hash_written = snprintf(g_test_sha256, sizeof(g_test_sha256), "%s", sha256 ? sha256 : "");
     g_test_manifest_set = name_written > 0 && (size_t)name_written < sizeof(g_test_pack_name) &&
-                          hash_written == CBM_SHA256_HEX_LEN;
+                          hash_written == HYP_SHA256_HEX_LEN;
     g_test_size = size;
 }
 
-void cbm_ui_assets_reset_for_testing(void) {
+void hyp_ui_assets_reset_for_testing(void) {
     ui_snapshot_free(&g_snapshot);
-    atomic_store_explicit(&g_state, CBM_UI_ASSETS_COLD, memory_order_release);
+    atomic_store_explicit(&g_state, HYP_UI_ASSETS_COLD, memory_order_release);
     atomic_store_explicit(&g_cancel_requested, false, memory_order_release);
     g_binary_path[0] = '\0';
     g_test_manifest_set = false;

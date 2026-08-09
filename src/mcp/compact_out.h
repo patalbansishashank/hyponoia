@@ -12,8 +12,8 @@
  * read as a non-string literal (true/false/null/number). Quotes and
  * backslashes are escaped JSON-style; newlines become \n.
  */
-#ifndef CBM_MCP_COMPACT_OUT_H
-#define CBM_MCP_COMPACT_OUT_H
+#ifndef HYP_MCP_COMPACT_OUT_H
+#define HYP_MCP_COMPACT_OUT_H
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -24,31 +24,31 @@ typedef struct {
     size_t len;
     size_t cap;
     bool oom;
-} cbm_sb_t;
+} hyp_sb_t;
 
-void cbm_sb_init(cbm_sb_t *sb);
-void cbm_sb_append_n(cbm_sb_t *sb, const char *s, size_t n);
-void cbm_sb_append(cbm_sb_t *sb, const char *s);
+void hyp_sb_init(hyp_sb_t *sb);
+void hyp_sb_append_n(hyp_sb_t *sb, const char *s, size_t n);
+void hyp_sb_append(hyp_sb_t *sb, const char *s);
 /* Returns the heap buffer (caller frees) and resets sb. NULL on OOM. */
-char *cbm_sb_finish(cbm_sb_t *sb);
-void cbm_sb_free(cbm_sb_t *sb);
+char *hyp_sb_finish(hyp_sb_t *sb);
+void hyp_sb_free(hyp_sb_t *sb);
 
 /* `key: value` scalar lines (top-level, no indent). */
-void cbm_tree_scalar_str(cbm_sb_t *sb, const char *key, const char *val);
-void cbm_tree_scalar_int(cbm_sb_t *sb, const char *key, long long v);
-void cbm_tree_scalar_bool(cbm_sb_t *sb, const char *key, bool v);
+void hyp_tree_scalar_str(hyp_sb_t *sb, const char *key, const char *val);
+void hyp_tree_scalar_int(hyp_sb_t *sb, const char *key, long long v);
+void hyp_tree_scalar_bool(hyp_sb_t *sb, const char *key, bool v);
 
 /* `key[n]{col1,col2,...}:` table header; rows follow at 2-space indent. */
-void cbm_tree_table_header(cbm_sb_t *sb, const char *key, int n, const char *const *cols,
+void hyp_tree_table_header(hyp_sb_t *sb, const char *key, int n, const char *const *cols,
                            int ncols);
 
 /* Row cells: call row_begin, then cell_* per column (first=true for the
  * first cell), then row_end. Empty/NULL strings emit as empty cells. */
-void cbm_tree_row_begin(cbm_sb_t *sb);
-void cbm_tree_cell_str(cbm_sb_t *sb, const char *val, bool first);
-void cbm_tree_cell_int(cbm_sb_t *sb, long long v, bool first);
-void cbm_tree_cell_real(cbm_sb_t *sb, double v, bool first);
-void cbm_tree_cell_bool(cbm_sb_t *sb, bool v, bool first);
-void cbm_tree_row_end(cbm_sb_t *sb);
+void hyp_tree_row_begin(hyp_sb_t *sb);
+void hyp_tree_cell_str(hyp_sb_t *sb, const char *val, bool first);
+void hyp_tree_cell_int(hyp_sb_t *sb, long long v, bool first);
+void hyp_tree_cell_real(hyp_sb_t *sb, double v, bool first);
+void hyp_tree_cell_bool(hyp_sb_t *sb, bool v, bool first);
+void hyp_tree_row_end(hyp_sb_t *sb);
 
-#endif /* CBM_MCP_COMPACT_OUT_H */
+#endif /* HYP_MCP_COMPACT_OUT_H */

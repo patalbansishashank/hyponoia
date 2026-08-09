@@ -22,30 +22,30 @@
  *   - The request path is matched RAW — never percent-decoded before
  *     routing ("/api%2Fbrowse" must not match "/api/browse"). "%00" or a
  *     raw NUL anywhere in the request target is rejected with 400. Only
- *     query parameter VALUES are decoded (cbm_http_query_param), and
+ *     query parameter VALUES are decoded (hyp_http_query_param), and
  *     decoded values containing NUL are rejected.
  */
-#ifndef CBM_UI_HTTPD_H
-#define CBM_UI_HTTPD_H
+#ifndef HYP_UI_HTTPD_H
+#define HYP_UI_HTTPD_H
 
 #include <stdbool.h>
 #include <stddef.h>
 
 /* Maximum request head (request line + headers + terminating CRLFCRLF). */
-#define CBM_HTTP_MAX_HEAD (16 * 1024)
+#define HYP_HTTP_MAX_HEAD (16 * 1024)
 /* Maximum request body accepted via Content-Length. */
-#define CBM_HTTP_MAX_BODY (1024 * 1024)
+#define HYP_HTTP_MAX_BODY (1024 * 1024)
 /* Default per-connection receive deadline. */
-#define CBM_HTTP_RECV_DEADLINE_MS 5000
-typedef struct cbm_httpd cbm_httpd_t;         /* listener */
-typedef struct cbm_http_conn cbm_http_conn_t; /* accepted connection */
+#define HYP_HTTP_RECV_DEADLINE_MS 5000
+typedef struct hyp_httpd hyp_httpd_t;         /* listener */
+typedef struct hyp_http_conn hyp_http_conn_t; /* accepted connection */
 
 /* Observable transport phase used by deterministic lifecycle tests. */
 typedef enum {
-    CBM_HTTPD_ACTIVITY_IDLE = 0,
-    CBM_HTTPD_ACTIVITY_READING_REQUEST = 1,
-    CBM_HTTPD_ACTIVITY_RESPONDING = 2,
-} cbm_httpd_activity_t;
+    HYP_HTTPD_ACTIVITY_IDLE = 0,
+    HYP_HTTPD_ACTIVITY_READING_REQUEST = 1,
+    HYP_HTTPD_ACTIVITY_RESPONDING = 2,
+} hyp_httpd_activity_t;
 
 /* A parsed request. `path` and `query` are raw (NOT percent-decoded).
  * Selected headers are copied for the routing/security layer ("" when
@@ -61,55 +61,55 @@ typedef struct {
     char accept_language[256];
     char *body;
     size_t body_len;
-} cbm_http_req_t;
+} hyp_http_req_t;
 
 /* ── Listener lifecycle ───────────────────────────────────────── */
 
 /* Listen on 127.0.0.1:<port>. port 0 binds an ephemeral port (tests).
  * Returns NULL if the port is unavailable. */
-cbm_httpd_t *cbm_httpd_listen(int port);
+hyp_httpd_t *hyp_httpd_listen(int port);
 
 /* The actually-bound port (differs from the requested one for port 0). */
-int cbm_httpd_port(const cbm_httpd_t *d);
+int hyp_httpd_port(const hyp_httpd_t *d);
 
 /* Override the per-connection receive deadline (tests use short values). */
-void cbm_httpd_set_recv_deadline_ms(cbm_httpd_t *d, int ms);
+void hyp_httpd_set_recv_deadline_ms(hyp_httpd_t *d, int ms);
 
 /* Interrupt the current accepted connection, if any. Safe from another
  * thread; the event-loop thread retains close/free ownership. */
-void cbm_httpd_interrupt(cbm_httpd_t *d);
+void hyp_httpd_interrupt(hyp_httpd_t *d);
 
 /* Interrupt and free a quiescent listener. Returns false without freeing while
  * an accepted connection still owns the listener; its event-loop owner must
  * close that connection before the caller retries. */
-bool cbm_httpd_close(cbm_httpd_t *d);
+bool hyp_httpd_close(hyp_httpd_t *d);
 
 /* Snapshot the active connection phase under the listener lifecycle lock.
  * This is an observation-only seam for deterministic concurrency tests. */
-cbm_httpd_activity_t cbm_httpd_activity_for_test(cbm_httpd_t *d);
+hyp_httpd_activity_t hyp_httpd_activity_for_test(hyp_httpd_t *d);
 /* Caps SO_SNDBUF on subsequently accepted sockets so a non-reading peer
  * produces a deterministic backpressure point on every platform. */
-void cbm_httpd_set_send_buffer_for_test(cbm_httpd_t *d, int bytes);
-void cbm_httpd_set_send_deadline_for_test(cbm_httpd_t *d, int ms);
+void hyp_httpd_set_send_buffer_for_test(hyp_httpd_t *d, int bytes);
+void hyp_httpd_set_send_deadline_for_test(hyp_httpd_t *d, int ms);
 
 /* ── Connection handling ──────────────────────────────────────── */
 
 /* Wait up to timeout_ms for a client. NULL on timeout (caller re-checks
  * its stop flag and calls again). */
-cbm_http_conn_t *cbm_httpd_accept(cbm_httpd_t *d, int timeout_ms);
+hyp_http_conn_t *hyp_httpd_accept(hyp_httpd_t *d, int timeout_ms);
 
 /* Read and parse one request from the connection.
  * Returns 0 on success. On failure returns the HTTP status the caller
  * should send before closing (400, 408, 411, 413, 431), or -1 for a
  * connection-level error where no response is possible. */
-int cbm_httpd_read_request(cbm_http_conn_t *c, cbm_http_req_t *req);
+int hyp_httpd_read_request(hyp_http_conn_t *c, hyp_http_req_t *req);
 
-void cbm_http_req_free(cbm_http_req_t *req);
+void hyp_http_req_free(hyp_http_req_t *req);
 
 /* Send a response. extra_headers is a string of zero or more complete
  * "Name: value\r\n" lines (may be ""). Content-Length and
  * "Connection: close" are always added here — callers must not. */
-void cbm_http_replyf(cbm_http_conn_t *c, int status, const char *extra_headers, const char *fmt,
+void hyp_http_replyf(hyp_http_conn_t *c, int status, const char *extra_headers, const char *fmt,
                      ...)
 #if defined(__GNUC__) || defined(__clang__)
     __attribute__((format(printf, 4, 5)))
@@ -117,32 +117,32 @@ void cbm_http_replyf(cbm_http_conn_t *c, int status, const char *extra_headers, 
     ;
 
 /* Binary-safe variant for verified asset-pack entries. */
-void cbm_http_reply_buf(cbm_http_conn_t *c, int status, const char *extra_headers, const void *data,
+void hyp_http_reply_buf(hyp_http_conn_t *c, int status, const char *extra_headers, const void *data,
                         size_t len);
 
-int cbm_http_conn_status(const cbm_http_conn_t *c);
-size_t cbm_http_conn_response_bytes(const cbm_http_conn_t *c);
-void cbm_httpd_conn_close(cbm_http_conn_t *c);
+int hyp_http_conn_status(const hyp_http_conn_t *c);
+size_t hyp_http_conn_response_bytes(const hyp_http_conn_t *c);
+void hyp_httpd_conn_close(hyp_http_conn_t *c);
 
 /* ── Pure helpers (unit-tested without sockets) ───────────────── */
 
 /* Parse a request head from `data` (which may also contain body bytes).
  * On success returns 0 and sets *body_offset (start of body within data)
  * and *content_length (0 when no Content-Length header is present).
- * Returns CBM_HTTP_NEED_MORE when the terminating CRLFCRLF has not
+ * Returns HYP_HTTP_NEED_MORE when the terminating CRLFCRLF has not
  * arrived yet, otherwise the HTTP error status to send (400/411/413/431).
  * req->body / req->body_len are NOT touched here. */
-#define CBM_HTTP_NEED_MORE (-1)
-int cbm_http_parse_head(const char *data, size_t len, cbm_http_req_t *req, size_t *body_offset,
+#define HYP_HTTP_NEED_MORE (-1)
+int hyp_http_parse_head(const char *data, size_t len, hyp_http_req_t *req, size_t *body_offset,
                         size_t *content_length);
 
 /* Exact match, or prefix match when `pattern` ends with '*'.
  * Used by route patterns such as "/api/layout*" and "/assets" + star. */
-bool cbm_http_path_match(const char *str, const char *pattern);
+bool hyp_http_path_match(const char *str, const char *pattern);
 
 /* Extract a query parameter value, percent-decoded (%XX and '+' → space).
  * Returns true only for a present, non-empty value that fits buf and
  * contains no NUL after decoding. */
-bool cbm_http_query_param(const char *query, const char *name, char *buf, int bufsz);
+bool hyp_http_query_param(const char *query, const char *name, char *buf, int bufsz);
 
-#endif /* CBM_UI_HTTPD_H */
+#endif /* HYP_UI_HTTPD_H */

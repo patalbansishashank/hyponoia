@@ -5,7 +5,7 @@ set -euo pipefail
 # plain `scripts/smoke-test.sh <binary>` skips without an artifact fixture.
 #
 # Usage: scripts/smoke-local.sh <binary> [ui]
-#   <binary>  product binary to smoke (e.g. build/c/codebase-memory-mcp)
+#   <binary>  product binary to smoke (e.g. build/c/hyponoia)
 #   ui        optional: mirror the -ui variant asset naming
 
 usage() {
@@ -20,13 +20,13 @@ update E2E) inside a disposable HOME/XDG/TMPDIR sandbox with every agent-config
 destination override neutralized.
 
 Arguments:
-  <binary>     Product binary to smoke (e.g. build/c/codebase-memory-mcp).
+  <binary>     Product binary to smoke (e.g. build/c/hyponoia).
   ui           Mirror the -ui asset naming AND require the external UI pack:
                Phase 15's "no assets" outcome becomes a FAILURE
                (SMOKE_REQUIRE_UI=1), so a standard binary cannot pass a ui run.
 
 Environment:
-  CBM_SMOKE_ARTIFACT_DIR   Release mode: an EXTRACTED release artifact
+  HYP_SMOKE_ARTIFACT_DIR   Release mode: an EXTRACTED release artifact
                directory. Sidecars (LICENSE, install.sh, THIRD_PARTY_NOTICES.md,
                and the UI pack when selected) are validated and served from
                THERE instead of regenerated, so
@@ -35,7 +35,7 @@ Environment:
                come from this checkout (local/PR mode).
 
 Callers: pr.yml pr-smoke (ubuntu/macos) · _smoke.yml smoke-unix +
-smoke-linux-portable (with CBM_SMOKE_ARTIFACT_DIR) · compose smoke services.
+smoke-linux-portable (with HYP_SMOKE_ARTIFACT_DIR) · compose smoke services.
 Windows uses the sibling test-infrastructure/vm/vm-smoke.sh.
 EOF
 }
@@ -70,10 +70,10 @@ esac
 # Unset (the local + PR default): synthesize the release sidecars from this
 # checkout. Set: take them from an EXTRACTED release artifact, so the release
 # venue serves the files it is about to publish rather than regenerated copies.
-ARTIFACT_DIR="${CBM_SMOKE_ARTIFACT_DIR:-}"
+ARTIFACT_DIR="${HYP_SMOKE_ARTIFACT_DIR:-}"
 if [ -n "$ARTIFACT_DIR" ]; then
     ARTIFACT_DIR="$(cd "$ARTIFACT_DIR" && pwd)"
-    for required in cbm-integrations.json LICENSE install.sh THIRD_PARTY_NOTICES.md; do
+    for required in hyp-integrations.json LICENSE install.sh THIRD_PARTY_NOTICES.md; do
         [ -s "$ARTIFACT_DIR/$required" ] || {
             echo "smoke-local: release artifact is missing $required" >&2
             exit 2
@@ -90,13 +90,13 @@ else
     UI_PACK_SOURCE_DIR="$(dirname "$BINARY")"
 fi
 shopt -s nullglob
-UI_PACK_CANDIDATES=("$UI_PACK_SOURCE_DIR"/cbm-ui-*.pack)
+UI_PACK_CANDIDATES=("$UI_PACK_SOURCE_DIR"/hyp-ui-*.pack)
 shopt -u nullglob
 for candidate in "${UI_PACK_CANDIDATES[@]+"${UI_PACK_CANDIDATES[@]}"}"; do
     UI_PACK_COUNT=$((UI_PACK_COUNT + 1))
     UI_PACK_SOURCE="$candidate"
     candidate_name="$(basename "$candidate")"
-    if ! [[ "$candidate_name" =~ ^cbm-ui-[0-9a-f]{64}\.pack$ ]]; then
+    if ! [[ "$candidate_name" =~ ^hyp-ui-[0-9a-f]{64}\.pack$ ]]; then
         echo "smoke-local: invalid UI pack name beside artifact: $candidate_name" >&2
         exit 2
     fi
@@ -132,7 +132,7 @@ x86_64)
 *) echo "smoke-local: unsupported host arch $(uname -m)" >&2; exit 2 ;;
 esac
 
-WORK_DIR=$(mktemp -d "${TMPDIR:-/tmp}/cbm-smoke-server-XXXXXX")
+WORK_DIR=$(mktemp -d "${TMPDIR:-/tmp}/hyp-smoke-server-XXXXXX")
 FIXTURE_DIR="$WORK_DIR/artifacts"
 SMOKE_TEMP_DIR="$WORK_DIR/temp"
 SMOKE_HOME="$WORK_DIR/home"
@@ -153,26 +153,26 @@ trap cleanup EXIT
 
 mkdir -p "$FIXTURE_DIR" "$SMOKE_TEMP_DIR" "$SMOKE_HOME" "$SMOKE_XDG_CONFIG" \
     "$SMOKE_APPDATA" "$SMOKE_LOCALAPPDATA"
-cp "$BINARY" "$FIXTURE_DIR/codebase-memory-mcp"
+cp "$BINARY" "$FIXTURE_DIR/hyponoia"
 if [ -n "$ARTIFACT_DIR" ]; then
-    cp "$ARTIFACT_DIR/cbm-integrations.json" "$ARTIFACT_DIR/LICENSE" \
+    cp "$ARTIFACT_DIR/hyp-integrations.json" "$ARTIFACT_DIR/LICENSE" \
         "$ARTIFACT_DIR/install.sh" "$ARTIFACT_DIR/THIRD_PARTY_NOTICES.md" "$FIXTURE_DIR/"
 else
-    cp "$ROOT/assets/cbm-integrations.json" "$ROOT/LICENSE" "$ROOT/install.sh" "$FIXTURE_DIR/"
+    cp "$ROOT/assets/hyp-integrations.json" "$ROOT/LICENSE" "$ROOT/install.sh" "$FIXTURE_DIR/"
     "$ROOT/scripts/gen-third-party-notices.sh" "$FIXTURE_DIR/THIRD_PARTY_NOTICES.md"
 fi
 if [ -n "$UI_PACK_SOURCE" ]; then
     cp "$UI_PACK_SOURCE" "$FIXTURE_DIR/$UI_PACK_NAME"
 fi
 
-# The archive must carry cbm-integrations.json — install verifies it against the
+# The archive must carry hyp-integrations.json — install verifies it against the
 # binary's embedded SHA-256 and fails closed without it. Member set and ORDER
 # mirror scripts/package-release.sh (the Windows one-executable runtime-set
 # contract locks that order); a fixture that omits it would smoke a release
 # layout we never ship.
-EXPECTED_ARTIFACT="codebase-memory-mcp${SUFFIX}-${OS}-${ARCH}.tar.gz"
+EXPECTED_ARTIFACT="hyponoia${SUFFIX}-${OS}-${ARCH}.tar.gz"
 ARCHIVE_MEMBERS=(
-    codebase-memory-mcp cbm-integrations.json LICENSE install.sh
+    hyponoia hyp-integrations.json LICENSE install.sh
     THIRD_PARTY_NOTICES.md
 )
 [ -n "$UI_PACK_NAME" ] && ARCHIVE_MEMBERS+=("$UI_PACK_NAME")
@@ -182,7 +182,7 @@ tar -czf "$FIXTURE_DIR/$EXPECTED_ARTIFACT" -C "$FIXTURE_DIR" "${ARCHIVE_MEMBERS[
 # smoke started from the dynamic production binary.
 if [ "$OS" = "linux" ]; then
     cp "$FIXTURE_DIR/$EXPECTED_ARTIFACT" \
-        "$FIXTURE_DIR/codebase-memory-mcp${SUFFIX}-${OS}-${ARCH}-portable.tar.gz"
+        "$FIXTURE_DIR/hyponoia${SUFFIX}-${OS}-${ARCH}-portable.tar.gz"
 fi
 (cd "$FIXTURE_DIR" && { sha256sum *.tar.gz > checksums.txt 2>/dev/null ||
     shasum -a 256 *.tar.gz > checksums.txt; })
@@ -239,11 +239,11 @@ env \
     -u VIBE_HOME \
     -u GLAB_CONFIG_DIR \
     -u KIMI_CODE_HOME \
-    -u CBM_CONTINUE_CONFIG_PATH \
-    -u CBM_TRAE_CONFIG_PATH \
-    -u CBM_ROO_CONFIG_PATH \
-    -u CBM_CODY_CONFIG_PATH \
-    -u CBM_TEST_WINDOWS_USER_PATH_RUN_ID \
+    -u HYP_CONTINUE_CONFIG_PATH \
+    -u HYP_TRAE_CONFIG_PATH \
+    -u HYP_ROO_CONFIG_PATH \
+    -u HYP_CODY_CONFIG_PATH \
+    -u HYP_TEST_WINDOWS_USER_PATH_RUN_ID \
     HOME="$SMOKE_HOME" \
     USERPROFILE="$SMOKE_HOME" \
     XDG_CONFIG_HOME="$SMOKE_XDG_CONFIG" \
@@ -253,7 +253,7 @@ env \
     TEMP="$SMOKE_TEMP_DIR" \
     TMP="$SMOKE_TEMP_DIR" \
     SHELL="/bin/sh" \
-    CBM_CACHE_DIR="$WORK_DIR/cache" \
+    HYP_CACHE_DIR="$WORK_DIR/cache" \
     SMOKE_TEMP_ROOT="$SMOKE_TEMP_DIR" \
     SMOKE_DOWNLOAD_URL="http://127.0.0.1:$PORT" \
     SMOKE_UPDATE_FIXTURE_DIR="$FIXTURE_DIR" \

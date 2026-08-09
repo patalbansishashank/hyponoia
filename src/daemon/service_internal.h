@@ -6,8 +6,8 @@
  * kernel-bound file handle through this internal boundary; the test hook lets
  * concurrency tests establish an exact interleaving without scheduler luck.
  */
-#ifndef CBM_DAEMON_SERVICE_INTERNAL_H
-#define CBM_DAEMON_SERVICE_INTERNAL_H
+#ifndef HYP_DAEMON_SERVICE_INTERNAL_H
+#define HYP_DAEMON_SERVICE_INTERNAL_H
 
 #include "daemon/service.h"
 
@@ -18,18 +18,18 @@
  * file descriptor on POSIX and a HANDLE cast through uintptr_t on Windows.
  * Callers use this after binding the handle to kernel process-image metadata,
  * avoiding a second lookup through a replaceable pathname. */
-bool cbm_daemon_build_fingerprint_native_file(uintptr_t native_file,
-                                              char out[CBM_DAEMON_BUILD_FINGERPRINT_SIZE]);
+bool hyp_daemon_build_fingerprint_native_file(uintptr_t native_file,
+                                              char out[HYP_DAEMON_BUILD_FINGERPRINT_SIZE]);
 
 typedef enum {
-    CBM_DAEMON_CONFLICT_LOG_BEFORE_SERIALIZATION_LOCK = 1,
-    CBM_DAEMON_CONFLICT_LOG_AFTER_SERIALIZATION_LOCK,
-} cbm_daemon_conflict_log_test_stage_t;
+    HYP_DAEMON_CONFLICT_LOG_BEFORE_SERIALIZATION_LOCK = 1,
+    HYP_DAEMON_CONFLICT_LOG_AFTER_SERIALIZATION_LOCK,
+} hyp_daemon_conflict_log_test_stage_t;
 
-typedef void (*cbm_daemon_conflict_log_test_hook_fn)(void *context,
-                                                     cbm_daemon_conflict_log_test_stage_t stage);
+typedef void (*hyp_daemon_conflict_log_test_hook_fn)(void *context,
+                                                     hyp_daemon_conflict_log_test_stage_t stage);
 
-void cbm_daemon_conflict_log_set_test_hook(cbm_daemon_conflict_log_test_hook_fn hook,
+void hyp_daemon_conflict_log_set_test_hook(hyp_daemon_conflict_log_test_hook_fn hook,
                                            void *context);
 
-#endif /* CBM_DAEMON_SERVICE_INTERNAL_H */
+#endif /* HYP_DAEMON_SERVICE_INTERNAL_H */

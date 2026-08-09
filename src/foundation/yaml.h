@@ -9,38 +9,38 @@
  *
  * NOT a general YAML parser — no multiline strings, anchors, flow style, etc.
  */
-#ifndef CBM_YAML_H
-#define CBM_YAML_H
+#ifndef HYP_YAML_H
+#define HYP_YAML_H
 
 #include <stdbool.h>
 
-typedef struct cbm_yaml_node cbm_yaml_node_t;
+typedef struct hyp_yaml_node hyp_yaml_node_t;
 
 /* Parse a YAML string into a tree. Returns NULL on error.
- * Caller must free with cbm_yaml_free(). */
-cbm_yaml_node_t *cbm_yaml_parse(const char *text, int len);
+ * Caller must free with hyp_yaml_free(). */
+hyp_yaml_node_t *hyp_yaml_parse(const char *text, int len);
 
 /* Free a parsed YAML tree. */
-void cbm_yaml_free(cbm_yaml_node_t *root);
+void hyp_yaml_free(hyp_yaml_node_t *root);
 
 /* Get a scalar value by dot-separated path (e.g. "http_linker.min_confidence").
  * Returns NULL if not found or not a scalar. */
-const char *cbm_yaml_get_str(const cbm_yaml_node_t *root, const char *path);
+const char *hyp_yaml_get_str(const hyp_yaml_node_t *root, const char *path);
 
 /* Get a float value by path, returning default_val if not found. */
-double cbm_yaml_get_float(const cbm_yaml_node_t *root, const char *path, double default_val);
+double hyp_yaml_get_float(const hyp_yaml_node_t *root, const char *path, double default_val);
 
 /* Get a bool value by path, returning default_val if not found.
  * Recognizes: true/false, yes/no, on/off (case-insensitive). */
-bool cbm_yaml_get_bool(const cbm_yaml_node_t *root, const char *path, bool default_val);
+bool hyp_yaml_get_bool(const hyp_yaml_node_t *root, const char *path, bool default_val);
 
 /* Get a list of string values at a path (e.g. "http_linker.exclude_paths").
  * Writes up to max_out pointers into out[]. Pointers are owned by the YAML tree.
  * Returns count of items written. */
-int cbm_yaml_get_str_list(const cbm_yaml_node_t *root, const char *path, const char **out,
+int hyp_yaml_get_str_list(const hyp_yaml_node_t *root, const char *path, const char **out,
                           int max_out);
 
 /* Check if a node at the given path exists. */
-bool cbm_yaml_has(const cbm_yaml_node_t *root, const char *path);
+bool hyp_yaml_has(const hyp_yaml_node_t *root, const char *path);
 
-#endif /* CBM_YAML_H */
+#endif /* HYP_YAML_H */

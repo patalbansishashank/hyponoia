@@ -18,7 +18,7 @@ from unittest import mock
 PACKAGE_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PACKAGE_ROOT / "src"))
 
-from codebase_memory_mcp import _cli  # noqa: E402
+from hyponoia import _cli  # noqa: E402
 
 
 class BinarySelectionTests(unittest.TestCase):
@@ -30,7 +30,7 @@ class BinarySelectionTests(unittest.TestCase):
         self.assertEqual(_cli._execution_path(binary, "win32"), binary)
 
     def test_non_windows_executes_the_cached_binary(self):
-        binary = Path("cache") / "0.8.1" / "codebase-memory-mcp"
+        binary = Path("cache") / "0.8.1" / "hyponoia"
 
         self.assertEqual(_cli._execution_path(binary, "linux"), binary)
 
@@ -59,7 +59,7 @@ class BinarySelectionTests(unittest.TestCase):
                 "win32",
                 windows_local_app_data
                 / "Programs"
-                / "codebase-memory-mcp",
+                / "hyponoia",
                 mock.patch.dict(
                     os.environ,
                     {"LOCALAPPDATA": str(windows_local_app_data)},
@@ -88,18 +88,18 @@ class BinarySelectionTests(unittest.TestCase):
                 )
 
     def test_standard_and_ui_cache_paths_do_not_collide(self):
-        with mock.patch.dict("os.environ", {"CBM_VARIANT": "standard"}):
+        with mock.patch.dict("os.environ", {"HYP_VARIANT": "standard"}):
             standard = _cli._bin_path("0.8.1")
-        with mock.patch.dict("os.environ", {"CBM_VARIANT": "ui"}):
+        with mock.patch.dict("os.environ", {"HYP_VARIANT": "ui"}):
             ui = _cli._bin_path("0.8.1")
 
         self.assertNotEqual(standard, ui)
 
     def test_release_archives_require_the_integrations_sidecar(self):
-        self.assertIn("cbm-integrations.json", _cli._WINDOWS_ARCHIVE_NAMES)
+        self.assertIn("hyp-integrations.json", _cli._WINDOWS_ARCHIVE_NAMES)
 
     def test_update_guidance_uses_pip_and_names_managed_install(self):
-        with mock.patch.object(_cli.sys, "argv", ["cbm", "update"]), \
+        with mock.patch.object(_cli.sys, "argv", ["hyp", "update"]), \
              mock.patch.object(_cli, "_version", return_value="0.8.1"), \
              mock.patch("sys.stderr") as stderr:
             with self.assertRaisesRegex(SystemExit, "2"):
@@ -107,9 +107,9 @@ class BinarySelectionTests(unittest.TestCase):
 
         output = "".join(call.args[0] for call in stderr.write.call_args_list)
         self.assertIn(
-            "python -m pip install --upgrade codebase-memory-mcp", output
+            "python -m pip install --upgrade hyponoia", output
         )
-        self.assertIn("codebase-memory-mcp install --yes", output)
+        self.assertIn("hyponoia install --yes", output)
         self.assertNotIn("install.sh", output)
 
 
@@ -209,8 +209,8 @@ class ProcessLivenessTests(unittest.TestCase):
 class RuntimeSetTests(unittest.TestCase):
     def test_candidate_probe_authenticates_adjacent_runtime_assets(self):
         candidates = (
-            Path("/tmp/codebase-memory-mcp"),
-            PureWindowsPath("/tmp/codebase-memory-mcp"),
+            Path("/tmp/hyponoia"),
+            PureWindowsPath("/tmp/hyponoia"),
         )
 
         for candidate in candidates:
@@ -240,8 +240,8 @@ class RuntimeSetTests(unittest.TestCase):
     def test_orphan_reconciliation_rejects_multiply_linked_backup_members(self):
         with tempfile.TemporaryDirectory() as root:
             directory = Path(root)
-            binary = directory / "codebase-memory-mcp"
-            backup = directory / f".cbm-runtime-backup-{'a' * 32}"
+            binary = directory / "hyponoia"
+            backup = directory / f".hyp-runtime-backup-{'a' * 32}"
             backup.mkdir()
             (backup / ".retirement-complete").write_bytes(b"")
             member = backup / binary.name
@@ -485,7 +485,7 @@ class RuntimeSetTests(unittest.TestCase):
             self.assertFalse(lock_path.exists())
 
     def test_archive_namespace_is_exact_and_ui_has_one_pack(self):
-        pack = f"cbm-ui-{'a' * 64}.pack"
+        pack = f"hyp-ui-{'a' * 64}.pack"
         names = (*_cli._WINDOWS_ARCHIVE_NAMES, pack)
 
         self.assertEqual(
@@ -500,7 +500,7 @@ class RuntimeSetTests(unittest.TestCase):
             )
         with self.assertRaises(SystemExit):
             _cli._validate_archive_names(
-                (*names, f"cbm-ui-{'b' * 64}.pack"),
+                (*names, f"hyp-ui-{'b' * 64}.pack"),
                 _cli._WINDOWS_ARCHIVE_NAMES,
                 True,
             )
@@ -510,7 +510,7 @@ class RuntimeSetTests(unittest.TestCase):
             )
 
     def test_ui_zip_extracts_only_the_runtime_set(self):
-        pack = f"cbm-ui-{'a' * 64}.pack"
+        pack = f"hyp-ui-{'a' * 64}.pack"
         with tempfile.TemporaryDirectory() as root:
             archive = Path(root) / "release.zip"
             destination = Path(root) / "extract"
@@ -551,7 +551,7 @@ class RuntimeSetTests(unittest.TestCase):
                     tf,
                     str(destination),
                     _cli._UNIX_ARCHIVE_NAMES,
-                    ("codebase-memory-mcp", _cli._INTEGRATIONS_NAME),
+                    ("hyponoia", _cli._INTEGRATIONS_NAME),
                     False,
                 )
 
@@ -559,9 +559,9 @@ class RuntimeSetTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as root:
             archive = Path(root) / "release.tar.gz"
             with tarfile.open(archive, "w:gz") as tf:
-                info = tarfile.TarInfo("codebase-memory-mcp")
+                info = tarfile.TarInfo("hyponoia")
                 info.type = tarfile.LNKTYPE
-                info.linkname = "cbm-integrations.json"
+                info.linkname = "hyp-integrations.json"
                 tf.addfile(info)
             destination = Path(root) / "extract"
             destination.mkdir()
@@ -569,8 +569,8 @@ class RuntimeSetTests(unittest.TestCase):
                 _cli._safe_extract_tar(
                     tf,
                     str(destination),
-                    ("codebase-memory-mcp",),
-                    ("codebase-memory-mcp",),
+                    ("hyponoia",),
+                    ("hyponoia",),
                     False,
                 )
 
@@ -581,7 +581,7 @@ class RuntimeSetTests(unittest.TestCase):
                 info = zipfile.ZipInfo(_cli._WINDOWS_BINARY_NAME)
                 info.create_system = 3
                 info.external_attr = (stat.S_IFLNK | 0o777) << 16
-                zf.writestr(info, "cbm-integrations.json")
+                zf.writestr(info, "hyp-integrations.json")
             destination = Path(root) / "extract"
             destination.mkdir()
             with zipfile.ZipFile(archive) as zf, self.assertRaises(SystemExit):
@@ -597,7 +597,7 @@ class RuntimeSetTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as root, mock.patch.object(
             _cli, "_cache_dir", return_value=Path(root)
         ):
-            with mock.patch.dict(os.environ, {"CBM_VARIANT": "standard"}):
+            with mock.patch.dict(os.environ, {"HYP_VARIANT": "standard"}):
                 standard_binary = _cli._bin_path("0.8.1")
                 standard_binary.parent.mkdir(parents=True)
                 standard_binary.write_text("binary")
@@ -608,7 +608,7 @@ class RuntimeSetTests(unittest.TestCase):
                 (standard_binary.parent / _cli._INTEGRATIONS_NAME).unlink()
                 self.assertFalse(_cli._runtime_set_ready("0.8.1"))
 
-            with mock.patch.dict(os.environ, {"CBM_VARIANT": "ui"}):
+            with mock.patch.dict(os.environ, {"HYP_VARIANT": "ui"}):
                 ui_binary = _cli._bin_path("0.8.1")
                 ui_binary.parent.mkdir(parents=True)
                 ui_binary.write_text("binary")
@@ -617,25 +617,25 @@ class RuntimeSetTests(unittest.TestCase):
                 )
                 pack_bytes = b"pack"
                 pack_name = (
-                    f"cbm-ui-{hashlib.sha256(pack_bytes).hexdigest()}.pack"
+                    f"hyp-ui-{hashlib.sha256(pack_bytes).hexdigest()}.pack"
                 )
                 (ui_binary.parent / pack_name).write_bytes(pack_bytes)
                 self.assertTrue(_cli._runtime_set_ready("0.8.1"))
-                second_pack = f"cbm-ui-{'b' * 64}.pack"
+                second_pack = f"hyp-ui-{'b' * 64}.pack"
                 (ui_binary.parent / second_pack).write_text("second pack")
                 self.assertFalse(_cli._runtime_set_ready("0.8.1"))
 
     def test_ui_readiness_rejects_digest_mismatched_pack_bytes(self):
         with tempfile.TemporaryDirectory() as root, mock.patch.object(
             _cli, "_cache_dir", return_value=Path(root)
-        ), mock.patch.dict(os.environ, {"CBM_VARIANT": "ui"}):
+        ), mock.patch.dict(os.environ, {"HYP_VARIANT": "ui"}):
             binary = _cli._bin_path("0.8.1")
             binary.parent.mkdir(parents=True)
             binary.write_text("binary")
             (binary.parent / _cli._INTEGRATIONS_NAME).write_text("integrations")
             authenticated = b"authenticated pack"
             digest = hashlib.sha256(authenticated).hexdigest()
-            pack = binary.parent / f"cbm-ui-{digest}.pack"
+            pack = binary.parent / f"hyp-ui-{digest}.pack"
             pack.write_bytes(b"corrupt pack")
 
             self.assertFalse(
@@ -646,10 +646,10 @@ class RuntimeSetTests(unittest.TestCase):
     def test_ui_publication_rejects_digest_mismatched_staged_pack(self):
         with tempfile.TemporaryDirectory() as root:
             directory = Path(root)
-            binary_name = "codebase-memory-mcp"
+            binary_name = "hyponoia"
             authenticated = b"authenticated pack"
             pack = (
-                f"cbm-ui-{hashlib.sha256(authenticated).hexdigest()}.pack"
+                f"hyp-ui-{hashlib.sha256(authenticated).hexdigest()}.pack"
             )
             staged_paths = {}
             for name, contents in (
@@ -672,9 +672,9 @@ class RuntimeSetTests(unittest.TestCase):
     def test_publication_commits_sidecars_before_binary(self):
         with tempfile.TemporaryDirectory() as root:
             directory = Path(root)
-            binary_name = "codebase-memory-mcp"
+            binary_name = "hyponoia"
             pack_bytes = b"pack"
-            pack = f"cbm-ui-{hashlib.sha256(pack_bytes).hexdigest()}.pack"
+            pack = f"hyp-ui-{hashlib.sha256(pack_bytes).hexdigest()}.pack"
             staged_paths = {}
             for name, contents in (
                 (binary_name, b"binary"),
@@ -709,12 +709,12 @@ from pathlib import Path
 
 source_root, directory_raw, staged_raw, marker_raw, crash_name = sys.argv[1:]
 sys.path.insert(0, source_root)
-from codebase_memory_mcp import _cli
+from hyponoia import _cli
 
 directory = Path(directory_raw)
 staged = Path(staged_raw)
 marker = Path(marker_raw)
-binary_name = "codebase-memory-mcp"
+binary_name = "hyponoia"
 staged_paths = {
     _cli._INTEGRATIONS_NAME: staged / _cli._INTEGRATIONS_NAME,
     binary_name: staged / binary_name,
@@ -741,7 +741,7 @@ _cli._publish_runtime_set(
     verifier=verifier,
 )
 """
-        binary_name = "codebase-memory-mcp"
+        binary_name = "hyponoia"
         for crash_name, expected_ready in (
             (_cli._INTEGRATIONS_NAME, False),
             (binary_name, True),
@@ -796,7 +796,7 @@ _cli._publish_runtime_set(
                     backups = [
                         path
                         for path in directory.iterdir()
-                        if path.name.startswith(".cbm-runtime-backup-")
+                        if path.name.startswith(".hyp-runtime-backup-")
                     ]
                     self.assertEqual(len(backups), 1)
                     self.assertTrue(backups[0].is_dir())
@@ -858,7 +858,7 @@ _cli._publish_runtime_set(
                     )
                     self.assertFalse(
                         any(
-                            path.name.startswith(".cbm-runtime-backup-")
+                            path.name.startswith(".hyp-runtime-backup-")
                             for path in directory.iterdir()
                         )
                     )
@@ -875,16 +875,16 @@ _cli._publish_runtime_set(
     def test_publication_failure_restores_prior_complete_runtime_set(self):
         with tempfile.TemporaryDirectory() as root:
             directory = Path(root)
-            binary_name = "codebase-memory-mcp"
+            binary_name = "hyponoia"
             old_pack_bytes = b"old pack"
-            old_pack = f"cbm-ui-{hashlib.sha256(old_pack_bytes).hexdigest()}.pack"
+            old_pack = f"hyp-ui-{hashlib.sha256(old_pack_bytes).hexdigest()}.pack"
             (directory / binary_name).write_text("binary:old")
             (directory / _cli._INTEGRATIONS_NAME).write_text("integrations:old")
             (directory / old_pack).write_bytes(old_pack_bytes)
 
             candidate_pack_bytes = b"candidate pack"
             candidate_pack = (
-                f"cbm-ui-{hashlib.sha256(candidate_pack_bytes).hexdigest()}.pack"
+                f"hyp-ui-{hashlib.sha256(candidate_pack_bytes).hexdigest()}.pack"
             )
             staged_paths = {}
             for name, contents in (
@@ -904,7 +904,7 @@ _cli._publish_runtime_set(
                 nonlocal failed
                 source = Path(source)
                 destination = Path(destination)
-                if destination.parent.name.startswith(".cbm-runtime-backup-"):
+                if destination.parent.name.startswith(".hyp-runtime-backup-"):
                     retired.append(source.name)
                 if destination == directory / binary_name and not failed:
                     failed = True
@@ -931,7 +931,7 @@ _cli._publish_runtime_set(
             self.assertFalse((directory / candidate_pack).exists())
             self.assertFalse(
                 any(
-                    path.name.startswith(".cbm-runtime-backup-")
+                    path.name.startswith(".hyp-runtime-backup-")
                     for path in directory.iterdir()
                 )
             )
@@ -939,12 +939,12 @@ _cli._publish_runtime_set(
     def test_concurrent_publishers_preserve_the_first_complete_winner(self):
         with tempfile.TemporaryDirectory() as root:
             directory = Path(root)
-            binary_name = "codebase-memory-mcp"
+            binary_name = "hyponoia"
 
             def stages(tag):
                 pack_bytes = f"pack:{tag}".encode()
                 pack = (
-                    f"cbm-ui-{hashlib.sha256(pack_bytes).hexdigest()}.pack"
+                    f"hyp-ui-{hashlib.sha256(pack_bytes).hexdigest()}.pack"
                 )
                 result = {}
                 for name, contents in (
@@ -1035,10 +1035,10 @@ _cli._publish_runtime_set(
     def test_failure_never_deletes_a_complete_foreign_winner(self):
         with tempfile.TemporaryDirectory() as root:
             directory = Path(root)
-            binary_name = "codebase-memory-mcp"
+            binary_name = "hyponoia"
             old_pack_bytes = b"pack:old"
             old_pack = (
-                f"cbm-ui-{hashlib.sha256(old_pack_bytes).hexdigest()}.pack"
+                f"hyp-ui-{hashlib.sha256(old_pack_bytes).hexdigest()}.pack"
             )
             (directory / binary_name).write_bytes(b"binary:old")
             (directory / _cli._INTEGRATIONS_NAME).write_bytes(
@@ -1048,7 +1048,7 @@ _cli._publish_runtime_set(
 
             candidate_pack_bytes = b"pack:candidate"
             candidate_pack = (
-                f"cbm-ui-{hashlib.sha256(candidate_pack_bytes).hexdigest()}.pack"
+                f"hyp-ui-{hashlib.sha256(candidate_pack_bytes).hexdigest()}.pack"
             )
             staged_paths = {}
             for name, contents in (
@@ -1062,7 +1062,7 @@ _cli._publish_runtime_set(
 
             foreign_pack_bytes = b"pack:foreign"
             foreign_pack = (
-                f"cbm-ui-{hashlib.sha256(foreign_pack_bytes).hexdigest()}.pack"
+                f"hyp-ui-{hashlib.sha256(foreign_pack_bytes).hexdigest()}.pack"
             )
             replace = os.replace
             injected = False
@@ -1074,7 +1074,7 @@ _cli._publish_runtime_set(
                 if destination == directory / binary_name and not injected:
                     injected = True
                     for path in directory.iterdir():
-                        if path.name.startswith("cbm-ui-") and path.name.endswith(
+                        if path.name.startswith("hyp-ui-") and path.name.endswith(
                             ".pack"
                         ):
                             path.unlink()
@@ -1109,7 +1109,7 @@ _cli._publish_runtime_set(
             self.assertFalse((directory / old_pack).exists())
             self.assertFalse(
                 any(
-                    path.name.startswith(".cbm-runtime-backup-")
+                    path.name.startswith(".hyp-runtime-backup-")
                     for path in directory.iterdir()
                 )
             )

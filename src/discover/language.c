@@ -1,14 +1,14 @@
 /*
  * language.c — Language detection from filename and extension.
  *
- * Maps file extensions and special filenames to CBMLanguage enum values.
+ * Maps file extensions and special filenames to HYPLanguage enum values.
  * Handles .m disambiguation (Objective-C vs Magma vs MATLAB).
- * Consults the process-global user config (set via cbm_set_user_lang_config)
+ * Consults the process-global user config (set via hyp_set_user_lang_config)
  * before the built-in lookup table.
  */
 #include "discover/discover.h"
 #include "discover/userconfig.h"
-#include "cbm.h" // CBMLanguage, CBM_LANG_*
+#include "hyp.h" // HYPLanguage, HYP_LANG_*
 
 #include "foundation/constants.h"
 #include "foundation/compat_fs.h"
@@ -23,612 +23,612 @@ enum { LANG_SCAN_PASSES = 2 };
 
 typedef struct {
     const char *ext; /* including dot, e.g. ".go" */
-    CBMLanguage language;
+    HYPLanguage language;
 } ext_entry_t;
 
 /* Sorted by extension for binary search (but linear scan is fine for ~120 entries) */
 static const ext_entry_t EXT_TABLE[] = {
     /* Bash */
-    {".bash", CBM_LANG_BASH},
-    {".sh", CBM_LANG_BASH},
+    {".bash", HYP_LANG_BASH},
+    {".sh", HYP_LANG_BASH},
 
     /* C */
-    {".c", CBM_LANG_C},
+    {".c", HYP_LANG_C},
 
     /* C++ */
-    {".cc", CBM_LANG_CPP},
-    {".ccm", CBM_LANG_CPP},
-    {".cpp", CBM_LANG_CPP},
-    {".cppm", CBM_LANG_CPP},
-    {".cxx", CBM_LANG_CPP},
-    {".h", CBM_LANG_CPP},
-    {".hh", CBM_LANG_CPP},
-    {".hpp", CBM_LANG_CPP},
-    {".hxx", CBM_LANG_CPP},
-    {".ixx", CBM_LANG_CPP},
+    {".cc", HYP_LANG_CPP},
+    {".ccm", HYP_LANG_CPP},
+    {".cpp", HYP_LANG_CPP},
+    {".cppm", HYP_LANG_CPP},
+    {".cxx", HYP_LANG_CPP},
+    {".h", HYP_LANG_CPP},
+    {".hh", HYP_LANG_CPP},
+    {".hpp", HYP_LANG_CPP},
+    {".hxx", HYP_LANG_CPP},
+    {".ixx", HYP_LANG_CPP},
 
     /* C# */
-    {".cs", CBM_LANG_CSHARP},
+    {".cs", HYP_LANG_CSHARP},
 
     /* Clojure */
-    {".clj", CBM_LANG_CLOJURE},
-    {".cljc", CBM_LANG_CLOJURE},
-    {".cljs", CBM_LANG_CLOJURE},
+    {".clj", HYP_LANG_CLOJURE},
+    {".cljc", HYP_LANG_CLOJURE},
+    {".cljs", HYP_LANG_CLOJURE},
 
     /* CMake */
-    {".cmake", CBM_LANG_CMAKE},
+    {".cmake", HYP_LANG_CMAKE},
 
     /* COBOL */
-    {".cbl", CBM_LANG_COBOL},
-    {".cob", CBM_LANG_COBOL},
+    {".cbl", HYP_LANG_COBOL},
+    {".cob", HYP_LANG_COBOL},
 
     /* Common Lisp */
-    {".cl", CBM_LANG_COMMONLISP},
-    {".lisp", CBM_LANG_COMMONLISP},
-    {".lsp", CBM_LANG_COMMONLISP},
+    {".cl", HYP_LANG_COMMONLISP},
+    {".lisp", HYP_LANG_COMMONLISP},
+    {".lsp", HYP_LANG_COMMONLISP},
 
     /* CSS */
-    {".css", CBM_LANG_CSS},
+    {".css", HYP_LANG_CSS},
 
     /* CUDA */
-    {".cu", CBM_LANG_CUDA},
-    {".cuh", CBM_LANG_CUDA},
+    {".cu", HYP_LANG_CUDA},
+    {".cuh", HYP_LANG_CUDA},
 
     /* Dart */
-    {".dart", CBM_LANG_DART},
+    {".dart", HYP_LANG_DART},
 
     /* Dockerfile */
-    {".dockerfile", CBM_LANG_DOCKERFILE},
+    {".dockerfile", HYP_LANG_DOCKERFILE},
 
     /* Elixir */
-    {".ex", CBM_LANG_ELIXIR},
-    {".exs", CBM_LANG_ELIXIR},
+    {".ex", HYP_LANG_ELIXIR},
+    {".exs", HYP_LANG_ELIXIR},
 
     /* DotEnv */
-    {".env", CBM_LANG_DOTENV},
+    {".env", HYP_LANG_DOTENV},
 
     /* Elm */
-    {".elm", CBM_LANG_ELM},
+    {".elm", HYP_LANG_ELM},
 
     /* Emacs Lisp */
-    {".el", CBM_LANG_EMACSLISP},
+    {".el", HYP_LANG_EMACSLISP},
 
     /* Erlang */
-    {".erl", CBM_LANG_ERLANG},
+    {".erl", HYP_LANG_ERLANG},
 
     /* F# */
-    {".fs", CBM_LANG_FSHARP},
-    {".fsi", CBM_LANG_FSHARP},
-    {".fsx", CBM_LANG_FSHARP},
+    {".fs", HYP_LANG_FSHARP},
+    {".fsi", HYP_LANG_FSHARP},
+    {".fsx", HYP_LANG_FSHARP},
 
     /* FORM */
-    {".frm", CBM_LANG_FORM},
-    {".prc", CBM_LANG_FORM},
+    {".frm", HYP_LANG_FORM},
+    {".prc", HYP_LANG_FORM},
 
     /* Fortran */
-    {".f03", CBM_LANG_FORTRAN},
-    {".f08", CBM_LANG_FORTRAN},
-    {".f90", CBM_LANG_FORTRAN},
-    {".f95", CBM_LANG_FORTRAN},
+    {".f03", HYP_LANG_FORTRAN},
+    {".f08", HYP_LANG_FORTRAN},
+    {".f90", HYP_LANG_FORTRAN},
+    {".f95", HYP_LANG_FORTRAN},
 
     /* GLSL */
-    {".frag", CBM_LANG_GLSL},
-    {".glsl", CBM_LANG_GLSL},
-    {".vert", CBM_LANG_GLSL},
+    {".frag", HYP_LANG_GLSL},
+    {".glsl", HYP_LANG_GLSL},
+    {".vert", HYP_LANG_GLSL},
 
     /* Go */
-    {".go", CBM_LANG_GO},
+    {".go", HYP_LANG_GO},
 
     /* GraphQL */
-    {".gql", CBM_LANG_GRAPHQL},
-    {".graphql", CBM_LANG_GRAPHQL},
+    {".gql", HYP_LANG_GRAPHQL},
+    {".graphql", HYP_LANG_GRAPHQL},
 
     /* Groovy */
-    {".gradle", CBM_LANG_GROOVY},
-    {".groovy", CBM_LANG_GROOVY},
+    {".gradle", HYP_LANG_GROOVY},
+    {".groovy", HYP_LANG_GROOVY},
 
     /* Haskell */
-    {".hs", CBM_LANG_HASKELL},
+    {".hs", HYP_LANG_HASKELL},
 
     /* HCL / Terraform */
-    {".hcl", CBM_LANG_HCL},
-    {".tf", CBM_LANG_HCL},
+    {".hcl", HYP_LANG_HCL},
+    {".tf", HYP_LANG_HCL},
 
     /* HTML */
-    {".htm", CBM_LANG_HTML},
-    {".html", CBM_LANG_HTML},
+    {".htm", HYP_LANG_HTML},
+    {".html", HYP_LANG_HTML},
 
     /* INI */
-    {".cfg", CBM_LANG_INI},
-    {".conf", CBM_LANG_INI},
-    {".ini", CBM_LANG_INI},
+    {".cfg", HYP_LANG_INI},
+    {".conf", HYP_LANG_INI},
+    {".ini", HYP_LANG_INI},
 
     /* Java */
-    {".java", CBM_LANG_JAVA},
+    {".java", HYP_LANG_JAVA},
 
     /* JavaScript */
-    {".js", CBM_LANG_JAVASCRIPT},
-    {".jsx", CBM_LANG_JAVASCRIPT},
-    {".mjs", CBM_LANG_JAVASCRIPT}, /* ES modules (#197) */
-    {".cjs", CBM_LANG_JAVASCRIPT}, /* CommonJS modules */
+    {".js", HYP_LANG_JAVASCRIPT},
+    {".jsx", HYP_LANG_JAVASCRIPT},
+    {".mjs", HYP_LANG_JAVASCRIPT}, /* ES modules (#197) */
+    {".cjs", HYP_LANG_JAVASCRIPT}, /* CommonJS modules */
 
     /* JSON */
-    {".json", CBM_LANG_JSON},
+    {".json", HYP_LANG_JSON},
 
     /* Julia */
-    {".jl", CBM_LANG_JULIA},
+    {".jl", HYP_LANG_JULIA},
 
     /* Kotlin */
-    {".kt", CBM_LANG_KOTLIN},
-    {".kts", CBM_LANG_KOTLIN},
+    {".kt", HYP_LANG_KOTLIN},
+    {".kts", HYP_LANG_KOTLIN},
 
     /* Lean */
-    {".lean", CBM_LANG_LEAN},
+    {".lean", HYP_LANG_LEAN},
 
     /* Lua */
-    {".lua", CBM_LANG_LUA},
+    {".lua", HYP_LANG_LUA},
 
     /* Magma */
-    {".mag", CBM_LANG_MAGMA},
-    {".magma", CBM_LANG_MAGMA},
+    {".mag", HYP_LANG_MAGMA},
+    {".magma", HYP_LANG_MAGMA},
 
     /* Makefile */
-    {".mk", CBM_LANG_MAKEFILE},
+    {".mk", HYP_LANG_MAKEFILE},
 
     /* Markdown */
-    {".md", CBM_LANG_MARKDOWN},
-    {".mdx", CBM_LANG_MARKDOWN},
+    {".md", HYP_LANG_MARKDOWN},
+    {".mdx", HYP_LANG_MARKDOWN},
 
     /* MATLAB */
-    {".m", CBM_LANG_MATLAB},
-    {".matlab", CBM_LANG_MATLAB},
-    {".mlx", CBM_LANG_MATLAB},
+    {".m", HYP_LANG_MATLAB},
+    {".matlab", HYP_LANG_MATLAB},
+    {".mlx", HYP_LANG_MATLAB},
 
     /* Meson */
-    {".meson", CBM_LANG_MESON},
+    {".meson", HYP_LANG_MESON},
 
     /* Mojo */
-    {".mojo", CBM_LANG_MOJO},
+    {".mojo", HYP_LANG_MOJO},
 
     /* Nix */
-    {".nix", CBM_LANG_NIX},
+    {".nix", HYP_LANG_NIX},
 
     /* OCaml */
-    {".ml", CBM_LANG_OCAML},
-    {".mli", CBM_LANG_OCAML},
+    {".ml", HYP_LANG_OCAML},
+    {".mli", HYP_LANG_OCAML},
 
     /* Perl */
-    {".pl", CBM_LANG_PERL},
-    {".pm", CBM_LANG_PERL},
+    {".pl", HYP_LANG_PERL},
+    {".pm", HYP_LANG_PERL},
 
     /* PHP */
-    {".php", CBM_LANG_PHP},
+    {".php", HYP_LANG_PHP},
 
     /* Protobuf */
-    {".proto", CBM_LANG_PROTOBUF},
+    {".proto", HYP_LANG_PROTOBUF},
 
     /* Python */
-    {".py", CBM_LANG_PYTHON},
+    {".py", HYP_LANG_PYTHON},
 
     /* R — case insensitive handled separately */
-    {".R", CBM_LANG_R},
-    {".r", CBM_LANG_R},
+    {".R", HYP_LANG_R},
+    {".r", HYP_LANG_R},
 
     /* Ruby */
-    {".gemspec", CBM_LANG_RUBY},
-    {".rake", CBM_LANG_RUBY},
-    {".rb", CBM_LANG_RUBY},
+    {".gemspec", HYP_LANG_RUBY},
+    {".rake", HYP_LANG_RUBY},
+    {".rb", HYP_LANG_RUBY},
 
     /* Rust */
-    {".rs", CBM_LANG_RUST},
+    {".rs", HYP_LANG_RUST},
 
     /* Scala */
-    {".sc", CBM_LANG_SCALA},
-    {".scala", CBM_LANG_SCALA},
+    {".sc", HYP_LANG_SCALA},
+    {".scala", HYP_LANG_SCALA},
 
     /* SCSS */
-    {".scss", CBM_LANG_SCSS},
+    {".scss", HYP_LANG_SCSS},
 
     /* SQL */
-    {".sql", CBM_LANG_SQL},
+    {".sql", HYP_LANG_SQL},
 
     /* Svelte */
-    {".svelte", CBM_LANG_SVELTE},
+    {".svelte", HYP_LANG_SVELTE},
 
     /* Swift */
-    {".swift", CBM_LANG_SWIFT},
+    {".swift", HYP_LANG_SWIFT},
 
     /* SystemVerilog + Verilog */
-    {".sv", CBM_LANG_VERILOG},
-    {".v", CBM_LANG_VERILOG},
+    {".sv", HYP_LANG_VERILOG},
+    {".v", HYP_LANG_VERILOG},
 
     /* TOML */
-    {".toml", CBM_LANG_TOML},
+    {".toml", HYP_LANG_TOML},
 
     /* TSX */
-    {".tsx", CBM_LANG_TSX},
+    {".tsx", HYP_LANG_TSX},
 
     /* TypeScript */
-    {".ts", CBM_LANG_TYPESCRIPT},
-    {".mts", CBM_LANG_TYPESCRIPT}, /* TS ES modules */
-    {".cts", CBM_LANG_TYPESCRIPT}, /* TS CommonJS modules */
+    {".ts", HYP_LANG_TYPESCRIPT},
+    {".mts", HYP_LANG_TYPESCRIPT}, /* TS ES modules */
+    {".cts", HYP_LANG_TYPESCRIPT}, /* TS CommonJS modules */
 
     /* VimScript */
-    {".vim", CBM_LANG_VIMSCRIPT},
-    {".vimrc", CBM_LANG_VIMSCRIPT},
-    {"justfile", CBM_LANG_JUST},
-    {"Justfile", CBM_LANG_JUST},
-    {".justfile", CBM_LANG_JUST},
-    {".just", CBM_LANG_JUST}, /* `import 'common.just'` target files */
-    {"hyprland.conf", CBM_LANG_HYPRLANG},
-    {"ssh_config", CBM_LANG_SSHCONFIG},
-    {"sshd_config", CBM_LANG_SSHCONFIG},
-    {"BUILD", CBM_LANG_STARLARK},
-    {"BUILD.bazel", CBM_LANG_STARLARK},
-    {"WORKSPACE", CBM_LANG_STARLARK},
-    {"WORKSPACE.bazel", CBM_LANG_STARLARK},
+    {".vim", HYP_LANG_VIMSCRIPT},
+    {".vimrc", HYP_LANG_VIMSCRIPT},
+    {"justfile", HYP_LANG_JUST},
+    {"Justfile", HYP_LANG_JUST},
+    {".justfile", HYP_LANG_JUST},
+    {".just", HYP_LANG_JUST}, /* `import 'common.just'` target files */
+    {"hyprland.conf", HYP_LANG_HYPRLANG},
+    {"ssh_config", HYP_LANG_SSHCONFIG},
+    {"sshd_config", HYP_LANG_SSHCONFIG},
+    {"BUILD", HYP_LANG_STARLARK},
+    {"BUILD.bazel", HYP_LANG_STARLARK},
+    {"WORKSPACE", HYP_LANG_STARLARK},
+    {"WORKSPACE.bazel", HYP_LANG_STARLARK},
 
     /* BitBake include fragments — `require/include foo.inc` target files.
      * NOTE: .inc is also used by ObjectScript include (macro) files; the
-     * ambiguity is resolved by content in cbm_disambiguate_inc(). */
-    {".inc", CBM_LANG_BITBAKE},
+     * ambiguity is resolved by content in hyp_disambiguate_inc(). */
+    {".inc", HYP_LANG_BITBAKE},
 
     /* InterSystems ObjectScript routines (.mac/.int/.rtn unambiguous; .cls is
-     * shared with Apex and resolved by content in cbm_disambiguate_cls()). */
-    {".mac", CBM_LANG_OBJECTSCRIPT_ROUTINE},
-    {".int", CBM_LANG_OBJECTSCRIPT_ROUTINE},
-    {".rtn", CBM_LANG_OBJECTSCRIPT_ROUTINE},
+     * shared with Apex and resolved by content in hyp_disambiguate_cls()). */
+    {".mac", HYP_LANG_OBJECTSCRIPT_ROUTINE},
+    {".int", HYP_LANG_OBJECTSCRIPT_ROUTINE},
+    {".rtn", HYP_LANG_OBJECTSCRIPT_ROUTINE},
 
     /* Vue */
-    {".vue", CBM_LANG_VUE},
+    {".vue", HYP_LANG_VUE},
 
     /* Wolfram */
-    {".wl", CBM_LANG_WOLFRAM},
-    {".wls", CBM_LANG_WOLFRAM},
+    {".wl", HYP_LANG_WOLFRAM},
+    {".wls", HYP_LANG_WOLFRAM},
 
     /* XML */
-    {".xml", CBM_LANG_XML},
-    {".xsd", CBM_LANG_XML},
-    {".xsl", CBM_LANG_XML},
-    {".svg", CBM_LANG_XML},
+    {".xml", HYP_LANG_XML},
+    {".xsd", HYP_LANG_XML},
+    {".xsl", HYP_LANG_XML},
+    {".svg", HYP_LANG_XML},
 
     /* YAML */
-    {".yaml", CBM_LANG_YAML},
-    {".yml", CBM_LANG_YAML},
+    {".yaml", HYP_LANG_YAML},
+    {".yml", HYP_LANG_YAML},
 
     /* Ada */
-    {".adb", CBM_LANG_ADA},
+    {".adb", HYP_LANG_ADA},
 
     /* Ada */
-    {".ads", CBM_LANG_ADA},
+    {".ads", HYP_LANG_ADA},
 
     /* Agda */
-    {".agda", CBM_LANG_AGDA},
+    {".agda", HYP_LANG_AGDA},
 
     /* Astro */
-    {".astro", CBM_LANG_ASTRO},
+    {".astro", HYP_LANG_ASTRO},
 
     /* AWK */
-    {".awk", CBM_LANG_AWK},
+    {".awk", HYP_LANG_AWK},
 
     /* BitBake */
-    {".bb", CBM_LANG_BITBAKE},
+    {".bb", HYP_LANG_BITBAKE},
 
     /* BitBake */
-    {".bbappend", CBM_LANG_BITBAKE},
+    {".bbappend", HYP_LANG_BITBAKE},
 
     /* BitBake */
-    {".bbclass", CBM_LANG_BITBAKE},
+    {".bbclass", HYP_LANG_BITBAKE},
 
     /* Beancount */
-    {".beancount", CBM_LANG_BEANCOUNT},
+    {".beancount", HYP_LANG_BEANCOUNT},
 
     /* BibTeX */
-    {".bib", CBM_LANG_BIBTEX},
+    {".bib", HYP_LANG_BIBTEX},
 
     /* Bicep */
-    {".bicep", CBM_LANG_BICEP},
+    {".bicep", HYP_LANG_BICEP},
 
     /* Blade */
     /* .blade.php handled by userconfig compound extensions, not EXT_TABLE */
 
     /* Starlark */
-    {".bzl", CBM_LANG_STARLARK},
+    {".bzl", HYP_LANG_STARLARK},
 
     /* Cairo */
-    {".cairo", CBM_LANG_CAIRO},
+    {".cairo", HYP_LANG_CAIRO},
 
     /* Cap'n Proto */
-    {".capnp", CBM_LANG_CAPNP},
+    {".capnp", HYP_LANG_CAPNP},
 
     /* Apex */
-    {".cls", CBM_LANG_APEX},
+    {".cls", HYP_LANG_APEX},
 
     /* Crystal */
-    {".cr", CBM_LANG_CRYSTAL},
+    {".cr", HYP_LANG_CRYSTAL},
 
     /* CSV */
-    {".csv", CBM_LANG_CSV},
+    {".csv", HYP_LANG_CSV},
 
     /* D */
-    {".d", CBM_LANG_DLANG},
+    {".d", HYP_LANG_DLANG},
 
     /* Diff */
-    {".diff", CBM_LANG_DIFF},
+    {".diff", HYP_LANG_DIFF},
 
     /* Pascal */
-    {".dpr", CBM_LANG_PASCAL},
+    {".dpr", HYP_LANG_PASCAL},
 
     /* DeviceTree */
-    {".dts", CBM_LANG_DEVICETREE},
+    {".dts", HYP_LANG_DEVICETREE},
 
     /* DeviceTree */
-    {".dtsi", CBM_LANG_DEVICETREE},
+    {".dtsi", HYP_LANG_DEVICETREE},
 
     /* FunC */
-    {".fc", CBM_LANG_FUNC},
+    {".fc", HYP_LANG_FUNC},
 
     /* Fish */
-    {".fish", CBM_LANG_FISH},
+    {".fish", HYP_LANG_FISH},
 
     /* Fennel */
-    {".fnl", CBM_LANG_FENNEL},
+    {".fnl", HYP_LANG_FENNEL},
 
     /* HLSL */
-    {".fx", CBM_LANG_HLSL},
+    {".fx", HYP_LANG_HLSL},
 
     /* GDScript */
-    {".gd", CBM_LANG_GDSCRIPT},
+    {".gd", HYP_LANG_GDSCRIPT},
 
     /* Gleam */
-    {".gleam", CBM_LANG_GLEAM},
+    {".gleam", HYP_LANG_GLEAM},
 
     /* GN */
-    {".gn", CBM_LANG_GN},
+    {".gn", HYP_LANG_GN},
 
     /* GN */
-    {".gni", CBM_LANG_GN},
+    {".gni", HYP_LANG_GN},
 
     /* Go Template */
-    {".gotmpl", CBM_LANG_GOTEMPLATE},
-    {".tpl", CBM_LANG_GOTEMPLATE}, /* Helm _helpers.tpl named-template definitions */
+    {".gotmpl", HYP_LANG_GOTEMPLATE},
+    {".tpl", HYP_LANG_GOTEMPLATE}, /* Helm _helpers.tpl named-template definitions */
 
     /* Hare */
-    {".ha", CBM_LANG_HARE},
+    {".ha", HYP_LANG_HARE},
 
     /* Hyprlang */
-    {".hl", CBM_LANG_HYPRLANG},
+    {".hl", HYP_LANG_HYPRLANG},
 
     /* HLSL */
-    {".hlsl", CBM_LANG_HLSL},
+    {".hlsl", HYP_LANG_HLSL},
 
     /* HLSL */
-    {".hlsli", CBM_LANG_HLSL},
+    {".hlsli", HYP_LANG_HLSL},
 
     /* ISPC */
-    {".ispc", CBM_LANG_ISPC},
+    {".ispc", HYP_LANG_ISPC},
 
     /* Jinja2 */
-    {".j2", CBM_LANG_JINJA2},
+    {".j2", HYP_LANG_JINJA2},
 
     /* Janet */
-    {".janet", CBM_LANG_JANET},
+    {".janet", HYP_LANG_JANET},
 
     /* Jinja2 */
-    {".jinja", CBM_LANG_JINJA2},
+    {".jinja", HYP_LANG_JINJA2},
 
     /* Jinja2 */
-    {".jinja2", CBM_LANG_JINJA2},
+    {".jinja2", HYP_LANG_JINJA2},
 
     /* JSON5 */
-    {".json5", CBM_LANG_JSON5},
+    {".json5", HYP_LANG_JSON5},
 
     /* Jsonnet */
-    {".jsonnet", CBM_LANG_JSONNET},
+    {".jsonnet", HYP_LANG_JSONNET},
 
     /* KDL */
-    {".kdl", CBM_LANG_KDL},
+    {".kdl", HYP_LANG_KDL},
 
     /* Linker Script */
-    {".ld", CBM_LANG_LINKERSCRIPT},
+    {".ld", HYP_LANG_LINKERSCRIPT},
 
     /* Linker Script */
-    {".lds", CBM_LANG_LINKERSCRIPT},
+    {".lds", HYP_LANG_LINKERSCRIPT},
 
     /* Jsonnet */
-    {".libsonnet", CBM_LANG_JSONNET},
+    {".libsonnet", HYP_LANG_JSONNET},
 
     /* Liquid */
-    {".liquid", CBM_LANG_LIQUID},
+    {".liquid", HYP_LANG_LIQUID},
 
     /* LLVM IR */
-    {".ll", CBM_LANG_LLVM_IR},
+    {".ll", HYP_LANG_LLVM_IR},
 
     /* Pascal */
-    {".lpr", CBM_LANG_PASCAL},
+    {".lpr", HYP_LANG_PASCAL},
 
     /* Luau */
-    {".luau", CBM_LANG_LUAU},
+    {".luau", HYP_LANG_LUAU},
 
     /* Qt QML */
-    {".qml", CBM_LANG_QML},
+    {".qml", HYP_LANG_QML},
 
     /* CFML / ColdFusion — .cfc components are script-dialect; .cfm are tag templates */
-    {".cfc", CBM_LANG_CFSCRIPT},
-    {".cfm", CBM_LANG_CFML},
+    {".cfc", HYP_LANG_CFSCRIPT},
+    {".cfm", HYP_LANG_CFML},
 
     /* Mermaid */
-    {".mermaid", CBM_LANG_MERMAID},
+    {".mermaid", HYP_LANG_MERMAID},
 
     /* Mermaid */
-    {".mmd", CBM_LANG_MERMAID},
+    {".mmd", HYP_LANG_MERMAID},
 
     /* Move */
-    {".move", CBM_LANG_MOVE},
+    {".move", HYP_LANG_MOVE},
 
     /* NASM */
-    {".nasm", CBM_LANG_NASM},
+    {".nasm", HYP_LANG_NASM},
 
     /* Nickel */
-    {".ncl", CBM_LANG_NICKEL},
+    {".ncl", HYP_LANG_NICKEL},
 
     /* Nim */
 
     /* Nim */
 
     /* Squirrel */
-    {".nut", CBM_LANG_SQUIRREL},
+    {".nut", HYP_LANG_SQUIRREL},
 
     /* Odin */
-    {".odin", CBM_LANG_ODIN},
+    {".odin", HYP_LANG_ODIN},
 
     /* DeviceTree */
-    {".overlay", CBM_LANG_DEVICETREE},
+    {".overlay", HYP_LANG_DEVICETREE},
 
     /* Pascal */
-    {".pas", CBM_LANG_PASCAL},
+    {".pas", HYP_LANG_PASCAL},
 
     /* Diff */
-    {".patch", CBM_LANG_DIFF},
+    {".patch", HYP_LANG_DIFF},
 
     /* Pine Script */
-    {".pine", CBM_LANG_PINE},
+    {".pine", HYP_LANG_PINE},
 
     /* Pkl */
-    {".pkl", CBM_LANG_PKL},
+    {".pkl", HYP_LANG_PKL},
 
     /* PO */
-    {".po", CBM_LANG_PO},
+    {".po", HYP_LANG_PO},
 
     /* Pony */
-    {".pony", CBM_LANG_PONY},
+    {".pony", HYP_LANG_PONY},
 
     /* PO */
-    {".pot", CBM_LANG_PO},
+    {".pot", HYP_LANG_PO},
 
     /* Puppet */
-    {".pp", CBM_LANG_PUPPET},
+    {".pp", HYP_LANG_PUPPET},
 
     /* Prisma */
-    {".prisma", CBM_LANG_PRISMA},
+    {".prisma", HYP_LANG_PRISMA},
 
     /* Properties */
-    {".properties", CBM_LANG_PROPERTIES},
+    {".properties", HYP_LANG_PROPERTIES},
 
     /* PowerShell */
-    {".ps1", CBM_LANG_POWERSHELL},
+    {".ps1", HYP_LANG_POWERSHELL},
 
     /* PowerShell */
-    {".psd1", CBM_LANG_POWERSHELL},
+    {".psd1", HYP_LANG_POWERSHELL},
 
     /* PowerShell */
-    {".psm1", CBM_LANG_POWERSHELL},
+    {".psm1", HYP_LANG_POWERSHELL},
 
     /* PureScript */
-    {".purs", CBM_LANG_PURESCRIPT},
+    {".purs", HYP_LANG_PURESCRIPT},
 
     /* ReScript */
-    {".res", CBM_LANG_RESCRIPT},
+    {".res", HYP_LANG_RESCRIPT},
 
     /* ReScript */
-    {".resi", CBM_LANG_RESCRIPT},
+    {".resi", HYP_LANG_RESCRIPT},
 
     /* Regex */
-    {".re", CBM_LANG_REGEX},
+    {".re", HYP_LANG_REGEX},
 
     /* Racket */
-    {".rkt", CBM_LANG_RACKET},
+    {".rkt", HYP_LANG_RACKET},
 
     /* RON */
-    {".ron", CBM_LANG_RON},
+    {".ron", HYP_LANG_RON},
 
     /* reStructuredText */
-    {".rst", CBM_LANG_RST},
+    {".rst", HYP_LANG_RST},
 
     /* Assembly */
-    {".s", CBM_LANG_ASSEMBLY},
+    {".s", HYP_LANG_ASSEMBLY},
 
     /* Assembly */
-    {".S", CBM_LANG_ASSEMBLY},
+    {".S", HYP_LANG_ASSEMBLY},
 
     /* Scheme */
-    {".scm", CBM_LANG_SCHEME},
+    {".scm", HYP_LANG_SCHEME},
 
     /* Slang */
-    {".slang", CBM_LANG_SLANG},
+    {".slang", HYP_LANG_SLANG},
 
     /* Smali */
-    {".smali", CBM_LANG_SMALI},
+    {".smali", HYP_LANG_SMALI},
 
     /* Smithy */
-    {".smithy", CBM_LANG_SMITHY},
+    {".smithy", HYP_LANG_SMITHY},
 
     /* Solidity */
-    {".sol", CBM_LANG_SOLIDITY},
+    {".sol", HYP_LANG_SOLIDITY},
 
     /* SOQL */
-    {".soql", CBM_LANG_SOQL},
+    {".soql", HYP_LANG_SOQL},
 
     /* SOSL */
-    {".sosl", CBM_LANG_SOSL},
+    {".sosl", HYP_LANG_SOSL},
 
     /* Scheme */
-    {".ss", CBM_LANG_SCHEME},
+    {".ss", HYP_LANG_SCHEME},
 
     /* Starlark */
-    {".star", CBM_LANG_STARLARK},
+    {".star", HYP_LANG_STARLARK},
 
     /* SystemVerilog */
 
     /* SystemVerilog */
 
     /* Sway */
-    {".sw", CBM_LANG_SWAY},
+    {".sw", HYP_LANG_SWAY},
 
     /* Tcl */
-    {".tcl", CBM_LANG_TCL},
+    {".tcl", HYP_LANG_TCL},
 
     /* TableGen */
-    {".td", CBM_LANG_TABLEGEN},
+    {".td", HYP_LANG_TABLEGEN},
 
     /* Templ */
-    {".templ", CBM_LANG_TEMPL},
+    {".templ", HYP_LANG_TEMPL},
 
     /* Thrift */
-    {".thrift", CBM_LANG_THRIFT},
+    {".thrift", HYP_LANG_THRIFT},
 
     /* Teal */
-    {".tl", CBM_LANG_TEAL},
+    {".tl", HYP_LANG_TEAL},
 
     /* TLA+ */
-    {".tla", CBM_LANG_TLAPLUS},
+    {".tla", HYP_LANG_TLAPLUS},
 
     /* Go Template */
-    {".tmpl", CBM_LANG_GOTEMPLATE},
+    {".tmpl", HYP_LANG_GOTEMPLATE},
 
     /* Apex */
-    {".trigger", CBM_LANG_APEX},
+    {".trigger", HYP_LANG_APEX},
 
     /* Typst */
-    {".typ", CBM_LANG_TYPST},
+    {".typ", HYP_LANG_TYPST},
 
     /* VHDL */
-    {".vhd", CBM_LANG_VHDL},
+    {".vhd", HYP_LANG_VHDL},
 
     /* VHDL */
-    {".vhdl", CBM_LANG_VHDL},
+    {".vhdl", HYP_LANG_VHDL},
 
     /* WGSL */
-    {".wgsl", CBM_LANG_WGSL},
+    {".wgsl", HYP_LANG_WGSL},
 
     /* WIT */
-    {".wit", CBM_LANG_WIT},
+    {".wit", HYP_LANG_WIT},
 
     /* Zsh */
-    {".zsh", CBM_LANG_ZSH},
+    {".zsh", HYP_LANG_ZSH},
 
     /* Zig */
-    {".zig", CBM_LANG_ZIG},
+    {".zig", HYP_LANG_ZIG},
 };
 
 #define EXT_TABLE_SIZE (sizeof(EXT_TABLE) / sizeof(EXT_TABLE[0]))
@@ -637,48 +637,48 @@ static const ext_entry_t EXT_TABLE[] = {
 
 typedef struct {
     const char *filename;
-    CBMLanguage language;
+    HYPLanguage language;
 } filename_entry_t;
 
 static const filename_entry_t FILENAME_TABLE[] = {
-    {"CMakeLists.txt", CBM_LANG_CMAKE},
-    {"Dockerfile", CBM_LANG_DOCKERFILE},
-    {"GNUmakefile", CBM_LANG_MAKEFILE},
-    {"Makefile", CBM_LANG_MAKEFILE},
-    {"makefile", CBM_LANG_MAKEFILE},
-    {"meson.build", CBM_LANG_MESON},
-    {"meson.options", CBM_LANG_MESON},
-    {"meson_options.txt", CBM_LANG_MESON},
-    {"kustomization.yaml", CBM_LANG_KUSTOMIZE},
-    {"kustomization.yml", CBM_LANG_KUSTOMIZE},
+    {"CMakeLists.txt", HYP_LANG_CMAKE},
+    {"Dockerfile", HYP_LANG_DOCKERFILE},
+    {"GNUmakefile", HYP_LANG_MAKEFILE},
+    {"Makefile", HYP_LANG_MAKEFILE},
+    {"makefile", HYP_LANG_MAKEFILE},
+    {"meson.build", HYP_LANG_MESON},
+    {"meson.options", HYP_LANG_MESON},
+    {"meson_options.txt", HYP_LANG_MESON},
+    {"kustomization.yaml", HYP_LANG_KUSTOMIZE},
+    {"kustomization.yml", HYP_LANG_KUSTOMIZE},
     /* Note: FILENAME_TABLE uses case-sensitive strcmp, so mixed-case variants
      * (e.g. "Kustomization.yaml") are not matched here.  They fall through to
-     * CBM_LANG_YAML and are re-classified by cbm_is_kustomize_file() in
+     * HYP_LANG_YAML and are re-classified by hyp_is_kustomize_file() in
      * pass_k8s.c, which performs a case-insensitive comparison.  This is the
      * intended behaviour — no additional entries are needed. */
-    {".vimrc", CBM_LANG_VIMSCRIPT},
-    {".zshrc", CBM_LANG_ZSH},
-    {".zshenv", CBM_LANG_ZSH},
-    {".zprofile", CBM_LANG_ZSH},
-    {"justfile", CBM_LANG_JUST},
-    {"Justfile", CBM_LANG_JUST},
-    {".justfile", CBM_LANG_JUST},
-    {"hyprland.conf", CBM_LANG_HYPRLANG},
-    {"ssh_config", CBM_LANG_SSHCONFIG},
-    {"sshd_config", CBM_LANG_SSHCONFIG},
-    {".ssh/config", CBM_LANG_SSHCONFIG},
-    {"BUILD", CBM_LANG_STARLARK},
-    {"BUILD.bazel", CBM_LANG_STARLARK},
-    {"WORKSPACE", CBM_LANG_STARLARK},
-    {"WORKSPACE.bazel", CBM_LANG_STARLARK},
-    {"requirements.txt", CBM_LANG_REQUIREMENTS},
-    {"requirements-dev.txt", CBM_LANG_REQUIREMENTS},
-    {"requirements-test.txt", CBM_LANG_REQUIREMENTS},
-    {"Kconfig", CBM_LANG_KCONFIG},
-    {"go.mod", CBM_LANG_GOMOD},
-    {".env", CBM_LANG_DOTENV},
-    {".env.local", CBM_LANG_DOTENV},
-    {".gitattributes", CBM_LANG_GITATTRIBUTES},
+    {".vimrc", HYP_LANG_VIMSCRIPT},
+    {".zshrc", HYP_LANG_ZSH},
+    {".zshenv", HYP_LANG_ZSH},
+    {".zprofile", HYP_LANG_ZSH},
+    {"justfile", HYP_LANG_JUST},
+    {"Justfile", HYP_LANG_JUST},
+    {".justfile", HYP_LANG_JUST},
+    {"hyprland.conf", HYP_LANG_HYPRLANG},
+    {"ssh_config", HYP_LANG_SSHCONFIG},
+    {"sshd_config", HYP_LANG_SSHCONFIG},
+    {".ssh/config", HYP_LANG_SSHCONFIG},
+    {"BUILD", HYP_LANG_STARLARK},
+    {"BUILD.bazel", HYP_LANG_STARLARK},
+    {"WORKSPACE", HYP_LANG_STARLARK},
+    {"WORKSPACE.bazel", HYP_LANG_STARLARK},
+    {"requirements.txt", HYP_LANG_REQUIREMENTS},
+    {"requirements-dev.txt", HYP_LANG_REQUIREMENTS},
+    {"requirements-test.txt", HYP_LANG_REQUIREMENTS},
+    {"Kconfig", HYP_LANG_KCONFIG},
+    {"go.mod", HYP_LANG_GOMOD},
+    {".env", HYP_LANG_DOTENV},
+    {".env.local", HYP_LANG_DOTENV},
+    {".gitattributes", HYP_LANG_GITATTRIBUTES},
 
 };
 
@@ -686,185 +686,185 @@ static const filename_entry_t FILENAME_TABLE[] = {
 
 /* ── Language names ──────────────────────────────────────────────── */
 
-static const char *LANG_NAMES[CBM_LANG_COUNT] = {
-    [CBM_LANG_GO] = "Go",
-    [CBM_LANG_PYTHON] = "Python",
-    [CBM_LANG_JAVASCRIPT] = "JavaScript",
-    [CBM_LANG_TYPESCRIPT] = "TypeScript",
-    [CBM_LANG_TSX] = "TSX",
-    [CBM_LANG_RUST] = "Rust",
-    [CBM_LANG_JAVA] = "Java",
-    [CBM_LANG_CPP] = "C++",
-    [CBM_LANG_CSHARP] = "C#",
-    [CBM_LANG_PHP] = "PHP",
-    [CBM_LANG_LUA] = "Lua",
-    [CBM_LANG_SCALA] = "Scala",
-    [CBM_LANG_KOTLIN] = "Kotlin",
-    [CBM_LANG_RUBY] = "Ruby",
-    [CBM_LANG_C] = "C",
-    [CBM_LANG_BASH] = "Bash",
-    [CBM_LANG_ZIG] = "Zig",
-    [CBM_LANG_ELIXIR] = "Elixir",
-    [CBM_LANG_HASKELL] = "Haskell",
-    [CBM_LANG_OCAML] = "OCaml",
-    [CBM_LANG_OBJC] = "Objective-C",
-    [CBM_LANG_SWIFT] = "Swift",
-    [CBM_LANG_DART] = "Dart",
-    [CBM_LANG_PERL] = "Perl",
-    [CBM_LANG_GROOVY] = "Groovy",
-    [CBM_LANG_ERLANG] = "Erlang",
-    [CBM_LANG_R] = "R",
-    [CBM_LANG_HTML] = "HTML",
-    [CBM_LANG_CSS] = "CSS",
-    [CBM_LANG_SCSS] = "SCSS",
-    [CBM_LANG_YAML] = "YAML",
-    [CBM_LANG_TOML] = "TOML",
-    [CBM_LANG_HCL] = "HCL",
-    [CBM_LANG_SQL] = "SQL",
-    [CBM_LANG_DOCKERFILE] = "Dockerfile",
-    [CBM_LANG_CLOJURE] = "Clojure",
-    [CBM_LANG_FSHARP] = "F#",
-    [CBM_LANG_JULIA] = "Julia",
-    [CBM_LANG_VIMSCRIPT] = "VimScript",
-    [CBM_LANG_NIX] = "Nix",
-    [CBM_LANG_COMMONLISP] = "Common Lisp",
-    [CBM_LANG_ELM] = "Elm",
-    [CBM_LANG_FORTRAN] = "Fortran",
-    [CBM_LANG_CUDA] = "CUDA",
-    [CBM_LANG_COBOL] = "COBOL",
-    [CBM_LANG_VERILOG] = "Verilog",
-    [CBM_LANG_EMACSLISP] = "Emacs Lisp",
-    [CBM_LANG_JSON] = "JSON",
-    [CBM_LANG_XML] = "XML",
-    [CBM_LANG_MARKDOWN] = "Markdown",
-    [CBM_LANG_MAKEFILE] = "Makefile",
-    [CBM_LANG_CMAKE] = "CMake",
-    [CBM_LANG_PROTOBUF] = "Protobuf",
-    [CBM_LANG_GRAPHQL] = "GraphQL",
-    [CBM_LANG_VUE] = "Vue",
-    [CBM_LANG_SVELTE] = "Svelte",
-    [CBM_LANG_MESON] = "Meson",
-    [CBM_LANG_GLSL] = "GLSL",
-    [CBM_LANG_INI] = "INI",
-    [CBM_LANG_MATLAB] = "MATLAB",
-    [CBM_LANG_LEAN] = "Lean",
-    [CBM_LANG_FORM] = "FORM",
-    [CBM_LANG_MAGMA] = "Magma",
-    [CBM_LANG_WOLFRAM] = "Wolfram",
-    [CBM_LANG_KUSTOMIZE] = "Kustomize",
-    [CBM_LANG_K8S] = "Kubernetes",
-    [CBM_LANG_PINE] = "PineScript",
-    [CBM_LANG_SOLIDITY] = "Solidity",
-    [CBM_LANG_TYPST] = "Typst",
-    [CBM_LANG_GDSCRIPT] = "GDScript",
-    [CBM_LANG_GLEAM] = "Gleam",
-    [CBM_LANG_POWERSHELL] = "PowerShell",
-    [CBM_LANG_PASCAL] = "Pascal",
-    [CBM_LANG_DLANG] = "D",
-    [CBM_LANG_NIM] = "Nim",
-    [CBM_LANG_SCHEME] = "Scheme",
-    [CBM_LANG_FENNEL] = "Fennel",
-    [CBM_LANG_FISH] = "Fish",
-    [CBM_LANG_AWK] = "AWK",
-    [CBM_LANG_ZSH] = "Zsh",
-    [CBM_LANG_TCL] = "Tcl",
-    [CBM_LANG_ADA] = "Ada",
-    [CBM_LANG_AGDA] = "Agda",
-    [CBM_LANG_RACKET] = "Racket",
-    [CBM_LANG_ODIN] = "Odin",
-    [CBM_LANG_RESCRIPT] = "ReScript",
-    [CBM_LANG_PURESCRIPT] = "PureScript",
-    [CBM_LANG_NICKEL] = "Nickel",
-    [CBM_LANG_CRYSTAL] = "Crystal",
-    [CBM_LANG_TEAL] = "Teal",
-    [CBM_LANG_HARE] = "Hare",
-    [CBM_LANG_PONY] = "Pony",
-    [CBM_LANG_LUAU] = "Luau",
-    [CBM_LANG_QML] = "QML",
-    [CBM_LANG_CFSCRIPT] = "CFML",
-    [CBM_LANG_CFML] = "CFML",
-    [CBM_LANG_JANET] = "Janet",
-    [CBM_LANG_SWAY] = "Sway",
-    [CBM_LANG_NASM] = "NASM",
-    [CBM_LANG_ASSEMBLY] = "Assembly",
-    [CBM_LANG_ASTRO] = "Astro",
-    [CBM_LANG_BLADE] = "Blade",
-    [CBM_LANG_JUST] = "Just",
-    [CBM_LANG_GOTEMPLATE] = "Go Template",
-    [CBM_LANG_TEMPL] = "Templ",
-    [CBM_LANG_LIQUID] = "Liquid",
-    [CBM_LANG_JINJA2] = "Jinja2",
-    [CBM_LANG_PRISMA] = "Prisma",
-    [CBM_LANG_HYPRLANG] = "Hyprlang",
-    [CBM_LANG_DOTENV] = "DotEnv",
-    [CBM_LANG_SYSTEMVERILOG] = "SystemVerilog",
-    [CBM_LANG_DIFF] = "Diff",
-    [CBM_LANG_WGSL] = "WGSL",
-    [CBM_LANG_KDL] = "KDL",
-    [CBM_LANG_JSON5] = "JSON5",
-    [CBM_LANG_JSONNET] = "Jsonnet",
-    [CBM_LANG_RON] = "RON",
-    [CBM_LANG_THRIFT] = "Thrift",
-    [CBM_LANG_CAPNP] = "Cap'n Proto",
-    [CBM_LANG_PROPERTIES] = "Properties",
-    [CBM_LANG_SSHCONFIG] = "SSH Config",
-    [CBM_LANG_BIBTEX] = "BibTeX",
-    [CBM_LANG_STARLARK] = "Starlark",
-    [CBM_LANG_BICEP] = "Bicep",
-    [CBM_LANG_CSV] = "CSV",
-    [CBM_LANG_REQUIREMENTS] = "Requirements",
-    [CBM_LANG_HLSL] = "HLSL",
-    [CBM_LANG_VHDL] = "VHDL",
-    [CBM_LANG_DEVICETREE] = "DeviceTree",
-    [CBM_LANG_LINKERSCRIPT] = "Linker Script",
-    [CBM_LANG_GN] = "GN",
-    [CBM_LANG_KCONFIG] = "Kconfig",
-    [CBM_LANG_BITBAKE] = "BitBake",
-    [CBM_LANG_SMALI] = "Smali",
-    [CBM_LANG_TABLEGEN] = "TableGen",
-    [CBM_LANG_ISPC] = "ISPC",
-    [CBM_LANG_CAIRO] = "Cairo",
-    [CBM_LANG_MOVE] = "Move",
-    [CBM_LANG_SQUIRREL] = "Squirrel",
-    [CBM_LANG_FUNC] = "FunC",
-    [CBM_LANG_REGEX] = "Regex",
-    [CBM_LANG_JSDOC] = "JSDoc",
-    [CBM_LANG_RST] = "reStructuredText",
-    [CBM_LANG_BEANCOUNT] = "Beancount",
-    [CBM_LANG_MERMAID] = "Mermaid",
-    [CBM_LANG_PUPPET] = "Puppet",
-    [CBM_LANG_PO] = "PO",
-    [CBM_LANG_GITATTRIBUTES] = "gitattributes",
-    [CBM_LANG_GITIGNORE] = "gitignore",
-    [CBM_LANG_SLANG] = "Slang",
-    [CBM_LANG_LLVM_IR] = "LLVM IR",
-    [CBM_LANG_SMITHY] = "Smithy",
-    [CBM_LANG_WIT] = "WIT",
-    [CBM_LANG_TLAPLUS] = "TLA+",
-    [CBM_LANG_PKL] = "Pkl",
-    [CBM_LANG_GOMOD] = "Go Mod",
-    [CBM_LANG_APEX] = "Apex",
-    [CBM_LANG_SOQL] = "SOQL",
-    [CBM_LANG_SOSL] = "SOSL",
-    [CBM_LANG_MOJO] = "Mojo",
-    [CBM_LANG_OBJECTSCRIPT_UDL] = "ObjectScript UDL",
-    [CBM_LANG_OBJECTSCRIPT_ROUTINE] = "ObjectScript Routine",
-    [CBM_LANG_OBJECTSCRIPT_EXPORT] = "ObjectScript Export XML",
+static const char *LANG_NAMES[HYP_LANG_COUNT] = {
+    [HYP_LANG_GO] = "Go",
+    [HYP_LANG_PYTHON] = "Python",
+    [HYP_LANG_JAVASCRIPT] = "JavaScript",
+    [HYP_LANG_TYPESCRIPT] = "TypeScript",
+    [HYP_LANG_TSX] = "TSX",
+    [HYP_LANG_RUST] = "Rust",
+    [HYP_LANG_JAVA] = "Java",
+    [HYP_LANG_CPP] = "C++",
+    [HYP_LANG_CSHARP] = "C#",
+    [HYP_LANG_PHP] = "PHP",
+    [HYP_LANG_LUA] = "Lua",
+    [HYP_LANG_SCALA] = "Scala",
+    [HYP_LANG_KOTLIN] = "Kotlin",
+    [HYP_LANG_RUBY] = "Ruby",
+    [HYP_LANG_C] = "C",
+    [HYP_LANG_BASH] = "Bash",
+    [HYP_LANG_ZIG] = "Zig",
+    [HYP_LANG_ELIXIR] = "Elixir",
+    [HYP_LANG_HASKELL] = "Haskell",
+    [HYP_LANG_OCAML] = "OCaml",
+    [HYP_LANG_OBJC] = "Objective-C",
+    [HYP_LANG_SWIFT] = "Swift",
+    [HYP_LANG_DART] = "Dart",
+    [HYP_LANG_PERL] = "Perl",
+    [HYP_LANG_GROOVY] = "Groovy",
+    [HYP_LANG_ERLANG] = "Erlang",
+    [HYP_LANG_R] = "R",
+    [HYP_LANG_HTML] = "HTML",
+    [HYP_LANG_CSS] = "CSS",
+    [HYP_LANG_SCSS] = "SCSS",
+    [HYP_LANG_YAML] = "YAML",
+    [HYP_LANG_TOML] = "TOML",
+    [HYP_LANG_HCL] = "HCL",
+    [HYP_LANG_SQL] = "SQL",
+    [HYP_LANG_DOCKERFILE] = "Dockerfile",
+    [HYP_LANG_CLOJURE] = "Clojure",
+    [HYP_LANG_FSHARP] = "F#",
+    [HYP_LANG_JULIA] = "Julia",
+    [HYP_LANG_VIMSCRIPT] = "VimScript",
+    [HYP_LANG_NIX] = "Nix",
+    [HYP_LANG_COMMONLISP] = "Common Lisp",
+    [HYP_LANG_ELM] = "Elm",
+    [HYP_LANG_FORTRAN] = "Fortran",
+    [HYP_LANG_CUDA] = "CUDA",
+    [HYP_LANG_COBOL] = "COBOL",
+    [HYP_LANG_VERILOG] = "Verilog",
+    [HYP_LANG_EMACSLISP] = "Emacs Lisp",
+    [HYP_LANG_JSON] = "JSON",
+    [HYP_LANG_XML] = "XML",
+    [HYP_LANG_MARKDOWN] = "Markdown",
+    [HYP_LANG_MAKEFILE] = "Makefile",
+    [HYP_LANG_CMAKE] = "CMake",
+    [HYP_LANG_PROTOBUF] = "Protobuf",
+    [HYP_LANG_GRAPHQL] = "GraphQL",
+    [HYP_LANG_VUE] = "Vue",
+    [HYP_LANG_SVELTE] = "Svelte",
+    [HYP_LANG_MESON] = "Meson",
+    [HYP_LANG_GLSL] = "GLSL",
+    [HYP_LANG_INI] = "INI",
+    [HYP_LANG_MATLAB] = "MATLAB",
+    [HYP_LANG_LEAN] = "Lean",
+    [HYP_LANG_FORM] = "FORM",
+    [HYP_LANG_MAGMA] = "Magma",
+    [HYP_LANG_WOLFRAM] = "Wolfram",
+    [HYP_LANG_KUSTOMIZE] = "Kustomize",
+    [HYP_LANG_K8S] = "Kubernetes",
+    [HYP_LANG_PINE] = "PineScript",
+    [HYP_LANG_SOLIDITY] = "Solidity",
+    [HYP_LANG_TYPST] = "Typst",
+    [HYP_LANG_GDSCRIPT] = "GDScript",
+    [HYP_LANG_GLEAM] = "Gleam",
+    [HYP_LANG_POWERSHELL] = "PowerShell",
+    [HYP_LANG_PASCAL] = "Pascal",
+    [HYP_LANG_DLANG] = "D",
+    [HYP_LANG_NIM] = "Nim",
+    [HYP_LANG_SCHEME] = "Scheme",
+    [HYP_LANG_FENNEL] = "Fennel",
+    [HYP_LANG_FISH] = "Fish",
+    [HYP_LANG_AWK] = "AWK",
+    [HYP_LANG_ZSH] = "Zsh",
+    [HYP_LANG_TCL] = "Tcl",
+    [HYP_LANG_ADA] = "Ada",
+    [HYP_LANG_AGDA] = "Agda",
+    [HYP_LANG_RACKET] = "Racket",
+    [HYP_LANG_ODIN] = "Odin",
+    [HYP_LANG_RESCRIPT] = "ReScript",
+    [HYP_LANG_PURESCRIPT] = "PureScript",
+    [HYP_LANG_NICKEL] = "Nickel",
+    [HYP_LANG_CRYSTAL] = "Crystal",
+    [HYP_LANG_TEAL] = "Teal",
+    [HYP_LANG_HARE] = "Hare",
+    [HYP_LANG_PONY] = "Pony",
+    [HYP_LANG_LUAU] = "Luau",
+    [HYP_LANG_QML] = "QML",
+    [HYP_LANG_CFSCRIPT] = "CFML",
+    [HYP_LANG_CFML] = "CFML",
+    [HYP_LANG_JANET] = "Janet",
+    [HYP_LANG_SWAY] = "Sway",
+    [HYP_LANG_NASM] = "NASM",
+    [HYP_LANG_ASSEMBLY] = "Assembly",
+    [HYP_LANG_ASTRO] = "Astro",
+    [HYP_LANG_BLADE] = "Blade",
+    [HYP_LANG_JUST] = "Just",
+    [HYP_LANG_GOTEMPLATE] = "Go Template",
+    [HYP_LANG_TEMPL] = "Templ",
+    [HYP_LANG_LIQUID] = "Liquid",
+    [HYP_LANG_JINJA2] = "Jinja2",
+    [HYP_LANG_PRISMA] = "Prisma",
+    [HYP_LANG_HYPRLANG] = "Hyprlang",
+    [HYP_LANG_DOTENV] = "DotEnv",
+    [HYP_LANG_SYSTEMVERILOG] = "SystemVerilog",
+    [HYP_LANG_DIFF] = "Diff",
+    [HYP_LANG_WGSL] = "WGSL",
+    [HYP_LANG_KDL] = "KDL",
+    [HYP_LANG_JSON5] = "JSON5",
+    [HYP_LANG_JSONNET] = "Jsonnet",
+    [HYP_LANG_RON] = "RON",
+    [HYP_LANG_THRIFT] = "Thrift",
+    [HYP_LANG_CAPNP] = "Cap'n Proto",
+    [HYP_LANG_PROPERTIES] = "Properties",
+    [HYP_LANG_SSHCONFIG] = "SSH Config",
+    [HYP_LANG_BIBTEX] = "BibTeX",
+    [HYP_LANG_STARLARK] = "Starlark",
+    [HYP_LANG_BICEP] = "Bicep",
+    [HYP_LANG_CSV] = "CSV",
+    [HYP_LANG_REQUIREMENTS] = "Requirements",
+    [HYP_LANG_HLSL] = "HLSL",
+    [HYP_LANG_VHDL] = "VHDL",
+    [HYP_LANG_DEVICETREE] = "DeviceTree",
+    [HYP_LANG_LINKERSCRIPT] = "Linker Script",
+    [HYP_LANG_GN] = "GN",
+    [HYP_LANG_KCONFIG] = "Kconfig",
+    [HYP_LANG_BITBAKE] = "BitBake",
+    [HYP_LANG_SMALI] = "Smali",
+    [HYP_LANG_TABLEGEN] = "TableGen",
+    [HYP_LANG_ISPC] = "ISPC",
+    [HYP_LANG_CAIRO] = "Cairo",
+    [HYP_LANG_MOVE] = "Move",
+    [HYP_LANG_SQUIRREL] = "Squirrel",
+    [HYP_LANG_FUNC] = "FunC",
+    [HYP_LANG_REGEX] = "Regex",
+    [HYP_LANG_JSDOC] = "JSDoc",
+    [HYP_LANG_RST] = "reStructuredText",
+    [HYP_LANG_BEANCOUNT] = "Beancount",
+    [HYP_LANG_MERMAID] = "Mermaid",
+    [HYP_LANG_PUPPET] = "Puppet",
+    [HYP_LANG_PO] = "PO",
+    [HYP_LANG_GITATTRIBUTES] = "gitattributes",
+    [HYP_LANG_GITIGNORE] = "gitignore",
+    [HYP_LANG_SLANG] = "Slang",
+    [HYP_LANG_LLVM_IR] = "LLVM IR",
+    [HYP_LANG_SMITHY] = "Smithy",
+    [HYP_LANG_WIT] = "WIT",
+    [HYP_LANG_TLAPLUS] = "TLA+",
+    [HYP_LANG_PKL] = "Pkl",
+    [HYP_LANG_GOMOD] = "Go Mod",
+    [HYP_LANG_APEX] = "Apex",
+    [HYP_LANG_SOQL] = "SOQL",
+    [HYP_LANG_SOSL] = "SOSL",
+    [HYP_LANG_MOJO] = "Mojo",
+    [HYP_LANG_OBJECTSCRIPT_UDL] = "ObjectScript UDL",
+    [HYP_LANG_OBJECTSCRIPT_ROUTINE] = "ObjectScript Routine",
+    [HYP_LANG_OBJECTSCRIPT_EXPORT] = "ObjectScript Export XML",
 
 };
 
 /* ── Public API ──────────────────────────────────────────────────── */
 
-CBMLanguage cbm_language_for_extension(const char *ext) {
+HYPLanguage hyp_language_for_extension(const char *ext) {
     if (!ext || !ext[0]) {
-        return CBM_LANG_COUNT;
+        return HYP_LANG_COUNT;
     }
 
     /* Check user-defined overrides first */
-    const cbm_userconfig_t *ucfg = cbm_get_user_lang_config();
+    const hyp_userconfig_t *ucfg = hyp_get_user_lang_config();
     if (ucfg) {
-        CBMLanguage ulang = cbm_userconfig_lookup(ucfg, ext);
-        if (ulang != CBM_LANG_COUNT) {
+        HYPLanguage ulang = hyp_userconfig_lookup(ucfg, ext);
+        if (ulang != HYP_LANG_COUNT) {
             return ulang;
         }
     }
@@ -874,12 +874,12 @@ CBMLanguage cbm_language_for_extension(const char *ext) {
             return EXT_TABLE[i].language;
         }
     }
-    return CBM_LANG_COUNT;
+    return HYP_LANG_COUNT;
 }
 
-CBMLanguage cbm_language_for_filename(const char *filename) {
+HYPLanguage hyp_language_for_filename(const char *filename) {
     if (!filename || !filename[0]) {
-        return CBM_LANG_COUNT;
+        return HYP_LANG_COUNT;
     }
 
     /* Check special filenames first */
@@ -895,7 +895,7 @@ CBMLanguage cbm_language_for_filename(const char *filename) {
      * pass_envscan/pass_infrascan (".env" exact, ".env." prefix, "*.env"
      * suffix) so file-index routing agrees with direct extraction. */
     if (strncmp(filename, ".env.", SLEN(".env.")) == 0) {
-        return CBM_LANG_DOTENV;
+        return HYP_LANG_DOTENV;
     }
 
     /* Fall back to extension-based lookup.
@@ -904,7 +904,7 @@ CBMLanguage cbm_language_for_filename(const char *filename) {
      * config at each position.  Built-in extensions use the last dot only. */
     const char *last_dot = strrchr(filename, '.');
     if (!last_dot) {
-        return CBM_LANG_COUNT;
+        return HYP_LANG_COUNT;
     }
 
     /* Probe compound extensions (e.g. ".blade.php") from the first dot toward
@@ -913,11 +913,11 @@ CBMLanguage cbm_language_for_filename(const char *filename) {
      * user config can still add more (#258). */
     static const struct {
         const char *ext;
-        CBMLanguage lang;
+        HYPLanguage lang;
     } COMPOUND_EXT_TABLE[] = {
-        {".blade.php", CBM_LANG_BLADE},
+        {".blade.php", HYP_LANG_BLADE},
     };
-    const cbm_userconfig_t *ucfg = cbm_get_user_lang_config();
+    const hyp_userconfig_t *ucfg = hyp_get_user_lang_config();
     const char *p = strchr(filename, '.');
     while (p && p < last_dot) {
         for (size_t i = 0; i < sizeof(COMPOUND_EXT_TABLE) / sizeof(COMPOUND_EXT_TABLE[0]); i++) {
@@ -926,8 +926,8 @@ CBMLanguage cbm_language_for_filename(const char *filename) {
             }
         }
         if (ucfg) {
-            CBMLanguage lang = cbm_userconfig_lookup(ucfg, p);
-            if (lang != CBM_LANG_COUNT) {
+            HYPLanguage lang = hyp_userconfig_lookup(ucfg, p);
+            if (lang != HYP_LANG_COUNT) {
                 return lang;
             }
         }
@@ -935,11 +935,11 @@ CBMLanguage cbm_language_for_filename(const char *filename) {
     }
 
     /* Standard single-extension lookup (built-ins + user overrides). */
-    return cbm_language_for_extension(last_dot);
+    return hyp_language_for_extension(last_dot);
 }
 
-const char *cbm_language_name(CBMLanguage lang) {
-    if (lang < 0 || lang >= CBM_LANG_COUNT) {
+const char *hyp_language_name(HYPLanguage lang) {
+    if (lang < 0 || lang >= HYP_LANG_COUNT) {
         return "Unknown";
     }
     return LANG_NAMES[lang] ? LANG_NAMES[lang] : "Unknown";
@@ -1009,54 +1009,54 @@ static bool has_matlab_line_markers(const char *buf) {
     return false;
 }
 
-CBMLanguage cbm_disambiguate_m(const char *path) {
+HYPLanguage hyp_disambiguate_m(const char *path) {
     if (!path) {
-        return CBM_LANG_MATLAB;
+        return HYP_LANG_MATLAB;
     }
 
-    FILE *f = cbm_fopen(path, "r");
+    FILE *f = hyp_fopen(path, "r");
     if (!f) {
-        return CBM_LANG_MATLAB;
+        return HYP_LANG_MATLAB;
     }
 
     /* Read first 4KB */
-    char buf[CBM_SZ_4K + SKIP_ONE];
-    size_t n = fread(buf, SKIP_ONE, CBM_SZ_4K, f);
+    char buf[HYP_SZ_4K + SKIP_ONE];
+    size_t n = fread(buf, SKIP_ONE, HYP_SZ_4K, f);
     buf[n] = '\0';
     (void)fclose(f);
 
     if (has_objc_markers(buf)) {
-        return CBM_LANG_OBJC;
+        return HYP_LANG_OBJC;
     }
     if (has_magma_end_markers(buf)) {
-        return CBM_LANG_MAGMA;
+        return HYP_LANG_MAGMA;
     }
     if ((str_contains(buf, "intrinsic ") || str_contains(buf, "procedure ")) &&
         has_magma_callable_pattern(buf)) {
-        return CBM_LANG_MAGMA;
+        return HYP_LANG_MAGMA;
     }
     if (has_matlab_line_markers(buf)) {
-        return CBM_LANG_MATLAB;
+        return HYP_LANG_MATLAB;
     }
 
-    return CBM_LANG_MATLAB;
+    return HYP_LANG_MATLAB;
 }
 
 /* Disambiguate .cls files: shared by InterSystems ObjectScript UDL and
  * Salesforce Apex. ObjectScript class files begin with a line of the form
  * "Class <UppercasePackage>...". Defaults to Apex on any doubt. */
-CBMLanguage cbm_disambiguate_cls(const char *path) {
+HYPLanguage hyp_disambiguate_cls(const char *path) {
     if (!path) {
-        return CBM_LANG_APEX;
+        return HYP_LANG_APEX;
     }
 
-    FILE *f = cbm_fopen(path, "r");
+    FILE *f = hyp_fopen(path, "r");
     if (!f) {
-        return CBM_LANG_APEX;
+        return HYP_LANG_APEX;
     }
 
-    char buf[CBM_SZ_4K + SKIP_ONE];
-    size_t n = fread(buf, SKIP_ONE, CBM_SZ_4K, f);
+    char buf[HYP_SZ_4K + SKIP_ONE];
+    size_t n = fread(buf, SKIP_ONE, HYP_SZ_4K, f);
     buf[n] = '\0';
     (void)fclose(f);
 
@@ -1064,7 +1064,7 @@ CBMLanguage cbm_disambiguate_cls(const char *path) {
     while (*line) {
         if (strncmp(line, "Class ", SLEN("Class ")) == 0 &&
             isupper((unsigned char)line[SLEN("Class ")])) {
-            return CBM_LANG_OBJECTSCRIPT_UDL;
+            return HYP_LANG_OBJECTSCRIPT_UDL;
         }
         const char *nl = strchr(line, '\n');
         if (!nl) {
@@ -1072,7 +1072,7 @@ CBMLanguage cbm_disambiguate_cls(const char *path) {
         }
         line = nl + SKIP_ONE;
     }
-    return CBM_LANG_APEX;
+    return HYP_LANG_APEX;
 }
 
 /* Disambiguate .inc files: shared by BitBake include fragments and
@@ -1084,18 +1084,18 @@ CBMLanguage cbm_disambiguate_cls(const char *path) {
  * We therefore match ObjectScript preprocessor directives ('#' immediately
  * followed by 'def'/';'), which BitBake never produces. Defaults to BitBake on
  * any doubt (preserves existing behaviour). */
-CBMLanguage cbm_disambiguate_inc(const char *path) {
+HYPLanguage hyp_disambiguate_inc(const char *path) {
     if (!path) {
-        return CBM_LANG_BITBAKE;
+        return HYP_LANG_BITBAKE;
     }
 
-    FILE *f = cbm_fopen(path, "r");
+    FILE *f = hyp_fopen(path, "r");
     if (!f) {
-        return CBM_LANG_BITBAKE;
+        return HYP_LANG_BITBAKE;
     }
 
-    char buf[CBM_SZ_4K + SKIP_ONE];
-    size_t n = fread(buf, SKIP_ONE, CBM_SZ_4K, f);
+    char buf[HYP_SZ_4K + SKIP_ONE];
+    size_t n = fread(buf, SKIP_ONE, HYP_SZ_4K, f);
     buf[n] = '\0';
     (void)fclose(f);
 
@@ -1104,7 +1104,7 @@ CBMLanguage cbm_disambiguate_inc(const char *path) {
         /* ObjectScript include header: a line beginning "ROUTINE <Uppercase>". */
         if (strncmp(line, "ROUTINE ", SLEN("ROUTINE ")) == 0 &&
             isupper((unsigned char)line[SLEN("ROUTINE ")])) {
-            return CBM_LANG_OBJECTSCRIPT_ROUTINE;
+            return HYP_LANG_OBJECTSCRIPT_ROUTINE;
         }
         /* ObjectScript macro directives — the primary content of .inc files.
          * "#define"/"#def1arg" (macro defs) and "#;" (line comment). BitBake's
@@ -1112,7 +1112,7 @@ CBMLanguage cbm_disambiguate_inc(const char *path) {
         if (strncmp(line, "#define", SLEN("#define")) == 0 ||
             strncmp(line, "#def1arg", SLEN("#def1arg")) == 0 ||
             strncmp(line, "#;", SLEN("#;")) == 0) {
-            return CBM_LANG_OBJECTSCRIPT_ROUTINE;
+            return HYP_LANG_OBJECTSCRIPT_ROUTINE;
         }
         const char *nl = strchr(line, '\n');
         if (!nl) {
@@ -1120,5 +1120,5 @@ CBMLanguage cbm_disambiguate_inc(const char *path) {
         }
         line = nl + SKIP_ONE;
     }
-    return CBM_LANG_BITBAKE;
+    return HYP_LANG_BITBAKE;
 }

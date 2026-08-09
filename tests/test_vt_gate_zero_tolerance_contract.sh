@@ -42,7 +42,7 @@ write_manifest() { # one|two
   local count=1 associations=2 archives=1
   if [ "$1" = "two" ]; then count=2; associations=3; archives=2; fi
   {
-    echo '# cbm-release-scan-set-v2'
+    echo '# hyp-release-scan-set-v2'
     echo "# scan_objects=$count"
     echo "# associations=$associations"
     printf 'scan_path\tsha256\tsize\tassociation_count\tassociation_kinds\n'
@@ -52,12 +52,12 @@ write_manifest() { # one|two
     fi
   } > "$FIX/work/binaries/scan-set.tsv"
   {
-    echo '# cbm-release-scan-associations-v3'
+    echo '# hyp-release-scan-associations-v3'
     echo "# archives=$archives"
     echo "# associations=$associations"
     echo "# scan_objects=$count"
     printf 'association_type\tarchive\tarchive_sha256\tvariant\tkind\tmember\tasset_path\tmime\tscan_path\tobject_sha256\tsize\n'
-    printf 'member\tprobe.tar.gz\t%s\tstandard\tbinary\tcodebase-memory-mcp\t\t\tobjects/probe\t%s\t%s\n' "$ARCHIVE_SHA" "$PROBE_SHA" "$PROBE_SIZE"
+    printf 'member\tprobe.tar.gz\t%s\tstandard\tbinary\thyponoia\t\t\tobjects/probe\t%s\t%s\n' "$ARCHIVE_SHA" "$PROBE_SHA" "$PROBE_SIZE"
     printf 'member\tprobe.tar.gz\t%s\tstandard\truntime\tLICENSE\t\t\tobjects/probe\t%s\t%s\n' "$ARCHIVE_SHA" "$PROBE_SHA" "$PROBE_SIZE"
     if [ "$1" = "two" ]; then
       printf 'member\tprobe2.zip\t%s\tstandard\truntime\tREADME.md\t\t\tobjects/probe2\t%s\t%s\n' "$ARCHIVE2_SHA" "$PROBE2_SHA" "$PROBE2_SIZE"
@@ -216,7 +216,7 @@ alias_output="binaries/objects/probe=$(url_for upload-alias)"
   fail "a content-bound canonical response alias must pass: $(cat "$FIX/last.log")"
 RESULTS="$FIX/work/binaries/vt-results.tsv"
 [ -f "$RESULTS" ] || fail "clean gate did not atomically publish its results manifest"
-grep -q '^# cbm-virustotal-results-v1$' "$RESULTS" || fail "results marker missing"
+grep -q '^# hyp-virustotal-results-v1$' "$RESULTS" || fail "results marker missing"
 grep -q "objects/probe.*$PROBE_SHA.*$PROBE_SIZE.*60" "$RESULTS" || \
   fail "results do not bind path/hash/size/actual engine count"
 grep -Fq 'upload-alias' "$RESULTS" || \

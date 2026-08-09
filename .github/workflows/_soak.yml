@@ -69,7 +69,7 @@ jobs:
       # scripts/soak-legs.sh — never in workflow YAML. Leg selection is a
       # workflow input so a long #581-only run needs no separate workflow.
       - name: Soak legs (${{ inputs.legs }}, ${{ inputs.duration_minutes }} min each)
-        run: scripts/soak-legs.sh --legs "${{ inputs.legs }}" build/c/codebase-memory-mcp ${{ inputs.duration_minutes }}
+        run: scripts/soak-legs.sh --legs "${{ inputs.legs }}" build/c/hyponoia ${{ inputs.duration_minutes }}
       - name: Upload metrics
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -111,9 +111,9 @@ jobs:
         shell: pwsh
         run: |
           $root = & scripts/ci/new-protected-temp-root.ps1 `
-            -Prefix 'cbm-ci-tmp-' `
+            -Prefix 'hyp-ci-tmp-' `
             -ProtectDir (Join-Path $env:GITHUB_WORKSPACE "build\c")
-          "CBM_CI_TEMP_ROOT=$root" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "HYP_CI_TEMP_ROOT=$root" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
       - name: Build
         shell: msys2 {0}
         run: scripts/build.sh ${{ inputs.version && format('--version {0}', inputs.version) || '' }} CC=clang CXX=clang++
@@ -122,10 +122,10 @@ jobs:
       - name: Soak legs (${{ inputs.legs }}, ${{ inputs.duration_minutes }} min each)
         shell: msys2 {0}
         run: |
-          export TEMP="$(cygpath -m "$CBM_CI_TEMP_ROOT")"
+          export TEMP="$(cygpath -m "$HYP_CI_TEMP_ROOT")"
           export TMP="$TEMP"
-          export TMPDIR="$(cygpath -u "$CBM_CI_TEMP_ROOT")"
-          scripts/soak-legs.sh --legs "${{ inputs.legs }}" build/c/codebase-memory-mcp ${{ inputs.duration_minutes }}
+          export TMPDIR="$(cygpath -u "$HYP_CI_TEMP_ROOT")"
+          scripts/soak-legs.sh --legs "${{ inputs.legs }}" build/c/hyponoia ${{ inputs.duration_minutes }}
       - name: Upload metrics
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -168,9 +168,9 @@ jobs:
         shell: pwsh
         run: |
           $root = & scripts/ci/new-protected-temp-root.ps1 `
-            -Prefix 'cbm-ci-tmp-' `
+            -Prefix 'hyp-ci-tmp-' `
             -ProtectDir (Join-Path $env:GITHUB_WORKSPACE "build\c")
-          "CBM_CI_TEMP_ROOT=$root" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "HYP_CI_TEMP_ROOT=$root" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
       - name: Build
         shell: msys2 {0}
         run: scripts/build.sh ${{ inputs.version && format('--version {0}', inputs.version) || '' }} CC=clang CXX=clang++
@@ -179,10 +179,10 @@ jobs:
       - name: Soak legs (${{ inputs.legs }}, ${{ inputs.duration_minutes }} min each)
         shell: msys2 {0}
         run: |
-          export TEMP="$(cygpath -m "$CBM_CI_TEMP_ROOT")"
+          export TEMP="$(cygpath -m "$HYP_CI_TEMP_ROOT")"
           export TMP="$TEMP"
-          export TMPDIR="$(cygpath -u "$CBM_CI_TEMP_ROOT")"
-          scripts/soak-legs.sh --legs "${{ inputs.legs }}" build/c/codebase-memory-mcp ${{ inputs.duration_minutes }}
+          export TMPDIR="$(cygpath -u "$HYP_CI_TEMP_ROOT")"
+          scripts/soak-legs.sh --legs "${{ inputs.legs }}" build/c/hyponoia ${{ inputs.duration_minutes }}
       - name: Upload metrics
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -246,7 +246,7 @@ jobs:
         # Single-leg variant of the canonical soak entry: the ASan build is too
         # slow for the two-leg sequence; leg selection is a documented flag, not
         # a divergent inline procedure.
-        run: scripts/soak-legs.sh --legs quick build/c/codebase-memory-mcp 15
+        run: scripts/soak-legs.sh --legs quick build/c/hyponoia 15
       - name: Upload metrics
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -286,7 +286,7 @@ jobs:
         env:
           ASAN_OPTIONS: "detect_leaks=0:halt_on_error=0:log_path=soak-results/asan"
         # Single-leg variant of the canonical soak entry (see the unix ASan job).
-        run: scripts/soak-legs.sh --legs quick build/c/codebase-memory-mcp 15
+        run: scripts/soak-legs.sh --legs quick build/c/hyponoia 15
       - name: Upload metrics
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

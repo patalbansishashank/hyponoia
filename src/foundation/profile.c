@@ -17,27 +17,27 @@ enum {
 };
 #define PROF_US_PER_SEC_D 1000000.0
 
-bool cbm_profile_active = false;
+bool hyp_profile_active = false;
 
-void cbm_profile_init(void) {
-    const char *env = getenv("CBM_PROFILE");
+void hyp_profile_init(void) {
+    const char *env = getenv("HYP_PROFILE");
     if (env && env[0] != '\0' && env[0] != '0') {
-        cbm_profile_active = true;
+        hyp_profile_active = true;
     }
 }
 
-void cbm_profile_enable(void) {
-    cbm_profile_active = true;
+void hyp_profile_enable(void) {
+    hyp_profile_active = true;
 }
 
-void cbm_profile_now(struct timespec *ts) {
-    cbm_clock_gettime(CLOCK_MONOTONIC, ts);
+void hyp_profile_now(struct timespec *ts) {
+    hyp_clock_gettime(CLOCK_MONOTONIC, ts);
 }
 
-void cbm_profile_log_elapsed(const char *phase, const char *sub, const struct timespec *start,
+void hyp_profile_log_elapsed(const char *phase, const char *sub, const struct timespec *start,
                              long items) {
     struct timespec now;
-    cbm_clock_gettime(CLOCK_MONOTONIC, &now);
+    hyp_clock_gettime(CLOCK_MONOTONIC, &now);
 
     long us = ((long)(now.tv_sec - start->tv_sec) * PROF_US_PER_SEC) +
               ((now.tv_nsec - start->tv_nsec) / PROF_NS_PER_US);
@@ -54,13 +54,13 @@ void cbm_profile_log_elapsed(const char *phase, const char *sub, const struct ti
         char rate_buf[PROF_BUF_LEN];
         snprintf(items_buf, sizeof(items_buf), "%ld", items);
         snprintf(rate_buf, sizeof(rate_buf), "%ld", rate);
-        cbm_log_info("prof", "phase", phase, "sub", sub, "ms", ms_buf, "us", us_buf, "items",
+        hyp_log_info("prof", "phase", phase, "sub", sub, "ms", ms_buf, "us", us_buf, "items",
                      items_buf, "rate_per_s", rate_buf);
     } else if (items > 0) {
         snprintf(items_buf, sizeof(items_buf), "%ld", items);
-        cbm_log_info("prof", "phase", phase, "sub", sub, "ms", ms_buf, "us", us_buf, "items",
+        hyp_log_info("prof", "phase", phase, "sub", sub, "ms", ms_buf, "us", us_buf, "items",
                      items_buf);
     } else {
-        cbm_log_info("prof", "phase", phase, "sub", sub, "ms", ms_buf, "us", us_buf);
+        hyp_log_info("prof", "phase", phase, "sub", sub, "ms", ms_buf, "us", us_buf);
     }
 }

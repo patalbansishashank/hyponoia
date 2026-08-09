@@ -43,7 +43,7 @@ Make passthrough (VAR=VAL, forwarded verbatim):
   EXTRA_CFLAGS= EXTRA_LDFLAGS=   Sanitizer soak builds (see _soak.yml).
 
 Environment:
-  CBM_NO_CCACHE=1  Disable the compiler cache (build correctness is identical;
+  HYP_NO_CCACHE=1  Disable the compiler cache (build correctness is identical;
                    only speed changes).
 
 Callers: _build.yml (all release artifacts) · pr.yml pr-smoke · every
@@ -59,13 +59,13 @@ done
 # Pre-parse --arch flag before sourcing env.sh
 for arg in "$@"; do
     case "$arg" in
-        --arch=*) export CBM_ARCH="${arg#--arch=}" ;;
+        --arch=*) export HYP_ARCH="${arg#--arch=}" ;;
     esac
 done
 prev_arg=""
 for arg in "$@"; do
     if [[ "${prev_arg:-}" == "--arch" ]]; then
-        export CBM_ARCH="$arg"
+        export HYP_ARCH="$arg"
     fi
     prev_arg="$arg"
 done
@@ -135,7 +135,7 @@ done
 CFLAGS_EXTRA=""
 if [[ -n "$VERSION" ]]; then
     CLEAN_VERSION="${VERSION#v}"
-    CFLAGS_EXTRA="-DCBM_VERSION=\"\\\"$CLEAN_VERSION\\\"\""
+    CFLAGS_EXTRA="-DHYP_VERSION=\"\\\"$CLEAN_VERSION\\\"\""
 fi
 
 print_env "build.sh"
@@ -145,41 +145,41 @@ echo "  ui=$WITH_UI version=${VERSION:-dev}"
 verify_compiler "$CC"
 
 # Step 1: Clean C build artifacts only (not node_modules — npm ci handles that)
-cbm_remove_build_dir "$ROOT" "$BUILD_DIR"
+hyp_remove_build_dir "$ROOT" "$BUILD_DIR"
 
 # Step 2: Build (Makefile applies $ARCHFLAGS for the target arch on macOS)
 if $WITH_UI; then
-    make -j"$NPROC" -f Makefile.cbm cbm-with-ui \
+    make -j"$NPROC" -f Makefile.hyp hyp-with-ui \
         CFLAGS_EXTRA="$CFLAGS_EXTRA" "${EXTRA_MAKE_ARGS[@]+"${EXTRA_MAKE_ARGS[@]}"}"
 else
-    make -j"$NPROC" -f Makefile.cbm cbm \
+    make -j"$NPROC" -f Makefile.hyp hyp \
         CFLAGS_EXTRA="$CFLAGS_EXTRA" "${EXTRA_MAKE_ARGS[@]+"${EXTRA_MAKE_ARGS[@]}"}"
 fi
 
 # Stage the integration-template asset next to the binary so the dev/CI build
-# mirrors the release archive layout. The binary resolves cbm-integrations.json
-# next to itself, in $CBM_ASSETS_DIR, or under ~/.cbm/assets/<sha256>/; a plain
+# mirrors the release archive layout. The binary resolves hyp-integrations.json
+# next to itself, in $HYP_ASSETS_DIR, or under ~/.hyp/assets/<sha256>/; a plain
 # build/c binary has none of those, so install/uninstall (which render the
 # templates to verify hash and ownership) would fail closed exactly as they do
 # for a user who deleted the file. Copying it here keeps `install` working
 # straight out of a build tree — smoke, local dev, and the release packaging all
 # then see the same adjacency.
-cp "$ROOT/assets/cbm-integrations.json" "$BUILD_DIR/cbm-integrations.json"
+cp "$ROOT/assets/hyp-integrations.json" "$BUILD_DIR/hyp-integrations.json"
 
 if $WITH_UI; then
     shopt -s nullglob
-    UI_PACKS=("$BUILD_DIR"/cbm-ui-*.pack)
+    UI_PACKS=("$BUILD_DIR"/hyp-ui-*.pack)
     shopt -u nullglob
     if [ "${#UI_PACKS[@]}" -ne 1 ]; then
         echo "build.sh: UI build did not produce exactly one content-addressed asset pack" >&2
         exit 1
     fi
     UI_PACK_NAME="$(basename "${UI_PACKS[0]}")"
-    if ! [[ "$UI_PACK_NAME" =~ ^cbm-ui-[0-9a-f]{64}\.pack$ ]]; then
+    if ! [[ "$UI_PACK_NAME" =~ ^hyp-ui-[0-9a-f]{64}\.pack$ ]]; then
         echo "build.sh: invalid UI asset pack name: $UI_PACK_NAME" >&2
         exit 1
     fi
     echo "=== UI assets: ${UI_PACKS[0]} ==="
 fi
 
-echo "=== Build complete: ${BUILD_DIR}/codebase-memory-mcp ==="
+echo "=== Build complete: ${BUILD_DIR}/hyponoia ==="

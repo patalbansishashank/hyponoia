@@ -21,7 +21,7 @@ BUILD_DIR="${BUILD_DIR:-build/c}"
 echo "=== Cleaning build artifacts ($BUILD_DIR) ==="
 
 # C build artifacts
-cbm_remove_build_dir "$ROOT" "$BUILD_DIR"
+hyp_remove_build_dir "$ROOT" "$BUILD_DIR"
 
 # Frontend build artifacts
 rm -rf "$ROOT/graph-ui/dist"
@@ -31,9 +31,9 @@ rm -rf "$ROOT/graph-ui/node_modules"
 rm -rf "$ROOT/node_modules"
 
 # Leftover test fixture dirs (C test suite sometimes creates these in CWD)
-find "$ROOT" -maxdepth 1 -type d \( -name 'cbm_*' -o -name 'cli-*' \) -exec rm -rf {} + 2>/dev/null || true
+find "$ROOT" -maxdepth 1 -type d \( -name 'hyp_*' -o -name 'cli-*' \) -exec rm -rf {} + 2>/dev/null || true
 
 # Leftover test fixture dirs in /tmp
-find /tmp -maxdepth 1 -type d \( -name 'cbm_*' -o -name 'cli-*' \) -user "$(id -u)" -exec rm -rf {} + 2>/dev/null || true
+find /tmp -maxdepth 1 -type d \( -name 'hyp_*' -o -name 'cli-*' \) -user "$(id -u)" -exec rm -rf {} + 2>/dev/null || true
 
 echo "=== Clean complete ==="

@@ -15,12 +15,12 @@ const {
 } = require('./install.js');
 
 const isWindows = process.platform === 'win32';
-const variant = (process.env.CBM_VARIANT || '').toLowerCase() === 'ui'
+const variant = (process.env.HYP_VARIANT || '').toLowerCase() === 'ui'
   ? 'ui'
   : 'standard';
 // npm is a portable one-shot wrapper. Every platform ships exactly one binary,
 // which is executed directly beside its authenticated runtime sidecars.
-const binName = isWindows ? 'codebase-memory-mcp.exe' : 'codebase-memory-mcp';
+const binName = isWindows ? 'hyponoia.exe' : 'hyponoia';
 const binDir = path.join(__dirname, 'bin', variant);
 const binPath = path.join(binDir, binName);
 const executionPath = binPath;
@@ -34,14 +34,14 @@ if (requestedMutation === 'update') {
 }
 if (!cacheReady()) {
   // Binary missing — try running the install script (handles --ignore-scripts case)
-  process.stderr.write('codebase-memory-mcp: binary not found, downloading...\n');
+  process.stderr.write('hyponoia: binary not found, downloading...\n');
   const installResult = spawnSync(process.execPath, [path.join(__dirname, 'install.js')], {
     stdio: 'inherit',
   });
   if (installResult.status !== 0 || !cacheReady()) {
     process.stderr.write(
-      'codebase-memory-mcp: download failed.\n' +
-      'Try reinstalling: npm install -g codebase-memory-mcp\n'
+      'hyponoia: download failed.\n' +
+      'Try reinstalling: npm install -g hyponoia\n'
     );
     process.exit(1);
   }
@@ -68,7 +68,7 @@ function defaultManagedInstallDir() {
   if (!isWindows) return path.join(os.homedir(), '.local', 'bin');
   const localAppData = process.env.LOCALAPPDATA ||
     path.join(os.homedir(), 'AppData', 'Local');
-  return path.join(localAppData, 'Programs', 'codebase-memory-mcp');
+  return path.join(localAppData, 'Programs', 'hyponoia');
 }
 
 function nativeArgs(args) {
@@ -83,9 +83,9 @@ function nativeArgs(args) {
 function printUpdateGuidance() {
   process.stderr.write(
     'This npm copy is maintained by npm. Update it with ' +
-    '"npm install codebase-memory-mcp@latest" (add -g for a global install). ' +
+    '"npm install hyponoia@latest" (add -g for a global install). ' +
     'For a managed standalone installation, run ' +
-    '"codebase-memory-mcp install --yes".\n',
+    '"hyponoia install --yes".\n',
   );
 }
 
@@ -102,7 +102,7 @@ if (mutation === 'install' || mutation === 'uninstall') {
     }
   } catch (error) {
     try { releaseRuntimeLock(lock); } catch (_) { /* preserve first error */ }
-    process.stderr.write(`codebase-memory-mcp: ${error.message}\n`);
+    process.stderr.write(`hyponoia: ${error.message}\n`);
     process.exit(1);
   }
   let child = null;
@@ -121,7 +121,7 @@ if (mutation === 'install' || mutation === 'uninstall') {
   child.on('error', (error) => {
     clearInterval(heartbeat);
     try { releaseRuntimeLock(lock); } catch (_) { /* report spawn error */ }
-    process.stderr.write(`codebase-memory-mcp: ${error.message}\n`);
+    process.stderr.write(`hyponoia: ${error.message}\n`);
     process.exit(1);
   });
   child.on('close', (status) => {
@@ -129,15 +129,15 @@ if (mutation === 'install' || mutation === 'uninstall') {
     let releaseError = heartbeatError;
     try { releaseRuntimeLock(lock); } catch (error) { releaseError ||= error; }
     if (releaseError) {
-      process.stderr.write(`codebase-memory-mcp: ${releaseError.message}\n`);
+      process.stderr.write(`hyponoia: ${releaseError.message}\n`);
       process.exit(1);
     }
     if (isWindows && status !== 0 && mutation === 'uninstall') {
       process.stderr.write(
-        'This npm Windows copy is portable. Use "npm uninstall codebase-memory-mcp" ' +
+        'This npm Windows copy is portable. Use "npm uninstall hyponoia" ' +
         'for package maintenance (add -g for a global install). ' +
         'To create or repair a managed standalone installation, run ' +
-        '"codebase-memory-mcp install --yes".\n',
+        '"hyponoia install --yes".\n',
       );
     }
     process.exit(status ?? 0);
@@ -151,7 +151,7 @@ const result = spawnSync(executionPath, forwardedArgs, {
 });
 
 if (result.error) {
-  process.stderr.write(`codebase-memory-mcp: ${result.error.message}\n`);
+  process.stderr.write(`hyponoia: ${result.error.message}\n`);
   process.exit(1);
 }
 

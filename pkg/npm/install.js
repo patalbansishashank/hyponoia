@@ -11,18 +11,18 @@ const os = require('os');
 const { execFileSync } = require('child_process');
 const { pipeline } = require('stream');
 
-const REPO = 'DeusData/codebase-memory-mcp';
+const REPO = 'patalbansishashank/hyponoia';
 const VERSION = require('./package.json').version;
 const BIN_ROOT = path.join(__dirname, 'bin');
 const MAX_REDIRECTS = 5;
 const DOWNLOAD_HOP_TIMEOUT_MS = 120_000;
 const CANDIDATE_TIMEOUT_MS = 15_000;
 const MAX_CHECKSUM_MANIFEST_BYTES = 1024 * 1024;
-const WINDOWS_BINARY_NAME = 'codebase-memory-mcp.exe';
-const INTEGRATIONS_NAME = 'cbm-integrations.json';
-const UI_PACK_PATTERN = /^cbm-ui-[0-9a-f]{64}\.pack$/;
+const WINDOWS_BINARY_NAME = 'hyponoia.exe';
+const INTEGRATIONS_NAME = 'hyp-integrations.json';
+const UI_PACK_PATTERN = /^hyp-ui-[0-9a-f]{64}\.pack$/;
 const UNIX_ARCHIVE_NAMES = [
-  'codebase-memory-mcp',
+  'hyponoia',
   INTEGRATIONS_NAME,
   'LICENSE',
   'install.sh',
@@ -35,15 +35,15 @@ const WINDOWS_ARCHIVE_NAMES = [
   'install.ps1',
   'THIRD_PARTY_NOTICES.md',
 ];
-const RUNTIME_LOCK_NAME = '.codebase-memory-mcp-runtime.lock';
+const RUNTIME_LOCK_NAME = '.hyponoia-runtime.lock';
 const RUNTIME_LOCK_WAIT_MS = 45_000;
 const RUNTIME_OWNERLESS_STALE_MS = 30_000;
 const RUNTIME_LOCK_LEASE_MS = 300_000;
 const RUNTIME_LOCK_HEARTBEAT_MS = 20_000;
 const RUNTIME_LEGACY_STALE_MS = 3_600_000;
 const RUNTIME_LOCK_POLL_MS = 25;
-const RUNTIME_BACKUP_PREFIX = '.cbm-runtime-backup-';
-const RUNTIME_BACKUP_DIRECTORY_PATTERN = /^\.cbm-runtime-backup-[0-9a-f]{32}$/;
+const RUNTIME_BACKUP_PREFIX = '.hyp-runtime-backup-';
+const RUNTIME_BACKUP_DIRECTORY_PATTERN = /^\.hyp-runtime-backup-[0-9a-f]{32}$/;
 const RUNTIME_BACKUP_RETIRED_MARKER = '.retirement-complete';
 const RUNTIME_BACKUP_CLEANUP_MARKER = '.cleanup-only';
 const SLEEP_WORD = new Int32Array(new SharedArrayBuffer(4));
@@ -270,7 +270,7 @@ function sleepSync(milliseconds) {
 }
 
 function runtimeVariant(env = process.env) {
-  return (env.CBM_VARIANT || '').toLowerCase() === 'ui' ? 'ui' : 'standard';
+  return (env.HYP_VARIANT || '').toLowerCase() === 'ui' ? 'ui' : 'standard';
 }
 
 function cacheDirForVariant(variant) {
@@ -295,7 +295,7 @@ function regularFile(pathname) {
 
 function uiPackMatchesDigest(directory, name) {
   try {
-    const expected = name.slice('cbm-ui-'.length, -'.pack'.length);
+    const expected = name.slice('hyp-ui-'.length, -'.pack'.length);
     return fileSha256(path.join(directory, name)) === expected;
   } catch (_) {
     return false;
@@ -310,7 +310,7 @@ function runtimeSetNames(directory, binaryName, variant) {
   let packLikeNames;
   try {
     packLikeNames = fs.readdirSync(directory)
-      .filter((name) => name.startsWith('cbm-ui-') && name.endsWith('.pack'));
+      .filter((name) => name.startsWith('hyp-ui-') && name.endsWith('.pack'));
   } catch (_) {
     return null;
   }
@@ -614,7 +614,7 @@ function copyRuntimeStageWithLease(source, staged, lock) {
 // so a second crash can finish deletion without interpreting a partial journal.
 function runtimeBackupTargetName(name, binaryName) {
   return name === binaryName || name === INTEGRATIONS_NAME ||
-    (name.startsWith('cbm-ui-') && name.endsWith('.pack'));
+    (name.startsWith('hyp-ui-') && name.endsWith('.pack'));
 }
 
 function createRuntimeBackupDirectory(destDir) {
@@ -728,7 +728,7 @@ function cleanupRuntimeBackup(backup, lock) {
 function copyRuntimeBackupFile(member, target, executable, lock) {
   const staged = path.join(
     path.dirname(target),
-    `.cbm-runtime-recovery-${crypto.randomBytes(16).toString('hex')}`,
+    `.hyp-runtime-recovery-${crypto.randomBytes(16).toString('hex')}`,
   );
   try {
     copyRuntimeStageWithLease(member.path, staged, lock);
@@ -840,7 +840,7 @@ function publishRuntimeSetWithRecovery(
     let backupDirectory = null;
     try {
       for (const name of sourceNames) {
-        const staged = path.join(destDir, `.cbm-runtime-stage-${publicationToken}-${name}`);
+        const staged = path.join(destDir, `.hyp-runtime-stage-${publicationToken}-${name}`);
         copyRuntimeStageWithLease(path.join(sourceDir, name), staged, lock);
         fs.chmodSync(staged, name === binaryName ? 0o755 : 0o644);
         stagedPaths.set(name, staged);
@@ -849,7 +849,7 @@ function publishRuntimeSetWithRecovery(
       backupDirectory = createRuntimeBackupDirectory(destDir);
 
       const stalePackNames = fs.readdirSync(destDir)
-        .filter((name) => name.startsWith('cbm-ui-') && name.endsWith('.pack'));
+        .filter((name) => name.startsWith('hyp-ui-') && name.endsWith('.pack'));
       const retireNames = [...new Set([
         binaryName,
         INTEGRATIONS_NAME,
@@ -935,10 +935,10 @@ function extractZipOnWindows(
   const script = [
     "$ErrorActionPreference = 'Stop'",
     'Add-Type -AssemblyName System.IO.Compression.FileSystem',
-    '$zip = [System.IO.Compression.ZipFile]::OpenRead($env:CBM_NPM_ARCHIVE_PATH)',
+    '$zip = [System.IO.Compression.ZipFile]::OpenRead($env:HYP_NPM_ARCHIVE_PATH)',
     "$seen = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)",
-    "$requiredNames = @($env:CBM_NPM_REQUIRED_NAMES.Split('|'))",
-    "$uiRequired = $env:CBM_NPM_UI_REQUIRED -eq '1'",
+    "$requiredNames = @($env:HYP_NPM_REQUIRED_NAMES.Split('|'))",
+    "$uiRequired = $env:HYP_NPM_UI_REQUIRED -eq '1'",
     '$uiPackName = $null',
     '$targetCounts = @{}',
     'foreach ($requiredName in $requiredNames) { $targetCounts[$requiredName] = 0 }',
@@ -956,7 +956,7 @@ function extractZipOnWindows(
       "throw \"unsafe zip entry path: $($entry.FullName)\" }; " +
       'if (-not $seen.Add($segmentsPath)) { ' +
       "throw \"duplicate or case-conflicting zip entry: $($entry.FullName)\" }; " +
-      "$isUiPack = $uiRequired -and ($name -cmatch '^cbm-ui-[0-9a-f]{64}\\.pack$'); " +
+      "$isUiPack = $uiRequired -and ($name -cmatch '^hyp-ui-[0-9a-f]{64}\\.pack$'); " +
       '$isRequired = $false; ' +
       'foreach ($requiredName in $requiredNames) { ' +
       'if ($name -ceq $requiredName) { ' +
@@ -975,13 +975,13 @@ function extractZipOnWindows(
     '$expectedCount = $requiredNames.Count; if ($uiRequired) { $expectedCount++ }',
     'if ($seen.Count -ne $expectedCount) { ' +
       'throw "archive does not match the exact release root-file allowlist" }',
-    "$extractNames = @($env:CBM_NPM_EXTRACT_NAMES.Split('|'))",
+    "$extractNames = @($env:HYP_NPM_EXTRACT_NAMES.Split('|'))",
     'if ($uiRequired) { $extractNames += $uiPackName }',
-    '$extractZip = [System.IO.Compression.ZipFile]::OpenRead($env:CBM_NPM_ARCHIVE_PATH)',
+    '$extractZip = [System.IO.Compression.ZipFile]::OpenRead($env:HYP_NPM_ARCHIVE_PATH)',
     'try { foreach ($extractName in $extractNames) { ' +
       '$entry = @($extractZip.Entries | Where-Object { $_.FullName -ceq $extractName })[0]; ' +
       '[System.IO.Compression.ZipFileExtensions]::ExtractToFile(' +
-      '$entry, (Join-Path $env:CBM_NPM_DEST_PATH $extractName), $false) ' +
+      '$entry, (Join-Path $env:HYP_NPM_DEST_PATH $extractName), $false) ' +
       '} } finally { $extractZip.Dispose() }',
   ].join('; ');
   const encoded = Buffer.from(script, 'utf16le').toString('base64');
@@ -990,11 +990,11 @@ function extractZipOnWindows(
   ], {
     env: {
       ...process.env,
-      CBM_NPM_ARCHIVE_PATH: archivePath,
-      CBM_NPM_DEST_PATH: destPath,
-      CBM_NPM_REQUIRED_NAMES: requiredNames.join('|'),
-      CBM_NPM_EXTRACT_NAMES: extractNames.join('|'),
-      CBM_NPM_UI_REQUIRED: ui ? '1' : '0',
+      HYP_NPM_ARCHIVE_PATH: archivePath,
+      HYP_NPM_DEST_PATH: destPath,
+      HYP_NPM_REQUIRED_NAMES: requiredNames.join('|'),
+      HYP_NPM_EXTRACT_NAMES: extractNames.join('|'),
+      HYP_NPM_UI_REQUIRED: ui ? '1' : '0',
     },
     stdio: 'inherit',
     windowsHide: true,
@@ -1023,7 +1023,7 @@ async function verifyChecksum(archivePath, archiveName) {
         `Checksum mismatch for ${archiveName}:\n  expected: ${expected}\n  actual:   ${actual}`,
       );
     }
-    process.stdout.write('codebase-memory-mcp: checksum verified.\n');
+    process.stdout.write('hyponoia: checksum verified.\n');
   } finally {
     try { fs.unlinkSync(tmpChecksums); } catch (_) { /* ignore */ }
   }
@@ -1039,7 +1039,7 @@ async function main() {
   // per platform, entered directly.
   const binName = platform === 'windows'
     ? WINDOWS_BINARY_NAME
-    : 'codebase-memory-mcp';
+    : 'hyponoia';
   const extractedNames = [binName, INTEGRATIONS_NAME];
   const archiveNames = platform === 'windows'
     ? WINDOWS_ARCHIVE_NAMES
@@ -1054,16 +1054,16 @@ async function main() {
   // have no such variant. Keep in sync with install.sh / pypi _cli.py / cli.c.
   const variant = platform === 'linux' ? '-portable' : '';
   // Opt into the UI build, whose verified asset pack is published beside the
-  // binary, with CBM_VARIANT=ui. Default is the standard (headless) build.
+  // binary, with HYP_VARIANT=ui. Default is the standard (headless) build.
   const ui = selectedVariant === 'ui' ? 'ui-' : '';
-  const archive = `codebase-memory-mcp-${ui}${platform}-${arch}${variant}.${ext}`;
+  const archive = `hyponoia-${ui}${platform}-${arch}${variant}.${ext}`;
   const url = `https://github.com/${REPO}/releases/download/v${VERSION}/${archive}`;
 
   const uiLabel = ui ? '(ui) ' : '';
-  process.stdout.write(`codebase-memory-mcp: downloading v${VERSION} ${uiLabel}for ${platform}/${arch}...\n`);
+  process.stdout.write(`hyponoia: downloading v${VERSION} ${uiLabel}for ${platform}/${arch}...\n`);
 
-  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cbm-install-'));
-  const tmpArchive = path.join(tmpDir, `cbm.${ext}`);
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'hyp-install-'));
+  const tmpArchive = path.join(tmpDir, `hyp.${ext}`);
 
   try {
     await download(url, tmpArchive);
@@ -1110,14 +1110,14 @@ async function main() {
       tmpDir, cacheDir, binName, selectedVariant,
     );
 
-    process.stdout.write('codebase-memory-mcp: ready.\n');
+    process.stdout.write('hyponoia: ready.\n');
     if (platform === 'windows') {
       process.stdout.write(
-        'Windows package cache is portable. Run "codebase-memory-mcp install --yes" ' +
-        'to create the managed installation (use "npx codebase-memory-mcp install --yes" ' +
+        'Windows package cache is portable. Run "hyponoia install --yes" ' +
+        'to create the managed installation (use "npx hyponoia install --yes" ' +
         'for a local npm install). Package updates/removal remain ' +
-        '"npm install codebase-memory-mcp@latest" and ' +
-        '"npm uninstall codebase-memory-mcp" (add -g for a global install).\n',
+        '"npm install hyponoia@latest" and ' +
+        '"npm uninstall hyponoia" (add -g for a global install).\n',
       );
     }
   } finally {
@@ -1127,7 +1127,7 @@ async function main() {
 
 if (require.main === module || module.parent == null) {
   main().catch((err) => {
-    process.stderr.write(`\ncodebase-memory-mcp: install failed — ${err.message}\n`);
+    process.stderr.write(`\nhyponoia: install failed — ${err.message}\n`);
     process.stderr.write(`You can install manually: https://github.com/${REPO}#installation\n`);
     process.exit(1);
   });

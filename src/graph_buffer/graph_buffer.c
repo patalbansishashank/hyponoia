@@ -6,7 +6,7 @@
  *
  * Memory ownership: each node/edge is individually heap-allocated so that
  * pointers stored in hash tables remain stable when the pointer-array grows.
- * The buffer frees everything in cbm_gbuf_free().
+ * The buffer frees everything in hyp_gbuf_free().
  */
 #include "foundation/constants.h"
 
@@ -53,15 +53,15 @@ static inline void *intptr_to_ptr(intptr_t v) {
  * plus ":local_name" for IMPORTS edges (#768). 256 bytes fit two int64s, the
  * type and a ~200-char local_name verbatim; longer local_names are re-keyed
  * with a hash of the full name in make_edge_key (never silently truncated). */
-#define EDGE_KEY_BUF CBM_SZ_256
+#define EDGE_KEY_BUF HYP_SZ_256
 
 /* Per-type or per-key edge list stored in hash tables as values */
-typedef CBM_DYN_ARRAY(const cbm_gbuf_edge_t *) edge_ptr_array_t;
+typedef HYP_DYN_ARRAY(const hyp_gbuf_edge_t *) edge_ptr_array_t;
 
 /* Per-label or per-name node list */
-typedef CBM_DYN_ARRAY(const cbm_gbuf_node_t *) node_ptr_array_t;
+typedef HYP_DYN_ARRAY(const hyp_gbuf_node_t *) node_ptr_array_t;
 
-struct cbm_gbuf {
+struct hyp_gbuf {
     char *project;
     char *root_path;
     int64_t next_id;
@@ -70,49 +70,49 @@ struct cbm_gbuf {
     /* Node storage: array of pointers to individually heap-allocated nodes.
      * This ensures pointers stored in hash tables remain valid when the
      * pointer array reallocs (only the pointer array moves, not the nodes). */
-    CBM_DYN_ARRAY(cbm_gbuf_node_t *) nodes;
+    HYP_DYN_ARRAY(hyp_gbuf_node_t *) nodes;
 
-    /* Primary index: QN → cbm_gbuf_node_t* */
-    CBMHashTable *node_by_qn;
-    /* Primary index: "id" string → cbm_gbuf_node_t* */
+    /* Primary index: QN → hyp_gbuf_node_t* */
+    HYPHashTable *node_by_qn;
+    /* Primary index: "id" string → hyp_gbuf_node_t* */
     /* Dense id → node array (ids are sequential from alloc_next_id, shared
      * with edges → holes where edges took ids). Replaces a hash table keyed
      * on STRDUP'D DECIMAL STRINGS of the id — ~0.44 GB of buckets + key
      * strings at kernel scale, plus a snprintf+strdup+hash on every one of
      * the ~18 hot find_by_id call sites. */
-    cbm_gbuf_node_t **by_id;
+    hyp_gbuf_node_t **by_id;
     int64_t by_id_cap;
 
     /* Secondary node indexes */
-    CBMHashTable *nodes_by_label; /* key: label, value: (node_ptr_array_t*) */
-    CBMHashTable *nodes_by_name;  /* key: name, value: (node_ptr_array_t*) */
+    HYPHashTable *nodes_by_label; /* key: label, value: (node_ptr_array_t*) */
+    HYPHashTable *nodes_by_name;  /* key: name, value: (node_ptr_array_t*) */
 
     /* Edge storage: array of pointers to individually heap-allocated edges */
-    CBM_DYN_ARRAY(cbm_gbuf_edge_t *) edges;
+    HYP_DYN_ARRAY(hyp_gbuf_edge_t *) edges;
 
-    /* Edge dedup index: "srcID:tgtID:type" → cbm_gbuf_edge_t* */
-    CBMHashTable *edge_by_key;
+    /* Edge dedup index: "srcID:tgtID:type" → hyp_gbuf_edge_t* */
+    HYPHashTable *edge_by_key;
 
     /* Edge secondary indexes: composite keys → edge_ptr_array_t */
-    CBMHashTable *edges_by_source_type; /* "srcID:type" → edge_ptr_array_t* */
-    CBMHashTable *edges_by_target_type; /* "tgtID:type" → edge_ptr_array_t* */
-    CBMHashTable *edges_by_type;        /* "type" → edge_ptr_array_t* */
+    HYPHashTable *edges_by_source_type; /* "srcID:type" → edge_ptr_array_t* */
+    HYPHashTable *edges_by_target_type; /* "tgtID:type" → edge_ptr_array_t* */
+    HYPHashTable *edges_by_type;        /* "type" → edge_ptr_array_t* */
 
     /* String intern pool for highly-repetitive fields (node label/file_path,
      * edge type). Maps string content → owned canonical copy, collapsing
      * O(nodes+edges) duplicate allocations to O(distinct). The pool owns the
      * copies; interned pointers are stable for the buffer lifetime and are NOT
-     * freed by free_node_strings/free_edge_strings — only once in cbm_gbuf_free. */
-    CBMHashTable *intern_pool;
+     * freed by free_node_strings/free_edge_strings — only once in hyp_gbuf_free. */
+    HYPHashTable *intern_pool;
 
     /* Vector storage for semantic embeddings (filled by pass_semantic_edges,
-     * consumed by cbm_write_db during dump). */
-    CBMDumpVector *dump_vectors;
+     * consumed by hyp_write_db during dump). */
+    HYPDumpVector *dump_vectors;
     int dump_vector_count;
     int dump_vector_cap;
 
     /* Token vector storage for enriched RI vectors (query-time lookup). */
-    CBMDumpTokenVec *dump_token_vecs;
+    HYPDumpTokenVec *dump_token_vecs;
     int dump_token_vec_count;
     int dump_token_vec_cap;
 };
@@ -127,15 +127,15 @@ static char *heap_strdup(const char *s) {
  * to a single heap copy owned by the pool. NULL maps to "{}" (matches
  * heap_strdup). The returned pointer is stable for the buffer's lifetime and
  * must never be freed or mutated by callers. Returns NULL only on OOM. */
-static const char *gb_intern(cbm_gbuf_t *gb, const char *s) {
+static const char *gb_intern(hyp_gbuf_t *gb, const char *s) {
     const char *key = s ? s : "{}";
-    const char *found = cbm_ht_get(gb->intern_pool, key);
+    const char *found = hyp_ht_get(gb->intern_pool, key);
     if (found) {
         return found;
     }
     char *copy = strdup(key);
     if (copy) {
-        cbm_ht_set(gb->intern_pool, copy, copy); /* key == value == owned copy */
+        hyp_ht_set(gb->intern_pool, copy, copy); /* key == value == owned copy */
     }
     return copy;
 }
@@ -198,21 +198,21 @@ static void make_src_type_key(char *buf, size_t bufsz, int64_t src, const char *
 }
 
 /* Get or create a node_ptr_array_t in a hash table */
-static node_ptr_array_t *get_or_create_node_array(CBMHashTable *ht, const char *key) {
-    node_ptr_array_t *arr = cbm_ht_get(ht, key);
+static node_ptr_array_t *get_or_create_node_array(HYPHashTable *ht, const char *key) {
+    node_ptr_array_t *arr = hyp_ht_get(ht, key);
     if (!arr) {
-        arr = calloc(CBM_ALLOC_ONE, sizeof(node_ptr_array_t));
-        cbm_ht_set(ht, strdup(key), arr);
+        arr = calloc(HYP_ALLOC_ONE, sizeof(node_ptr_array_t));
+        hyp_ht_set(ht, strdup(key), arr);
     }
     return arr;
 }
 
 /* Get or create an edge_ptr_array_t in a hash table */
-static edge_ptr_array_t *get_or_create_edge_array(CBMHashTable *ht, const char *key) {
-    edge_ptr_array_t *arr = cbm_ht_get(ht, key);
+static edge_ptr_array_t *get_or_create_edge_array(HYPHashTable *ht, const char *key) {
+    edge_ptr_array_t *arr = hyp_ht_get(ht, key);
     if (!arr) {
-        arr = calloc(CBM_ALLOC_ONE, sizeof(edge_ptr_array_t));
-        cbm_ht_set(ht, strdup(key), arr);
+        arr = calloc(HYP_ALLOC_ONE, sizeof(edge_ptr_array_t));
+        hyp_ht_set(ht, strdup(key), arr);
     }
     return arr;
 }
@@ -222,7 +222,7 @@ static void free_node_array(const char *key, void *value, void *ud) {
     (void)ud;
     node_ptr_array_t *arr = value;
     if (arr) {
-        cbm_da_free(arr);
+        hyp_da_free(arr);
         free(arr);
     }
     free((void *)key);
@@ -233,7 +233,7 @@ static void free_edge_array(const char *key, void *value, void *ud) {
     (void)ud;
     edge_ptr_array_t *arr = value;
     if (arr) {
-        cbm_da_free(arr);
+        hyp_da_free(arr);
         free(arr);
     }
     free((void *)key);
@@ -247,21 +247,21 @@ static void free_key_only(const char *key, void *value, void *ud) {
 }
 
 /* Free a single node's owned strings. label and file_path are interned
- * (pool-owned) — NOT freed here; the pool frees them once in cbm_gbuf_free. */
-static void free_node_strings(cbm_gbuf_node_t *n) {
+ * (pool-owned) — NOT freed here; the pool frees them once in hyp_gbuf_free. */
+static void free_node_strings(hyp_gbuf_node_t *n) {
     free(n->name);
     free(n->qualified_name);
     free(n->properties_json);
 }
 
 /* Free a single edge's owned strings. type is interned (pool-owned) — NOT
- * freed here; the pool frees it once in cbm_gbuf_free. */
-static void free_edge_strings(cbm_gbuf_edge_t *e) {
+ * freed here; the pool frees it once in hyp_gbuf_free. */
+static void free_edge_strings(hyp_gbuf_edge_t *e) {
     free(e->properties_json);
 }
 
 /* Allocate the next buffer-local or shared-atomic ID. */
-static int64_t alloc_next_id(cbm_gbuf_t *gb) {
+static int64_t alloc_next_id(hyp_gbuf_t *gb) {
     if (gb->shared_ids) {
         return atomic_fetch_add_explicit(gb->shared_ids, SKIP_ONE, memory_order_relaxed);
     }
@@ -295,34 +295,34 @@ static void remove_node_from_ptr_array(node_ptr_array_t *arr, int64_t node_id) {
 }
 
 /* Remove an edge from all indexes (dedup + source_type + target_type + type). */
-static void unindex_edge(cbm_gbuf_t *gb, const cbm_gbuf_edge_t *e) {
+static void unindex_edge(hyp_gbuf_t *gb, const hyp_gbuf_edge_t *e) {
     char key[EDGE_KEY_BUF];
 
     make_edge_key(key, sizeof(key), e->source_id, e->target_id, e->type, e->properties_json);
-    const char *ekey = cbm_ht_get_key(gb->edge_by_key, key);
-    cbm_ht_delete(gb->edge_by_key, key);
+    const char *ekey = hyp_ht_get_key(gb->edge_by_key, key);
+    hyp_ht_delete(gb->edge_by_key, key);
     free((void *)ekey);
 
     make_src_type_key(key, sizeof(key), e->source_id, e->type);
-    remove_edge_from_ptr_array(cbm_ht_get(gb->edges_by_source_type, key), e->id);
+    remove_edge_from_ptr_array(hyp_ht_get(gb->edges_by_source_type, key), e->id);
 
     make_src_type_key(key, sizeof(key), e->target_id, e->type);
-    remove_edge_from_ptr_array(cbm_ht_get(gb->edges_by_target_type, key), e->id);
+    remove_edge_from_ptr_array(hyp_ht_get(gb->edges_by_target_type, key), e->id);
 
-    remove_edge_from_ptr_array(cbm_ht_get(gb->edges_by_type, e->type), e->id);
+    remove_edge_from_ptr_array(hyp_ht_get(gb->edges_by_type, e->type), e->id);
 }
 
 /* Cascade-delete all edges touching nodes in deleted_set. */
-static void cascade_delete_edges(cbm_gbuf_t *gb, CBMHashTable *deleted_set) {
+static void cascade_delete_edges(hyp_gbuf_t *gb, HYPHashTable *deleted_set) {
     int write_idx = 0;
     for (int i = 0; i < gb->edges.count; i++) {
-        cbm_gbuf_edge_t *e = gb->edges.items[i];
-        char src_id[CBM_SZ_32];
-        char tgt_id[CBM_SZ_32];
+        hyp_gbuf_edge_t *e = gb->edges.items[i];
+        char src_id[HYP_SZ_32];
+        char tgt_id[HYP_SZ_32];
         make_id_key(src_id, sizeof(src_id), e->source_id);
         make_id_key(tgt_id, sizeof(tgt_id), e->target_id);
 
-        if (cbm_ht_get(deleted_set, src_id) || cbm_ht_get(deleted_set, tgt_id)) {
+        if (hyp_ht_get(deleted_set, src_id) || hyp_ht_get(deleted_set, tgt_id)) {
             unindex_edge(gb, e);
             free_edge_strings(e);
             free(e);
@@ -334,15 +334,15 @@ static void cascade_delete_edges(cbm_gbuf_t *gb, CBMHashTable *deleted_set) {
 }
 
 /* Register a node in primary (QN, ID) and secondary (label, name) indexes. */
-static void register_node_in_indexes(cbm_gbuf_t *gb, cbm_gbuf_node_t *node) {
-    cbm_ht_set(gb->node_by_qn, node->qualified_name, node);
+static void register_node_in_indexes(hyp_gbuf_t *gb, hyp_gbuf_node_t *node) {
+    hyp_ht_set(gb->node_by_qn, node->qualified_name, node);
 
     if (node->id >= gb->by_id_cap) {
-        int64_t nc = gb->by_id_cap > 0 ? gb->by_id_cap : CBM_SZ_1K;
+        int64_t nc = gb->by_id_cap > 0 ? gb->by_id_cap : HYP_SZ_1K;
         while (nc <= node->id) {
             nc *= 2;
         }
-        cbm_gbuf_node_t **grown = realloc(gb->by_id, (size_t)nc * sizeof(*grown));
+        hyp_gbuf_node_t **grown = realloc(gb->by_id, (size_t)nc * sizeof(*grown));
         if (grown) {
             memset(grown + gb->by_id_cap, 0, (size_t)(nc - gb->by_id_cap) * sizeof(*grown));
             gb->by_id = grown;
@@ -355,26 +355,26 @@ static void register_node_in_indexes(cbm_gbuf_t *gb, cbm_gbuf_node_t *node) {
 
     node_ptr_array_t *by_label =
         get_or_create_node_array(gb->nodes_by_label, node->label ? node->label : "");
-    cbm_da_push(by_label, (const cbm_gbuf_node_t *)node);
+    hyp_da_push(by_label, (const hyp_gbuf_node_t *)node);
 
     node_ptr_array_t *by_name =
         get_or_create_node_array(gb->nodes_by_name, node->name ? node->name : "");
-    cbm_da_push(by_name, (const cbm_gbuf_node_t *)node);
+    hyp_da_push(by_name, (const hyp_gbuf_node_t *)node);
 }
 
 /* Push an edge pointer into a dynamic array (wraps macro to reduce CC contribution). */
-static void edge_array_push(edge_ptr_array_t *arr, const cbm_gbuf_edge_t *edge) {
-    cbm_da_push(arr, edge);
+static void edge_array_push(edge_ptr_array_t *arr, const hyp_gbuf_edge_t *edge) {
+    hyp_da_push(arr, edge);
 }
 
 /* Index an edge by one key into a hash table bucket. */
-static void index_edge_by_key(CBMHashTable *ht, const char *key, cbm_gbuf_edge_t *edge) {
+static void index_edge_by_key(HYPHashTable *ht, const char *key, hyp_gbuf_edge_t *edge) {
     edge_ptr_array_t *arr = get_or_create_edge_array(ht, key);
-    edge_array_push(arr, (const cbm_gbuf_edge_t *)edge);
+    edge_array_push(arr, (const hyp_gbuf_edge_t *)edge);
 }
 
 /* Register an edge in secondary indexes (source_type, target_type, type). */
-static void register_edge_in_indexes(cbm_gbuf_t *gb, cbm_gbuf_edge_t *edge) {
+static void register_edge_in_indexes(hyp_gbuf_t *gb, hyp_gbuf_edge_t *edge) {
     char key[EDGE_KEY_BUF];
 
     make_src_type_key(key, sizeof(key), edge->source_id, edge->type);
@@ -387,17 +387,17 @@ static void register_edge_in_indexes(cbm_gbuf_t *gb, cbm_gbuf_edge_t *edge) {
 }
 
 /* Rebuild edge secondary indexes from scratch (after bulk deletion). */
-static void rebuild_edge_secondary_indexes(cbm_gbuf_t *gb) {
-    cbm_ht_foreach(gb->edges_by_source_type, free_edge_array, NULL);
-    cbm_ht_free(gb->edges_by_source_type);
-    cbm_ht_foreach(gb->edges_by_target_type, free_edge_array, NULL);
-    cbm_ht_free(gb->edges_by_target_type);
-    cbm_ht_foreach(gb->edges_by_type, free_edge_array, NULL);
-    cbm_ht_free(gb->edges_by_type);
+static void rebuild_edge_secondary_indexes(hyp_gbuf_t *gb) {
+    hyp_ht_foreach(gb->edges_by_source_type, free_edge_array, NULL);
+    hyp_ht_free(gb->edges_by_source_type);
+    hyp_ht_foreach(gb->edges_by_target_type, free_edge_array, NULL);
+    hyp_ht_free(gb->edges_by_target_type);
+    hyp_ht_foreach(gb->edges_by_type, free_edge_array, NULL);
+    hyp_ht_free(gb->edges_by_type);
 
-    gb->edges_by_source_type = cbm_ht_create(CBM_SZ_256);
-    gb->edges_by_target_type = cbm_ht_create(CBM_SZ_256);
-    gb->edges_by_type = cbm_ht_create(CBM_SZ_32);
+    gb->edges_by_source_type = hyp_ht_create(HYP_SZ_256);
+    gb->edges_by_target_type = hyp_ht_create(HYP_SZ_256);
+    gb->edges_by_type = hyp_ht_create(HYP_SZ_32);
 
     for (int i = 0; i < gb->edges.count; i++) {
         register_edge_in_indexes(gb, gb->edges.items[i]);
@@ -405,36 +405,36 @@ static void rebuild_edge_secondary_indexes(cbm_gbuf_t *gb) {
 }
 
 /* Release all lookup hash tables (used by dump after building arrays). */
-static void release_gbuf_indexes(cbm_gbuf_t *gb) {
-    cbm_ht_free(gb->node_by_qn);
+static void release_gbuf_indexes(hyp_gbuf_t *gb) {
+    hyp_ht_free(gb->node_by_qn);
     gb->node_by_qn = NULL;
     free(gb->by_id);
     gb->by_id = NULL;
     gb->by_id_cap = 0;
-    cbm_ht_foreach(gb->nodes_by_label, free_node_array, NULL);
-    cbm_ht_free(gb->nodes_by_label);
+    hyp_ht_foreach(gb->nodes_by_label, free_node_array, NULL);
+    hyp_ht_free(gb->nodes_by_label);
     gb->nodes_by_label = NULL;
-    cbm_ht_foreach(gb->nodes_by_name, free_node_array, NULL);
-    cbm_ht_free(gb->nodes_by_name);
+    hyp_ht_foreach(gb->nodes_by_name, free_node_array, NULL);
+    hyp_ht_free(gb->nodes_by_name);
     gb->nodes_by_name = NULL;
-    cbm_ht_foreach(gb->edge_by_key, free_key_only, NULL);
-    cbm_ht_free(gb->edge_by_key);
+    hyp_ht_foreach(gb->edge_by_key, free_key_only, NULL);
+    hyp_ht_free(gb->edge_by_key);
     gb->edge_by_key = NULL;
-    cbm_ht_foreach(gb->edges_by_source_type, free_edge_array, NULL);
-    cbm_ht_free(gb->edges_by_source_type);
+    hyp_ht_foreach(gb->edges_by_source_type, free_edge_array, NULL);
+    hyp_ht_free(gb->edges_by_source_type);
     gb->edges_by_source_type = NULL;
-    cbm_ht_foreach(gb->edges_by_target_type, free_edge_array, NULL);
-    cbm_ht_free(gb->edges_by_target_type);
+    hyp_ht_foreach(gb->edges_by_target_type, free_edge_array, NULL);
+    hyp_ht_free(gb->edges_by_target_type);
     gb->edges_by_target_type = NULL;
-    cbm_ht_foreach(gb->edges_by_type, free_edge_array, NULL);
-    cbm_ht_free(gb->edges_by_type);
+    hyp_ht_foreach(gb->edges_by_type, free_edge_array, NULL);
+    hyp_ht_free(gb->edges_by_type);
     gb->edges_by_type = NULL;
 }
 
 /* ── Lifecycle ──────────────────────────────────────────────────── */
 
-cbm_gbuf_t *cbm_gbuf_new(const char *project, const char *root_path) {
-    cbm_gbuf_t *gb = calloc(CBM_ALLOC_ONE, sizeof(cbm_gbuf_t));
+hyp_gbuf_t *hyp_gbuf_new(const char *project, const char *root_path) {
+    hyp_gbuf_t *gb = calloc(HYP_ALLOC_ONE, sizeof(hyp_gbuf_t));
     if (!gb) {
         return NULL;
     }
@@ -444,80 +444,80 @@ cbm_gbuf_t *cbm_gbuf_new(const char *project, const char *root_path) {
     gb->next_id = SKIP_ONE;
     gb->shared_ids = NULL;
 
-    gb->node_by_qn = cbm_ht_create(CBM_SZ_256);
+    gb->node_by_qn = hyp_ht_create(HYP_SZ_256);
     gb->by_id = NULL;
     gb->by_id_cap = 0;
-    gb->nodes_by_label = cbm_ht_create(CBM_SZ_32);
-    gb->nodes_by_name = cbm_ht_create(CBM_SZ_256);
+    gb->nodes_by_label = hyp_ht_create(HYP_SZ_32);
+    gb->nodes_by_name = hyp_ht_create(HYP_SZ_256);
 
-    gb->edge_by_key = cbm_ht_create(CBM_SZ_512);
-    gb->edges_by_source_type = cbm_ht_create(CBM_SZ_256);
-    gb->edges_by_target_type = cbm_ht_create(CBM_SZ_256);
-    gb->edges_by_type = cbm_ht_create(CBM_SZ_32);
+    gb->edge_by_key = hyp_ht_create(HYP_SZ_512);
+    gb->edges_by_source_type = hyp_ht_create(HYP_SZ_256);
+    gb->edges_by_target_type = hyp_ht_create(HYP_SZ_256);
+    gb->edges_by_type = hyp_ht_create(HYP_SZ_32);
 
-    gb->intern_pool = cbm_ht_create(CBM_SZ_1K);
+    gb->intern_pool = hyp_ht_create(HYP_SZ_1K);
 
     return gb;
 }
 
-cbm_gbuf_t *cbm_gbuf_new_shared_ids(const char *project, const char *root_path,
+hyp_gbuf_t *hyp_gbuf_new_shared_ids(const char *project, const char *root_path,
                                     _Atomic int64_t *id_source) {
-    cbm_gbuf_t *gb = cbm_gbuf_new(project, root_path);
+    hyp_gbuf_t *gb = hyp_gbuf_new(project, root_path);
     if (gb && id_source) {
         gb->shared_ids = id_source;
     }
     return gb;
 }
 
-void cbm_gbuf_free(cbm_gbuf_t *gb) {
+void hyp_gbuf_free(hyp_gbuf_t *gb) {
     if (!gb) {
         return;
     }
 
     /* Free each individually-allocated node */
     for (int i = 0; i < gb->nodes.count; i++) {
-        cbm_gbuf_node_t *n = gb->nodes.items[i];
+        hyp_gbuf_node_t *n = gb->nodes.items[i];
         free_node_strings(n);
         free(n);
     }
-    cbm_da_free(&gb->nodes);
+    hyp_da_free(&gb->nodes);
 
     /* Free each individually-allocated edge */
     for (int i = 0; i < gb->edges.count; i++) {
-        cbm_gbuf_edge_t *e = gb->edges.items[i];
+        hyp_gbuf_edge_t *e = gb->edges.items[i];
         free_edge_strings(e);
         free(e);
     }
-    cbm_da_free(&gb->edges);
+    hyp_da_free(&gb->edges);
 
     /* Free hash tables — may be NULL if already released by dump_to_sqlite */
     if (gb->node_by_qn) {
-        cbm_ht_free(gb->node_by_qn);
+        hyp_ht_free(gb->node_by_qn);
     }
     free(gb->by_id);
     if (gb->nodes_by_label) {
-        cbm_ht_foreach(gb->nodes_by_label, free_node_array, NULL);
-        cbm_ht_free(gb->nodes_by_label);
+        hyp_ht_foreach(gb->nodes_by_label, free_node_array, NULL);
+        hyp_ht_free(gb->nodes_by_label);
     }
     if (gb->nodes_by_name) {
-        cbm_ht_foreach(gb->nodes_by_name, free_node_array, NULL);
-        cbm_ht_free(gb->nodes_by_name);
+        hyp_ht_foreach(gb->nodes_by_name, free_node_array, NULL);
+        hyp_ht_free(gb->nodes_by_name);
     }
     if (gb->edge_by_key) {
-        cbm_ht_foreach(gb->edge_by_key, free_key_only, NULL);
-        cbm_ht_free(gb->edge_by_key);
+        hyp_ht_foreach(gb->edge_by_key, free_key_only, NULL);
+        hyp_ht_free(gb->edge_by_key);
     }
     if (gb->edges_by_source_type) {
-        cbm_ht_foreach(gb->edges_by_source_type, free_edge_array, NULL);
-        cbm_ht_free(gb->edges_by_source_type);
+        hyp_ht_foreach(gb->edges_by_source_type, free_edge_array, NULL);
+        hyp_ht_free(gb->edges_by_source_type);
     }
     if (gb->edges_by_target_type) {
-        cbm_ht_foreach(gb->edges_by_target_type, free_edge_array, NULL);
-        cbm_ht_free(gb->edges_by_target_type);
+        hyp_ht_foreach(gb->edges_by_target_type, free_edge_array, NULL);
+        hyp_ht_free(gb->edges_by_target_type);
     }
     if (gb->edges_by_type) {
-        cbm_ht_foreach(gb->edges_by_type, free_edge_array, NULL);
-        cbm_ht_free(gb->edges_by_type);
+        hyp_ht_foreach(gb->edges_by_type, free_edge_array, NULL);
+        hyp_ht_free(gb->edges_by_type);
     }
 
     /* Free vector storage */
@@ -537,8 +537,8 @@ void cbm_gbuf_free(cbm_gbuf_t *gb) {
      * copy each (key == value), freed exactly once via free_key_only. Done after
      * nodes/edges since they borrowed these pointers. */
     if (gb->intern_pool) {
-        cbm_ht_foreach(gb->intern_pool, free_key_only, NULL);
-        cbm_ht_free(gb->intern_pool);
+        hyp_ht_foreach(gb->intern_pool, free_key_only, NULL);
+        hyp_ht_free(gb->intern_pool);
     }
 
     free(gb->project);
@@ -548,7 +548,7 @@ void cbm_gbuf_free(cbm_gbuf_t *gb) {
 
 /* ── Vector storage ──────────────────────────────────────────────── */
 
-int cbm_gbuf_store_vector(cbm_gbuf_t *gb, int64_t node_id, const uint8_t *vector, int vector_len) {
+int hyp_gbuf_store_vector(hyp_gbuf_t *gb, int64_t node_id, const uint8_t *vector, int vector_len) {
     if (!gb || !vector || vector_len <= 0) {
         return GB_ERR;
     }
@@ -556,7 +556,7 @@ int cbm_gbuf_store_vector(cbm_gbuf_t *gb, int64_t node_id, const uint8_t *vector
     if (gb->dump_vector_count >= gb->dump_vector_cap) {
         int new_cap =
             gb->dump_vector_cap < VEC_INIT_CAP ? VEC_INIT_CAP : gb->dump_vector_cap * VEC_GROW;
-        CBMDumpVector *grown = realloc(gb->dump_vectors, (size_t)new_cap * sizeof(CBMDumpVector));
+        HYPDumpVector *grown = realloc(gb->dump_vectors, (size_t)new_cap * sizeof(HYPDumpVector));
         if (!grown) {
             return GB_ERR;
         }
@@ -570,7 +570,7 @@ int cbm_gbuf_store_vector(cbm_gbuf_t *gb, int64_t node_id, const uint8_t *vector
     }
     memcpy(vec_copy, vector, (size_t)vector_len);
 
-    gb->dump_vectors[gb->dump_vector_count++] = (CBMDumpVector){
+    gb->dump_vectors[gb->dump_vector_count++] = (HYPDumpVector){
         .node_id = node_id,
         .project = gb->project, /* borrowed — valid until gbuf_free */
         .vector = vec_copy,
@@ -579,7 +579,7 @@ int cbm_gbuf_store_vector(cbm_gbuf_t *gb, int64_t node_id, const uint8_t *vector
     return 0;
 }
 
-int cbm_gbuf_store_token_vector(cbm_gbuf_t *gb, const char *token, const uint8_t *vector,
+int hyp_gbuf_store_token_vector(hyp_gbuf_t *gb, const char *token, const uint8_t *vector,
                                 int vector_len, float idf) {
     if (!gb || !token || !vector || vector_len <= 0) {
         return GB_ERR;
@@ -588,8 +588,8 @@ int cbm_gbuf_store_token_vector(cbm_gbuf_t *gb, const char *token, const uint8_t
     if (gb->dump_token_vec_count >= gb->dump_token_vec_cap) {
         int new_cap =
             gb->dump_token_vec_cap < TV_INIT_CAP ? TV_INIT_CAP : gb->dump_token_vec_cap * TV_GROW;
-        CBMDumpTokenVec *grown =
-            realloc(gb->dump_token_vecs, (size_t)new_cap * sizeof(CBMDumpTokenVec));
+        HYPDumpTokenVec *grown =
+            realloc(gb->dump_token_vecs, (size_t)new_cap * sizeof(HYPDumpTokenVec));
         if (!grown) {
             return GB_ERR;
         }
@@ -603,7 +603,7 @@ int cbm_gbuf_store_token_vector(cbm_gbuf_t *gb, const char *token, const uint8_t
     memcpy(vec_copy, vector, (size_t)vector_len);
 
     int idx = gb->dump_token_vec_count;
-    gb->dump_token_vecs[idx] = (CBMDumpTokenVec){
+    gb->dump_token_vecs[idx] = (HYPDumpTokenVec){
         .id = idx + SKIP_ONE, /* 1-based sequential ID */
         .project = gb->project,
         .token = strdup(token),
@@ -617,7 +617,7 @@ int cbm_gbuf_store_token_vector(cbm_gbuf_t *gb, const char *token, const uint8_t
 
 /* ── ID accessors ────────────────────────────────────────────────── */
 
-int64_t cbm_gbuf_next_id(const cbm_gbuf_t *gb) {
+int64_t hyp_gbuf_next_id(const hyp_gbuf_t *gb) {
     if (!gb) {
         return SKIP_ONE;
     }
@@ -627,7 +627,7 @@ int64_t cbm_gbuf_next_id(const cbm_gbuf_t *gb) {
     return gb->next_id;
 }
 
-void cbm_gbuf_set_next_id(cbm_gbuf_t *gb, int64_t next_id) {
+void hyp_gbuf_set_next_id(hyp_gbuf_t *gb, int64_t next_id) {
     if (!gb) {
         return;
     }
@@ -636,7 +636,7 @@ void cbm_gbuf_set_next_id(cbm_gbuf_t *gb, int64_t next_id) {
 
 /* ── Node operations ─────────────────────────────────────────────── */
 
-int64_t cbm_gbuf_upsert_node(cbm_gbuf_t *gb, const char *label, const char *name,
+int64_t hyp_gbuf_upsert_node(hyp_gbuf_t *gb, const char *label, const char *name,
                              const char *qualified_name, const char *file_path, int start_line,
                              int end_line, const char *properties_json) {
     if (!gb || !qualified_name) {
@@ -644,7 +644,7 @@ int64_t cbm_gbuf_upsert_node(cbm_gbuf_t *gb, const char *label, const char *name
     }
 
     /* Check if node already exists */
-    cbm_gbuf_node_t *existing = cbm_ht_get(gb->node_by_qn, qualified_name);
+    hyp_gbuf_node_t *existing = hyp_ht_get(gb->node_by_qn, qualified_name);
     if (existing) {
         /* Don't let a per-file "Module" def touch a structural directory node
          * ("Project" root or "Folder"). In a directory-based-module language
@@ -699,7 +699,7 @@ int64_t cbm_gbuf_upsert_node(cbm_gbuf_t *gb, const char *label, const char *name
          * label == existing->label), so the old value is replaced, never freed.
          * When the surviving label/name changes, keep the secondary indexes
          * consistent (the old code left the node listed under its ORIGINAL
-         * label/name — cbm_gbuf_find_by_label/name then missed or mis-listed it,
+         * label/name — hyp_gbuf_find_by_label/name then missed or mis-listed it,
          * which is how the flickering Function set reached the semantic pass). */
         char *new_name = heap_strdup(name);
         char *new_props = properties_json ? heap_strdup(properties_json) : NULL;
@@ -709,12 +709,12 @@ int64_t cbm_gbuf_upsert_node(cbm_gbuf_t *gb, const char *label, const char *name
         bool name_changed = !existing->name || !new_name || strcmp(existing->name, new_name) != 0;
         if (label_changed) {
             remove_node_from_ptr_array(
-                cbm_ht_get(gb->nodes_by_label, existing->label ? existing->label : ""),
+                hyp_ht_get(gb->nodes_by_label, existing->label ? existing->label : ""),
                 existing->id);
         }
         if (name_changed) {
             remove_node_from_ptr_array(
-                cbm_ht_get(gb->nodes_by_name, existing->name ? existing->name : ""), existing->id);
+                hyp_ht_get(gb->nodes_by_name, existing->name ? existing->name : ""), existing->id);
         }
         existing->label = (char *)new_label_interned;
         free(existing->name);
@@ -729,18 +729,18 @@ int64_t cbm_gbuf_upsert_node(cbm_gbuf_t *gb, const char *label, const char *name
         if (label_changed) {
             node_ptr_array_t *by_label = get_or_create_node_array(
                 gb->nodes_by_label, existing->label ? existing->label : "");
-            cbm_da_push(by_label, (const cbm_gbuf_node_t *)existing);
+            hyp_da_push(by_label, (const hyp_gbuf_node_t *)existing);
         }
         if (name_changed) {
             node_ptr_array_t *by_name =
                 get_or_create_node_array(gb->nodes_by_name, existing->name ? existing->name : "");
-            cbm_da_push(by_name, (const cbm_gbuf_node_t *)existing);
+            hyp_da_push(by_name, (const hyp_gbuf_node_t *)existing);
         }
         return existing->id;
     }
 
     /* Heap-allocate a new node (pointer stays stable across array growth) */
-    cbm_gbuf_node_t *node = calloc(CBM_ALLOC_ONE, sizeof(cbm_gbuf_node_t));
+    hyp_gbuf_node_t *node = calloc(HYP_ALLOC_ONE, sizeof(hyp_gbuf_node_t));
     if (!node) {
         return 0;
     }
@@ -756,32 +756,32 @@ int64_t cbm_gbuf_upsert_node(cbm_gbuf_t *gb, const char *label, const char *name
     node->properties_json = heap_strdup(properties_json);
 
     /* Store pointer in array and register in all indexes */
-    cbm_da_push(&gb->nodes, node);
+    hyp_da_push(&gb->nodes, node);
     register_node_in_indexes(gb, node);
 
     return id;
 }
 
-const cbm_gbuf_node_t *cbm_gbuf_find_by_qn(const cbm_gbuf_t *gb, const char *qn) {
+const hyp_gbuf_node_t *hyp_gbuf_find_by_qn(const hyp_gbuf_t *gb, const char *qn) {
     if (!gb || !qn) {
         return NULL;
     }
-    return cbm_ht_get(gb->node_by_qn, qn);
+    return hyp_ht_get(gb->node_by_qn, qn);
 }
 
-const cbm_gbuf_node_t *cbm_gbuf_find_by_id(const cbm_gbuf_t *gb, int64_t id) {
+const hyp_gbuf_node_t *hyp_gbuf_find_by_id(const hyp_gbuf_t *gb, int64_t id) {
     if (!gb || !gb->by_id || id < 0 || id >= gb->by_id_cap) {
         return NULL;
     }
     return gb->by_id[id];
 }
 
-int cbm_gbuf_find_by_label(const cbm_gbuf_t *gb, const char *label, const cbm_gbuf_node_t ***out,
+int hyp_gbuf_find_by_label(const hyp_gbuf_t *gb, const char *label, const hyp_gbuf_node_t ***out,
                            int *count) {
     if (!gb || !out || !count) {
-        return CBM_NOT_FOUND;
+        return HYP_NOT_FOUND;
     }
-    node_ptr_array_t *arr = cbm_ht_get(gb->nodes_by_label, label ? label : "");
+    node_ptr_array_t *arr = hyp_ht_get(gb->nodes_by_label, label ? label : "");
     if (arr && arr->count > 0) {
         *out = arr->items;
         *count = arr->count;
@@ -792,12 +792,12 @@ int cbm_gbuf_find_by_label(const cbm_gbuf_t *gb, const char *label, const cbm_gb
     return 0;
 }
 
-int cbm_gbuf_find_by_name(const cbm_gbuf_t *gb, const char *name, const cbm_gbuf_node_t ***out,
+int hyp_gbuf_find_by_name(const hyp_gbuf_t *gb, const char *name, const hyp_gbuf_node_t ***out,
                           int *count) {
     if (!gb || !out || !count) {
-        return CBM_NOT_FOUND;
+        return HYP_NOT_FOUND;
     }
-    node_ptr_array_t *arr = cbm_ht_get(gb->nodes_by_name, name ? name : "");
+    node_ptr_array_t *arr = hyp_ht_get(gb->nodes_by_name, name ? name : "");
     if (arr && arr->count > 0) {
         *out = arr->items;
         *count = arr->count;
@@ -808,83 +808,83 @@ int cbm_gbuf_find_by_name(const cbm_gbuf_t *gb, const char *name, const cbm_gbuf
     return 0;
 }
 
-int cbm_gbuf_node_count(const cbm_gbuf_t *gb) {
+int hyp_gbuf_node_count(const hyp_gbuf_t *gb) {
     /* Use QN hash table count since it's authoritative (handles deletes) */
-    return gb ? (int)cbm_ht_count(gb->node_by_qn) : 0;
+    return gb ? (int)hyp_ht_count(gb->node_by_qn) : 0;
 }
 
-int cbm_gbuf_delete_by_label(cbm_gbuf_t *gb, const char *label) {
+int hyp_gbuf_delete_by_label(hyp_gbuf_t *gb, const char *label) {
     if (!gb || !label) {
-        return CBM_NOT_FOUND;
+        return HYP_NOT_FOUND;
     }
 
-    node_ptr_array_t *arr = cbm_ht_get(gb->nodes_by_label, label);
+    node_ptr_array_t *arr = hyp_ht_get(gb->nodes_by_label, label);
     if (!arr || arr->count == 0) {
         return 0;
     }
 
     /* Build hash set of deleted node IDs for O(1) lookup */
-    CBMHashTable *deleted_set = cbm_ht_create(arr->count);
+    HYPHashTable *deleted_set = hyp_ht_create(arr->count);
     for (int i = 0; i < arr->count; i++) {
-        const cbm_gbuf_node_t *n = arr->items[i];
+        const hyp_gbuf_node_t *n = arr->items[i];
 
-        char id_buf[CBM_SZ_32];
+        char id_buf[HYP_SZ_32];
         make_id_key(id_buf, sizeof(id_buf), n->id);
-        cbm_ht_set(deleted_set, strdup(id_buf), intptr_to_ptr(SKIP_ONE));
+        hyp_ht_set(deleted_set, strdup(id_buf), intptr_to_ptr(SKIP_ONE));
 
         /* Remove from primary indexes */
-        cbm_ht_delete(gb->node_by_qn, n->qualified_name);
+        hyp_ht_delete(gb->node_by_qn, n->qualified_name);
         if (n->id >= 0 && n->id < gb->by_id_cap) {
             gb->by_id[n->id] = NULL;
         }
     }
 
     /* Clear the label array */
-    cbm_da_clear(arr);
+    hyp_da_clear(arr);
 
     /* Cascade-delete edges referencing deleted nodes */
     cascade_delete_edges(gb, deleted_set);
 
-    cbm_ht_foreach(deleted_set, free_key_only, NULL);
-    cbm_ht_free(deleted_set);
+    hyp_ht_foreach(deleted_set, free_key_only, NULL);
+    hyp_ht_free(deleted_set);
     return 0;
 }
 
-int cbm_gbuf_delete_by_file(cbm_gbuf_t *gb, const char *file_path) {
+int hyp_gbuf_delete_by_file(hyp_gbuf_t *gb, const char *file_path) {
     if (!gb || !file_path) {
-        return CBM_NOT_FOUND;
+        return HYP_NOT_FOUND;
     }
 
     /* Collect IDs of nodes in this file */
-    CBMHashTable *deleted_set = cbm_ht_create(CBM_SZ_64);
+    HYPHashTable *deleted_set = hyp_ht_create(HYP_SZ_64);
     int deleted_count = 0;
     int scanned = 0;
 
     for (int i = 0; i < gb->nodes.count; i++) {
-        cbm_gbuf_node_t *n = gb->nodes.items[i];
+        hyp_gbuf_node_t *n = gb->nodes.items[i];
         scanned++;
         if (!n->file_path || strcmp(n->file_path, file_path) != 0) {
             continue;
         }
-        if (!n->qualified_name || !cbm_ht_get(gb->node_by_qn, n->qualified_name)) {
+        if (!n->qualified_name || !hyp_ht_get(gb->node_by_qn, n->qualified_name)) {
             continue;
         }
 
-        char id_buf[CBM_SZ_32];
+        char id_buf[HYP_SZ_32];
         make_id_key(id_buf, sizeof(id_buf), n->id);
-        cbm_ht_set(deleted_set, strdup(id_buf), intptr_to_ptr(SKIP_ONE));
+        hyp_ht_set(deleted_set, strdup(id_buf), intptr_to_ptr(SKIP_ONE));
 
         /* Remove from secondary indexes */
-        remove_node_from_ptr_array(cbm_ht_get(gb->nodes_by_label, n->label), n->id);
-        remove_node_from_ptr_array(cbm_ht_get(gb->nodes_by_name, n->name), n->id);
+        remove_node_from_ptr_array(hyp_ht_get(gb->nodes_by_label, n->label), n->id);
+        remove_node_from_ptr_array(hyp_ht_get(gb->nodes_by_name, n->name), n->id);
 
         /* Remove from primary indexes */
-        cbm_ht_delete(gb->node_by_qn, n->qualified_name);
+        hyp_ht_delete(gb->node_by_qn, n->qualified_name);
         if (n->id >= 0 && n->id < gb->by_id_cap) {
             gb->by_id[n->id] = NULL;
         }
 
-        /* NULL out QN so dump's liveness check (cbm_ht_get by QN) fails
+        /* NULL out QN so dump's liveness check (hyp_ht_get by QN) fails
          * even if a new node with the same QN is inserted later via merge. */
         free(n->qualified_name);
         n->qualified_name = NULL;
@@ -892,49 +892,49 @@ int cbm_gbuf_delete_by_file(cbm_gbuf_t *gb, const char *file_path) {
     }
 
     if (deleted_count == 0) {
-        cbm_ht_free(deleted_set);
+        hyp_ht_free(deleted_set);
         return 0;
     }
 
     /* Cascade-delete edges referencing deleted nodes */
     cascade_delete_edges(gb, deleted_set);
 
-    cbm_ht_foreach(deleted_set, free_key_only, NULL);
-    cbm_ht_free(deleted_set);
+    hyp_ht_foreach(deleted_set, free_key_only, NULL);
+    hyp_ht_free(deleted_set);
     {
-        char s_buf[CBM_SZ_16];
-        char d_buf[CBM_SZ_16];
+        char s_buf[HYP_SZ_16];
+        char d_buf[HYP_SZ_16];
         snprintf(s_buf, sizeof(s_buf), "%d", scanned);
         snprintf(d_buf, sizeof(d_buf), "%d", deleted_count);
-        cbm_log_info("gbuf.delete_by_file", "file", file_path, "scanned", s_buf, "deleted", d_buf);
+        hyp_log_info("gbuf.delete_by_file", "file", file_path, "scanned", s_buf, "deleted", d_buf);
     }
     return deleted_count;
 }
 
-int cbm_gbuf_load_from_db(cbm_gbuf_t *gb, const char *db_path, const char *project) {
+int hyp_gbuf_load_from_db(hyp_gbuf_t *gb, const char *db_path, const char *project) {
     if (!gb || !db_path || !project) {
-        return CBM_NOT_FOUND;
+        return HYP_NOT_FOUND;
     }
 
-    cbm_store_t *store = cbm_store_open_path(db_path);
+    hyp_store_t *store = hyp_store_open_path(db_path);
     if (!store) {
-        return CBM_NOT_FOUND;
+        return HYP_NOT_FOUND;
     }
 
-    sqlite3 *db = cbm_store_get_db(store);
+    sqlite3 *db = hyp_store_get_db(store);
     if (!db) {
-        cbm_store_close(store);
-        return CBM_NOT_FOUND;
+        hyp_store_close(store);
+        return HYP_NOT_FOUND;
     }
 
     /* First pass: find max node ID for mapping array */
     sqlite3_stmt *stmt = NULL;
-    if (sqlite3_prepare_v2(db, "SELECT MAX(id) FROM nodes WHERE project = ?", CBM_NOT_FOUND, &stmt,
+    if (sqlite3_prepare_v2(db, "SELECT MAX(id) FROM nodes WHERE project = ?", HYP_NOT_FOUND, &stmt,
                            NULL) != SQLITE_OK) {
-        cbm_store_close(store);
-        return CBM_NOT_FOUND;
+        hyp_store_close(store);
+        return HYP_NOT_FOUND;
     }
-    sqlite3_bind_text(stmt, SKIP_ONE, project, CBM_NOT_FOUND, SQLITE_STATIC);
+    sqlite3_bind_text(stmt, SKIP_ONE, project, HYP_NOT_FOUND, SQLITE_STATIC);
     int64_t max_old_id = 0;
     if (sqlite3_step(stmt) == SQLITE_ROW) {
         max_old_id = sqlite3_column_int64(stmt, 0);
@@ -943,8 +943,8 @@ int cbm_gbuf_load_from_db(cbm_gbuf_t *gb, const char *db_path, const char *proje
 
     int64_t *old_to_new = calloc((size_t)(max_old_id + SKIP_ONE), sizeof(int64_t));
     if (!old_to_new) {
-        cbm_store_close(store);
-        return CBM_NOT_FOUND;
+        hyp_store_close(store);
+        return HYP_NOT_FOUND;
     }
 
     /* Load all nodes */
@@ -952,12 +952,12 @@ int cbm_gbuf_load_from_db(cbm_gbuf_t *gb, const char *db_path, const char *proje
             db,
             "SELECT id, label, name, qualified_name, file_path, start_line, end_line, properties "
             "FROM nodes WHERE project = ? ORDER BY id",
-            CBM_NOT_FOUND, &stmt, NULL) != SQLITE_OK) {
+            HYP_NOT_FOUND, &stmt, NULL) != SQLITE_OK) {
         free(old_to_new);
-        cbm_store_close(store);
-        return CBM_NOT_FOUND;
+        hyp_store_close(store);
+        return HYP_NOT_FOUND;
     }
-    sqlite3_bind_text(stmt, SKIP_ONE, project, CBM_NOT_FOUND, SQLITE_STATIC);
+    sqlite3_bind_text(stmt, SKIP_ONE, project, HYP_NOT_FOUND, SQLITE_STATIC);
 
     while (sqlite3_step(stmt) == SQLITE_ROW) {
         int64_t old_id = sqlite3_column_int64(stmt, 0);
@@ -969,7 +969,7 @@ int cbm_gbuf_load_from_db(cbm_gbuf_t *gb, const char *db_path, const char *proje
         int el = sqlite3_column_int(stmt, GB_COL_6);
         const char *props = (const char *)sqlite3_column_text(stmt, GB_COL_7);
 
-        int64_t new_id = cbm_gbuf_upsert_node(gb, label, name, qn, fp, sl, el, props);
+        int64_t new_id = hyp_gbuf_upsert_node(gb, label, name, qn, fp, sl, el, props);
         if (new_id > 0 && old_id <= max_old_id) {
             old_to_new[old_id] = new_id;
         }
@@ -980,12 +980,12 @@ int cbm_gbuf_load_from_db(cbm_gbuf_t *gb, const char *db_path, const char *proje
     if (sqlite3_prepare_v2(db,
                            "SELECT source_id, target_id, type, properties "
                            "FROM edges WHERE project = ?",
-                           CBM_NOT_FOUND, &stmt, NULL) != SQLITE_OK) {
+                           HYP_NOT_FOUND, &stmt, NULL) != SQLITE_OK) {
         free(old_to_new);
-        cbm_store_close(store);
-        return CBM_NOT_FOUND;
+        hyp_store_close(store);
+        return HYP_NOT_FOUND;
     }
-    sqlite3_bind_text(stmt, SKIP_ONE, project, CBM_NOT_FOUND, SQLITE_STATIC);
+    sqlite3_bind_text(stmt, SKIP_ONE, project, HYP_NOT_FOUND, SQLITE_STATIC);
 
     while (sqlite3_step(stmt) == SQLITE_ROW) {
         int64_t old_src = sqlite3_column_int64(stmt, 0);
@@ -996,29 +996,29 @@ int cbm_gbuf_load_from_db(cbm_gbuf_t *gb, const char *db_path, const char *proje
         int64_t new_src = (old_src <= max_old_id) ? old_to_new[old_src] : 0;
         int64_t new_tgt = (old_tgt <= max_old_id) ? old_to_new[old_tgt] : 0;
         if (new_src > 0 && new_tgt > 0) {
-            cbm_gbuf_insert_edge(gb, new_src, new_tgt, type, props);
+            hyp_gbuf_insert_edge(gb, new_src, new_tgt, type, props);
         }
     }
     sqlite3_finalize(stmt);
 
     free(old_to_new);
-    cbm_store_close(store);
+    hyp_store_close(store);
     return 0;
 }
 
-void cbm_gbuf_foreach_node(const cbm_gbuf_t *gb, cbm_gbuf_node_visitor_fn fn, void *userdata) {
+void hyp_gbuf_foreach_node(const hyp_gbuf_t *gb, hyp_gbuf_node_visitor_fn fn, void *userdata) {
     if (!gb || !fn) {
         return;
     }
     for (int i = 0; i < gb->nodes.count; i++) {
-        const cbm_gbuf_node_t *n = gb->nodes.items[i];
-        if (n->qualified_name && cbm_ht_get(gb->node_by_qn, n->qualified_name)) {
+        const hyp_gbuf_node_t *n = gb->nodes.items[i];
+        if (n->qualified_name && hyp_ht_get(gb->node_by_qn, n->qualified_name)) {
             fn(n, userdata);
         }
     }
 }
 
-void cbm_gbuf_foreach_edge(const cbm_gbuf_t *gb, cbm_gbuf_edge_visitor_fn fn, void *userdata) {
+void hyp_gbuf_foreach_edge(const hyp_gbuf_t *gb, hyp_gbuf_edge_visitor_fn fn, void *userdata) {
     if (!gb || !fn) {
         return;
     }
@@ -1029,7 +1029,7 @@ void cbm_gbuf_foreach_edge(const cbm_gbuf_t *gb, cbm_gbuf_edge_visitor_fn fn, vo
 
 /* ── Edge operations ─────────────────────────────────────────────── */
 
-int64_t cbm_gbuf_insert_edge(cbm_gbuf_t *gb, int64_t source_id, int64_t target_id, const char *type,
+int64_t hyp_gbuf_insert_edge(hyp_gbuf_t *gb, int64_t source_id, int64_t target_id, const char *type,
                              const char *properties_json) {
     if (!gb || !type) {
         return 0;
@@ -1039,7 +1039,7 @@ int64_t cbm_gbuf_insert_edge(cbm_gbuf_t *gb, int64_t source_id, int64_t target_i
     char key[EDGE_KEY_BUF];
     make_edge_key(key, sizeof(key), source_id, target_id, type, properties_json);
 
-    cbm_gbuf_edge_t *existing = cbm_ht_get(gb->edge_by_key, key);
+    hyp_gbuf_edge_t *existing = hyp_ht_get(gb->edge_by_key, key);
     if (existing) {
         /* Merge properties (just replace for now) */
         if (properties_json && strcmp(properties_json, "{}") != 0) {
@@ -1050,7 +1050,7 @@ int64_t cbm_gbuf_insert_edge(cbm_gbuf_t *gb, int64_t source_id, int64_t target_i
     }
 
     /* Heap-allocate a new edge (pointer stays stable) */
-    cbm_gbuf_edge_t *edge = calloc(CBM_ALLOC_ONE, sizeof(cbm_gbuf_edge_t));
+    hyp_gbuf_edge_t *edge = calloc(HYP_ALLOC_ONE, sizeof(hyp_gbuf_edge_t));
     if (!edge) {
         return 0;
     }
@@ -1063,10 +1063,10 @@ int64_t cbm_gbuf_insert_edge(cbm_gbuf_t *gb, int64_t source_id, int64_t target_i
     edge->properties_json = heap_strdup(properties_json);
 
     /* Store pointer in array */
-    cbm_da_push(&gb->edges, edge);
+    hyp_da_push(&gb->edges, edge);
 
     /* Dedup index */
-    cbm_ht_set(gb->edge_by_key, strdup(key), edge);
+    hyp_ht_set(gb->edge_by_key, strdup(key), edge);
 
     /* Secondary indexes */
     register_edge_in_indexes(gb, edge);
@@ -1074,14 +1074,14 @@ int64_t cbm_gbuf_insert_edge(cbm_gbuf_t *gb, int64_t source_id, int64_t target_i
     return id;
 }
 
-int cbm_gbuf_find_edges_by_source_type(const cbm_gbuf_t *gb, int64_t source_id, const char *type,
-                                       const cbm_gbuf_edge_t ***out, int *count) {
+int hyp_gbuf_find_edges_by_source_type(const hyp_gbuf_t *gb, int64_t source_id, const char *type,
+                                       const hyp_gbuf_edge_t ***out, int *count) {
     if (!gb || !out || !count) {
-        return CBM_NOT_FOUND;
+        return HYP_NOT_FOUND;
     }
     char key[EDGE_KEY_BUF];
     make_src_type_key(key, sizeof(key), source_id, type);
-    edge_ptr_array_t *arr = cbm_ht_get(gb->edges_by_source_type, key);
+    edge_ptr_array_t *arr = hyp_ht_get(gb->edges_by_source_type, key);
     if (arr && arr->count > 0) {
         *out = arr->items;
         *count = arr->count;
@@ -1092,14 +1092,14 @@ int cbm_gbuf_find_edges_by_source_type(const cbm_gbuf_t *gb, int64_t source_id, 
     return 0;
 }
 
-int cbm_gbuf_find_edges_by_target_type(const cbm_gbuf_t *gb, int64_t target_id, const char *type,
-                                       const cbm_gbuf_edge_t ***out, int *count) {
+int hyp_gbuf_find_edges_by_target_type(const hyp_gbuf_t *gb, int64_t target_id, const char *type,
+                                       const hyp_gbuf_edge_t ***out, int *count) {
     if (!gb || !out || !count) {
-        return CBM_NOT_FOUND;
+        return HYP_NOT_FOUND;
     }
     char key[EDGE_KEY_BUF];
     make_src_type_key(key, sizeof(key), target_id, type);
-    edge_ptr_array_t *arr = cbm_ht_get(gb->edges_by_target_type, key);
+    edge_ptr_array_t *arr = hyp_ht_get(gb->edges_by_target_type, key);
     if (arr && arr->count > 0) {
         *out = arr->items;
         *count = arr->count;
@@ -1110,12 +1110,12 @@ int cbm_gbuf_find_edges_by_target_type(const cbm_gbuf_t *gb, int64_t target_id, 
     return 0;
 }
 
-int cbm_gbuf_find_edges_by_type(const cbm_gbuf_t *gb, const char *type,
-                                const cbm_gbuf_edge_t ***out, int *count) {
+int hyp_gbuf_find_edges_by_type(const hyp_gbuf_t *gb, const char *type,
+                                const hyp_gbuf_edge_t ***out, int *count) {
     if (!gb || !out || !count) {
-        return CBM_NOT_FOUND;
+        return HYP_NOT_FOUND;
     }
-    edge_ptr_array_t *arr = cbm_ht_get(gb->edges_by_type, type);
+    edge_ptr_array_t *arr = hyp_ht_get(gb->edges_by_type, type);
     if (arr && arr->count > 0) {
         *out = arr->items;
         *count = arr->count;
@@ -1126,33 +1126,33 @@ int cbm_gbuf_find_edges_by_type(const cbm_gbuf_t *gb, const char *type,
     return 0;
 }
 
-int cbm_gbuf_edge_count(const cbm_gbuf_t *gb) {
+int hyp_gbuf_edge_count(const hyp_gbuf_t *gb) {
     return gb ? gb->edges.count : 0;
 }
 
-int cbm_gbuf_edge_count_by_type(const cbm_gbuf_t *gb, const char *type) {
+int hyp_gbuf_edge_count_by_type(const hyp_gbuf_t *gb, const char *type) {
     if (!gb || !type) {
         return 0;
     }
-    edge_ptr_array_t *arr = cbm_ht_get(gb->edges_by_type, type);
+    edge_ptr_array_t *arr = hyp_ht_get(gb->edges_by_type, type);
     return arr ? arr->count : 0;
 }
 
-int cbm_gbuf_delete_edges_by_type(cbm_gbuf_t *gb, const char *type) {
+int hyp_gbuf_delete_edges_by_type(hyp_gbuf_t *gb, const char *type) {
     if (!gb || !type) {
-        return CBM_NOT_FOUND;
+        return HYP_NOT_FOUND;
     }
 
     /* Remove edges of the given type from array and dedup index */
     int write_idx = 0;
     for (int i = 0; i < gb->edges.count; i++) {
-        cbm_gbuf_edge_t *e = gb->edges.items[i];
+        hyp_gbuf_edge_t *e = gb->edges.items[i];
         if (strcmp(e->type, type) == 0) {
             char key[EDGE_KEY_BUF];
             make_edge_key(key, sizeof(key), e->source_id, e->target_id, e->type,
                           e->properties_json);
-            const char *ekey = cbm_ht_get_key(gb->edge_by_key, key);
-            cbm_ht_delete(gb->edge_by_key, key);
+            const char *ekey = hyp_ht_get_key(gb->edge_by_key, key);
+            hyp_ht_delete(gb->edge_by_key, key);
             free((void *)ekey);
             free_edge_strings(e);
             free(e);
@@ -1179,9 +1179,9 @@ static void free_remap_entry(const char *key, void *val, void *ud) {
 
 /* Handle QN collision: update dst node fields (src wins), record remap if IDs differ.
  * label/file_path are re-interned into dst's pool (sn's pointers belong to src). */
-static void merge_update_existing(cbm_gbuf_t *dst, cbm_gbuf_node_t *existing,
-                                  const cbm_gbuf_node_t *sn, CBMHashTable **remap) {
-    /* Same guard as cbm_gbuf_upsert_node: a per-file "Module" def coming from a
+static void merge_update_existing(hyp_gbuf_t *dst, hyp_gbuf_node_t *existing,
+                                  const hyp_gbuf_node_t *sn, HYPHashTable **remap) {
+    /* Same guard as hyp_gbuf_upsert_node: a per-file "Module" def coming from a
      * worker-local gbuf must not touch the structural directory node ("Project"
      * root or "Folder") that shares its QN in a directory-based-module language
      * (Java/Go). pass_structure seeds Folder/Project nodes on the MAIN gbuf
@@ -1196,7 +1196,7 @@ static void merge_update_existing(cbm_gbuf_t *dst, cbm_gbuf_node_t *existing,
         (strcmp(existing->label, "Project") == 0 || strcmp(existing->label, "Folder") == 0);
     if (!module_on_container) {
         /* Canonical collision winner (determinism) — mirrors
-         * cbm_gbuf_upsert_node exactly. Distinct source entities can share a
+         * hyp_gbuf_upsert_node exactly. Distinct source entities can share a
          * QN (C: struct/function/macro with one name); unconditional "src
          * wins" made the survivor depend on worker merge order, flickering
          * the node set (and every downstream consumer) run to run. Winner =
@@ -1226,12 +1226,12 @@ static void merge_update_existing(cbm_gbuf_t *dst, cbm_gbuf_node_t *existing,
                 !existing->name || !sn->name || strcmp(existing->name, sn->name) != 0;
             if (label_changed) {
                 remove_node_from_ptr_array(
-                    cbm_ht_get(dst->nodes_by_label, existing->label ? existing->label : ""),
+                    hyp_ht_get(dst->nodes_by_label, existing->label ? existing->label : ""),
                     existing->id);
             }
             if (name_changed) {
                 remove_node_from_ptr_array(
-                    cbm_ht_get(dst->nodes_by_name, existing->name ? existing->name : ""),
+                    hyp_ht_get(dst->nodes_by_name, existing->name ? existing->name : ""),
                     existing->id);
             }
             existing->label = (char *)new_label;
@@ -1247,31 +1247,31 @@ static void merge_update_existing(cbm_gbuf_t *dst, cbm_gbuf_node_t *existing,
             if (label_changed) {
                 node_ptr_array_t *by_label = get_or_create_node_array(
                     dst->nodes_by_label, existing->label ? existing->label : "");
-                cbm_da_push(by_label, (const cbm_gbuf_node_t *)existing);
+                hyp_da_push(by_label, (const hyp_gbuf_node_t *)existing);
             }
             if (name_changed) {
                 node_ptr_array_t *by_name = get_or_create_node_array(
                     dst->nodes_by_name, existing->name ? existing->name : "");
-                cbm_da_push(by_name, (const cbm_gbuf_node_t *)existing);
+                hyp_da_push(by_name, (const hyp_gbuf_node_t *)existing);
             }
         }
     }
 
     if (sn->id != existing->id) {
         if (!*remap) {
-            *remap = cbm_ht_create(CBM_SZ_32);
+            *remap = hyp_ht_create(HYP_SZ_32);
         }
-        char key[CBM_SZ_32];
+        char key[HYP_SZ_32];
         make_id_key(key, sizeof(key), sn->id);
         int64_t *val = malloc(sizeof(int64_t));
         *val = existing->id;
-        cbm_ht_set(*remap, strdup(key), val);
+        hyp_ht_set(*remap, strdup(key), val);
     }
 }
 
 /* Copy a non-colliding src node into dst with its original ID. */
-static void merge_copy_new_node(cbm_gbuf_t *dst, const cbm_gbuf_node_t *sn) {
-    cbm_gbuf_node_t *node = calloc(CBM_ALLOC_ONE, sizeof(cbm_gbuf_node_t));
+static void merge_copy_new_node(hyp_gbuf_t *dst, const hyp_gbuf_node_t *sn) {
+    hyp_gbuf_node_t *node = calloc(HYP_ALLOC_ONE, sizeof(hyp_gbuf_node_t));
     if (!node) {
         return;
     }
@@ -1285,7 +1285,7 @@ static void merge_copy_new_node(cbm_gbuf_t *dst, const cbm_gbuf_node_t *sn) {
     node->end_line = sn->end_line;
     node->properties_json = heap_strdup(sn->properties_json);
 
-    cbm_da_push(&dst->nodes, node);
+    hyp_da_push(&dst->nodes, node);
     register_node_in_indexes(dst, node);
 
     if (node->id >= dst->next_id) {
@@ -1294,35 +1294,35 @@ static void merge_copy_new_node(cbm_gbuf_t *dst, const cbm_gbuf_node_t *sn) {
 }
 
 /* Remap edge IDs using the collision remap table and insert into dst. */
-static void merge_remap_edges(cbm_gbuf_t *dst, cbm_gbuf_t *src, CBMHashTable *remap) {
+static void merge_remap_edges(hyp_gbuf_t *dst, hyp_gbuf_t *src, HYPHashTable *remap) {
     for (int i = 0; i < src->edges.count; i++) {
-        cbm_gbuf_edge_t *se = src->edges.items[i];
+        hyp_gbuf_edge_t *se = src->edges.items[i];
 
         int64_t new_src = se->source_id;
         int64_t new_tgt = se->target_id;
 
         if (remap) {
-            char key[CBM_SZ_32];
+            char key[HYP_SZ_32];
             make_id_key(key, sizeof(key), se->source_id);
-            int64_t *remapped = cbm_ht_get(remap, key);
+            int64_t *remapped = hyp_ht_get(remap, key);
             if (remapped) {
                 new_src = *remapped;
             }
 
             make_id_key(key, sizeof(key), se->target_id);
-            remapped = cbm_ht_get(remap, key);
+            remapped = hyp_ht_get(remap, key);
             if (remapped) {
                 new_tgt = *remapped;
             }
         }
 
-        cbm_gbuf_insert_edge(dst, new_src, new_tgt, se->type, se->properties_json);
+        hyp_gbuf_insert_edge(dst, new_src, new_tgt, se->type, se->properties_json);
     }
 }
 
-int cbm_gbuf_merge(cbm_gbuf_t *dst, cbm_gbuf_t *src) {
+int hyp_gbuf_merge(hyp_gbuf_t *dst, hyp_gbuf_t *src) {
     if (!dst || !src) {
-        return CBM_NOT_FOUND;
+        return HYP_NOT_FOUND;
     }
     if (src->nodes.count == 0 && src->edges.count == 0) {
         return 0;
@@ -1330,20 +1330,20 @@ int cbm_gbuf_merge(cbm_gbuf_t *dst, cbm_gbuf_t *src) {
 
     /* ID remap for QN-colliding nodes: "src_id" → (int64_t*) dst_id.
      * Only populated when a src node's QN already exists in dst. */
-    CBMHashTable *remap = NULL;
+    HYPHashTable *remap = NULL;
 
     for (int i = 0; i < src->nodes.count; i++) {
-        cbm_gbuf_node_t *sn = src->nodes.items[i];
+        hyp_gbuf_node_t *sn = src->nodes.items[i];
         if (!sn->qualified_name) {
             continue;
         }
 
         /* Skip nodes deleted from QN index */
-        if (!cbm_ht_get(src->node_by_qn, sn->qualified_name)) {
+        if (!hyp_ht_get(src->node_by_qn, sn->qualified_name)) {
             continue;
         }
 
-        cbm_gbuf_node_t *existing = cbm_ht_get(dst->node_by_qn, sn->qualified_name);
+        hyp_gbuf_node_t *existing = hyp_ht_get(dst->node_by_qn, sn->qualified_name);
         if (existing) {
             merge_update_existing(dst, existing, sn, &remap);
         } else {
@@ -1355,8 +1355,8 @@ int cbm_gbuf_merge(cbm_gbuf_t *dst, cbm_gbuf_t *src) {
     merge_remap_edges(dst, src, remap);
 
     if (remap) {
-        cbm_ht_foreach(remap, free_remap_entry, NULL);
-        cbm_ht_free(remap);
+        hyp_ht_foreach(remap, free_remap_entry, NULL);
+        hyp_ht_free(remap);
     }
 
     return 0;
@@ -1384,7 +1384,7 @@ static char *extract_prop_string(const char *props, const char *key_quoted, cons
     yyjson_val *v = yyjson_obj_get(yyjson_doc_get_root(doc), key);
     if (v && yyjson_is_str(v)) {
         const char *sv = yyjson_get_str(v);
-        out = cbm_strndup(sv, strlen(sv));
+        out = hyp_strndup(sv, strlen(sv));
     }
     yyjson_doc_free(doc);
     return out;
@@ -1407,25 +1407,25 @@ static int64_t remap_id(const int64_t *temp_to_final, int64_t max_temp_id, int64
 
 /* Build dump-ready node array with sequential IDs. Populates temp_to_final mapping. */
 static int cmp_dump_vectors_by_id(const void *a, const void *b) {
-    int64_t da = ((const CBMDumpVector *)a)->node_id;
-    int64_t db = ((const CBMDumpVector *)b)->node_id;
+    int64_t da = ((const HYPDumpVector *)a)->node_id;
+    int64_t db = ((const HYPDumpVector *)b)->node_id;
     return (da > db) - (da < db);
 }
 
-static CBMDumpNode *build_dump_nodes(cbm_gbuf_t *gb, int live_count, int64_t *temp_to_final,
+static HYPDumpNode *build_dump_nodes(hyp_gbuf_t *gb, int live_count, int64_t *temp_to_final,
                                      int64_t max_temp_id, int *out_count,
-                                     cbm_gbuf_node_t ***src_out) {
+                                     hyp_gbuf_node_t ***src_out) {
     size_t cap = (size_t)(live_count > 0 ? live_count : SKIP_ONE);
-    CBMDumpNode *dump_nodes = malloc(cap * sizeof(CBMDumpNode));
+    HYPDumpNode *dump_nodes = malloc(cap * sizeof(HYPDumpNode));
     /* Parallel gbuf-node pointers so a streamed partition can free its heavy
      * properties_json after the rows are persisted. NULL on OOM disables the
      * per-partition free (the dump still succeeds). */
-    cbm_gbuf_node_t **src = malloc(cap * sizeof(cbm_gbuf_node_t *));
+    hyp_gbuf_node_t **src = malloc(cap * sizeof(hyp_gbuf_node_t *));
     int idx = 0;
 
     for (int i = 0; i < gb->nodes.count; i++) {
-        cbm_gbuf_node_t *n = gb->nodes.items[i];
-        if (!n->qualified_name || !cbm_ht_get(gb->node_by_qn, n->qualified_name)) {
+        hyp_gbuf_node_t *n = gb->nodes.items[i];
+        if (!n->qualified_name || !hyp_ht_get(gb->node_by_qn, n->qualified_name)) {
             continue;
         }
 
@@ -1436,7 +1436,7 @@ static CBMDumpNode *build_dump_nodes(cbm_gbuf_t *gb, int live_count, int64_t *te
 
         const char *fp = n->file_path ? n->file_path : "";
         const char *props = n->properties_json ? n->properties_json : "{}";
-        dump_nodes[idx] = (CBMDumpNode){
+        dump_nodes[idx] = (HYPDumpNode){
             .id = final_id,
             .project = gb->project,
             .label = n->label,
@@ -1460,27 +1460,27 @@ static CBMDumpNode *build_dump_nodes(cbm_gbuf_t *gb, int live_count, int64_t *te
 
 /* Build dump-ready edge array with remapped IDs. Returns url_paths and
  * local_names (heap string arrays owned by the caller) via out params. */
-static CBMDumpEdge *build_dump_edges(cbm_gbuf_t *gb, const int64_t *temp_to_final,
+static HYPDumpEdge *build_dump_edges(hyp_gbuf_t *gb, const int64_t *temp_to_final,
                                      int64_t max_temp_id, int *out_count, char ***out_url_paths,
                                      char ***out_local_names) {
     /* Count valid edges (both endpoints resolved) */
     int valid_edges = 0;
     for (int i = 0; i < gb->edges.count; i++) {
-        cbm_gbuf_edge_t *e = gb->edges.items[i];
+        hyp_gbuf_edge_t *e = gb->edges.items[i];
         if (remap_id(temp_to_final, max_temp_id, e->source_id) > 0 &&
             remap_id(temp_to_final, max_temp_id, e->target_id) > 0) {
             valid_edges++;
         }
     }
 
-    CBMDumpEdge *dump_edges =
-        malloc((size_t)(valid_edges > 0 ? valid_edges : SKIP_ONE) * sizeof(CBMDumpEdge));
+    HYPDumpEdge *dump_edges =
+        malloc((size_t)(valid_edges > 0 ? valid_edges : SKIP_ONE) * sizeof(HYPDumpEdge));
     char **url_paths = calloc((size_t)(valid_edges > 0 ? valid_edges : SKIP_ONE), sizeof(char *));
     char **local_names = calloc((size_t)(valid_edges > 0 ? valid_edges : SKIP_ONE), sizeof(char *));
     int idx = 0;
 
     for (int i = 0; i < gb->edges.count; i++) {
-        cbm_gbuf_edge_t *e = gb->edges.items[i];
+        hyp_gbuf_edge_t *e = gb->edges.items[i];
         int64_t src = remap_id(temp_to_final, max_temp_id, e->source_id);
         int64_t tgt = remap_id(temp_to_final, max_temp_id, e->target_id);
         if (src == 0 || tgt == 0) {
@@ -1497,7 +1497,7 @@ static CBMDumpEdge *build_dump_edges(cbm_gbuf_t *gb, const int64_t *temp_to_fina
         local_names[idx] = local_name;
 
         const char *props = e->properties_json ? e->properties_json : "{}";
-        dump_edges[idx] = (CBMDumpEdge){
+        dump_edges[idx] = (HYPDumpEdge){
             .id = idx + SKIP_ONE,
             .project = gb->project,
             .source_id = src,
@@ -1517,7 +1517,7 @@ static CBMDumpEdge *build_dump_edges(cbm_gbuf_t *gb, const int64_t *temp_to_fina
 }
 
 /* Remap vector node IDs through temp_to_final, sort by ID, deduplicate. */
-static void remap_sort_dedup_vectors(cbm_gbuf_t *gb, const int64_t *temp_to_final,
+static void remap_sort_dedup_vectors(hyp_gbuf_t *gb, const int64_t *temp_to_final,
                                      int64_t max_temp_id) {
     int remapped = 0;
     int dropped = 0;
@@ -1533,16 +1533,16 @@ static void remap_sort_dedup_vectors(cbm_gbuf_t *gb, const int64_t *temp_to_fina
         }
     }
     if (dropped > 0) {
-        char r_buf[CBM_SZ_16];
-        char d_buf[CBM_SZ_16];
+        char r_buf[HYP_SZ_16];
+        char d_buf[HYP_SZ_16];
         snprintf(r_buf, sizeof(r_buf), "%d", remapped);
         snprintf(d_buf, sizeof(d_buf), "%d", dropped);
-        cbm_log_info("dump.vectors.remap", "remapped", r_buf, "dropped", d_buf);
+        hyp_log_info("dump.vectors.remap", "remapped", r_buf, "dropped", d_buf);
     }
     gb->dump_vector_count = remapped;
 
     if (gb->dump_vector_count >= GB_MIN_FOR_DEDUP) {
-        qsort(gb->dump_vectors, (size_t)gb->dump_vector_count, sizeof(CBMDumpVector),
+        qsort(gb->dump_vectors, (size_t)gb->dump_vector_count, sizeof(HYPDumpVector),
               cmp_dump_vectors_by_id);
         int deduped = 0;
         for (int i = 0; i < gb->dump_vector_count; i++) {
@@ -1557,15 +1557,15 @@ static void remap_sort_dedup_vectors(cbm_gbuf_t *gb, const int64_t *temp_to_fina
 }
 
 static void log_dump_summary(int node_count, int edge_count) {
-    char b1[CBM_SZ_16];
-    char b2[CBM_SZ_16];
+    char b1[HYP_SZ_16];
+    char b2[HYP_SZ_16];
     snprintf(b1, sizeof(b1), "%d", node_count);
     snprintf(b2, sizeof(b2), "%d", edge_count);
-    cbm_log_info("gbuf.dump", "nodes", b1, "edges", b2);
+    hyp_log_info("gbuf.dump", "nodes", b1, "edges", b2);
 }
 
 static void free_dump_resources(char **url_paths, char **local_names, int edge_count,
-                                CBMDumpEdge *dump_edges, CBMDumpNode *dump_nodes,
+                                HYPDumpEdge *dump_edges, HYPDumpNode *dump_nodes,
                                 int64_t *temp_to_final) {
     for (int i = 0; i < edge_count; i++) {
         free(url_paths[i]);
@@ -1578,11 +1578,11 @@ static void free_dump_resources(char **url_paths, char **local_names, int edge_c
     free(temp_to_final);
 }
 
-static int count_live_nodes(cbm_gbuf_t *gb) {
+static int count_live_nodes(hyp_gbuf_t *gb) {
     int count = 0;
     for (int i = 0; i < gb->nodes.count; i++) {
-        cbm_gbuf_node_t *n = gb->nodes.items[i];
-        if (n->qualified_name && cbm_ht_get(gb->node_by_qn, n->qualified_name)) {
+        hyp_gbuf_node_t *n = gb->nodes.items[i];
+        if (n->qualified_name && hyp_ht_get(gb->node_by_qn, n->qualified_name)) {
             count++;
         }
     }
@@ -1592,41 +1592,41 @@ static int count_live_nodes(cbm_gbuf_t *gb) {
 static void generate_iso_timestamp(char *buf, size_t buf_size) {
     time_t now = time(NULL);
     struct tm tm_buf;
-    struct tm *tm_val = cbm_gmtime_r(&now, &tm_buf);
+    struct tm *tm_val = hyp_gmtime_r(&now, &tm_buf);
     if (strftime(buf, buf_size, "%Y-%m-%dT%H:%M:%SZ", tm_val) == 0) {
         snprintf(buf, buf_size, "1970-01-01T00:00:00Z");
     }
 }
 
 /* Release lookup indexes then remap+sort+dedup vectors for the B-tree writer. */
-static void release_and_remap_vectors(cbm_gbuf_t *gb, const int64_t *temp_to_final,
+static void release_and_remap_vectors(hyp_gbuf_t *gb, const int64_t *temp_to_final,
                                       int64_t max_temp_id) {
-    CBM_PROF_START(t_vec_remap);
+    HYP_PROF_START(t_vec_remap);
     remap_sort_dedup_vectors(gb, temp_to_final, max_temp_id);
-    CBM_PROF_END_N("dump", "5_vector_remap_sort", t_vec_remap, gb->dump_vector_count);
+    HYP_PROF_END_N("dump", "5_vector_remap_sort", t_vec_remap, gb->dump_vector_count);
 }
 
-int cbm_gbuf_dump_to_sqlite(cbm_gbuf_t *gb, const char *path) {
+int hyp_gbuf_dump_to_sqlite(hyp_gbuf_t *gb, const char *path) {
     if (!gb || !path) {
-        return CBM_NOT_FOUND;
+        return HYP_NOT_FOUND;
     }
 
-    CBM_PROF_START(t_count);
+    HYP_PROF_START(t_count);
     int live_count = count_live_nodes(gb);
-    CBM_PROF_END_N("dump", "1_count_live_nodes", t_count, live_count);
+    HYP_PROF_END_N("dump", "1_count_live_nodes", t_count, live_count);
 
-    CBM_PROF_START(t_build_nodes);
+    HYP_PROF_START(t_build_nodes);
     int64_t max_temp_id = gb->next_id;
     int64_t *temp_to_final = calloc((size_t)max_temp_id, sizeof(int64_t));
     if (!temp_to_final) {
-        return CBM_NOT_FOUND;
+        return HYP_NOT_FOUND;
     }
 
     int node_idx = 0;
-    cbm_gbuf_node_t **src_nodes = NULL;
-    CBMDumpNode *dump_nodes =
+    hyp_gbuf_node_t **src_nodes = NULL;
+    HYPDumpNode *dump_nodes =
         build_dump_nodes(gb, live_count, temp_to_final, max_temp_id, &node_idx, &src_nodes);
-    CBM_PROF_END_N("dump", "2_build_dump_nodes", t_build_nodes, node_idx);
+    HYP_PROF_END_N("dump", "2_build_dump_nodes", t_build_nodes, node_idx);
 
     /* Release ALL lookup indexes NOW: nothing between here and finalize reads
      * them (stream-append uses dump_nodes/src_nodes, build_dump_edges uses
@@ -1634,11 +1634,11 @@ int cbm_gbuf_dump_to_sqlite(cbm_gbuf_t *gb, const char *path) {
      * kernel scale they are ~3.8 GB (hash buckets + key strings + pointer
      * arrays); releasing them only AFTER edge building made them coexist with
      * every dump-side transient array — the dump-phase RSS peak. */
-    CBM_PROF_START(t_release_idx);
+    HYP_PROF_START(t_release_idx);
     release_gbuf_indexes(gb);
-    CBM_PROF_END("dump", "4_release_gbuf_indexes", t_release_idx);
+    HYP_PROF_END("dump", "4_release_gbuf_indexes", t_release_idx);
 
-    char indexed_at[CBM_SZ_64];
+    char indexed_at[HYP_SZ_64];
     generate_iso_timestamp(indexed_at, sizeof(indexed_at));
 
     /* Stream node rows to the DB in partitions. Under memory pressure, free each
@@ -1647,15 +1647,15 @@ int cbm_gbuf_dump_to_sqlite(cbm_gbuf_t *gb, const char *path) {
      * The DB output is identical whether or not freeing engages, so non-pressure
      * runs (and tests) leave the gbuf intact (the budget>0 guard keeps an
      * uninitialized budget from ever triggering the free). */
-    cbm_db_writer_t *w = cbm_writer_open(path);
+    hyp_db_writer_t *w = hyp_writer_open(path);
     if (!w) {
         free(src_nodes);
         free(dump_nodes);
         free(temp_to_final);
-        return CBM_NOT_FOUND;
+        return HYP_NOT_FOUND;
     }
 
-    CBM_PROF_START(t_append);
+    HYP_PROF_START(t_append);
     enum { DUMP_PARTITION_NODES = 1 << 16 };
     bool free_heavy = false;
     int rc = 0;
@@ -1664,41 +1664,41 @@ int cbm_gbuf_dump_to_sqlite(cbm_gbuf_t *gb, const char *path) {
         if (chunk > DUMP_PARTITION_NODES) {
             chunk = DUMP_PARTITION_NODES;
         }
-        rc = cbm_writer_append_nodes(w, &dump_nodes[off], chunk);
+        rc = hyp_writer_append_nodes(w, &dump_nodes[off], chunk);
         if (rc != 0) {
             break;
         }
-        free_heavy = free_heavy || (cbm_mem_budget() > 0 && cbm_mem_over_budget());
+        free_heavy = free_heavy || (hyp_mem_budget() > 0 && hyp_mem_over_budget());
         if (free_heavy && src_nodes) {
             for (int j = off; j < off + chunk; j++) {
                 free(src_nodes[j]->properties_json);
                 src_nodes[j]->properties_json = NULL;
                 dump_nodes[j].properties = NULL;
             }
-            cbm_mem_collect();
+            hyp_mem_collect();
         }
     }
-    CBM_PROF_END_N("dump", "2b_stream_append_nodes", t_append, node_idx);
+    HYP_PROF_END_N("dump", "2b_stream_append_nodes", t_append, node_idx);
 
     int edge_idx = 0;
     char **url_paths = NULL;
     char **local_names = NULL;
-    CBMDumpEdge *dump_edges = NULL;
+    HYPDumpEdge *dump_edges = NULL;
     if (rc == 0) {
-        CBM_PROF_START(t_build_edges);
+        HYP_PROF_START(t_build_edges);
         dump_edges =
             build_dump_edges(gb, temp_to_final, max_temp_id, &edge_idx, &url_paths, &local_names);
-        CBM_PROF_END_N("dump", "3_build_dump_edges", t_build_edges, edge_idx);
+        HYP_PROF_END_N("dump", "3_build_dump_edges", t_build_edges, edge_idx);
         release_and_remap_vectors(gb, temp_to_final, max_temp_id);
     }
 
     /* Finalize: nodes-table interior + edges/vectors/metadata/indexes/sqlite_master.
      * Frees w and closes the file; handles a prior append error cleanly. */
-    CBM_PROF_START(t_finalize);
-    int frc = cbm_writer_finalize(w, gb->project, gb->root_path, indexed_at, dump_nodes, node_idx,
+    HYP_PROF_START(t_finalize);
+    int frc = hyp_writer_finalize(w, gb->project, gb->root_path, indexed_at, dump_nodes, node_idx,
                                   dump_edges, edge_idx, gb->dump_vectors, gb->dump_vector_count,
                                   gb->dump_token_vecs, gb->dump_token_vec_count);
-    CBM_PROF_END_N("dump", "6_write_db_finalize", t_finalize, node_idx + edge_idx);
+    HYP_PROF_END_N("dump", "6_write_db_finalize", t_finalize, node_idx + edge_idx);
     if (rc == 0) {
         rc = frc;
     }
@@ -1709,22 +1709,22 @@ int cbm_gbuf_dump_to_sqlite(cbm_gbuf_t *gb, const char *path) {
     return rc;
 }
 
-int cbm_gbuf_flush_to_store(cbm_gbuf_t *gb, cbm_store_t *store) {
+int hyp_gbuf_flush_to_store(hyp_gbuf_t *gb, hyp_store_t *store) {
     if (!gb || !store) {
-        return CBM_NOT_FOUND;
+        return HYP_NOT_FOUND;
     }
 
     /* Upsert project */
-    cbm_store_upsert_project(store, gb->project, gb->root_path);
+    hyp_store_upsert_project(store, gb->project, gb->root_path);
 
     /* Begin bulk mode */
-    cbm_store_begin_bulk(store);
-    cbm_store_drop_indexes(store);
-    cbm_store_begin(store);
+    hyp_store_begin_bulk(store);
+    hyp_store_drop_indexes(store);
+    hyp_store_begin(store);
 
     /* Delete existing project data */
-    cbm_store_delete_edges_by_project(store, gb->project);
-    cbm_store_delete_nodes_by_project(store, gb->project);
+    hyp_store_delete_edges_by_project(store, gb->project);
+    hyp_store_delete_nodes_by_project(store, gb->project);
 
     /* Build temp_id → real_id map.
      * Temp IDs start at 1 and are sequential, but can have gaps from edge inserts.
@@ -1733,14 +1733,14 @@ int cbm_gbuf_flush_to_store(cbm_gbuf_t *gb, cbm_store_t *store) {
     int64_t *temp_to_real = calloc(max_temp_id, sizeof(int64_t));
 
     for (int i = 0; i < gb->nodes.count; i++) {
-        cbm_gbuf_node_t *n = gb->nodes.items[i];
+        hyp_gbuf_node_t *n = gb->nodes.items[i];
 
         /* Skip if deleted from QN index */
-        if (!n->qualified_name || !cbm_ht_get(gb->node_by_qn, n->qualified_name)) {
+        if (!n->qualified_name || !hyp_ht_get(gb->node_by_qn, n->qualified_name)) {
             continue;
         }
 
-        cbm_node_t sn = {
+        hyp_node_t sn = {
             .project = gb->project,
             .label = n->label,
             .name = n->name,
@@ -1750,7 +1750,7 @@ int cbm_gbuf_flush_to_store(cbm_gbuf_t *gb, cbm_store_t *store) {
             .end_line = n->end_line,
             .properties_json = n->properties_json,
         };
-        int64_t real_id = cbm_store_upsert_node(store, &sn);
+        int64_t real_id = hyp_store_upsert_node(store, &sn);
         if (real_id > 0 && n->id < max_temp_id) {
             temp_to_real[n->id] = real_id;
         }
@@ -1758,51 +1758,51 @@ int cbm_gbuf_flush_to_store(cbm_gbuf_t *gb, cbm_store_t *store) {
 
     /* Insert all edges with remapped IDs */
     for (int i = 0; i < gb->edges.count; i++) {
-        cbm_gbuf_edge_t *e = gb->edges.items[i];
+        hyp_gbuf_edge_t *e = gb->edges.items[i];
         int64_t real_src = (e->source_id < max_temp_id) ? temp_to_real[e->source_id] : 0;
         int64_t real_tgt = (e->target_id < max_temp_id) ? temp_to_real[e->target_id] : 0;
         if (real_src == 0 || real_tgt == 0) {
             continue;
         }
 
-        cbm_edge_t se = {
+        hyp_edge_t se = {
             .project = gb->project,
             .source_id = real_src,
             .target_id = real_tgt,
             .type = e->type,
             .properties_json = e->properties_json,
         };
-        cbm_store_insert_edge(store, &se);
+        hyp_store_insert_edge(store, &se);
     }
 
-    cbm_store_commit(store);
-    cbm_store_create_indexes(store);
-    cbm_store_end_bulk(store);
+    hyp_store_commit(store);
+    hyp_store_create_indexes(store);
+    hyp_store_end_bulk(store);
 
     free(temp_to_real);
     return 0;
 }
 
-int cbm_gbuf_merge_into_store(cbm_gbuf_t *gb, cbm_store_t *store) {
+int hyp_gbuf_merge_into_store(hyp_gbuf_t *gb, hyp_store_t *store) {
     if (!gb || !store) {
-        return CBM_NOT_FOUND;
+        return HYP_NOT_FOUND;
     }
 
     /* Begin bulk mode — no project wipe */
-    cbm_store_begin(store);
+    hyp_store_begin(store);
 
     /* Build temp_id → real_id map */
     int64_t max_temp_id = gb->next_id;
     int64_t *temp_to_real = calloc(max_temp_id, sizeof(int64_t));
 
     for (int i = 0; i < gb->nodes.count; i++) {
-        cbm_gbuf_node_t *n = gb->nodes.items[i];
+        hyp_gbuf_node_t *n = gb->nodes.items[i];
 
-        if (!n->qualified_name || !cbm_ht_get(gb->node_by_qn, n->qualified_name)) {
+        if (!n->qualified_name || !hyp_ht_get(gb->node_by_qn, n->qualified_name)) {
             continue;
         }
 
-        cbm_node_t sn = {
+        hyp_node_t sn = {
             .project = gb->project,
             .label = n->label,
             .name = n->name,
@@ -1812,31 +1812,31 @@ int cbm_gbuf_merge_into_store(cbm_gbuf_t *gb, cbm_store_t *store) {
             .end_line = n->end_line,
             .properties_json = n->properties_json,
         };
-        int64_t real_id = cbm_store_upsert_node(store, &sn);
+        int64_t real_id = hyp_store_upsert_node(store, &sn);
         if (real_id > 0 && n->id < max_temp_id) {
             temp_to_real[n->id] = real_id;
         }
     }
 
     for (int i = 0; i < gb->edges.count; i++) {
-        cbm_gbuf_edge_t *e = gb->edges.items[i];
+        hyp_gbuf_edge_t *e = gb->edges.items[i];
         int64_t real_src = (e->source_id < max_temp_id) ? temp_to_real[e->source_id] : 0;
         int64_t real_tgt = (e->target_id < max_temp_id) ? temp_to_real[e->target_id] : 0;
         if (real_src == 0 || real_tgt == 0) {
             continue;
         }
 
-        cbm_edge_t se = {
+        hyp_edge_t se = {
             .project = gb->project,
             .source_id = real_src,
             .target_id = real_tgt,
             .type = e->type,
             .properties_json = e->properties_json,
         };
-        cbm_store_insert_edge(store, &se);
+        hyp_store_insert_edge(store, &se);
     }
 
-    cbm_store_commit(store);
+    hyp_store_commit(store);
 
     free(temp_to_real);
     return 0;

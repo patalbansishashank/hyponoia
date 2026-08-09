@@ -5,7 +5,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-WORK="$(mktemp -d "${TMPDIR:-/tmp}/cbm-ui-pack-test.XXXXXX")"
+WORK="$(mktemp -d "${TMPDIR:-/tmp}/hyp-ui-pack-test.XXXXXX")"
 trap 'rm -rf "$WORK"' EXIT
 
 make_real_dir_link() {
@@ -25,7 +25,7 @@ make_real_dir_link() {
 }
 
 mkdir -p "$WORK/a/assets" "$WORK/b/assets"
-printf '%s\n' '<!doctype html><title>Codebase Memory — Graph</title>' > "$WORK/a/index.html"
+printf '%s\n' '<!doctype html><title>Hyponoia — Graph</title>' > "$WORK/a/index.html"
 printf '%s\n' 'console.log("transparent-ui-pack")' > "$WORK/a/assets/app.js"
 printf '%s\n' 'body { color: #fff; }' > "$WORK/a/assets/app.css"
 
@@ -43,8 +43,8 @@ node "$ROOT/scripts/pack-ui-assets.mjs" \
 node "$ROOT/scripts/pack-ui-assets.mjs" \
     "$WORK/b" "$WORK/b-out" "$WORK/b-manifest.c"
 
-PACK_A="$(find "$WORK/a-out" -maxdepth 1 -type f -name 'cbm-ui-*.pack')"
-PACK_B="$(find "$WORK/b-out" -maxdepth 1 -type f -name 'cbm-ui-*.pack')"
+PACK_A="$(find "$WORK/a-out" -maxdepth 1 -type f -name 'hyp-ui-*.pack')"
+PACK_B="$(find "$WORK/b-out" -maxdepth 1 -type f -name 'hyp-ui-*.pack')"
 [ -n "$PACK_A" ] && [ -n "$PACK_B" ]
 [ "$(basename "$PACK_A")" = "$(basename "$PACK_B")" ]
 cmp "$PACK_A" "$PACK_B"
@@ -79,7 +79,7 @@ manifest = manifest_path.read_text(encoding="utf-8")
     payload_size,
     total_size,
 ) = struct.unpack_from("<8sHHIIIQQQQQQQ", data, 0)
-assert magic == b"CBMUIPK\0", "wrong pack magic"
+assert magic == b"HYPUIPK\0", "wrong pack magic"
 assert version == 1
 assert header_bytes == 80
 assert flags == 0
@@ -129,12 +129,12 @@ assert b"transparent-ui-pack" in data
 assert b"<!doctype html>" in data
 
 digest = hashlib.sha256(data).hexdigest()
-assert re.search(rf'CBM_UI_ASSET_SHA256\[\]\s*=\s*"{digest}"', manifest)
-assert re.search(rf"CBM_UI_ASSET_SIZE\s*=\s*UINT64_C\({len(data)}\)", manifest)
+assert re.search(rf'HYP_UI_ASSET_SHA256\[\]\s*=\s*"{digest}"', manifest)
+assert re.search(rf"HYP_UI_ASSET_SIZE\s*=\s*UINT64_C\({len(data)}\)", manifest)
 assert re.search(
-    rf'CBM_UI_ASSET_PACK_NAME\[\]\s*=\s*"cbm-ui-{digest}\.pack"', manifest
+    rf'HYP_UI_ASSET_PACK_NAME\[\]\s*=\s*"hyp-ui-{digest}\.pack"', manifest
 )
-assert pack_path.name == f"cbm-ui-{digest}.pack"
+assert pack_path.name == f"hyp-ui-{digest}.pack"
 PY
 
 # A source symlink makes the build depend on bytes outside the declared dist

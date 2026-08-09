@@ -1,0 +1,27 @@
+{
+  "version": "0.8.1",
+  "description": "Fast code intelligence engine — native executable with verified runtime assets",
+  "homepage": "https://github.com/patalbansishashank/hyponoia",
+  "license": "MIT",
+  "architecture": {
+    "64bit": {
+      "url": "https://github.com/patalbansishashank/hyponoia/releases/download/v0.8.1/hyponoia-windows-amd64.zip",
+      "hash": "a602ad090ed3f49d86c55472f73f27ad7055222806a82358f2e08513e027f00f",
+      "bin": "hyponoia.exe"
+    }
+  },
+  "checkver": {
+    "github": "https://github.com/patalbansishashank/hyponoia"
+  },
+  "autoupdate": {
+    "architecture": {
+      "64bit": {
+        "url": "https://github.com/patalbansishashank/hyponoia/releases/download/v$version/hyponoia-windows-amd64.zip",
+        "hash": {
+          "url": "https://github.com/patalbansishashank/hyponoia/releases/download/v$version/checksums.txt",
+          "find": "([a-f0-9]{64})\\s+hyponoia-windows-amd64\\.zip"
+        }
+      }
+    }
+  }
+}

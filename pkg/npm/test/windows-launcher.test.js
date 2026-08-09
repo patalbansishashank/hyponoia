@@ -8,7 +8,7 @@ const test = require('node:test');
 const vm = require('node:vm');
 
 const UI_PACK_BYTES = Buffer.from('authenticated UI pack');
-const UI_PACK_NAME = `cbm-ui-${crypto.createHash('sha256').update(UI_PACK_BYTES).digest('hex')}.pack`;
+const UI_PACK_NAME = `hyp-ui-${crypto.createHash('sha256').update(UI_PACK_BYTES).digest('hex')}.pack`;
 
 class ExitSignal extends Error {
   constructor(code) {
@@ -28,7 +28,7 @@ function runShim(targetPlatform, arguments_, childStatus, options = {}) {
   const fakeProcess = {
     platform: targetPlatform,
     env: {
-      CBM_VARIANT: options.variant || '',
+      HYP_VARIANT: options.variant || '',
       LOCALAPPDATA: 'C:\\Users\\test\\AppData\\Local',
     },
     argv: ['node.exe', shimPath, ...arguments_],
@@ -39,7 +39,7 @@ function runShim(targetPlatform, arguments_, childStatus, options = {}) {
   const fakeFs = {
     lstatSync: (candidate) => {
       if (options.missingSidecar && !installed &&
-          path.basename(candidate) === 'cbm-integrations.json') {
+          path.basename(candidate) === 'hyp-integrations.json') {
         const error = new Error('missing sidecar');
         error.code = 'ENOENT';
         throw error;
@@ -126,10 +126,10 @@ test('Windows npm shim authenticates assets and executes the cached binary', () 
   assert.equal(observed.exitCode, 0);
   assert.equal(observed.calls.length, 2);
   for (const call of observed.calls) {
-    assert.equal(path.basename(call.executable), 'codebase-memory-mcp.exe');
+    assert.equal(path.basename(call.executable), 'hyponoia.exe');
     assert.notEqual(
       path.basename(call.executable),
-      'codebase-memory-mcp.payload.exe',
+      'hyponoia.payload.exe',
     );
   }
   assert.deepEqual(Array.from(observed.calls[0].args), ['--verify-runtime-assets']);
@@ -142,8 +142,8 @@ test('npm update is routed to the package manager without invoking absent instal
 
   assert.equal(observed.exitCode, 2);
   assert.equal(observed.calls.length, 0, 'update guidance must not launch cached code');
-  assert.match(observed.stderr, /npm install codebase-memory-mcp@latest/);
-  assert.match(observed.stderr, /codebase-memory-mcp install --yes/);
+  assert.match(observed.stderr, /npm install hyponoia@latest/);
+  assert.match(observed.stderr, /hyponoia install --yes/);
   assert.doesNotMatch(observed.stderr, /install\.sh/);
 });
 
@@ -153,7 +153,7 @@ test('nested update token is forwarded instead of treated as package update', ()
   assert.equal(observed.exitCode, 0);
   assert.equal(observed.calls.length, 2);
   assert.deepEqual(Array.from(observed.calls[1].args), ['daemon', 'update']);
-  assert.doesNotMatch(observed.stderr, /npm install codebase-memory-mcp@latest/);
+  assert.doesNotMatch(observed.stderr, /npm install hyponoia@latest/);
 });
 
 test('non-Windows npm shim executes its cached binary directly', () => {
@@ -162,7 +162,7 @@ test('non-Windows npm shim executes its cached binary directly', () => {
   assert.equal(observed.exitCode, 0);
   assert.equal(observed.calls.length, 2);
   assert.deepEqual(Array.from(observed.calls[0].args), ['--verify-runtime-assets']);
-  assert.equal(path.basename(observed.calls[1].executable), 'codebase-memory-mcp');
+  assert.equal(path.basename(observed.calls[1].executable), 'hyponoia');
 });
 
 test('npm shim selects a separate UI runtime set', () => {
@@ -181,7 +181,7 @@ test('npm shim repairs a cache whose integrations sidecar is missing', () => {
   assert.equal(observed.calls[0].executable, 'node.exe');
   assert.equal(path.basename(observed.calls[0].args[0]), 'install.js');
   assert.deepEqual(Array.from(observed.calls[1].args), ['--verify-runtime-assets']);
-  assert.equal(path.basename(observed.calls[2].executable), 'codebase-memory-mcp');
+  assert.equal(path.basename(observed.calls[2].executable), 'hyponoia');
 });
 
 test('npm shim repairs a UI cache whose pack digest does not match its name', () => {
@@ -193,7 +193,7 @@ test('npm shim repairs a UI cache whose pack digest does not match its name', ()
   assert.equal(observed.calls[0].executable, 'node.exe');
   assert.equal(path.basename(observed.calls[0].args[0]), 'install.js');
   assert.deepEqual(Array.from(observed.calls[1].args), ['--verify-runtime-assets']);
-  assert.equal(path.basename(observed.calls[2].executable), 'codebase-memory-mcp');
+  assert.equal(path.basename(observed.calls[2].executable), 'hyponoia');
 });
 
 test('wrapper uninstall locks the cache and targets the managed install by default', () => {
@@ -208,7 +208,7 @@ test('wrapper uninstall locks the cache and targets the managed install by defau
       path.join(
         'C:\\Users\\test\\AppData\\Local',
         'Programs',
-        'codebase-memory-mcp',
+        'hyponoia',
       ),
     ],
   );

@@ -1,16 +1,16 @@
 {
-  "name": "codebase-memory-mcp",
+  "name": "hyponoia",
   "version": "0.8.1",
   "description": "Fast code intelligence for AI coding agents — installs a verified native runtime set",
-  "mcpName": "io.github.DeusData/codebase-memory-mcp",
+  "mcpName": "io.github.patalbansishashank/hyponoia",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/DeusData/codebase-memory-mcp.git"
+    "url": "git+https://github.com/patalbansishashank/hyponoia.git"
   },
-  "homepage": "https://github.com/DeusData/codebase-memory-mcp",
+  "homepage": "https://github.com/patalbansishashank/hyponoia",
   "bugs": {
-    "url": "https://github.com/DeusData/codebase-memory-mcp/issues"
+    "url": "https://github.com/patalbansishashank/hyponoia/issues"
   },
   "keywords": [
     "mcp",
@@ -23,7 +23,7 @@
     "tree-sitter"
   ],
   "bin": {
-    "codebase-memory-mcp": "./bin.js"
+    "hyponoia": "./bin.js"
   },
   "scripts": {
     "test": "node --test test/*.test.js",

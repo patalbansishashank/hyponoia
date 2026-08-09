@@ -45,9 +45,9 @@ esac
 # processes and file placement. Their absence is a release-security boundary;
 # no claim is made about whether a third-party classifier weighs them.
 SEAM_NEEDLES=(
-    'CBM_TEST_WORKER_DESCENDANT_PID_FILE'
-    'CBM_TEST_CRASH_ON'
-    'CBM_TEST_HANG_ON'
+    'HYP_TEST_WORKER_DESCENDANT_PID_FILE'
+    'HYP_TEST_CRASH_ON'
+    'HYP_TEST_HANG_ON'
 )
 
 # The in-process updater combined network download with replacement of its own
@@ -103,7 +103,7 @@ UI_HTTP_NEEDLES=(
 # bodies written to disk at 0755. Keeping those programs outside the native
 # image narrows executable surface and lets each component be inspected and
 # scanned independently. They now ship in
-# cbm-integrations.json (the binary embeds only its SHA-256); these needles
+# hyp-integrations.json (the binary embeds only its SHA-256); these needles
 # prove the removal stayed removed. Source-level enforcement lives in
 # tests/test_no_embedded_scripts_contract.sh; this is the shipped-artifact
 # half of the same property.
@@ -119,7 +119,7 @@ SCRIPT_NEEDLES=(
 # selected to avoid generic HTML grammar strings that legitimately occur in the
 # language parsers linked into every binary.
 UI_ASSET_BYTE_NEEDLES=(
-    'CBMUIPK'
+    'HYPUIPK'
     '<!doctype html>'
     '<html lang="en" class="dark">'
     '<script type="module" crossorigin'
@@ -128,7 +128,7 @@ UI_ASSET_BYTE_NEEDLES=(
 # Canary: proves the needle scan can actually see this file's strings. Without
 # it, handing the gate a gzip, a stub or a 0-byte file would pass every
 # absence assertion. 168+ occurrences in a real artifact, 0 in anything else.
-CANARY_NEEDLE='codebase-memory-mcp'
+CANARY_NEEDLE='hyponoia'
 
 # ── Args ────────────────────────────────────────────────────────────
 VARIANT=auto
@@ -250,7 +250,7 @@ skipped_files=0
 check_file() {
     file="$1"
     # Two path components: both variants ship a binary literally named
-    # "codebase-memory-mcp", so the parent directory is what tells them apart.
+    # "hyponoia", so the parent directory is what tells them apart.
     token=$(printf '%s' "$file" | awk -F/ '{ if (NF > 1) print $(NF - 1) "/" $NF; else print $NF }')
     fmt=$(detect_format "$file")
     if [ "$fmt" = other ]; then
@@ -264,8 +264,8 @@ check_file() {
     ui) is_ui=1 ;;
     standard) is_ui=0 ;;
     auto)
-        # The UI archive is codebase-memory-mcp-ui-<os>-<arch>, but the binary
-        # inside it is just "codebase-memory-mcp" — so the whole path decides,
+        # The UI archive is hyponoia-ui-<os>-<arch>, but the binary
+        # inside it is just "hyponoia" — so the whole path decides,
         # not the basename. Printed below so a misclassified path is visible in
         # the log instead of silently disarming the UI assertion.
         case "$file" in
@@ -316,15 +316,15 @@ check_file() {
     for needle in "${SEAM_NEEDLES[@]}"; do
         assert_absent "$file" "$token" A2-no-test-seams "$needle"
     done
-    # Sweep for seams nobody thought to pin: a new CBM_TEST_* env var added to
+    # Sweep for seams nobody thought to pin: a new HYP_TEST_* env var added to
     # production code lands here on its first release, not on the next audit.
     # One narrowly validated seam remains in Windows release artifacts by
     # decision: WINDOWS_USER_PATH_RUN_ID redirects the artifact smoke away from
     # the tester's actual user PATH. Crash/hang injectors are test-build-only and
     # are explicitly forbidden above. Anything else is novel and fails.
-    seam_allowed='CBM_TEST_WINDOWS_USER_PATH_RUN_ID'
+    seam_allowed='HYP_TEST_WINDOWS_USER_PATH_RUN_ID'
     seam_unexpected=''
-    for found in $(LC_ALL=C grep -a -o -E 'CBM_TEST_[A-Za-z0-9_]+' "$file" 2>/dev/null |
+    for found in $(LC_ALL=C grep -a -o -E 'HYP_TEST_[A-Za-z0-9_]+' "$file" 2>/dev/null |
         sort -u || true); do
         case " $seam_allowed " in
         *" $found "*) ;;
@@ -333,9 +333,9 @@ check_file() {
     done
     if [ -n "$seam_unexpected" ]; then
         report FAIL A2-no-test-seams "$token" \
-            "unexpected CBM_TEST_* seam(s):$seam_unexpected (allowlist: $seam_allowed)"
+            "unexpected HYP_TEST_* seam(s):$seam_unexpected (allowlist: $seam_allowed)"
     else
-        report PASS A2-no-test-seams "$token" 'no CBM_TEST_* seams beyond the smoke allowlist'
+        report PASS A2-no-test-seams "$token" 'no HYP_TEST_* seams beyond the smoke allowlist'
     fi
 
     # A3 — updater/release URLs.
@@ -369,11 +369,11 @@ check_file() {
     # variant remains only for before/after VirusTotal verification and is then
     # deprecated in favor of one UI-capable product composition. Until that
     # evidence gate is complete, this assertion remains an explicit diagnostic;
-    # CBM_CHECK_UI_ABSENT=1 is available for any future true no-UI composition.
+    # HYP_CHECK_UI_ABSENT=1 is available for any future true no-UI composition.
     if [ "$is_ui" -eq 1 ]; then
         printf 'n/a  %-22s %s: UI artifact, HTTP server ships here by design\n' \
             A5-no-ui-http "$token"
-    elif [ "${CBM_CHECK_UI_ABSENT:-0}" = "1" ]; then
+    elif [ "${HYP_CHECK_UI_ABSENT:-0}" = "1" ]; then
         for needle in "${UI_HTTP_NEEDLES[@]}"; do
             assert_absent "$file" "$token" A5-no-ui-http "$needle"
         done
@@ -384,7 +384,7 @@ check_file() {
                 ui_hits=$((ui_hits + 1))
             fi
         done
-        printf 'INFO %-22s %s: %d/%d UI/HTTP needles present (temporary standard variant; set CBM_CHECK_UI_ABSENT=1 to enforce a true no-UI composition)\n' \
+        printf 'INFO %-22s %s: %d/%d UI/HTTP needles present (temporary standard variant; set HYP_CHECK_UI_ABSENT=1 to enforce a true no-UI composition)\n' \
             A5-no-ui-http "$token" "$ui_hits" "${#UI_HTTP_NEEDLES[@]}"
     fi
 

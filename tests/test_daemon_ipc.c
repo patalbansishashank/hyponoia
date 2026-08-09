@@ -1,5 +1,5 @@
 /*
- * test_daemon_ipc.c — RED guards for the local CBM daemon transport.
+ * test_daemon_ipc.c — RED guards for the local HYP daemon transport.
  *
  * These tests deliberately exercise the public transport boundary rather than
  * platform socket/pipe primitives.  The same API is expected to use Unix
@@ -297,7 +297,7 @@ typedef struct {
 } ipc_test_win_env_t;
 
 static bool ipc_test_win_grant_everyone_rights(const char *path, DWORD rights) {
-    wchar_t *wide_path = cbm_utf8_to_wide(path);
+    wchar_t *wide_path = hyp_utf8_to_wide(path);
     BYTE world_buffer[SECURITY_MAX_SID_SIZE];
     DWORD world_size = sizeof(world_buffer);
     PACL existing = NULL;
@@ -369,7 +369,7 @@ static bool ipc_test_win_env_restore(const wchar_t *name, ipc_test_win_env_t *sa
 }
 
 static bool ipc_test_win_temp_set(const char *path) {
-    wchar_t *wide = cbm_utf8_to_wide(path);
+    wchar_t *wide = hyp_utf8_to_wide(path);
     bool changed = wide && SetEnvironmentVariableW(L"TMP", wide) != 0 &&
                    SetEnvironmentVariableW(L"TEMP", wide) != 0;
     free(wide);
@@ -383,19 +383,19 @@ static int ipc_test_win_lock_child(const char *kind, const char *key, const char
         return -1;
     }
     const char *const argv[] = {
-        self, "__cbm_daemon_ipc_lock_probe", kind, key, parent, NULL,
+        self, "__hyp_daemon_ipc_lock_probe", kind, key, parent, NULL,
     };
-    cbm_proc_opts_t options = {
+    hyp_proc_opts_t options = {
         .bin = self,
         .argv = argv,
         .quiet_timeout_ms = 5000,
     };
-    cbm_proc_result_t result;
-    return cbm_subprocess_run(&options, &result) == 0 ? result.exit_code : -1;
+    hyp_proc_result_t result;
+    return hyp_subprocess_run(&options, &result) == 0 ? result.exit_code : -1;
 }
 
 typedef struct {
-    const cbm_daemon_ipc_endpoint_t *endpoint;
+    const hyp_daemon_ipc_endpoint_t *endpoint;
     int result;
 } ipc_test_win_startup_call_t;
 
@@ -404,7 +404,7 @@ typedef struct {
     atomic_bool may_proceed;
 } ipc_test_startup_gate_t;
 
-/* Runs on the startup thread INSIDE cbm_daemon_ipc_startup_lock_try_acquire,
+/* Runs on the startup thread INSIDE hyp_daemon_ipc_startup_lock_try_acquire,
  * with the startup lock held and the rendezvous handoff not yet attempted.
  * Announce that state, then park until the test has released its reader. This
  * pins the interleaving by construction; the previous version polled for the
@@ -413,7 +413,7 @@ static void ipc_test_startup_gate(void *context) {
     ipc_test_startup_gate_t *gate = context;
     atomic_store(&gate->acquired, true);
     while (!atomic_load(&gate->may_proceed)) {
-        cbm_usleep(200);
+        hyp_usleep(200);
     }
 }
 
@@ -424,33 +424,33 @@ static bool ipc_test_startup_gate_wait_acquired(ipc_test_startup_gate_t *gate) {
         if (atomic_load(&gate->acquired)) {
             return true;
         }
-        cbm_usleep(200);
+        hyp_usleep(200);
     }
     return false;
 }
 
 static void *ipc_test_win_startup_call(void *opaque) {
     ipc_test_win_startup_call_t *call = opaque;
-    cbm_daemon_ipc_startup_lock_t *startup = NULL;
-    call->result = cbm_daemon_ipc_startup_lock_try_acquire(call->endpoint, &startup);
-    if (call->result == 1 && !cbm_daemon_ipc_startup_lock_prepare_handoff(startup)) {
+    hyp_daemon_ipc_startup_lock_t *startup = NULL;
+    call->result = hyp_daemon_ipc_startup_lock_try_acquire(call->endpoint, &startup);
+    if (call->result == 1 && !hyp_daemon_ipc_startup_lock_prepare_handoff(startup)) {
         call->result = 0;
     }
-    cbm_daemon_ipc_startup_lock_release(&startup);
+    hyp_daemon_ipc_startup_lock_release(&startup);
     return NULL;
 }
 
-static void ipc_test_win_lock_release(cbm_private_file_lock_t **lock_io) {
+static void ipc_test_win_lock_release(hyp_private_file_lock_t **lock_io) {
     while (lock_io && *lock_io &&
-           cbm_private_file_lock_release(lock_io) != CBM_PRIVATE_FILE_LOCK_OK) {
-        cbm_usleep(1000);
+           hyp_private_file_lock_release(lock_io) != HYP_PRIVATE_FILE_LOCK_OK) {
+        hyp_usleep(1000);
     }
 }
 #endif
 
 typedef struct {
-    cbm_ipc_pending_wait_status_t wait_status;
-    cbm_ipc_pending_finish_status_t finish_status;
+    hyp_ipc_pending_wait_status_t wait_status;
+    hyp_ipc_pending_finish_status_t finish_status;
     uint32_t finish_bytes;
     char calls[8];
     size_t call_count;
@@ -464,7 +464,7 @@ static void ipc_pending_fake_record(ipc_pending_fake_t *fake, char call) {
     }
 }
 
-static cbm_ipc_pending_wait_status_t ipc_pending_fake_wait(void *opaque, uint32_t timeout_ms) {
+static hyp_ipc_pending_wait_status_t ipc_pending_fake_wait(void *opaque, uint32_t timeout_ms) {
     ipc_pending_fake_t *fake = (ipc_pending_fake_t *)opaque;
     (void)timeout_ms;
     ipc_pending_fake_record(fake, 'W');
@@ -476,31 +476,31 @@ static void ipc_pending_fake_cancel(void *opaque) {
     ipc_pending_fake_record(fake, 'C');
 }
 
-static cbm_ipc_pending_finish_status_t ipc_pending_fake_finish(void *opaque, bool blocking,
+static hyp_ipc_pending_finish_status_t ipc_pending_fake_finish(void *opaque, bool blocking,
                                                                uint32_t *transferred_out) {
     ipc_pending_fake_t *fake = (ipc_pending_fake_t *)opaque;
     ipc_pending_fake_record(fake, 'D');
     fake->finish_was_blocking = blocking;
-    if (fake->finish_status == CBM_IPC_PENDING_FINISH_COMPLETED) {
+    if (fake->finish_status == HYP_IPC_PENDING_FINISH_COMPLETED) {
         *transferred_out = fake->finish_bytes;
     }
     return fake->finish_status;
 }
 
 static int ipc_pending_fake_run(ipc_pending_fake_t *fake, uint32_t *transferred_out) {
-    cbm_ipc_pending_ops_t ops = {
+    hyp_ipc_pending_ops_t ops = {
         .context = fake,
         .wait = ipc_pending_fake_wait,
         .cancel = ipc_pending_fake_cancel,
         .finish = ipc_pending_fake_finish,
     };
-    return cbm_daemon_ipc_wait_pending(&ops, 17, transferred_out);
+    return hyp_daemon_ipc_wait_pending(&ops, 17, transferred_out);
 }
 
 TEST(daemon_ipc_pending_timeout_race_returns_completed_io) {
     ipc_pending_fake_t fake = {
-        .wait_status = CBM_IPC_PENDING_WAIT_TIMEOUT,
-        .finish_status = CBM_IPC_PENDING_FINISH_COMPLETED,
+        .wait_status = HYP_IPC_PENDING_WAIT_TIMEOUT,
+        .finish_status = HYP_IPC_PENDING_FINISH_COMPLETED,
         .finish_bytes = 6,
     };
     uint32_t transferred = 0;
@@ -515,8 +515,8 @@ TEST(daemon_ipc_pending_timeout_race_returns_completed_io) {
 
 TEST(daemon_ipc_pending_wait_failure_cancels_and_drains) {
     ipc_pending_fake_t fake = {
-        .wait_status = CBM_IPC_PENDING_WAIT_FAILED,
-        .finish_status = CBM_IPC_PENDING_FINISH_CANCELLED,
+        .wait_status = HYP_IPC_PENDING_WAIT_FAILED,
+        .finish_status = HYP_IPC_PENDING_FINISH_CANCELLED,
     };
     uint32_t transferred = 0;
     int result = ipc_pending_fake_run(&fake, &transferred);
@@ -529,8 +529,8 @@ TEST(daemon_ipc_pending_wait_failure_cancels_and_drains) {
 
 TEST(daemon_ipc_pending_timeout_cancelled_returns_timeout) {
     ipc_pending_fake_t fake = {
-        .wait_status = CBM_IPC_PENDING_WAIT_TIMEOUT,
-        .finish_status = CBM_IPC_PENDING_FINISH_CANCELLED,
+        .wait_status = HYP_IPC_PENDING_WAIT_TIMEOUT,
+        .finish_status = HYP_IPC_PENDING_FINISH_CANCELLED,
     };
     uint32_t transferred = 0;
     int result = ipc_pending_fake_run(&fake, &transferred);
@@ -554,31 +554,31 @@ TEST(daemon_ipc_windows_generation_address_binds_account_key_and_nonce) {
     };
     static const char key[] = "0123456789abcdef";
     static const char other_key[] = "fedcba9876543210";
-    static const uint8_t nonce_a[CBM_DAEMON_IPC_WINDOWS_NONCE_SIZE] = {
+    static const uint8_t nonce_a[HYP_DAEMON_IPC_WINDOWS_NONCE_SIZE] = {
         0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a,
         0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10, 0x11, 0x12, 0x13, 0x14, 0x15,
         0x16, 0x17, 0x18, 0x19, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e, 0x1f,
     };
-    static const uint8_t nonce_b[CBM_DAEMON_IPC_WINDOWS_NONCE_SIZE] = {
+    static const uint8_t nonce_b[HYP_DAEMON_IPC_WINDOWS_NONCE_SIZE] = {
         0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28, 0x29, 0x2a,
         0x2b, 0x2c, 0x2d, 0x2e, 0x2f, 0x30, 0x31, 0x32, 0x33, 0x34, 0x35,
         0x36, 0x37, 0x38, 0x39, 0x3a, 0x3b, 0x3c, 0x3d, 0x3e, 0x3f,
     };
-    char address_a[CBM_DAEMON_IPC_WINDOWS_NAME_CAP] = {0};
-    char address_same[CBM_DAEMON_IPC_WINDOWS_NAME_CAP] = {0};
-    char address_b[CBM_DAEMON_IPC_WINDOWS_NAME_CAP] = {0};
-    char address_other_key[CBM_DAEMON_IPC_WINDOWS_NAME_CAP] = {0};
-    char address_other_nonce[CBM_DAEMON_IPC_WINDOWS_NAME_CAP] = {0};
+    char address_a[HYP_DAEMON_IPC_WINDOWS_NAME_CAP] = {0};
+    char address_same[HYP_DAEMON_IPC_WINDOWS_NAME_CAP] = {0};
+    char address_b[HYP_DAEMON_IPC_WINDOWS_NAME_CAP] = {0};
+    char address_other_key[HYP_DAEMON_IPC_WINDOWS_NAME_CAP] = {0};
+    char address_other_nonce[HYP_DAEMON_IPC_WINDOWS_NAME_CAP] = {0};
 
     bool first =
-        cbm_daemon_ipc_windows_generation_address(sid_a, sizeof(sid_a), key, nonce_a, address_a);
+        hyp_daemon_ipc_windows_generation_address(sid_a, sizeof(sid_a), key, nonce_a, address_a);
     bool repeated =
-        cbm_daemon_ipc_windows_generation_address(sid_a, sizeof(sid_a), key, nonce_a, address_same);
+        hyp_daemon_ipc_windows_generation_address(sid_a, sizeof(sid_a), key, nonce_a, address_same);
     bool other_user =
-        cbm_daemon_ipc_windows_generation_address(sid_b, sizeof(sid_b), key, nonce_a, address_b);
-    bool changed_key = cbm_daemon_ipc_windows_generation_address(sid_a, sizeof(sid_a), other_key,
+        hyp_daemon_ipc_windows_generation_address(sid_b, sizeof(sid_b), key, nonce_a, address_b);
+    bool changed_key = hyp_daemon_ipc_windows_generation_address(sid_a, sizeof(sid_a), other_key,
                                                                  nonce_a, address_other_key);
-    bool changed_nonce = cbm_daemon_ipc_windows_generation_address(sid_a, sizeof(sid_a), key,
+    bool changed_nonce = hyp_daemon_ipc_windows_generation_address(sid_a, sizeof(sid_a), key,
                                                                    nonce_b, address_other_nonce);
 
     ASSERT_TRUE(first);
@@ -590,7 +590,7 @@ TEST(daemon_ipc_windows_generation_address_binds_account_key_and_nonce) {
     ASSERT_TRUE(strcmp(address_a, address_b) != 0);
     ASSERT_TRUE(strcmp(address_a, address_other_key) != 0);
     ASSERT_TRUE(strcmp(address_a, address_other_nonce) != 0);
-    ASSERT_STR_EQ(address_a, "\\\\.\\pipe\\cbm-daemon-"
+    ASSERT_STR_EQ(address_a, "\\\\.\\pipe\\hyp-daemon-"
                              "e861648d9f8bc786dce31bbb16eda2ab"
                              "ffa330a770752832ab5f2e4feaa506f1");
     ASSERT_TRUE(strstr(address_a, "S-1-") == NULL);
@@ -599,34 +599,34 @@ TEST(daemon_ipc_windows_generation_address_binds_account_key_and_nonce) {
 }
 
 TEST(daemon_ipc_windows_legacy_names_are_frozen_for_migration) {
-    char pipe_name[CBM_DAEMON_IPC_WINDOWS_NAME_CAP] = {0};
-    char startup_name[CBM_DAEMON_IPC_WINDOWS_NAME_CAP] = {0};
-    bool derived = cbm_daemon_ipc_windows_legacy_names("C:\\Users\\Alice\\AppData\\Local",
+    char pipe_name[HYP_DAEMON_IPC_WINDOWS_NAME_CAP] = {0};
+    char startup_name[HYP_DAEMON_IPC_WINDOWS_NAME_CAP] = {0};
+    bool derived = hyp_daemon_ipc_windows_legacy_names("C:\\Users\\Alice\\AppData\\Local",
                                                        "0123456789abcdef", pipe_name, startup_name);
 
     ASSERT_TRUE(derived);
-    ASSERT_STR_EQ(pipe_name, "\\\\.\\pipe\\cbm-daemon-72380d6ef7f19c0c-"
+    ASSERT_STR_EQ(pipe_name, "\\\\.\\pipe\\hyp-daemon-72380d6ef7f19c0c-"
                              "0123456789abcdef");
-    ASSERT_STR_EQ(startup_name, "Local\\cbm-daemon-72380d6ef7f19c0c-"
+    ASSERT_STR_EQ(startup_name, "Local\\hyp-daemon-72380d6ef7f19c0c-"
                                 "0123456789abcdef-startup");
     PASS();
 }
 
 TEST(daemon_ipc_windows_rendezvous_record_is_exact_and_canonical) {
-    static const uint8_t nonce[CBM_DAEMON_IPC_WINDOWS_NONCE_SIZE] = {
+    static const uint8_t nonce[HYP_DAEMON_IPC_WINDOWS_NONCE_SIZE] = {
         0x80, 0x81, 0x82, 0x83, 0x84, 0x85, 0x86, 0x87, 0x88, 0x89, 0x8a,
         0x8b, 0x8c, 0x8d, 0x8e, 0x8f, 0x90, 0x91, 0x92, 0x93, 0x94, 0x95,
         0x96, 0x97, 0x98, 0x99, 0x9a, 0x9b, 0x9c, 0x9d, 0x9e, 0x9f,
     };
-    static const char address[] = "\\\\.\\pipe\\cbm-daemon-"
+    static const char address[] = "\\\\.\\pipe\\hyp-daemon-"
                                   "0123456789abcdef0123456789abcdef"
                                   "0123456789abcdef0123456789abcdef";
-    uint8_t record[CBM_DAEMON_IPC_WINDOWS_RENDEZVOUS_RECORD_SIZE];
-    uint8_t decoded_nonce[CBM_DAEMON_IPC_WINDOWS_NONCE_SIZE] = {0};
-    char decoded_address[CBM_DAEMON_IPC_WINDOWS_NAME_CAP] = {0};
+    uint8_t record[HYP_DAEMON_IPC_WINDOWS_RENDEZVOUS_RECORD_SIZE];
+    uint8_t decoded_nonce[HYP_DAEMON_IPC_WINDOWS_NONCE_SIZE] = {0};
+    char decoded_address[HYP_DAEMON_IPC_WINDOWS_NAME_CAP] = {0};
 
-    bool encoded = cbm_daemon_ipc_windows_rendezvous_record_encode(nonce, address, record);
-    bool decoded = encoded && cbm_daemon_ipc_windows_rendezvous_record_decode(
+    bool encoded = hyp_daemon_ipc_windows_rendezvous_record_encode(nonce, address, record);
+    bool decoded = encoded && hyp_daemon_ipc_windows_rendezvous_record_decode(
                                   record, sizeof(record), decoded_nonce, decoded_address);
     ASSERT_TRUE(encoded);
     ASSERT_TRUE(decoded);
@@ -636,20 +636,20 @@ TEST(daemon_ipc_windows_rendezvous_record_is_exact_and_canonical) {
     uint8_t corrupt[sizeof(record)];
     memcpy(corrupt, record, sizeof(corrupt));
     corrupt[0] ^= 0xffU;
-    ASSERT_FALSE(cbm_daemon_ipc_windows_rendezvous_record_decode(corrupt, sizeof(corrupt),
+    ASSERT_FALSE(hyp_daemon_ipc_windows_rendezvous_record_decode(corrupt, sizeof(corrupt),
                                                                  decoded_nonce, decoded_address));
-    ASSERT_FALSE(cbm_daemon_ipc_windows_rendezvous_record_decode(record, sizeof(record) - 1U,
+    ASSERT_FALSE(hyp_daemon_ipc_windows_rendezvous_record_decode(record, sizeof(record) - 1U,
                                                                  decoded_nonce, decoded_address));
 
     memcpy(corrupt, record, sizeof(corrupt));
     corrupt[sizeof(corrupt) - 1U] = 1U;
-    ASSERT_FALSE(cbm_daemon_ipc_windows_rendezvous_record_decode(corrupt, sizeof(corrupt),
+    ASSERT_FALSE(hyp_daemon_ipc_windows_rendezvous_record_decode(corrupt, sizeof(corrupt),
                                                                  decoded_nonce, decoded_address));
 
     memcpy(corrupt, record, sizeof(corrupt));
-    const size_t address_offset = 8U + CBM_DAEMON_IPC_WINDOWS_NONCE_SIZE;
-    corrupt[address_offset + strlen("\\\\.\\pipe\\cbm-daemon-")] = 'A';
-    ASSERT_FALSE(cbm_daemon_ipc_windows_rendezvous_record_decode(corrupt, sizeof(corrupt),
+    const size_t address_offset = 8U + HYP_DAEMON_IPC_WINDOWS_NONCE_SIZE;
+    corrupt[address_offset + strlen("\\\\.\\pipe\\hyp-daemon-")] = 'A';
+    ASSERT_FALSE(hyp_daemon_ipc_windows_rendezvous_record_decode(corrupt, sizeof(corrupt),
                                                                  decoded_nonce, decoded_address));
     PASS();
 }
@@ -661,13 +661,13 @@ TEST(daemon_ipc_windows_default_endpoint_ignores_temp_environment) {
     char parent_b[TEST_PATH_CAP] = {0};
     char runtime_a[TEST_PATH_CAP] = {0};
     char runtime_b[TEST_PATH_CAP] = {0};
-    char address_a[CBM_DAEMON_IPC_WINDOWS_NAME_CAP] = {0};
-    char address_b[CBM_DAEMON_IPC_WINDOWS_NAME_CAP] = {0};
+    char address_a[HYP_DAEMON_IPC_WINDOWS_NAME_CAP] = {0};
+    char address_b[HYP_DAEMON_IPC_WINDOWS_NAME_CAP] = {0};
     ipc_test_win_env_t saved_tmp = {0};
     ipc_test_win_env_t saved_temp = {0};
-    cbm_daemon_ipc_endpoint_t *endpoint_a = NULL;
-    cbm_daemon_ipc_endpoint_t *endpoint_b = NULL;
-    cbm_daemon_ipc_startup_lock_t *startup = NULL;
+    hyp_daemon_ipc_endpoint_t *endpoint_a = NULL;
+    hyp_daemon_ipc_endpoint_t *endpoint_b = NULL;
+    hyp_daemon_ipc_startup_lock_t *startup = NULL;
     unsigned long long unique =
         ((unsigned long long)GetCurrentProcessId() << 32U) ^ GetTickCount64();
     bool key_ok = snprintf(key, sizeof(key), "%016llx", unique) == 16;
@@ -678,33 +678,33 @@ TEST(daemon_ipc_windows_default_endpoint_ignores_temp_environment) {
     bool saved = tmp_saved && temp_saved;
     bool first_temp = parents_ok && saved && ipc_test_win_temp_set(parent_a);
     if (key_ok && first_temp) {
-        endpoint_a = cbm_daemon_ipc_endpoint_new(key, NULL);
+        endpoint_a = hyp_daemon_ipc_endpoint_new(key, NULL);
     }
     if (endpoint_a) {
-        int startup_status = cbm_daemon_ipc_startup_lock_try_acquire(endpoint_a, &startup);
+        int startup_status = hyp_daemon_ipc_startup_lock_try_acquire(endpoint_a, &startup);
         /* Publish the generation record: the address under test exists only
          * after a startup owner prepares the handoff. */
-        if (startup_status == 1 && !cbm_daemon_ipc_startup_lock_prepare_handoff(startup)) {
+        if (startup_status == 1 && !hyp_daemon_ipc_startup_lock_prepare_handoff(startup)) {
             startup_status = -1;
         }
-        cbm_daemon_ipc_startup_lock_release(&startup);
+        hyp_daemon_ipc_startup_lock_release(&startup);
         startup = NULL;
         if (startup_status != 1) {
-            cbm_daemon_ipc_endpoint_free(endpoint_a);
+            hyp_daemon_ipc_endpoint_free(endpoint_a);
             endpoint_a = NULL;
         }
     }
     if (endpoint_a) {
-        ipc_test_copy_path(runtime_a, cbm_daemon_ipc_endpoint_runtime_dir(endpoint_a));
-        ipc_test_copy_path(address_a, cbm_daemon_ipc_endpoint_address(endpoint_a));
+        ipc_test_copy_path(runtime_a, hyp_daemon_ipc_endpoint_runtime_dir(endpoint_a));
+        ipc_test_copy_path(address_a, hyp_daemon_ipc_endpoint_address(endpoint_a));
     }
     bool second_temp = endpoint_a && ipc_test_win_temp_set(parent_b);
     if (second_temp) {
-        endpoint_b = cbm_daemon_ipc_endpoint_new(key, NULL);
+        endpoint_b = hyp_daemon_ipc_endpoint_new(key, NULL);
     }
     if (endpoint_b) {
-        ipc_test_copy_path(runtime_b, cbm_daemon_ipc_endpoint_runtime_dir(endpoint_b));
-        ipc_test_copy_path(address_b, cbm_daemon_ipc_endpoint_address(endpoint_b));
+        ipc_test_copy_path(runtime_b, hyp_daemon_ipc_endpoint_runtime_dir(endpoint_b));
+        ipc_test_copy_path(address_b, hyp_daemon_ipc_endpoint_address(endpoint_b));
     }
     bool stable = endpoint_a && endpoint_b && strcmp(address_a, address_b) == 0 &&
                   address_a[0] != '\0' && strcmp(runtime_a, runtime_b) == 0 &&
@@ -713,8 +713,8 @@ TEST(daemon_ipc_windows_default_endpoint_ignores_temp_environment) {
 
     bool restored_tmp = tmp_saved && ipc_test_win_env_restore(L"TMP", &saved_tmp);
     bool restored_temp = temp_saved && ipc_test_win_env_restore(L"TEMP", &saved_temp);
-    cbm_daemon_ipc_endpoint_free(endpoint_b);
-    cbm_daemon_ipc_endpoint_free(endpoint_a);
+    hyp_daemon_ipc_endpoint_free(endpoint_b);
+    hyp_daemon_ipc_endpoint_free(endpoint_a);
     if (runtime_b[0] != '\0' && strcmp(runtime_b, runtime_a) != 0) {
         ipc_test_remove_flat_dir(runtime_b);
     }
@@ -756,7 +756,7 @@ TEST(daemon_ipc_windows_private_directory_rejects_untrusted_ancestor_acl) {
         acl_injected = ipc_test_win_grant_everyone_mutation(unsafe);
     }
     if (acl_injected) {
-        rejected = !cbm_daemon_ipc_private_directory_secure(cache);
+        rejected = !hyp_daemon_ipc_private_directory_secure(cache);
         SetLastError(ERROR_SUCCESS);
         DWORD attributes = GetFileAttributesA(cache);
         DWORD error = GetLastError();
@@ -799,7 +799,7 @@ TEST(daemon_ipc_windows_private_directory_allows_add_subdirectory_only_ancestor)
         acl_injected = ipc_test_win_grant_everyone_rights(add_only, FILE_ADD_SUBDIRECTORY);
     }
     if (acl_injected) {
-        secured = cbm_daemon_ipc_private_directory_secure(cache);
+        secured = hyp_daemon_ipc_private_directory_secure(cache);
         DWORD attributes = GetFileAttributesA(cache);
         cache_created = attributes != INVALID_FILE_ATTRIBUTES &&
                         (attributes & FILE_ATTRIBUTE_DIRECTORY) != 0 &&
@@ -823,47 +823,47 @@ TEST(daemon_ipc_windows_legacy_bridge_covers_handoff_and_lifetime) {
     char parent[TEST_PATH_CAP] = {0};
     char canonical_parent[TEST_PATH_CAP] = {0};
     char runtime_dir[TEST_PATH_CAP] = {0};
-    char legacy_pipe[CBM_DAEMON_IPC_WINDOWS_NAME_CAP] = {0};
-    char legacy_startup[CBM_DAEMON_IPC_WINDOWS_NAME_CAP] = {0};
-    cbm_daemon_ipc_endpoint_t *endpoint = NULL;
-    cbm_daemon_ipc_startup_lock_t *startup = NULL;
-    cbm_daemon_ipc_participant_guard_t *participant = NULL;
-    cbm_daemon_ipc_lifetime_reservation_t *lifetime = NULL;
+    char legacy_pipe[HYP_DAEMON_IPC_WINDOWS_NAME_CAP] = {0};
+    char legacy_startup[HYP_DAEMON_IPC_WINDOWS_NAME_CAP] = {0};
+    hyp_daemon_ipc_endpoint_t *endpoint = NULL;
+    hyp_daemon_ipc_startup_lock_t *startup = NULL;
+    hyp_daemon_ipc_participant_guard_t *participant = NULL;
+    hyp_daemon_ipc_lifetime_reservation_t *lifetime = NULL;
     HANDLE old_pipe = INVALID_HANDLE_VALUE;
 
     bool parent_ok = ipc_test_parent_new(parent, "win-legacy-bridge") &&
                      ipc_test_full_path(canonical_parent, parent);
-    bool names_ok = parent_ok && cbm_daemon_ipc_windows_legacy_names(canonical_parent, key,
+    bool names_ok = parent_ok && hyp_daemon_ipc_windows_legacy_names(canonical_parent, key,
                                                                      legacy_pipe, legacy_startup);
     if (names_ok) {
-        endpoint = cbm_daemon_ipc_endpoint_new(key, parent);
+        endpoint = hyp_daemon_ipc_endpoint_new(key, parent);
     }
     if (endpoint) {
-        ipc_test_copy_path(runtime_dir, cbm_daemon_ipc_endpoint_runtime_dir(endpoint));
+        ipc_test_copy_path(runtime_dir, hyp_daemon_ipc_endpoint_runtime_dir(endpoint));
     }
-    int absent_before = endpoint ? cbm_daemon_ipc_legacy_generation_probe(endpoint) : -1;
+    int absent_before = endpoint ? hyp_daemon_ipc_legacy_generation_probe(endpoint) : -1;
     int startup_status =
-        endpoint ? cbm_daemon_ipc_startup_lock_try_acquire(endpoint, &startup) : -1;
-    int visible_during_startup = startup ? cbm_daemon_ipc_legacy_generation_probe(endpoint) : -1;
-    bool handoff = startup && cbm_daemon_ipc_startup_lock_prepare_handoff(startup);
-    int visible_during_handoff = handoff ? cbm_daemon_ipc_legacy_generation_probe(endpoint) : -1;
+        endpoint ? hyp_daemon_ipc_startup_lock_try_acquire(endpoint, &startup) : -1;
+    int visible_during_startup = startup ? hyp_daemon_ipc_legacy_generation_probe(endpoint) : -1;
+    bool handoff = startup && hyp_daemon_ipc_startup_lock_prepare_handoff(startup);
+    int visible_during_handoff = handoff ? hyp_daemon_ipc_legacy_generation_probe(endpoint) : -1;
     int participant_status =
-        handoff ? cbm_daemon_ipc_participant_guard_try_join(endpoint, &participant) : -1;
+        handoff ? hyp_daemon_ipc_participant_guard_try_join(endpoint, &participant) : -1;
     int lifetime_status = participant_status == 1
-                              ? cbm_daemon_ipc_lifetime_reservation_try_acquire(endpoint, &lifetime)
+                              ? hyp_daemon_ipc_lifetime_reservation_try_acquire(endpoint, &lifetime)
                               : -1;
-    int visible_during_lifetime = lifetime ? cbm_daemon_ipc_legacy_generation_probe(endpoint) : -1;
-    cbm_daemon_ipc_lifetime_reservation_release(lifetime);
+    int visible_during_lifetime = lifetime ? hyp_daemon_ipc_legacy_generation_probe(endpoint) : -1;
+    hyp_daemon_ipc_lifetime_reservation_release(lifetime);
     lifetime = NULL;
     /* Native Windows teardown is deliberately ordered through startup-v2.
      * A participant must remain retryable while a bootstrap handoff owner
      * retains that transition; releasing the bootstrap then unblocks it. */
     bool participant_blocked_by_startup =
-        participant && !cbm_daemon_ipc_participant_guard_release(&participant);
+        participant && !hyp_daemon_ipc_participant_guard_release(&participant);
     bool participant_retained = participant != NULL;
-    bool startup_released = cbm_daemon_ipc_startup_lock_release(&startup);
-    bool participant_released = cbm_daemon_ipc_participant_guard_release(&participant);
-    int absent_after_lifetime = endpoint ? cbm_daemon_ipc_legacy_generation_probe(endpoint) : -1;
+    bool startup_released = hyp_daemon_ipc_startup_lock_release(&startup);
+    bool participant_released = hyp_daemon_ipc_participant_guard_release(&participant);
+    int absent_after_lifetime = endpoint ? hyp_daemon_ipc_legacy_generation_probe(endpoint) : -1;
 
     typedef BOOL(WINAPI * ipc_test_initialize_sd_fn)(PSECURITY_DESCRIPTOR, DWORD);
     typedef BOOL(WINAPI * ipc_test_set_dacl_fn)(PSECURITY_DESCRIPTOR, BOOL, PACL, BOOL);
@@ -884,25 +884,25 @@ TEST(daemon_ipc_windows_legacy_bridge_covers_handoff_and_lifetime) {
         .lpSecurityDescriptor = unsafe_descriptor_ok ? &unsafe_descriptor : NULL,
         .bInheritHandle = FALSE,
     };
-    wchar_t *legacy_startup_wide = names_ok ? cbm_utf8_to_wide(legacy_startup) : NULL;
+    wchar_t *legacy_startup_wide = names_ok ? hyp_utf8_to_wide(legacy_startup) : NULL;
     HANDLE unsafe_mutex = unsafe_descriptor_ok && legacy_startup_wide
                               ? CreateMutexW(&unsafe_attributes, FALSE, legacy_startup_wide)
                               : NULL;
     free(legacy_startup_wide);
-    int unsafe_probe = unsafe_mutex ? cbm_daemon_ipc_legacy_generation_probe(endpoint) : 0;
-    cbm_daemon_ipc_startup_lock_t *unsafe_startup = NULL;
+    int unsafe_probe = unsafe_mutex ? hyp_daemon_ipc_legacy_generation_probe(endpoint) : 0;
+    hyp_daemon_ipc_startup_lock_t *unsafe_startup = NULL;
     int unsafe_startup_status =
-        unsafe_mutex ? cbm_daemon_ipc_startup_lock_try_acquire(endpoint, &unsafe_startup) : 0;
-    cbm_daemon_ipc_startup_lock_release(&unsafe_startup);
+        unsafe_mutex ? hyp_daemon_ipc_startup_lock_try_acquire(endpoint, &unsafe_startup) : 0;
+    hyp_daemon_ipc_startup_lock_release(&unsafe_startup);
     if (unsafe_mutex) {
         (void)CloseHandle(unsafe_mutex);
     }
     if (advapi) {
         (void)FreeLibrary(advapi);
     }
-    int absent_after_unsafe = endpoint ? cbm_daemon_ipc_legacy_generation_probe(endpoint) : -1;
+    int absent_after_unsafe = endpoint ? hyp_daemon_ipc_legacy_generation_probe(endpoint) : -1;
 
-    wchar_t *old_name = names_ok ? cbm_utf8_to_wide(legacy_pipe) : NULL;
+    wchar_t *old_name = names_ok ? hyp_utf8_to_wide(legacy_pipe) : NULL;
     if (old_name) {
         old_pipe = CreateNamedPipeW(old_name, PIPE_ACCESS_DUPLEX | FILE_FLAG_FIRST_PIPE_INSTANCE,
                                     PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT |
@@ -911,16 +911,16 @@ TEST(daemon_ipc_windows_legacy_bridge_covers_handoff_and_lifetime) {
     }
     free(old_name);
     int visible_legacy_pipe =
-        old_pipe != INVALID_HANDLE_VALUE ? cbm_daemon_ipc_legacy_generation_probe(endpoint) : -1;
+        old_pipe != INVALID_HANDLE_VALUE ? hyp_daemon_ipc_legacy_generation_probe(endpoint) : -1;
     if (old_pipe != INVALID_HANDLE_VALUE) {
         (void)CloseHandle(old_pipe);
     }
-    int absent_after_pipe = endpoint ? cbm_daemon_ipc_legacy_generation_probe(endpoint) : -1;
+    int absent_after_pipe = endpoint ? hyp_daemon_ipc_legacy_generation_probe(endpoint) : -1;
 
-    cbm_daemon_ipc_lifetime_reservation_release(lifetime);
-    (void)cbm_daemon_ipc_participant_guard_release(&participant);
-    cbm_daemon_ipc_startup_lock_release(&startup);
-    cbm_daemon_ipc_endpoint_free(endpoint);
+    hyp_daemon_ipc_lifetime_reservation_release(lifetime);
+    (void)hyp_daemon_ipc_participant_guard_release(&participant);
+    hyp_daemon_ipc_startup_lock_release(&startup);
+    hyp_daemon_ipc_endpoint_free(endpoint);
     ipc_test_remove_tree(runtime_dir, parent);
 
     ASSERT_TRUE(parent_ok);
@@ -956,32 +956,32 @@ TEST(daemon_ipc_windows_local_transition_atomically_reserves_legacy_pipe) {
     char parent[TEST_PATH_CAP] = {0};
     char canonical_parent[TEST_PATH_CAP] = {0};
     char runtime_dir[TEST_PATH_CAP] = {0};
-    char legacy_pipe[CBM_DAEMON_IPC_WINDOWS_NAME_CAP] = {0};
-    char legacy_startup[CBM_DAEMON_IPC_WINDOWS_NAME_CAP] = {0};
-    cbm_daemon_ipc_endpoint_t *endpoint = NULL;
-    cbm_daemon_ipc_local_transition_t *transition_wins = NULL;
-    cbm_daemon_ipc_local_transition_t *legacy_wins = NULL;
+    char legacy_pipe[HYP_DAEMON_IPC_WINDOWS_NAME_CAP] = {0};
+    char legacy_startup[HYP_DAEMON_IPC_WINDOWS_NAME_CAP] = {0};
+    hyp_daemon_ipc_endpoint_t *endpoint = NULL;
+    hyp_daemon_ipc_local_transition_t *transition_wins = NULL;
+    hyp_daemon_ipc_local_transition_t *legacy_wins = NULL;
     HANDLE old_after_sentinel = INVALID_HANDLE_VALUE;
     HANDLE old_first = INVALID_HANDLE_VALUE;
 
     bool parent_ok = ipc_test_parent_new(parent, "win-local-transition") &&
                      ipc_test_full_path(canonical_parent, parent);
-    bool names_ok = parent_ok && cbm_daemon_ipc_windows_legacy_names(canonical_parent, key,
+    bool names_ok = parent_ok && hyp_daemon_ipc_windows_legacy_names(canonical_parent, key,
                                                                      legacy_pipe, legacy_startup);
     if (names_ok) {
-        endpoint = cbm_daemon_ipc_endpoint_new(key, parent);
+        endpoint = hyp_daemon_ipc_endpoint_new(key, parent);
     }
     if (endpoint) {
-        ipc_test_copy_path(runtime_dir, cbm_daemon_ipc_endpoint_runtime_dir(endpoint));
+        ipc_test_copy_path(runtime_dir, hyp_daemon_ipc_endpoint_runtime_dir(endpoint));
     }
     int transition_wins_result =
-        endpoint ? cbm_daemon_ipc_local_transition_try_acquire(endpoint, &transition_wins) : -1;
+        endpoint ? hyp_daemon_ipc_local_transition_try_acquire(endpoint, &transition_wins) : -1;
     int sentinel_result = transition_wins_result == 1
-                              ? cbm_daemon_ipc_local_transition_seal_legacy(transition_wins)
+                              ? hyp_daemon_ipc_local_transition_seal_legacy(transition_wins)
                               : -1;
     int sentinel_visible =
-        sentinel_result == 1 ? cbm_daemon_ipc_legacy_generation_probe(endpoint) : -1;
-    wchar_t *legacy_name = names_ok ? cbm_utf8_to_wide(legacy_pipe) : NULL;
+        sentinel_result == 1 ? hyp_daemon_ipc_legacy_generation_probe(endpoint) : -1;
+    wchar_t *legacy_name = names_ok ? hyp_utf8_to_wide(legacy_pipe) : NULL;
     if (legacy_name && sentinel_result == 1) {
         old_after_sentinel = CreateNamedPipeW(
             legacy_name, PIPE_ACCESS_DUPLEX | FILE_FLAG_FIRST_PIPE_INSTANCE,
@@ -989,9 +989,9 @@ TEST(daemon_ipc_windows_local_transition_atomically_reserves_legacy_pipe) {
             4096, 0, NULL);
     }
     bool work_begun =
-        sentinel_result == 1 && cbm_daemon_ipc_local_transition_begin_work(transition_wins);
-    bool transition_wins_released = cbm_daemon_ipc_local_transition_release(&transition_wins);
-    int absent_after_sentinel = endpoint ? cbm_daemon_ipc_legacy_generation_probe(endpoint) : -1;
+        sentinel_result == 1 && hyp_daemon_ipc_local_transition_begin_work(transition_wins);
+    bool transition_wins_released = hyp_daemon_ipc_local_transition_release(&transition_wins);
+    int absent_after_sentinel = endpoint ? hyp_daemon_ipc_legacy_generation_probe(endpoint) : -1;
 
     if (legacy_name) {
         old_first = CreateNamedPipeW(
@@ -1001,11 +1001,11 @@ TEST(daemon_ipc_windows_local_transition_atomically_reserves_legacy_pipe) {
     }
     int legacy_wins_result =
         old_first != INVALID_HANDLE_VALUE
-            ? cbm_daemon_ipc_local_transition_try_acquire(endpoint, &legacy_wins)
+            ? hyp_daemon_ipc_local_transition_try_acquire(endpoint, &legacy_wins)
             : -1;
     int rejected_after_legacy_win =
-        legacy_wins_result == 1 ? cbm_daemon_ipc_local_transition_seal_legacy(legacy_wins) : -1;
-    bool legacy_wins_released = cbm_daemon_ipc_local_transition_release(&legacy_wins);
+        legacy_wins_result == 1 ? hyp_daemon_ipc_local_transition_seal_legacy(legacy_wins) : -1;
+    bool legacy_wins_released = hyp_daemon_ipc_local_transition_release(&legacy_wins);
     if (old_after_sentinel != INVALID_HANDLE_VALUE) {
         (void)CloseHandle(old_after_sentinel);
     }
@@ -1013,11 +1013,11 @@ TEST(daemon_ipc_windows_local_transition_atomically_reserves_legacy_pipe) {
         (void)CloseHandle(old_first);
     }
     free(legacy_name);
-    int absent_after_old = endpoint ? cbm_daemon_ipc_legacy_generation_probe(endpoint) : -1;
+    int absent_after_old = endpoint ? hyp_daemon_ipc_legacy_generation_probe(endpoint) : -1;
 
-    (void)cbm_daemon_ipc_local_transition_release(&legacy_wins);
-    (void)cbm_daemon_ipc_local_transition_release(&transition_wins);
-    cbm_daemon_ipc_endpoint_free(endpoint);
+    (void)hyp_daemon_ipc_local_transition_release(&legacy_wins);
+    (void)hyp_daemon_ipc_local_transition_release(&transition_wins);
+    hyp_daemon_ipc_endpoint_free(endpoint);
     ipc_test_remove_tree(runtime_dir, parent);
 
     ASSERT_TRUE(parent_ok);
@@ -1043,11 +1043,11 @@ TEST(daemon_ipc_windows_startup_retries_transient_rendezvous_reader) {
     static const char key[] = "81b2c3d4e5f60719";
     char parent[TEST_PATH_CAP] = {0};
     char runtime_dir[TEST_PATH_CAP] = {0};
-    char address[CBM_DAEMON_IPC_WINDOWS_NAME_CAP] = {0};
-    cbm_daemon_ipc_endpoint_t *endpoint = NULL;
-    cbm_private_lock_directory_t *directory = NULL;
-    cbm_private_file_lock_t *record_reader = NULL;
-    cbm_thread_t thread;
+    char address[HYP_DAEMON_IPC_WINDOWS_NAME_CAP] = {0};
+    hyp_daemon_ipc_endpoint_t *endpoint = NULL;
+    hyp_private_lock_directory_t *directory = NULL;
+    hyp_private_file_lock_t *record_reader = NULL;
+    hyp_thread_t thread;
     bool thread_started = false;
     bool startup_observed = false;
     int join_status = -1;
@@ -1055,26 +1055,26 @@ TEST(daemon_ipc_windows_startup_retries_transient_rendezvous_reader) {
     ipc_test_startup_gate_t gate;
     atomic_init(&gate.acquired, false);
     atomic_init(&gate.may_proceed, false);
-    cbm_daemon_ipc_startup_gate_set_for_test(ipc_test_startup_gate, &gate);
+    hyp_daemon_ipc_startup_gate_set_for_test(ipc_test_startup_gate, &gate);
 
     bool parent_ok = ipc_test_parent_new(parent, "win-record-reader");
     if (parent_ok) {
-        endpoint = cbm_daemon_ipc_endpoint_new(key, parent);
+        endpoint = hyp_daemon_ipc_endpoint_new(key, parent);
     }
     if (endpoint) {
         call.endpoint = endpoint;
-        ipc_test_copy_path(runtime_dir, cbm_daemon_ipc_endpoint_runtime_dir(endpoint));
+        ipc_test_copy_path(runtime_dir, hyp_daemon_ipc_endpoint_runtime_dir(endpoint));
     }
-    cbm_private_file_lock_status_t directory_status =
-        endpoint ? cbm_daemon_ipc_private_lock_directory_new(endpoint, &directory)
-                 : CBM_PRIVATE_FILE_LOCK_IO;
-    cbm_private_file_lock_status_t record_status =
-        directory_status == CBM_PRIVATE_FILE_LOCK_OK
-            ? cbm_private_file_lock_try_acquire(directory, CBM_DAEMON_IPC_WINDOWS_RENDEZVOUS_FILE,
-                                                CBM_PRIVATE_FILE_LOCK_SH, &record_reader)
-            : CBM_PRIVATE_FILE_LOCK_IO;
-    if (record_status == CBM_PRIVATE_FILE_LOCK_OK) {
-        thread_started = cbm_thread_create(&thread, 0, ipc_test_win_startup_call, &call) == 0;
+    hyp_private_file_lock_status_t directory_status =
+        endpoint ? hyp_daemon_ipc_private_lock_directory_new(endpoint, &directory)
+                 : HYP_PRIVATE_FILE_LOCK_IO;
+    hyp_private_file_lock_status_t record_status =
+        directory_status == HYP_PRIVATE_FILE_LOCK_OK
+            ? hyp_private_file_lock_try_acquire(directory, HYP_DAEMON_IPC_WINDOWS_RENDEZVOUS_FILE,
+                                                HYP_PRIVATE_FILE_LOCK_SH, &record_reader)
+            : HYP_PRIVATE_FILE_LOCK_IO;
+    if (record_status == HYP_PRIVATE_FILE_LOCK_OK) {
+        thread_started = hyp_thread_create(&thread, 0, ipc_test_win_startup_call, &call) == 0;
     }
     if (thread_started) {
         startup_observed = ipc_test_startup_gate_wait_acquired(&gate);
@@ -1082,21 +1082,21 @@ TEST(daemon_ipc_windows_startup_retries_transient_rendezvous_reader) {
     ipc_test_win_lock_release(&record_reader);
     atomic_store(&gate.may_proceed, true);
     if (thread_started) {
-        join_status = cbm_thread_join(&thread);
+        join_status = hyp_thread_join(&thread);
     }
     if (endpoint) {
-        ipc_test_copy_path(address, cbm_daemon_ipc_endpoint_address(endpoint));
+        ipc_test_copy_path(address, hyp_daemon_ipc_endpoint_address(endpoint));
     }
 
-    cbm_daemon_ipc_startup_gate_set_for_test(NULL, NULL);
+    hyp_daemon_ipc_startup_gate_set_for_test(NULL, NULL);
     ipc_test_win_lock_release(&record_reader);
-    cbm_private_lock_directory_close(directory);
-    cbm_daemon_ipc_endpoint_free(endpoint);
+    hyp_private_lock_directory_close(directory);
+    hyp_daemon_ipc_endpoint_free(endpoint);
     ipc_test_remove_tree(runtime_dir, parent);
 
     ASSERT_TRUE(parent_ok);
-    ASSERT_EQ(directory_status, CBM_PRIVATE_FILE_LOCK_OK);
-    ASSERT_EQ(record_status, CBM_PRIVATE_FILE_LOCK_OK);
+    ASSERT_EQ(directory_status, HYP_PRIVATE_FILE_LOCK_OK);
+    ASSERT_EQ(record_status, HYP_PRIVATE_FILE_LOCK_OK);
     ASSERT_TRUE(thread_started);
     ASSERT_TRUE(startup_observed);
     ASSERT_EQ(join_status, 0);
@@ -1109,14 +1109,14 @@ TEST(daemon_ipc_windows_rendezvous_bridges_concurrent_lifetime_owner) {
     static const char key[] = "71b2c3d4e5f60729";
     char parent[TEST_PATH_CAP] = {0};
     char runtime_dir[TEST_PATH_CAP] = {0};
-    char before[CBM_DAEMON_IPC_WINDOWS_NAME_CAP] = {0};
-    char after[CBM_DAEMON_IPC_WINDOWS_NAME_CAP] = {0};
-    cbm_daemon_ipc_endpoint_t *endpoint = NULL;
-    cbm_daemon_ipc_startup_lock_t *initial_startup = NULL;
-    cbm_private_lock_directory_t *directory = NULL;
-    cbm_private_file_lock_t *record_reader = NULL;
-    cbm_private_file_lock_t *lifetime_owner = NULL;
-    cbm_thread_t thread;
+    char before[HYP_DAEMON_IPC_WINDOWS_NAME_CAP] = {0};
+    char after[HYP_DAEMON_IPC_WINDOWS_NAME_CAP] = {0};
+    hyp_daemon_ipc_endpoint_t *endpoint = NULL;
+    hyp_daemon_ipc_startup_lock_t *initial_startup = NULL;
+    hyp_private_lock_directory_t *directory = NULL;
+    hyp_private_file_lock_t *record_reader = NULL;
+    hyp_private_file_lock_t *lifetime_owner = NULL;
+    hyp_thread_t thread;
     bool thread_started = false;
     bool startup_observed = false;
     int join_status = -1;
@@ -1124,75 +1124,75 @@ TEST(daemon_ipc_windows_rendezvous_bridges_concurrent_lifetime_owner) {
 
     bool parent_ok = ipc_test_parent_new(parent, "win-lifetime-bridge");
     if (parent_ok) {
-        endpoint = cbm_daemon_ipc_endpoint_new(key, parent);
+        endpoint = hyp_daemon_ipc_endpoint_new(key, parent);
     }
     if (endpoint) {
         call.endpoint = endpoint;
-        ipc_test_copy_path(runtime_dir, cbm_daemon_ipc_endpoint_runtime_dir(endpoint));
+        ipc_test_copy_path(runtime_dir, hyp_daemon_ipc_endpoint_runtime_dir(endpoint));
     }
     int initial_status =
-        endpoint ? cbm_daemon_ipc_startup_lock_try_acquire(endpoint, &initial_startup) : -1;
-    if (initial_status == 1 && !cbm_daemon_ipc_startup_lock_prepare_handoff(initial_startup)) {
+        endpoint ? hyp_daemon_ipc_startup_lock_try_acquire(endpoint, &initial_startup) : -1;
+    if (initial_status == 1 && !hyp_daemon_ipc_startup_lock_prepare_handoff(initial_startup)) {
         initial_status = -1;
     }
     if (initial_status == 1) {
-        ipc_test_copy_path(before, cbm_daemon_ipc_endpoint_address(endpoint));
+        ipc_test_copy_path(before, hyp_daemon_ipc_endpoint_address(endpoint));
     }
-    cbm_daemon_ipc_startup_lock_release(&initial_startup);
+    hyp_daemon_ipc_startup_lock_release(&initial_startup);
     initial_startup = NULL;
 
     ipc_test_startup_gate_t gate;
     atomic_init(&gate.acquired, false);
     atomic_init(&gate.may_proceed, false);
-    cbm_daemon_ipc_startup_gate_set_for_test(ipc_test_startup_gate, &gate);
+    hyp_daemon_ipc_startup_gate_set_for_test(ipc_test_startup_gate, &gate);
 
-    cbm_private_file_lock_status_t directory_status =
-        endpoint ? cbm_daemon_ipc_private_lock_directory_new(endpoint, &directory)
-                 : CBM_PRIVATE_FILE_LOCK_IO;
-    cbm_private_file_lock_status_t record_status =
-        directory_status == CBM_PRIVATE_FILE_LOCK_OK
-            ? cbm_private_file_lock_try_acquire(directory, CBM_DAEMON_IPC_WINDOWS_RENDEZVOUS_FILE,
-                                                CBM_PRIVATE_FILE_LOCK_SH, &record_reader)
-            : CBM_PRIVATE_FILE_LOCK_IO;
-    if (record_status == CBM_PRIVATE_FILE_LOCK_OK) {
-        thread_started = cbm_thread_create(&thread, 0, ipc_test_win_startup_call, &call) == 0;
+    hyp_private_file_lock_status_t directory_status =
+        endpoint ? hyp_daemon_ipc_private_lock_directory_new(endpoint, &directory)
+                 : HYP_PRIVATE_FILE_LOCK_IO;
+    hyp_private_file_lock_status_t record_status =
+        directory_status == HYP_PRIVATE_FILE_LOCK_OK
+            ? hyp_private_file_lock_try_acquire(directory, HYP_DAEMON_IPC_WINDOWS_RENDEZVOUS_FILE,
+                                                HYP_PRIVATE_FILE_LOCK_SH, &record_reader)
+            : HYP_PRIVATE_FILE_LOCK_IO;
+    if (record_status == HYP_PRIVATE_FILE_LOCK_OK) {
+        thread_started = hyp_thread_create(&thread, 0, ipc_test_win_startup_call, &call) == 0;
     }
     if (thread_started) {
         startup_observed = ipc_test_startup_gate_wait_acquired(&gate);
     }
     /* Claim the lifetime lock while startup is parked in the gate, so the
      * concurrent-owner bridge under test is exercised deterministically. */
-    cbm_private_file_lock_status_t lifetime_status =
+    hyp_private_file_lock_status_t lifetime_status =
         startup_observed
-            ? cbm_private_file_lock_try_acquire(directory, "cbm-lifetime.lock",
-                                                CBM_PRIVATE_FILE_LOCK_EX, &lifetime_owner)
-            : CBM_PRIVATE_FILE_LOCK_IO;
+            ? hyp_private_file_lock_try_acquire(directory, "hyp-lifetime.lock",
+                                                HYP_PRIVATE_FILE_LOCK_EX, &lifetime_owner)
+            : HYP_PRIVATE_FILE_LOCK_IO;
     ipc_test_win_lock_release(&record_reader);
     atomic_store(&gate.may_proceed, true);
     if (thread_started) {
-        join_status = cbm_thread_join(&thread);
+        join_status = hyp_thread_join(&thread);
     }
     if (endpoint) {
-        ipc_test_copy_path(after, cbm_daemon_ipc_endpoint_address(endpoint));
+        ipc_test_copy_path(after, hyp_daemon_ipc_endpoint_address(endpoint));
     }
     ipc_test_win_lock_release(&lifetime_owner);
 
-    cbm_daemon_ipc_startup_gate_set_for_test(NULL, NULL);
+    hyp_daemon_ipc_startup_gate_set_for_test(NULL, NULL);
     ipc_test_win_lock_release(&record_reader);
     ipc_test_win_lock_release(&lifetime_owner);
-    cbm_private_lock_directory_close(directory);
-    cbm_daemon_ipc_startup_lock_release(&initial_startup);
-    cbm_daemon_ipc_endpoint_free(endpoint);
+    hyp_private_lock_directory_close(directory);
+    hyp_daemon_ipc_startup_lock_release(&initial_startup);
+    hyp_daemon_ipc_endpoint_free(endpoint);
     ipc_test_remove_tree(runtime_dir, parent);
 
     ASSERT_TRUE(parent_ok);
     ASSERT_EQ(initial_status, 1);
     ASSERT_TRUE(before[0] != '\0');
-    ASSERT_EQ(directory_status, CBM_PRIVATE_FILE_LOCK_OK);
-    ASSERT_EQ(record_status, CBM_PRIVATE_FILE_LOCK_OK);
+    ASSERT_EQ(directory_status, HYP_PRIVATE_FILE_LOCK_OK);
+    ASSERT_EQ(record_status, HYP_PRIVATE_FILE_LOCK_OK);
     ASSERT_TRUE(thread_started);
     ASSERT_TRUE(startup_observed);
-    ASSERT_EQ(lifetime_status, CBM_PRIVATE_FILE_LOCK_OK);
+    ASSERT_EQ(lifetime_status, HYP_PRIVATE_FILE_LOCK_OK);
     ASSERT_EQ(join_status, 0);
     ASSERT_EQ(call.result, 0);
     ASSERT_STR_EQ(after, before);
@@ -1203,40 +1203,40 @@ TEST(daemon_ipc_windows_generation_rotates_and_escapes_occupied_old_pipe) {
     static const char key[] = "a1b2c3d4e5f60718";
     char parent[TEST_PATH_CAP] = {0};
     char runtime_dir[TEST_PATH_CAP] = {0};
-    char first_address[CBM_DAEMON_IPC_WINDOWS_NAME_CAP] = {0};
-    char first_peer_address[CBM_DAEMON_IPC_WINDOWS_NAME_CAP] = {0};
-    char second_address[CBM_DAEMON_IPC_WINDOWS_NAME_CAP] = {0};
-    char second_peer_address[CBM_DAEMON_IPC_WINDOWS_NAME_CAP] = {0};
-    cbm_daemon_ipc_endpoint_t *endpoint = NULL;
-    cbm_daemon_ipc_endpoint_t *peer = NULL;
-    cbm_daemon_ipc_startup_lock_t *first_startup = NULL;
-    cbm_daemon_ipc_startup_lock_t *second_startup = NULL;
-    cbm_daemon_ipc_participant_guard_t *participant = NULL;
-    cbm_daemon_ipc_lifetime_reservation_t *lifetime = NULL;
-    cbm_daemon_ipc_listener_t *listener = NULL;
+    char first_address[HYP_DAEMON_IPC_WINDOWS_NAME_CAP] = {0};
+    char first_peer_address[HYP_DAEMON_IPC_WINDOWS_NAME_CAP] = {0};
+    char second_address[HYP_DAEMON_IPC_WINDOWS_NAME_CAP] = {0};
+    char second_peer_address[HYP_DAEMON_IPC_WINDOWS_NAME_CAP] = {0};
+    hyp_daemon_ipc_endpoint_t *endpoint = NULL;
+    hyp_daemon_ipc_endpoint_t *peer = NULL;
+    hyp_daemon_ipc_startup_lock_t *first_startup = NULL;
+    hyp_daemon_ipc_startup_lock_t *second_startup = NULL;
+    hyp_daemon_ipc_participant_guard_t *participant = NULL;
+    hyp_daemon_ipc_lifetime_reservation_t *lifetime = NULL;
+    hyp_daemon_ipc_listener_t *listener = NULL;
     HANDLE old_pipe = INVALID_HANDLE_VALUE;
 
     bool parent_ok = ipc_test_parent_new(parent, "win-generation");
     if (parent_ok) {
-        endpoint = cbm_daemon_ipc_endpoint_new(key, parent);
-        peer = cbm_daemon_ipc_endpoint_new(key, parent);
+        endpoint = hyp_daemon_ipc_endpoint_new(key, parent);
+        peer = hyp_daemon_ipc_endpoint_new(key, parent);
     }
     if (endpoint) {
-        ipc_test_copy_path(runtime_dir, cbm_daemon_ipc_endpoint_runtime_dir(endpoint));
+        ipc_test_copy_path(runtime_dir, hyp_daemon_ipc_endpoint_runtime_dir(endpoint));
     }
     int first_status =
-        endpoint ? cbm_daemon_ipc_startup_lock_try_acquire(endpoint, &first_startup) : -1;
-    if (first_status == 1 && !cbm_daemon_ipc_startup_lock_prepare_handoff(first_startup)) {
+        endpoint ? hyp_daemon_ipc_startup_lock_try_acquire(endpoint, &first_startup) : -1;
+    if (first_status == 1 && !hyp_daemon_ipc_startup_lock_prepare_handoff(first_startup)) {
         first_status = -1;
     }
     if (first_status == 1) {
-        ipc_test_copy_path(first_address, cbm_daemon_ipc_endpoint_address(endpoint));
-        ipc_test_copy_path(first_peer_address, cbm_daemon_ipc_endpoint_address(peer));
+        ipc_test_copy_path(first_address, hyp_daemon_ipc_endpoint_address(endpoint));
+        ipc_test_copy_path(first_peer_address, hyp_daemon_ipc_endpoint_address(peer));
     }
-    cbm_daemon_ipc_startup_lock_release(&first_startup);
+    hyp_daemon_ipc_startup_lock_release(&first_startup);
     first_startup = NULL;
 
-    wchar_t *old_name = first_address[0] ? cbm_utf8_to_wide(first_address) : NULL;
+    wchar_t *old_name = first_address[0] ? hyp_utf8_to_wide(first_address) : NULL;
     if (old_name) {
         old_pipe = CreateNamedPipeW(old_name, PIPE_ACCESS_DUPLEX | FILE_FLAG_FIRST_PIPE_INSTANCE,
                                     PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT |
@@ -1245,21 +1245,21 @@ TEST(daemon_ipc_windows_generation_rotates_and_escapes_occupied_old_pipe) {
     }
     free(old_name);
     int second_status =
-        endpoint ? cbm_daemon_ipc_startup_lock_try_acquire(endpoint, &second_startup) : -1;
+        endpoint ? hyp_daemon_ipc_startup_lock_try_acquire(endpoint, &second_startup) : -1;
     bool handoff_prepared =
-        second_status == 1 && cbm_daemon_ipc_startup_lock_prepare_handoff(second_startup);
+        second_status == 1 && hyp_daemon_ipc_startup_lock_prepare_handoff(second_startup);
     int participant_status =
-        handoff_prepared ? cbm_daemon_ipc_participant_guard_try_join(endpoint, &participant) : -1;
+        handoff_prepared ? hyp_daemon_ipc_participant_guard_try_join(endpoint, &participant) : -1;
     int lifetime_status = participant_status == 1
-                              ? cbm_daemon_ipc_lifetime_reservation_try_acquire(endpoint, &lifetime)
+                              ? hyp_daemon_ipc_lifetime_reservation_try_acquire(endpoint, &lifetime)
                               : -1;
     if (handoff_prepared) {
-        ipc_test_copy_path(second_address, cbm_daemon_ipc_endpoint_address(endpoint));
-        ipc_test_copy_path(second_peer_address, cbm_daemon_ipc_endpoint_address(peer));
+        ipc_test_copy_path(second_address, hyp_daemon_ipc_endpoint_address(endpoint));
+        ipc_test_copy_path(second_peer_address, hyp_daemon_ipc_endpoint_address(peer));
         listener =
-            lifetime_status == 1 ? cbm_daemon_ipc_listen_reserved(endpoint, &lifetime) : NULL;
+            lifetime_status == 1 ? hyp_daemon_ipc_listen_reserved(endpoint, &lifetime) : NULL;
     }
-    cbm_daemon_ipc_startup_lock_release(&second_startup);
+    hyp_daemon_ipc_startup_lock_release(&second_startup);
     second_startup = NULL;
 
     bool first_shared = first_address[0] && strcmp(first_address, first_peer_address) == 0;
@@ -1268,16 +1268,16 @@ TEST(daemon_ipc_windows_generation_rotates_and_escapes_occupied_old_pipe) {
     bool old_occupied = old_pipe != INVALID_HANDLE_VALUE;
     bool new_listened = listener != NULL;
 
-    cbm_daemon_ipc_listener_close(listener);
-    cbm_daemon_ipc_lifetime_reservation_release(lifetime);
-    bool participant_released = cbm_daemon_ipc_participant_guard_release(&participant);
+    hyp_daemon_ipc_listener_close(listener);
+    hyp_daemon_ipc_lifetime_reservation_release(lifetime);
+    bool participant_released = hyp_daemon_ipc_participant_guard_release(&participant);
     if (old_pipe != INVALID_HANDLE_VALUE) {
         (void)CloseHandle(old_pipe);
     }
-    cbm_daemon_ipc_startup_lock_release(&second_startup);
-    cbm_daemon_ipc_startup_lock_release(&first_startup);
-    cbm_daemon_ipc_endpoint_free(peer);
-    cbm_daemon_ipc_endpoint_free(endpoint);
+    hyp_daemon_ipc_startup_lock_release(&second_startup);
+    hyp_daemon_ipc_startup_lock_release(&first_startup);
+    hyp_daemon_ipc_endpoint_free(peer);
+    hyp_daemon_ipc_endpoint_free(endpoint);
     ipc_test_remove_tree(runtime_dir, parent);
 
     ASSERT_TRUE(parent_ok);
@@ -1300,158 +1300,158 @@ TEST(daemon_ipc_windows_corrupt_rendezvous_fails_closed_until_startup_repairs) {
     static const uint8_t partial[] = {'C', 'B', 'M', 'R', 'D', 'V', '1'};
     char parent[TEST_PATH_CAP] = {0};
     char runtime_dir[TEST_PATH_CAP] = {0};
-    char original_address[CBM_DAEMON_IPC_WINDOWS_NAME_CAP] = {0};
-    char repaired_address[CBM_DAEMON_IPC_WINDOWS_NAME_CAP] = {0};
-    char rebound_address[CBM_DAEMON_IPC_WINDOWS_NAME_CAP] = {0};
-    cbm_daemon_ipc_endpoint_t *endpoint = NULL;
-    cbm_daemon_ipc_endpoint_t *reader = NULL;
-    cbm_daemon_ipc_startup_lock_t *startup = NULL;
-    cbm_private_lock_directory_t *directory = NULL;
-    cbm_private_file_lock_t *record_lock = NULL;
-    cbm_private_file_lock_status_t directory_status = CBM_PRIVATE_FILE_LOCK_IO;
-    cbm_private_file_lock_status_t record_status = CBM_PRIVATE_FILE_LOCK_IO;
-    cbm_private_file_lock_status_t write_status = CBM_PRIVATE_FILE_LOCK_IO;
-    cbm_private_file_lock_status_t read_status = CBM_PRIVATE_FILE_LOCK_IO;
-    uint8_t readback[CBM_DAEMON_IPC_WINDOWS_RENDEZVOUS_RECORD_SIZE] = {0};
+    char original_address[HYP_DAEMON_IPC_WINDOWS_NAME_CAP] = {0};
+    char repaired_address[HYP_DAEMON_IPC_WINDOWS_NAME_CAP] = {0};
+    char rebound_address[HYP_DAEMON_IPC_WINDOWS_NAME_CAP] = {0};
+    hyp_daemon_ipc_endpoint_t *endpoint = NULL;
+    hyp_daemon_ipc_endpoint_t *reader = NULL;
+    hyp_daemon_ipc_startup_lock_t *startup = NULL;
+    hyp_private_lock_directory_t *directory = NULL;
+    hyp_private_file_lock_t *record_lock = NULL;
+    hyp_private_file_lock_status_t directory_status = HYP_PRIVATE_FILE_LOCK_IO;
+    hyp_private_file_lock_status_t record_status = HYP_PRIVATE_FILE_LOCK_IO;
+    hyp_private_file_lock_status_t write_status = HYP_PRIVATE_FILE_LOCK_IO;
+    hyp_private_file_lock_status_t read_status = HYP_PRIVATE_FILE_LOCK_IO;
+    uint8_t readback[HYP_DAEMON_IPC_WINDOWS_RENDEZVOUS_RECORD_SIZE] = {0};
     size_t readback_length = 0;
 
     bool parent_ok = ipc_test_parent_new(parent, "win-corrupt-record");
     if (parent_ok) {
-        endpoint = cbm_daemon_ipc_endpoint_new(key, parent);
+        endpoint = hyp_daemon_ipc_endpoint_new(key, parent);
     }
     if (endpoint) {
-        ipc_test_copy_path(runtime_dir, cbm_daemon_ipc_endpoint_runtime_dir(endpoint));
+        ipc_test_copy_path(runtime_dir, hyp_daemon_ipc_endpoint_runtime_dir(endpoint));
     }
     int initial_status =
-        endpoint ? cbm_daemon_ipc_startup_lock_try_acquire(endpoint, &startup) : -1;
-    if (initial_status == 1 && !cbm_daemon_ipc_startup_lock_prepare_handoff(startup)) {
+        endpoint ? hyp_daemon_ipc_startup_lock_try_acquire(endpoint, &startup) : -1;
+    if (initial_status == 1 && !hyp_daemon_ipc_startup_lock_prepare_handoff(startup)) {
         initial_status = -1;
     }
     if (initial_status == 1) {
-        ipc_test_copy_path(original_address, cbm_daemon_ipc_endpoint_address(endpoint));
+        ipc_test_copy_path(original_address, hyp_daemon_ipc_endpoint_address(endpoint));
     }
-    cbm_daemon_ipc_startup_lock_release(&startup);
+    hyp_daemon_ipc_startup_lock_release(&startup);
     startup = NULL;
 
     if (endpoint) {
-        directory_status = cbm_daemon_ipc_private_lock_directory_new(endpoint, &directory);
+        directory_status = hyp_daemon_ipc_private_lock_directory_new(endpoint, &directory);
     }
-    if (directory_status == CBM_PRIVATE_FILE_LOCK_OK) {
+    if (directory_status == HYP_PRIVATE_FILE_LOCK_OK) {
         record_status =
-            cbm_private_file_lock_try_acquire(directory, CBM_DAEMON_IPC_WINDOWS_RENDEZVOUS_FILE,
-                                              CBM_PRIVATE_FILE_LOCK_EX, &record_lock);
+            hyp_private_file_lock_try_acquire(directory, HYP_DAEMON_IPC_WINDOWS_RENDEZVOUS_FILE,
+                                              HYP_PRIVATE_FILE_LOCK_EX, &record_lock);
     }
-    if (record_status == CBM_PRIVATE_FILE_LOCK_OK) {
-        write_status = cbm_private_file_lock_payload_write(record_lock, partial, sizeof(partial));
+    if (record_status == HYP_PRIVATE_FILE_LOCK_OK) {
+        write_status = hyp_private_file_lock_payload_write(record_lock, partial, sizeof(partial));
     }
     if (record_lock) {
-        (void)cbm_private_file_lock_release(&record_lock);
+        (void)hyp_private_file_lock_release(&record_lock);
     }
-    cbm_private_lock_directory_close(directory);
+    hyp_private_lock_directory_close(directory);
     directory = NULL;
 
-    if (write_status == CBM_PRIVATE_FILE_LOCK_OK) {
-        reader = cbm_daemon_ipc_endpoint_new(key, parent);
+    if (write_status == HYP_PRIVATE_FILE_LOCK_OK) {
+        reader = hyp_daemon_ipc_endpoint_new(key, parent);
     }
-    cbm_daemon_ipc_connection_t *corrupt_connection =
-        reader ? cbm_daemon_ipc_connect(reader, 1) : NULL;
+    hyp_daemon_ipc_connection_t *corrupt_connection =
+        reader ? hyp_daemon_ipc_connect(reader, 1) : NULL;
     bool failed_closed =
-        reader && cbm_daemon_ipc_endpoint_address(reader) == NULL && corrupt_connection == NULL;
-    cbm_daemon_ipc_connection_close(corrupt_connection);
+        reader && hyp_daemon_ipc_endpoint_address(reader) == NULL && corrupt_connection == NULL;
+    hyp_daemon_ipc_connection_close(corrupt_connection);
 
     if (reader &&
-        cbm_daemon_ipc_private_lock_directory_new(reader, &directory) == CBM_PRIVATE_FILE_LOCK_OK &&
-        cbm_private_file_lock_try_acquire(directory, CBM_DAEMON_IPC_WINDOWS_RENDEZVOUS_FILE,
-                                          CBM_PRIVATE_FILE_LOCK_SH,
-                                          &record_lock) == CBM_PRIVATE_FILE_LOCK_OK) {
-        read_status = cbm_private_file_lock_payload_read(record_lock, readback, sizeof(readback),
+        hyp_daemon_ipc_private_lock_directory_new(reader, &directory) == HYP_PRIVATE_FILE_LOCK_OK &&
+        hyp_private_file_lock_try_acquire(directory, HYP_DAEMON_IPC_WINDOWS_RENDEZVOUS_FILE,
+                                          HYP_PRIVATE_FILE_LOCK_SH,
+                                          &record_lock) == HYP_PRIVATE_FILE_LOCK_OK) {
+        read_status = hyp_private_file_lock_payload_read(record_lock, readback, sizeof(readback),
                                                          &readback_length);
     }
     if (record_lock) {
-        (void)cbm_private_file_lock_release(&record_lock);
+        (void)hyp_private_file_lock_release(&record_lock);
     }
-    cbm_private_lock_directory_close(directory);
+    hyp_private_lock_directory_close(directory);
     directory = NULL;
-    bool reader_did_not_repair = read_status == CBM_PRIVATE_FILE_LOCK_OK &&
+    bool reader_did_not_repair = read_status == HYP_PRIVATE_FILE_LOCK_OK &&
                                  readback_length == sizeof(partial) &&
                                  memcmp(readback, partial, sizeof(partial)) == 0;
 
-    int repair_status = reader ? cbm_daemon_ipc_startup_lock_try_acquire(reader, &startup) : -1;
-    if (repair_status == 1 && !cbm_daemon_ipc_startup_lock_prepare_handoff(startup)) {
+    int repair_status = reader ? hyp_daemon_ipc_startup_lock_try_acquire(reader, &startup) : -1;
+    if (repair_status == 1 && !hyp_daemon_ipc_startup_lock_prepare_handoff(startup)) {
         repair_status = -1;
     }
     if (repair_status == 1) {
-        ipc_test_copy_path(repaired_address, cbm_daemon_ipc_endpoint_address(reader));
+        ipc_test_copy_path(repaired_address, hyp_daemon_ipc_endpoint_address(reader));
     }
-    cbm_daemon_ipc_startup_lock_release(&startup);
+    hyp_daemon_ipc_startup_lock_release(&startup);
     startup = NULL;
 
     bool repaired = repaired_address[0] && strcmp(original_address, repaired_address) != 0;
 
-    uint8_t mismatched_nonce[CBM_DAEMON_IPC_WINDOWS_NONCE_SIZE] = {0};
-    char mismatched_address[CBM_DAEMON_IPC_WINDOWS_NAME_CAP] = {0};
+    uint8_t mismatched_nonce[HYP_DAEMON_IPC_WINDOWS_NONCE_SIZE] = {0};
+    char mismatched_address[HYP_DAEMON_IPC_WINDOWS_NAME_CAP] = {0};
     size_t valid_record_length = 0;
-    cbm_private_file_lock_status_t mismatch_read = CBM_PRIVATE_FILE_LOCK_IO;
-    cbm_private_file_lock_status_t mismatch_write = CBM_PRIVATE_FILE_LOCK_IO;
+    hyp_private_file_lock_status_t mismatch_read = HYP_PRIVATE_FILE_LOCK_IO;
+    hyp_private_file_lock_status_t mismatch_write = HYP_PRIVATE_FILE_LOCK_IO;
     bool mismatch_encoded = false;
     if (reader &&
-        cbm_daemon_ipc_private_lock_directory_new(reader, &directory) == CBM_PRIVATE_FILE_LOCK_OK &&
-        cbm_private_file_lock_try_acquire(directory, CBM_DAEMON_IPC_WINDOWS_RENDEZVOUS_FILE,
-                                          CBM_PRIVATE_FILE_LOCK_EX,
-                                          &record_lock) == CBM_PRIVATE_FILE_LOCK_OK) {
-        mismatch_read = cbm_private_file_lock_payload_read(record_lock, readback, sizeof(readback),
+        hyp_daemon_ipc_private_lock_directory_new(reader, &directory) == HYP_PRIVATE_FILE_LOCK_OK &&
+        hyp_private_file_lock_try_acquire(directory, HYP_DAEMON_IPC_WINDOWS_RENDEZVOUS_FILE,
+                                          HYP_PRIVATE_FILE_LOCK_EX,
+                                          &record_lock) == HYP_PRIVATE_FILE_LOCK_OK) {
+        mismatch_read = hyp_private_file_lock_payload_read(record_lock, readback, sizeof(readback),
                                                            &valid_record_length);
-        bool decoded = mismatch_read == CBM_PRIVATE_FILE_LOCK_OK &&
-                       cbm_daemon_ipc_windows_rendezvous_record_decode(
+        bool decoded = mismatch_read == HYP_PRIVATE_FILE_LOCK_OK &&
+                       hyp_daemon_ipc_windows_rendezvous_record_decode(
                            readback, valid_record_length, mismatched_nonce, mismatched_address);
         if (decoded) {
             mismatched_nonce[0] ^= 0x80U;
-            mismatch_encoded = cbm_daemon_ipc_windows_rendezvous_record_encode(
+            mismatch_encoded = hyp_daemon_ipc_windows_rendezvous_record_encode(
                 mismatched_nonce, mismatched_address, readback);
         }
         if (mismatch_encoded) {
             mismatch_write =
-                cbm_private_file_lock_payload_write(record_lock, readback, sizeof(readback));
+                hyp_private_file_lock_payload_write(record_lock, readback, sizeof(readback));
         }
     }
     ipc_test_win_lock_release(&record_lock);
-    cbm_private_lock_directory_close(directory);
+    hyp_private_lock_directory_close(directory);
     directory = NULL;
-    bool mismatch_failed_closed = mismatch_write == CBM_PRIVATE_FILE_LOCK_OK &&
-                                  cbm_daemon_ipc_endpoint_address(reader) == NULL;
-    int rebound_status = reader ? cbm_daemon_ipc_startup_lock_try_acquire(reader, &startup) : -1;
-    if (rebound_status == 1 && !cbm_daemon_ipc_startup_lock_prepare_handoff(startup)) {
+    bool mismatch_failed_closed = mismatch_write == HYP_PRIVATE_FILE_LOCK_OK &&
+                                  hyp_daemon_ipc_endpoint_address(reader) == NULL;
+    int rebound_status = reader ? hyp_daemon_ipc_startup_lock_try_acquire(reader, &startup) : -1;
+    if (rebound_status == 1 && !hyp_daemon_ipc_startup_lock_prepare_handoff(startup)) {
         rebound_status = -1;
     }
     if (rebound_status == 1) {
-        ipc_test_copy_path(rebound_address, cbm_daemon_ipc_endpoint_address(reader));
+        ipc_test_copy_path(rebound_address, hyp_daemon_ipc_endpoint_address(reader));
     }
-    cbm_daemon_ipc_startup_lock_release(&startup);
+    hyp_daemon_ipc_startup_lock_release(&startup);
     startup = NULL;
     bool rebound = rebound_address[0] && strcmp(rebound_address, repaired_address) != 0;
 
-    cbm_daemon_ipc_startup_lock_release(&startup);
+    hyp_daemon_ipc_startup_lock_release(&startup);
     if (record_lock) {
-        (void)cbm_private_file_lock_release(&record_lock);
+        (void)hyp_private_file_lock_release(&record_lock);
     }
-    cbm_private_lock_directory_close(directory);
-    cbm_daemon_ipc_endpoint_free(reader);
-    cbm_daemon_ipc_endpoint_free(endpoint);
+    hyp_private_lock_directory_close(directory);
+    hyp_daemon_ipc_endpoint_free(reader);
+    hyp_daemon_ipc_endpoint_free(endpoint);
     ipc_test_remove_tree(runtime_dir, parent);
 
     ASSERT_TRUE(parent_ok);
     ASSERT_EQ(initial_status, 1);
     ASSERT_TRUE(original_address[0] != '\0');
-    ASSERT_EQ(directory_status, CBM_PRIVATE_FILE_LOCK_OK);
-    ASSERT_EQ(record_status, CBM_PRIVATE_FILE_LOCK_OK);
-    ASSERT_EQ(write_status, CBM_PRIVATE_FILE_LOCK_OK);
+    ASSERT_EQ(directory_status, HYP_PRIVATE_FILE_LOCK_OK);
+    ASSERT_EQ(record_status, HYP_PRIVATE_FILE_LOCK_OK);
+    ASSERT_EQ(write_status, HYP_PRIVATE_FILE_LOCK_OK);
     ASSERT_TRUE(failed_closed);
     ASSERT_TRUE(reader_did_not_repair);
     ASSERT_EQ(repair_status, 1);
     ASSERT_TRUE(repaired);
-    ASSERT_EQ(mismatch_read, CBM_PRIVATE_FILE_LOCK_OK);
+    ASSERT_EQ(mismatch_read, HYP_PRIVATE_FILE_LOCK_OK);
     ASSERT_TRUE(mismatch_encoded);
-    ASSERT_EQ(mismatch_write, CBM_PRIVATE_FILE_LOCK_OK);
+    ASSERT_EQ(mismatch_write, HYP_PRIVATE_FILE_LOCK_OK);
     ASSERT_TRUE(mismatch_failed_closed);
     ASSERT_EQ(rebound_status, 1);
     ASSERT_TRUE(rebound);
@@ -1462,51 +1462,51 @@ TEST(daemon_ipc_windows_startup_and_lifetime_locks_are_cross_process) {
     static const char key[] = "c1d2e3f405162738";
     char parent[TEST_PATH_CAP] = {0};
     char runtime_dir[TEST_PATH_CAP] = {0};
-    cbm_daemon_ipc_endpoint_t *endpoint = NULL;
-    cbm_daemon_ipc_startup_lock_t *startup = NULL;
-    cbm_daemon_ipc_startup_lock_t *lifetime_startup = NULL;
-    cbm_daemon_ipc_participant_guard_t *participant = NULL;
-    cbm_daemon_ipc_lifetime_reservation_t *lifetime = NULL;
+    hyp_daemon_ipc_endpoint_t *endpoint = NULL;
+    hyp_daemon_ipc_startup_lock_t *startup = NULL;
+    hyp_daemon_ipc_startup_lock_t *lifetime_startup = NULL;
+    hyp_daemon_ipc_participant_guard_t *participant = NULL;
+    hyp_daemon_ipc_lifetime_reservation_t *lifetime = NULL;
 
     bool parent_ok = ipc_test_parent_new(parent, "win-process-locks");
     if (parent_ok) {
-        endpoint = cbm_daemon_ipc_endpoint_new(key, parent);
+        endpoint = hyp_daemon_ipc_endpoint_new(key, parent);
     }
     if (endpoint) {
-        ipc_test_copy_path(runtime_dir, cbm_daemon_ipc_endpoint_runtime_dir(endpoint));
+        ipc_test_copy_path(runtime_dir, hyp_daemon_ipc_endpoint_runtime_dir(endpoint));
     }
     int startup_status =
-        endpoint ? cbm_daemon_ipc_startup_lock_try_acquire(endpoint, &startup) : -1;
+        endpoint ? hyp_daemon_ipc_startup_lock_try_acquire(endpoint, &startup) : -1;
     int child_startup_while_held =
         startup_status == 1 ? ipc_test_win_lock_child("startup", key, parent) : -1;
-    cbm_daemon_ipc_startup_lock_release(&startup);
+    hyp_daemon_ipc_startup_lock_release(&startup);
     startup = NULL;
     int child_startup_after_release =
         endpoint ? ipc_test_win_lock_child("startup", key, parent) : -1;
 
     int lifetime_startup_status =
-        endpoint ? cbm_daemon_ipc_startup_lock_try_acquire(endpoint, &lifetime_startup) : -1;
+        endpoint ? hyp_daemon_ipc_startup_lock_try_acquire(endpoint, &lifetime_startup) : -1;
     bool lifetime_prepared = lifetime_startup_status == 1 &&
-                             cbm_daemon_ipc_startup_lock_prepare_handoff(lifetime_startup);
+                             hyp_daemon_ipc_startup_lock_prepare_handoff(lifetime_startup);
     int participant_status =
-        lifetime_prepared ? cbm_daemon_ipc_participant_guard_try_join(endpoint, &participant) : -1;
+        lifetime_prepared ? hyp_daemon_ipc_participant_guard_try_join(endpoint, &participant) : -1;
     int lifetime_status = participant_status == 1
-                              ? cbm_daemon_ipc_lifetime_reservation_try_acquire(endpoint, &lifetime)
+                              ? hyp_daemon_ipc_lifetime_reservation_try_acquire(endpoint, &lifetime)
                               : -1;
-    cbm_daemon_ipc_startup_lock_release(&lifetime_startup);
+    hyp_daemon_ipc_startup_lock_release(&lifetime_startup);
     lifetime_startup = NULL;
     int child_lifetime_while_held =
         lifetime_status == 1 ? ipc_test_win_lock_child("lifetime", key, parent) : -1;
-    cbm_daemon_ipc_lifetime_reservation_release(lifetime);
+    hyp_daemon_ipc_lifetime_reservation_release(lifetime);
     lifetime = NULL;
     int child_lifetime_after_release =
         endpoint ? ipc_test_win_lock_child("lifetime", key, parent) : -1;
-    bool participant_released = cbm_daemon_ipc_participant_guard_release(&participant);
+    bool participant_released = hyp_daemon_ipc_participant_guard_release(&participant);
 
-    cbm_daemon_ipc_lifetime_reservation_release(lifetime);
-    cbm_daemon_ipc_startup_lock_release(&startup);
-    cbm_daemon_ipc_startup_lock_release(&lifetime_startup);
-    cbm_daemon_ipc_endpoint_free(endpoint);
+    hyp_daemon_ipc_lifetime_reservation_release(lifetime);
+    hyp_daemon_ipc_startup_lock_release(&startup);
+    hyp_daemon_ipc_startup_lock_release(&lifetime_startup);
+    hyp_daemon_ipc_endpoint_free(endpoint);
     ipc_test_remove_tree(runtime_dir, parent);
 
     ASSERT_TRUE(parent_ok);
@@ -1539,60 +1539,60 @@ TEST(daemon_ipc_endpoint_is_namespaced_by_instance_key) {
     bool runtime_is_private_child = false;
     bool invalid_key_rejected = false;
 
-    cbm_daemon_ipc_endpoint_t *a = NULL;
-    cbm_daemon_ipc_endpoint_t *same = NULL;
-    cbm_daemon_ipc_endpoint_t *other = NULL;
-    cbm_daemon_ipc_endpoint_t *invalid = NULL;
-    cbm_daemon_ipc_startup_lock_t *a_startup = NULL;
-    cbm_daemon_ipc_startup_lock_t *other_startup = NULL;
+    hyp_daemon_ipc_endpoint_t *a = NULL;
+    hyp_daemon_ipc_endpoint_t *same = NULL;
+    hyp_daemon_ipc_endpoint_t *other = NULL;
+    hyp_daemon_ipc_endpoint_t *invalid = NULL;
+    hyp_daemon_ipc_startup_lock_t *a_startup = NULL;
+    hyp_daemon_ipc_startup_lock_t *other_startup = NULL;
 
     bool parent_ok =
         ipc_test_parent_new(parent, "namespace") && ipc_test_full_path(canonical_parent, parent);
     if (parent_ok) {
-        a = cbm_daemon_ipc_endpoint_new(key_a, parent);
-        same = cbm_daemon_ipc_endpoint_new(key_a, parent);
-        other = cbm_daemon_ipc_endpoint_new(key_b, parent);
-        invalid = cbm_daemon_ipc_endpoint_new("../../not-a-key", parent);
+        a = hyp_daemon_ipc_endpoint_new(key_a, parent);
+        same = hyp_daemon_ipc_endpoint_new(key_a, parent);
+        other = hyp_daemon_ipc_endpoint_new(key_b, parent);
+        invalid = hyp_daemon_ipc_endpoint_new("../../not-a-key", parent);
         invalid_key_rejected = invalid == NULL;
     }
 
 #ifdef _WIN32
-    int a_startup_status = a ? cbm_daemon_ipc_startup_lock_try_acquire(a, &a_startup) : -1;
+    int a_startup_status = a ? hyp_daemon_ipc_startup_lock_try_acquire(a, &a_startup) : -1;
     int other_startup_status =
-        other ? cbm_daemon_ipc_startup_lock_try_acquire(other, &other_startup) : -1;
+        other ? hyp_daemon_ipc_startup_lock_try_acquire(other, &other_startup) : -1;
     /* Windows addresses are generation-bound and exist only once a startup
      * owner publishes the rendezvous record; drive the documented flow. */
-    if (a_startup_status == 1 && !cbm_daemon_ipc_startup_lock_prepare_handoff(a_startup)) {
+    if (a_startup_status == 1 && !hyp_daemon_ipc_startup_lock_prepare_handoff(a_startup)) {
         a_startup_status = -1;
     }
     if (other_startup_status == 1 &&
-        !cbm_daemon_ipc_startup_lock_prepare_handoff(other_startup)) {
+        !hyp_daemon_ipc_startup_lock_prepare_handoff(other_startup)) {
         other_startup_status = -1;
     }
-    cbm_daemon_ipc_startup_lock_release(&a_startup);
-    cbm_daemon_ipc_startup_lock_release(&other_startup);
+    hyp_daemon_ipc_startup_lock_release(&a_startup);
+    hyp_daemon_ipc_startup_lock_release(&other_startup);
     a_startup = NULL;
     other_startup = NULL;
     if (a_startup_status != 1 || other_startup_status != 1) {
-        cbm_daemon_ipc_endpoint_free(other);
-        cbm_daemon_ipc_endpoint_free(same);
+        hyp_daemon_ipc_endpoint_free(other);
+        hyp_daemon_ipc_endpoint_free(same);
         other = NULL;
         same = NULL;
     }
 #endif
 
     if (a && same && other) {
-        const char *a_address = cbm_daemon_ipc_endpoint_address(a);
-        const char *same_address = cbm_daemon_ipc_endpoint_address(same);
-        const char *other_address = cbm_daemon_ipc_endpoint_address(other);
-        const char *runtime = cbm_daemon_ipc_endpoint_runtime_dir(a);
+        const char *a_address = hyp_daemon_ipc_endpoint_address(a);
+        const char *same_address = hyp_daemon_ipc_endpoint_address(same);
+        const char *other_address = hyp_daemon_ipc_endpoint_address(other);
+        const char *runtime = hyp_daemon_ipc_endpoint_runtime_dir(a);
         same_key_same_address = a_address && same_address && strcmp(a_address, same_address) == 0;
         other_key_other_address =
             a_address && other_address && strcmp(a_address, other_address) != 0;
 #ifdef _WIN32
         address_contains_key = a_address &&
-                               strncmp(a_address, "\\\\.\\pipe\\cbm-daemon-",
-                                       strlen("\\\\.\\pipe\\cbm-daemon-")) == 0 &&
+                               strncmp(a_address, "\\\\.\\pipe\\hyp-daemon-",
+                                       strlen("\\\\.\\pipe\\hyp-daemon-")) == 0 &&
                                strstr(a_address, key_a) == NULL && other_address &&
                                strstr(other_address, key_b) == NULL;
 #else
@@ -1602,16 +1602,16 @@ TEST(daemon_ipc_endpoint_is_namespaced_by_instance_key) {
         runtime_is_private_child = runtime && strcmp(runtime, canonical_parent) != 0 &&
                                    ipc_test_path_has_parent(runtime, canonical_parent);
         ipc_test_copy_path(runtime_dir, runtime);
-        ipc_test_copy_path(same_runtime_dir, cbm_daemon_ipc_endpoint_runtime_dir(same));
-        ipc_test_copy_path(other_runtime_dir, cbm_daemon_ipc_endpoint_runtime_dir(other));
+        ipc_test_copy_path(same_runtime_dir, hyp_daemon_ipc_endpoint_runtime_dir(same));
+        ipc_test_copy_path(other_runtime_dir, hyp_daemon_ipc_endpoint_runtime_dir(other));
     }
 
-    cbm_daemon_ipc_endpoint_free(invalid);
-    cbm_daemon_ipc_startup_lock_release(&other_startup);
-    cbm_daemon_ipc_startup_lock_release(&a_startup);
-    cbm_daemon_ipc_endpoint_free(other);
-    cbm_daemon_ipc_endpoint_free(same);
-    cbm_daemon_ipc_endpoint_free(a);
+    hyp_daemon_ipc_endpoint_free(invalid);
+    hyp_daemon_ipc_startup_lock_release(&other_startup);
+    hyp_daemon_ipc_startup_lock_release(&a_startup);
+    hyp_daemon_ipc_endpoint_free(other);
+    hyp_daemon_ipc_endpoint_free(same);
+    hyp_daemon_ipc_endpoint_free(a);
     if (same_runtime_dir[0] != '\0' && strcmp(same_runtime_dir, runtime_dir) != 0) {
         ipc_test_remove_flat_dir(same_runtime_dir);
     }
@@ -1638,9 +1638,9 @@ TEST(daemon_ipc_relative_runtime_parent_is_canonical_and_stable) {
     char runtime_dir[TEST_PATH_CAP] = {0};
     char cleanup_runtime_dir[TEST_PATH_CAP] = {0};
     char address[TEST_PATH_CAP] = {0};
-    cbm_daemon_ipc_endpoint_t *endpoint = NULL;
-    cbm_daemon_ipc_listener_t *listener = NULL;
-    cbm_daemon_ipc_connection_t *client = NULL;
+    hyp_daemon_ipc_endpoint_t *endpoint = NULL;
+    hyp_daemon_ipc_listener_t *listener = NULL;
+    hyp_daemon_ipc_connection_t *client = NULL;
     bool parent_ok = false;
     bool cwd_saved = false;
     bool entered_parent = false;
@@ -1654,10 +1654,10 @@ TEST(daemon_ipc_relative_runtime_parent_is_canonical_and_stable) {
     cwd_saved = parent_ok && ipc_test_getcwd(saved_cwd, sizeof(saved_cwd)) != NULL;
     entered_parent = cwd_saved && ipc_test_chdir(parent) == 0;
     if (entered_parent) {
-        endpoint = cbm_daemon_ipc_endpoint_new(key, ".");
+        endpoint = hyp_daemon_ipc_endpoint_new(key, ".");
     }
     if (endpoint) {
-        ipc_test_copy_path(runtime_dir, cbm_daemon_ipc_endpoint_runtime_dir(endpoint));
+        ipc_test_copy_path(runtime_dir, hyp_daemon_ipc_endpoint_runtime_dir(endpoint));
         (void)ipc_test_full_path(cleanup_runtime_dir, runtime_dir);
         runtime_canonical = ipc_test_path_is_absolute(runtime_dir) &&
                             ipc_test_path_has_parent(runtime_dir, canonical_parent);
@@ -1666,22 +1666,22 @@ TEST(daemon_ipc_relative_runtime_parent_is_canonical_and_stable) {
         cwd_restored = ipc_test_chdir(saved_cwd) == 0;
     }
     if (endpoint && cwd_restored) {
-        listener = cbm_daemon_ipc_listen(endpoint);
-        ipc_test_copy_path(address, cbm_daemon_ipc_endpoint_address(endpoint));
+        listener = hyp_daemon_ipc_listen(endpoint);
+        ipc_test_copy_path(address, hyp_daemon_ipc_endpoint_address(endpoint));
 #ifdef _WIN32
         address_absolute = strncmp(address, "\\\\.\\pipe\\", 9) == 0;
 #else
         address_absolute = ipc_test_path_is_absolute(address);
 #endif
         if (listener) {
-            client = cbm_daemon_ipc_connect(endpoint, 500);
+            client = hyp_daemon_ipc_connect(endpoint, 500);
         }
         usable_after_chdir = listener != NULL && client != NULL;
     }
 
-    cbm_daemon_ipc_connection_close(client);
-    cbm_daemon_ipc_listener_close(listener);
-    cbm_daemon_ipc_endpoint_free(endpoint);
+    hyp_daemon_ipc_connection_close(client);
+    hyp_daemon_ipc_listener_close(listener);
+    hyp_daemon_ipc_endpoint_free(endpoint);
     if (entered_parent && !cwd_restored) {
         cwd_restored = ipc_test_chdir(saved_cwd) == 0;
     }
@@ -1701,18 +1701,18 @@ TEST(daemon_ipc_rejects_uppercase_instance_key) {
     static const char uppercase_key[] = "ABCDEF0123456789";
     char parent[TEST_PATH_CAP] = {0};
     char runtime_dir[TEST_PATH_CAP] = {0};
-    cbm_daemon_ipc_endpoint_t *endpoint = NULL;
+    hyp_daemon_ipc_endpoint_t *endpoint = NULL;
 
     bool parent_ok = ipc_test_parent_new(parent, "uppercase-key");
     if (parent_ok) {
-        endpoint = cbm_daemon_ipc_endpoint_new(uppercase_key, parent);
+        endpoint = hyp_daemon_ipc_endpoint_new(uppercase_key, parent);
     }
     if (endpoint) {
-        ipc_test_copy_path(runtime_dir, cbm_daemon_ipc_endpoint_runtime_dir(endpoint));
+        ipc_test_copy_path(runtime_dir, hyp_daemon_ipc_endpoint_runtime_dir(endpoint));
     }
     bool rejected = endpoint == NULL;
 
-    cbm_daemon_ipc_endpoint_free(endpoint);
+    hyp_daemon_ipc_endpoint_free(endpoint);
     ipc_test_remove_tree(runtime_dir, parent);
 
     ASSERT_TRUE(parent_ok);
@@ -1725,43 +1725,43 @@ TEST(daemon_ipc_no_spawn_probe_distinguishes_absent_active_and_busy) {
     enum { PROBE_CLIENT_CAP = 64 };
     char parent[TEST_PATH_CAP] = {0};
     char runtime_dir[TEST_PATH_CAP] = {0};
-    cbm_daemon_ipc_endpoint_t *endpoint = NULL;
-    cbm_daemon_ipc_listener_t *listener = NULL;
-    cbm_daemon_ipc_connection_t *clients[PROBE_CLIENT_CAP] = {0};
+    hyp_daemon_ipc_endpoint_t *endpoint = NULL;
+    hyp_daemon_ipc_listener_t *listener = NULL;
+    hyp_daemon_ipc_connection_t *clients[PROBE_CLIENT_CAP] = {0};
     size_t client_count = 0;
     int absent_before = -1;
     int active_or_busy = -1;
     int absent_after = -1;
 
     if (ipc_test_parent_new(parent, "no-spawn-probe")) {
-        endpoint = cbm_daemon_ipc_endpoint_new(key, parent);
+        endpoint = hyp_daemon_ipc_endpoint_new(key, parent);
     }
     if (endpoint) {
-        ipc_test_copy_path(runtime_dir, cbm_daemon_ipc_endpoint_runtime_dir(endpoint));
-        absent_before = cbm_daemon_ipc_endpoint_probe(endpoint, 1);
-        listener = cbm_daemon_ipc_listen(endpoint);
+        ipc_test_copy_path(runtime_dir, hyp_daemon_ipc_endpoint_runtime_dir(endpoint));
+        absent_before = hyp_daemon_ipc_endpoint_probe(endpoint, 1);
+        listener = hyp_daemon_ipc_listen(endpoint);
     }
     /* Do not accept: on Windows the sole pipe instance becomes BUSY; on
      * POSIX this fills the listen backlog. Probe must still report ACTIVE. */
     while (listener && client_count < PROBE_CLIENT_CAP) {
-        cbm_daemon_ipc_connection_t *client = cbm_daemon_ipc_connect(endpoint, 1);
+        hyp_daemon_ipc_connection_t *client = hyp_daemon_ipc_connect(endpoint, 1);
         if (!client) {
             break;
         }
         clients[client_count++] = client;
     }
     if (listener) {
-        active_or_busy = cbm_daemon_ipc_endpoint_probe(endpoint, 1);
+        active_or_busy = hyp_daemon_ipc_endpoint_probe(endpoint, 1);
     }
     for (size_t i = 0; i < client_count; i++) {
-        cbm_daemon_ipc_connection_close(clients[i]);
+        hyp_daemon_ipc_connection_close(clients[i]);
     }
-    cbm_daemon_ipc_listener_close(listener);
+    hyp_daemon_ipc_listener_close(listener);
     listener = NULL;
     if (endpoint) {
-        absent_after = cbm_daemon_ipc_endpoint_probe(endpoint, 1);
+        absent_after = hyp_daemon_ipc_endpoint_probe(endpoint, 1);
     }
-    cbm_daemon_ipc_endpoint_free(endpoint);
+    hyp_daemon_ipc_endpoint_free(endpoint);
     ipc_test_remove_tree(runtime_dir, parent);
 
     ASSERT_EQ(absent_before, 0);
@@ -1776,11 +1776,11 @@ TEST(daemon_ipc_lifetime_reservation_survives_saturated_second_listen) {
     enum { PROBE_CLIENT_CAP = 64 };
     char parent[TEST_PATH_CAP] = {0};
     char runtime_dir[TEST_PATH_CAP] = {0};
-    cbm_daemon_ipc_endpoint_t *endpoint = NULL;
-    cbm_daemon_ipc_listener_t *first = NULL;
-    cbm_daemon_ipc_listener_t *second = NULL;
-    cbm_daemon_ipc_listener_t *after_close = NULL;
-    cbm_daemon_ipc_connection_t *clients[PROBE_CLIENT_CAP] = {0};
+    hyp_daemon_ipc_endpoint_t *endpoint = NULL;
+    hyp_daemon_ipc_listener_t *first = NULL;
+    hyp_daemon_ipc_listener_t *second = NULL;
+    hyp_daemon_ipc_listener_t *after_close = NULL;
+    hyp_daemon_ipc_connection_t *clients[PROBE_CLIENT_CAP] = {0};
     size_t client_count = 0;
     bool first_started = false;
     bool after_close_started = false;
@@ -1791,45 +1791,45 @@ TEST(daemon_ipc_lifetime_reservation_survives_saturated_second_listen) {
     int free_after_close = -1;
 
     if (ipc_test_parent_new(parent, "lifetime-reservation")) {
-        endpoint = cbm_daemon_ipc_endpoint_new(key, parent);
+        endpoint = hyp_daemon_ipc_endpoint_new(key, parent);
     }
     if (endpoint) {
-        ipc_test_copy_path(runtime_dir, cbm_daemon_ipc_endpoint_runtime_dir(endpoint));
-        free_before = cbm_daemon_ipc_lifetime_reservation_probe(endpoint);
-        first = cbm_daemon_ipc_listen(endpoint);
+        ipc_test_copy_path(runtime_dir, hyp_daemon_ipc_endpoint_runtime_dir(endpoint));
+        free_before = hyp_daemon_ipc_lifetime_reservation_probe(endpoint);
+        first = hyp_daemon_ipc_listen(endpoint);
         first_started = first != NULL;
     }
     if (first) {
-        held_while_listening = cbm_daemon_ipc_lifetime_reservation_probe(endpoint);
+        held_while_listening = hyp_daemon_ipc_lifetime_reservation_probe(endpoint);
     }
     /* Keep the first listener from accepting and fill as much transport
      * capacity as the platform exposes. On BSD-derived kernels a subsequent
      * connect can report ECONNREFUSED even though this listener is live. */
     while (first && client_count < PROBE_CLIENT_CAP) {
-        cbm_daemon_ipc_connection_t *client = cbm_daemon_ipc_connect(endpoint, 1);
+        hyp_daemon_ipc_connection_t *client = hyp_daemon_ipc_connect(endpoint, 1);
         if (!client) {
             break;
         }
         clients[client_count++] = client;
     }
     if (first) {
-        second = cbm_daemon_ipc_listen(endpoint);
-        held_after_second_attempt = cbm_daemon_ipc_lifetime_reservation_probe(endpoint);
-        endpoint_after_second_attempt = cbm_daemon_ipc_endpoint_probe(endpoint, 1);
+        second = hyp_daemon_ipc_listen(endpoint);
+        held_after_second_attempt = hyp_daemon_ipc_lifetime_reservation_probe(endpoint);
+        endpoint_after_second_attempt = hyp_daemon_ipc_endpoint_probe(endpoint, 1);
     }
     for (size_t i = 0; i < client_count; i++) {
-        cbm_daemon_ipc_connection_close(clients[i]);
+        hyp_daemon_ipc_connection_close(clients[i]);
     }
-    cbm_daemon_ipc_listener_close(second);
-    cbm_daemon_ipc_listener_close(first);
+    hyp_daemon_ipc_listener_close(second);
+    hyp_daemon_ipc_listener_close(first);
     first = NULL;
     if (endpoint) {
-        free_after_close = cbm_daemon_ipc_lifetime_reservation_probe(endpoint);
-        after_close = cbm_daemon_ipc_listen(endpoint);
+        free_after_close = hyp_daemon_ipc_lifetime_reservation_probe(endpoint);
+        after_close = hyp_daemon_ipc_listen(endpoint);
         after_close_started = after_close != NULL;
     }
-    cbm_daemon_ipc_listener_close(after_close);
-    cbm_daemon_ipc_endpoint_free(endpoint);
+    hyp_daemon_ipc_listener_close(after_close);
+    hyp_daemon_ipc_endpoint_free(endpoint);
     ipc_test_remove_tree(runtime_dir, parent);
 
     ASSERT_EQ(free_before, 0);
@@ -1848,13 +1848,13 @@ TEST(daemon_ipc_lifetime_reservation_transfers_without_unlock_window) {
     static const char key[] = "1029384756abcdef";
     char parent[TEST_PATH_CAP] = {0};
     char runtime_dir[TEST_PATH_CAP] = {0};
-    cbm_daemon_ipc_endpoint_t *endpoint = NULL;
-    cbm_daemon_ipc_startup_lock_t *startup = NULL;
-    cbm_daemon_ipc_participant_guard_t *participant = NULL;
-    cbm_daemon_ipc_lifetime_reservation_t *reservation = NULL;
-    cbm_daemon_ipc_listener_t *listener = NULL;
-    cbm_daemon_ipc_listener_t *contender = NULL;
-    cbm_daemon_ipc_connection_t *client = NULL;
+    hyp_daemon_ipc_endpoint_t *endpoint = NULL;
+    hyp_daemon_ipc_startup_lock_t *startup = NULL;
+    hyp_daemon_ipc_participant_guard_t *participant = NULL;
+    hyp_daemon_ipc_lifetime_reservation_t *reservation = NULL;
+    hyp_daemon_ipc_listener_t *listener = NULL;
+    hyp_daemon_ipc_listener_t *contender = NULL;
+    hyp_daemon_ipc_connection_t *client = NULL;
     int acquired = -1;
     int held_before_transfer = -1;
     int held_after_transfer = -1;
@@ -1863,43 +1863,43 @@ TEST(daemon_ipc_lifetime_reservation_transfers_without_unlock_window) {
     bool connected = false;
 
     if (ipc_test_parent_new(parent, "lifetime-transfer")) {
-        endpoint = cbm_daemon_ipc_endpoint_new(key, parent);
+        endpoint = hyp_daemon_ipc_endpoint_new(key, parent);
     }
     if (endpoint) {
-        ipc_test_copy_path(runtime_dir, cbm_daemon_ipc_endpoint_runtime_dir(endpoint));
-        int startup_result = cbm_daemon_ipc_startup_lock_try_acquire(endpoint, &startup);
-        bool prepared = startup_result == 1 && cbm_daemon_ipc_startup_lock_prepare_handoff(startup);
+        ipc_test_copy_path(runtime_dir, hyp_daemon_ipc_endpoint_runtime_dir(endpoint));
+        int startup_result = hyp_daemon_ipc_startup_lock_try_acquire(endpoint, &startup);
+        bool prepared = startup_result == 1 && hyp_daemon_ipc_startup_lock_prepare_handoff(startup);
         int participant_result =
-            prepared ? cbm_daemon_ipc_participant_guard_try_join(endpoint, &participant) : -1;
+            prepared ? hyp_daemon_ipc_participant_guard_try_join(endpoint, &participant) : -1;
         acquired = participant_result == 1
-                       ? cbm_daemon_ipc_lifetime_reservation_try_acquire(endpoint, &reservation)
+                       ? hyp_daemon_ipc_lifetime_reservation_try_acquire(endpoint, &reservation)
                        : -1;
-        cbm_daemon_ipc_startup_lock_release(&startup);
+        hyp_daemon_ipc_startup_lock_release(&startup);
         startup = NULL;
     }
     if (reservation) {
-        held_before_transfer = cbm_daemon_ipc_lifetime_reservation_probe(endpoint);
-        contender = cbm_daemon_ipc_listen(endpoint);
-        listener = cbm_daemon_ipc_listen_reserved(endpoint, &reservation);
+        held_before_transfer = hyp_daemon_ipc_lifetime_reservation_probe(endpoint);
+        contender = hyp_daemon_ipc_listen(endpoint);
+        listener = hyp_daemon_ipc_listen_reserved(endpoint, &reservation);
         transfer_consumed = listener != NULL && reservation == NULL;
     }
     if (listener) {
-        held_after_transfer = cbm_daemon_ipc_lifetime_reservation_probe(endpoint);
-        client = cbm_daemon_ipc_connect(endpoint, 500);
+        held_after_transfer = hyp_daemon_ipc_lifetime_reservation_probe(endpoint);
+        client = hyp_daemon_ipc_connect(endpoint, 500);
         connected = client != NULL;
     }
 
-    cbm_daemon_ipc_connection_close(client);
-    cbm_daemon_ipc_listener_close(contender);
-    cbm_daemon_ipc_listener_close(listener);
+    hyp_daemon_ipc_connection_close(client);
+    hyp_daemon_ipc_listener_close(contender);
+    hyp_daemon_ipc_listener_close(listener);
     listener = NULL;
-    cbm_daemon_ipc_lifetime_reservation_release(reservation);
+    hyp_daemon_ipc_lifetime_reservation_release(reservation);
     reservation = NULL;
-    bool participant_released = cbm_daemon_ipc_participant_guard_release(&participant);
+    bool participant_released = hyp_daemon_ipc_participant_guard_release(&participant);
     if (endpoint) {
-        free_after_close = cbm_daemon_ipc_lifetime_reservation_probe(endpoint);
+        free_after_close = hyp_daemon_ipc_lifetime_reservation_probe(endpoint);
     }
-    cbm_daemon_ipc_endpoint_free(endpoint);
+    hyp_daemon_ipc_endpoint_free(endpoint);
     ipc_test_remove_tree(runtime_dir, parent);
 
     ASSERT_EQ(acquired, 1);
@@ -1915,7 +1915,7 @@ TEST(daemon_ipc_lifetime_reservation_transfers_without_unlock_window) {
 }
 
 typedef struct {
-    cbm_daemon_ipc_listener_t *listener;
+    hyp_daemon_ipc_listener_t *listener;
     int result;
     uint64_t peer_pid;
 } ipc_roundtrip_server_t;
@@ -1932,27 +1932,27 @@ static void *ipc_roundtrip_server(void *opaque) {
     static const uint8_t expected_request[] = {0x00, 'r', 'e', 'q', 0xff};
     static const uint8_t response[] = {'o', 'k', 0x00, 0x7f};
     ipc_roundtrip_server_t *server = (ipc_roundtrip_server_t *)opaque;
-    cbm_daemon_ipc_connection_t *connection = NULL;
-    cbm_daemon_frame_t frame = {0};
+    hyp_daemon_ipc_connection_t *connection = NULL;
+    hyp_daemon_frame_t frame = {0};
     uint8_t *payload = NULL;
 
     server->result = 1;
-    if (cbm_daemon_ipc_accept(server->listener, 2000, &connection) != 1 || !connection) {
+    if (hyp_daemon_ipc_accept(server->listener, 2000, &connection) != 1 || !connection) {
         goto done;
     }
-    server->peer_pid = cbm_daemon_ipc_connection_peer_pid(connection);
+    server->peer_pid = hyp_daemon_ipc_connection_peer_pid(connection);
     if (server->peer_pid == 0) {
         goto done;
     }
-    if (cbm_daemon_ipc_receive_frame(connection, 2000, &frame, &payload) != 1) {
+    if (hyp_daemon_ipc_receive_frame(connection, 2000, &frame, &payload) != 1) {
         goto done;
     }
-    if (frame.type != CBM_DAEMON_FRAME_REQUEST || frame.flags != 0x1234 ||
+    if (frame.type != HYP_DAEMON_FRAME_REQUEST || frame.flags != 0x1234 ||
         frame.length != sizeof(expected_request) || !payload ||
         memcmp(payload, expected_request, sizeof(expected_request)) != 0) {
         goto done;
     }
-    if (!cbm_daemon_ipc_send_frame(connection, CBM_DAEMON_FRAME_RESPONSE, 0x00a5, response,
+    if (!hyp_daemon_ipc_send_frame(connection, HYP_DAEMON_FRAME_RESPONSE, 0x00a5, response,
                                    (uint32_t)sizeof(response))) {
         goto done;
     }
@@ -1960,7 +1960,7 @@ static void *ipc_roundtrip_server(void *opaque) {
 
 done:
     free(payload); /* receive_frame returns a malloc-owned payload */
-    cbm_daemon_ipc_connection_close(connection);
+    hyp_daemon_ipc_connection_close(connection);
     return NULL;
 }
 
@@ -1970,13 +1970,13 @@ TEST(daemon_ipc_local_frame_roundtrip) {
     static const uint8_t expected_response[] = {'o', 'k', 0x00, 0x7f};
     char parent[TEST_PATH_CAP] = {0};
     char runtime_dir[TEST_PATH_CAP] = {0};
-    cbm_daemon_ipc_endpoint_t *endpoint = NULL;
-    cbm_daemon_ipc_listener_t *listener = NULL;
-    cbm_daemon_ipc_connection_t *client = NULL;
-    cbm_thread_t thread;
+    hyp_daemon_ipc_endpoint_t *endpoint = NULL;
+    hyp_daemon_ipc_listener_t *listener = NULL;
+    hyp_daemon_ipc_connection_t *client = NULL;
+    hyp_thread_t thread;
     bool thread_started = false;
     ipc_roundtrip_server_t server = {0};
-    cbm_daemon_frame_t response_frame = {0};
+    hyp_daemon_frame_t response_frame = {0};
     uint8_t *response_payload = NULL;
     uint64_t client_peer_pid = 0;
     int result = 1;
@@ -1984,30 +1984,30 @@ TEST(daemon_ipc_local_frame_roundtrip) {
     if (!ipc_test_parent_new(parent, "roundtrip")) {
         goto cleanup;
     }
-    endpoint = cbm_daemon_ipc_endpoint_new(key, parent);
+    endpoint = hyp_daemon_ipc_endpoint_new(key, parent);
     if (!endpoint) {
         goto cleanup;
     }
-    ipc_test_copy_path(runtime_dir, cbm_daemon_ipc_endpoint_runtime_dir(endpoint));
-    listener = cbm_daemon_ipc_listen(endpoint);
+    ipc_test_copy_path(runtime_dir, hyp_daemon_ipc_endpoint_runtime_dir(endpoint));
+    listener = hyp_daemon_ipc_listen(endpoint);
     if (!listener) {
         goto cleanup;
     }
     server.listener = listener;
     server.result = 1;
-    if (cbm_thread_create(&thread, 0, ipc_roundtrip_server, &server) != 0) {
+    if (hyp_thread_create(&thread, 0, ipc_roundtrip_server, &server) != 0) {
         goto cleanup;
     }
     thread_started = true;
-    client = cbm_daemon_ipc_connect(endpoint, 2000);
-    client_peer_pid = cbm_daemon_ipc_connection_peer_pid(client);
+    client = hyp_daemon_ipc_connect(endpoint, 2000);
+    client_peer_pid = hyp_daemon_ipc_connection_peer_pid(client);
     if (!client || client_peer_pid == 0 ||
-        !cbm_daemon_ipc_send_frame(client, CBM_DAEMON_FRAME_REQUEST, 0x1234, request,
+        !hyp_daemon_ipc_send_frame(client, HYP_DAEMON_FRAME_REQUEST, 0x1234, request,
                                    (uint32_t)sizeof(request)) ||
-        cbm_daemon_ipc_receive_frame(client, 2000, &response_frame, &response_payload) != 1) {
+        hyp_daemon_ipc_receive_frame(client, 2000, &response_frame, &response_payload) != 1) {
         goto cleanup;
     }
-    if (response_frame.type != CBM_DAEMON_FRAME_RESPONSE || response_frame.flags != 0x00a5 ||
+    if (response_frame.type != HYP_DAEMON_FRAME_RESPONSE || response_frame.flags != 0x00a5 ||
         response_frame.length != sizeof(expected_response) || !response_payload ||
         memcmp(response_payload, expected_response, sizeof(expected_response)) != 0) {
         goto cleanup;
@@ -2016,15 +2016,15 @@ TEST(daemon_ipc_local_frame_roundtrip) {
 
 cleanup:
     free(response_payload);
-    cbm_daemon_ipc_connection_close(client);
+    hyp_daemon_ipc_connection_close(client);
     if (thread_started) {
-        int join_result = cbm_thread_join(&thread);
+        int join_result = hyp_thread_join(&thread);
         if (join_result != 0 || server.result != 0) {
             result = 1;
         }
     }
-    cbm_daemon_ipc_listener_close(listener);
-    cbm_daemon_ipc_endpoint_free(endpoint);
+    hyp_daemon_ipc_listener_close(listener);
+    hyp_daemon_ipc_endpoint_free(endpoint);
     ipc_test_remove_tree(runtime_dir, parent);
 
     ASSERT_EQ(result, 0);
@@ -2038,11 +2038,11 @@ TEST(daemon_ipc_bounded_receive_rejects_oversize_before_payload) {
     static const uint8_t oversized_payload[] = {'o', 'v', 'e', 'r', '!'};
     char parent[TEST_PATH_CAP] = {0};
     char runtime_dir[TEST_PATH_CAP] = {0};
-    cbm_daemon_ipc_endpoint_t *endpoint = NULL;
-    cbm_daemon_ipc_listener_t *listener = NULL;
-    cbm_daemon_ipc_connection_t *client = NULL;
-    cbm_daemon_ipc_connection_t *server = NULL;
-    cbm_daemon_frame_t frame = {0};
+    hyp_daemon_ipc_endpoint_t *endpoint = NULL;
+    hyp_daemon_ipc_listener_t *listener = NULL;
+    hyp_daemon_ipc_connection_t *client = NULL;
+    hyp_daemon_ipc_connection_t *server = NULL;
+    hyp_daemon_frame_t frame = {0};
     uint8_t *received_payload = NULL;
     bool parent_ok = ipc_test_parent_new(parent, "bounded-frame");
     int accepted = -1;
@@ -2053,37 +2053,37 @@ TEST(daemon_ipc_bounded_receive_rejects_oversize_before_payload) {
     bool bounded_frame_empty = false;
 
     if (parent_ok) {
-        endpoint = cbm_daemon_ipc_endpoint_new(key, parent);
+        endpoint = hyp_daemon_ipc_endpoint_new(key, parent);
     }
     if (endpoint) {
-        ipc_test_copy_path(runtime_dir, cbm_daemon_ipc_endpoint_runtime_dir(endpoint));
-        listener = cbm_daemon_ipc_listen(endpoint);
+        ipc_test_copy_path(runtime_dir, hyp_daemon_ipc_endpoint_runtime_dir(endpoint));
+        listener = hyp_daemon_ipc_listen(endpoint);
     }
     if (listener) {
-        client = cbm_daemon_ipc_connect(endpoint, 500);
+        client = hyp_daemon_ipc_connect(endpoint, 500);
     }
     if (client) {
-        accepted = cbm_daemon_ipc_accept(listener, 500, &server);
+        accepted = hyp_daemon_ipc_accept(listener, 500, &server);
     }
     if (accepted == 1 && server) {
-        sent = cbm_daemon_ipc_send_frame(client, CBM_DAEMON_FRAME_REQUEST, 0x2021,
+        sent = hyp_daemon_ipc_send_frame(client, HYP_DAEMON_FRAME_REQUEST, 0x2021,
                                          oversized_payload, (uint32_t)sizeof(oversized_payload));
     }
     if (sent) {
-        bounded_result = cbm_daemon_ipc_receive_frame_bounded(
+        bounded_result = hyp_daemon_ipc_receive_frame_bounded(
             server, 500, (uint32_t)sizeof(oversized_payload) - 1, &frame, &received_payload);
         bounded_payload_absent = received_payload == NULL;
         bounded_frame_empty = frame.length == 0;
         free(received_payload);
         received_payload = NULL;
-        reuse_result = cbm_daemon_ipc_receive_frame(server, 1, &frame, &received_payload);
+        reuse_result = hyp_daemon_ipc_receive_frame(server, 1, &frame, &received_payload);
     }
 
     free(received_payload);
-    cbm_daemon_ipc_connection_close(server);
-    cbm_daemon_ipc_connection_close(client);
-    cbm_daemon_ipc_listener_close(listener);
-    cbm_daemon_ipc_endpoint_free(endpoint);
+    hyp_daemon_ipc_connection_close(server);
+    hyp_daemon_ipc_connection_close(client);
+    hyp_daemon_ipc_listener_close(listener);
+    hyp_daemon_ipc_endpoint_free(endpoint);
     ipc_test_remove_tree(runtime_dir, parent);
 
     ASSERT_TRUE(parent_ok);
@@ -2097,8 +2097,8 @@ TEST(daemon_ipc_bounded_receive_rejects_oversize_before_payload) {
 }
 
 typedef struct {
-    cbm_daemon_ipc_listener_t *listener;
-    cbm_daemon_ipc_connection_t *connection;
+    hyp_daemon_ipc_listener_t *listener;
+    hyp_daemon_ipc_connection_t *connection;
     atomic_bool waiting;
     int receive_result;
 } ipc_forever_wait_server_t;
@@ -2112,14 +2112,14 @@ typedef struct {
  * closes it after joining, so `interrupt` can only ever see a live connection. */
 static void *ipc_forever_wait_server(void *opaque) {
     ipc_forever_wait_server_t *server = (ipc_forever_wait_server_t *)opaque;
-    cbm_daemon_frame_t frame = {0};
+    hyp_daemon_frame_t frame = {0};
     uint8_t *payload = NULL;
     server->receive_result = -2;
-    if (cbm_daemon_ipc_accept(server->listener, 2000, &server->connection) == 1 &&
+    if (hyp_daemon_ipc_accept(server->listener, 2000, &server->connection) == 1 &&
         server->connection) {
         atomic_store_explicit(&server->waiting, true, memory_order_release);
-        server->receive_result = cbm_daemon_ipc_receive_frame(
-            server->connection, CBM_DAEMON_IPC_WAIT_FOREVER, &frame, &payload);
+        server->receive_result = hyp_daemon_ipc_receive_frame(
+            server->connection, HYP_DAEMON_IPC_WAIT_FOREVER, &frame, &payload);
     }
     free(payload);
     return NULL;
@@ -2129,10 +2129,10 @@ TEST(daemon_ipc_wait_forever_is_interruptible) {
     static const char key[] = "1212121212121212";
     char parent[TEST_PATH_CAP] = {0};
     char runtime_dir[TEST_PATH_CAP] = {0};
-    cbm_daemon_ipc_endpoint_t *endpoint = NULL;
-    cbm_daemon_ipc_listener_t *listener = NULL;
-    cbm_daemon_ipc_connection_t *client = NULL;
-    cbm_thread_t thread;
+    hyp_daemon_ipc_endpoint_t *endpoint = NULL;
+    hyp_daemon_ipc_listener_t *listener = NULL;
+    hyp_daemon_ipc_connection_t *client = NULL;
+    hyp_thread_t thread;
     bool thread_started = false;
     bool reached_wait = false;
     int join_result = -1;
@@ -2140,37 +2140,37 @@ TEST(daemon_ipc_wait_forever_is_interruptible) {
     atomic_init(&server.waiting, false);
 
     if (ipc_test_parent_new(parent, "wait-forever")) {
-        endpoint = cbm_daemon_ipc_endpoint_new(key, parent);
+        endpoint = hyp_daemon_ipc_endpoint_new(key, parent);
     }
     if (endpoint) {
-        ipc_test_copy_path(runtime_dir, cbm_daemon_ipc_endpoint_runtime_dir(endpoint));
-        listener = cbm_daemon_ipc_listen(endpoint);
+        ipc_test_copy_path(runtime_dir, hyp_daemon_ipc_endpoint_runtime_dir(endpoint));
+        listener = hyp_daemon_ipc_listen(endpoint);
     }
     if (listener) {
         server.listener = listener;
-        thread_started = cbm_thread_create(&thread, 0, ipc_forever_wait_server, &server) == 0;
+        thread_started = hyp_thread_create(&thread, 0, ipc_forever_wait_server, &server) == 0;
     }
     if (thread_started) {
-        client = cbm_daemon_ipc_connect(endpoint, 2000);
+        client = hyp_daemon_ipc_connect(endpoint, 2000);
     }
-    uint64_t deadline = cbm_now_ms() + 2000;
-    while (client && cbm_now_ms() < deadline &&
+    uint64_t deadline = hyp_now_ms() + 2000;
+    while (client && hyp_now_ms() < deadline &&
            !atomic_load_explicit(&server.waiting, memory_order_acquire)) {
-        cbm_usleep(1000);
+        hyp_usleep(1000);
     }
     reached_wait = atomic_load_explicit(&server.waiting, memory_order_acquire);
     if (reached_wait) {
-        cbm_daemon_ipc_connection_interrupt(server.connection);
+        hyp_daemon_ipc_connection_interrupt(server.connection);
     }
     if (thread_started) {
-        join_result = cbm_thread_join(&thread);
+        join_result = hyp_thread_join(&thread);
     }
     /* Safe only after the join: the server thread no longer touches it. */
-    cbm_daemon_ipc_connection_close(server.connection);
+    hyp_daemon_ipc_connection_close(server.connection);
     server.connection = NULL;
-    cbm_daemon_ipc_connection_close(client);
-    cbm_daemon_ipc_listener_close(listener);
-    cbm_daemon_ipc_endpoint_free(endpoint);
+    hyp_daemon_ipc_connection_close(client);
+    hyp_daemon_ipc_listener_close(listener);
+    hyp_daemon_ipc_endpoint_free(endpoint);
     ipc_test_remove_tree(runtime_dir, parent);
 
     ASSERT_TRUE(thread_started);
@@ -2182,8 +2182,8 @@ TEST(daemon_ipc_wait_forever_is_interruptible) {
 }
 
 typedef struct {
-    const cbm_daemon_ipc_endpoint_t *endpoint;
-    cbm_daemon_ipc_listener_t *listener;
+    const hyp_daemon_ipc_endpoint_t *endpoint;
+    hyp_daemon_ipc_listener_t *listener;
     atomic_bool delay_started;
 } ipc_delayed_listener_t;
 
@@ -2191,8 +2191,8 @@ static void *ipc_delayed_listener_start(void *opaque) {
     ipc_delayed_listener_t *delayed = (ipc_delayed_listener_t *)opaque;
     struct timespec delay = {.tv_sec = 0, .tv_nsec = 150000000};
     atomic_store_explicit(&delayed->delay_started, true, memory_order_release);
-    (void)cbm_nanosleep(&delay, NULL);
-    delayed->listener = cbm_daemon_ipc_listen(delayed->endpoint);
+    (void)hyp_nanosleep(&delay, NULL);
+    delayed->listener = hyp_daemon_ipc_listen(delayed->endpoint);
     return NULL;
 }
 
@@ -2200,9 +2200,9 @@ TEST(daemon_ipc_connect_waits_for_delayed_listener) {
     static const char key[] = "2222333344445555";
     char parent[TEST_PATH_CAP] = {0};
     char runtime_dir[TEST_PATH_CAP] = {0};
-    cbm_daemon_ipc_endpoint_t *endpoint = NULL;
-    cbm_daemon_ipc_connection_t *client = NULL;
-    cbm_thread_t thread;
+    hyp_daemon_ipc_endpoint_t *endpoint = NULL;
+    hyp_daemon_ipc_connection_t *client = NULL;
+    hyp_thread_t thread;
     bool thread_started = false;
     bool delay_observed = false;
     int join_result = -1;
@@ -2211,12 +2211,12 @@ TEST(daemon_ipc_connect_waits_for_delayed_listener) {
 
     bool parent_ok = ipc_test_parent_new(parent, "delayed-listener");
     if (parent_ok) {
-        endpoint = cbm_daemon_ipc_endpoint_new(key, parent);
+        endpoint = hyp_daemon_ipc_endpoint_new(key, parent);
     }
     if (endpoint) {
-        ipc_test_copy_path(runtime_dir, cbm_daemon_ipc_endpoint_runtime_dir(endpoint));
+        ipc_test_copy_path(runtime_dir, hyp_daemon_ipc_endpoint_runtime_dir(endpoint));
         delayed.endpoint = endpoint;
-        thread_started = cbm_thread_create(&thread, 0, ipc_delayed_listener_start, &delayed) == 0;
+        thread_started = hyp_thread_create(&thread, 0, ipc_delayed_listener_start, &delayed) == 0;
     }
     if (thread_started) {
         struct timespec poll_delay = {.tv_sec = 0, .tv_nsec = 1000000};
@@ -2225,20 +2225,20 @@ TEST(daemon_ipc_connect_waits_for_delayed_listener) {
                 delay_observed = true;
                 break;
             }
-            (void)cbm_nanosleep(&poll_delay, NULL);
+            (void)hyp_nanosleep(&poll_delay, NULL);
         }
     }
     if (delay_observed) {
-        client = cbm_daemon_ipc_connect(endpoint, 1500);
+        client = hyp_daemon_ipc_connect(endpoint, 1500);
     }
     if (thread_started) {
-        join_result = cbm_thread_join(&thread);
+        join_result = hyp_thread_join(&thread);
     }
     bool connected_after_wait = client != NULL && delayed.listener != NULL;
 
-    cbm_daemon_ipc_connection_close(client);
-    cbm_daemon_ipc_listener_close(delayed.listener);
-    cbm_daemon_ipc_endpoint_free(endpoint);
+    hyp_daemon_ipc_connection_close(client);
+    hyp_daemon_ipc_listener_close(delayed.listener);
+    hyp_daemon_ipc_endpoint_free(endpoint);
     ipc_test_remove_tree(runtime_dir, parent);
 
     ASSERT_TRUE(parent_ok);
@@ -2250,15 +2250,15 @@ TEST(daemon_ipc_connect_waits_for_delayed_listener) {
 }
 
 typedef struct {
-    const cbm_daemon_ipc_endpoint_t *endpoint;
+    const hyp_daemon_ipc_endpoint_t *endpoint;
     int result;
 } ipc_lock_contender_t;
 
 static void *ipc_lock_contender(void *opaque) {
     ipc_lock_contender_t *contender = (ipc_lock_contender_t *)opaque;
-    cbm_daemon_ipc_startup_lock_t *lock = NULL;
-    contender->result = cbm_daemon_ipc_startup_lock_try_acquire(contender->endpoint, &lock);
-    cbm_daemon_ipc_startup_lock_release(&lock);
+    hyp_daemon_ipc_startup_lock_t *lock = NULL;
+    contender->result = hyp_daemon_ipc_startup_lock_try_acquire(contender->endpoint, &lock);
+    hyp_daemon_ipc_startup_lock_release(&lock);
     return NULL;
 }
 
@@ -2266,10 +2266,10 @@ TEST(daemon_ipc_startup_lock_has_one_winner) {
     static const char key[] = "5555666677778888";
     char parent[TEST_PATH_CAP] = {0};
     char runtime_dir[TEST_PATH_CAP] = {0};
-    cbm_daemon_ipc_endpoint_t *endpoint = NULL;
-    cbm_daemon_ipc_startup_lock_t *first = NULL;
-    cbm_daemon_ipc_startup_lock_t *after_release = NULL;
-    cbm_thread_t thread;
+    hyp_daemon_ipc_endpoint_t *endpoint = NULL;
+    hyp_daemon_ipc_startup_lock_t *first = NULL;
+    hyp_daemon_ipc_startup_lock_t *after_release = NULL;
+    hyp_thread_t thread;
     bool thread_started = false;
     ipc_lock_contender_t contender = {0};
     int first_result = -1;
@@ -2277,31 +2277,31 @@ TEST(daemon_ipc_startup_lock_has_one_winner) {
     int join_result = -1;
 
     if (ipc_test_parent_new(parent, "startup-lock")) {
-        endpoint = cbm_daemon_ipc_endpoint_new(key, parent);
+        endpoint = hyp_daemon_ipc_endpoint_new(key, parent);
     }
     if (endpoint) {
-        ipc_test_copy_path(runtime_dir, cbm_daemon_ipc_endpoint_runtime_dir(endpoint));
-        first_result = cbm_daemon_ipc_startup_lock_try_acquire(endpoint, &first);
+        ipc_test_copy_path(runtime_dir, hyp_daemon_ipc_endpoint_runtime_dir(endpoint));
+        first_result = hyp_daemon_ipc_startup_lock_try_acquire(endpoint, &first);
     }
     if (first_result == 1 && first) {
         contender.endpoint = endpoint;
         contender.result = -1;
-        if (cbm_thread_create(&thread, 0, ipc_lock_contender, &contender) == 0) {
+        if (hyp_thread_create(&thread, 0, ipc_lock_contender, &contender) == 0) {
             thread_started = true;
-            join_result = cbm_thread_join(&thread);
+            join_result = hyp_thread_join(&thread);
             thread_started = false;
         }
     }
-    cbm_daemon_ipc_startup_lock_release(&first);
+    hyp_daemon_ipc_startup_lock_release(&first);
     first = NULL;
     if (endpoint) {
-        reacquire_result = cbm_daemon_ipc_startup_lock_try_acquire(endpoint, &after_release);
+        reacquire_result = hyp_daemon_ipc_startup_lock_try_acquire(endpoint, &after_release);
     }
-    cbm_daemon_ipc_startup_lock_release(&after_release);
+    hyp_daemon_ipc_startup_lock_release(&after_release);
     if (thread_started) {
-        (void)cbm_thread_join(&thread);
+        (void)hyp_thread_join(&thread);
     }
-    cbm_daemon_ipc_endpoint_free(endpoint);
+    hyp_daemon_ipc_endpoint_free(endpoint);
     ipc_test_remove_tree(runtime_dir, parent);
 
     ASSERT_EQ(first_result, 1);
@@ -2315,49 +2315,49 @@ TEST(daemon_ipc_activation_probe_ignores_matching_startup_claim_only) {
     static const char key[] = "5c5c6d6d7e7e8f8f";
     char parent[TEST_PATH_CAP] = {0};
     char runtime_dir[TEST_PATH_CAP] = {0};
-    cbm_daemon_ipc_endpoint_t *endpoint = NULL;
-    cbm_daemon_ipc_endpoint_t *wrong_endpoint = NULL;
-    cbm_daemon_ipc_startup_lock_t *startup = NULL;
-    cbm_daemon_ipc_listener_t *listener = NULL;
+    hyp_daemon_ipc_endpoint_t *endpoint = NULL;
+    hyp_daemon_ipc_endpoint_t *wrong_endpoint = NULL;
+    hyp_daemon_ipc_startup_lock_t *startup = NULL;
+    hyp_daemon_ipc_listener_t *listener = NULL;
 
     bool parent_ok = ipc_test_parent_new(parent, "activation-probe");
     if (parent_ok) {
-        endpoint = cbm_daemon_ipc_endpoint_new(key, parent);
-        wrong_endpoint = cbm_daemon_ipc_endpoint_new("5c5c6d6d7e7e8f90", parent);
+        endpoint = hyp_daemon_ipc_endpoint_new(key, parent);
+        wrong_endpoint = hyp_daemon_ipc_endpoint_new("5c5c6d6d7e7e8f90", parent);
     }
     if (endpoint) {
-        ipc_test_copy_path(runtime_dir, cbm_daemon_ipc_endpoint_runtime_dir(endpoint));
+        ipc_test_copy_path(runtime_dir, hyp_daemon_ipc_endpoint_runtime_dir(endpoint));
     }
     int without_lock =
-        endpoint ? cbm_daemon_ipc_generation_probe_under_startup_lock(endpoint, NULL) : 0;
+        endpoint ? hyp_daemon_ipc_generation_probe_under_startup_lock(endpoint, NULL) : 0;
     int startup_result =
-        endpoint ? cbm_daemon_ipc_startup_lock_try_acquire(endpoint, &startup) : -1;
-    int generic_self = startup ? cbm_daemon_ipc_legacy_generation_probe(endpoint) : -1;
+        endpoint ? hyp_daemon_ipc_startup_lock_try_acquire(endpoint, &startup) : -1;
+    int generic_self = startup ? hyp_daemon_ipc_legacy_generation_probe(endpoint) : -1;
     int matching =
-        startup ? cbm_daemon_ipc_generation_probe_under_startup_lock(endpoint, startup) : -2;
+        startup ? hyp_daemon_ipc_generation_probe_under_startup_lock(endpoint, startup) : -2;
     int mismatched =
         startup && wrong_endpoint
-            ? cbm_daemon_ipc_generation_probe_under_startup_lock(wrong_endpoint, startup)
+            ? hyp_daemon_ipc_generation_probe_under_startup_lock(wrong_endpoint, startup)
             : -2;
-    bool prepared = startup && cbm_daemon_ipc_startup_lock_prepare_handoff(startup);
+    bool prepared = startup && hyp_daemon_ipc_startup_lock_prepare_handoff(startup);
     int after_prepare =
-        prepared ? cbm_daemon_ipc_generation_probe_under_startup_lock(endpoint, startup) : -2;
-    cbm_daemon_ipc_startup_lock_release(&startup);
+        prepared ? hyp_daemon_ipc_generation_probe_under_startup_lock(endpoint, startup) : -2;
+    hyp_daemon_ipc_startup_lock_release(&startup);
     startup = NULL;
-    int after_release = endpoint ? cbm_daemon_ipc_legacy_generation_probe(endpoint) : -1;
-    listener = endpoint ? cbm_daemon_ipc_listen(endpoint) : NULL;
+    int after_release = endpoint ? hyp_daemon_ipc_legacy_generation_probe(endpoint) : -1;
+    listener = endpoint ? hyp_daemon_ipc_listen(endpoint) : NULL;
     bool listener_started = listener != NULL;
     int active_startup =
-        listener ? cbm_daemon_ipc_startup_lock_try_acquire(endpoint, &startup) : -1;
+        listener ? hyp_daemon_ipc_startup_lock_try_acquire(endpoint, &startup) : -1;
     int active_generation =
-        active_startup == 1 ? cbm_daemon_ipc_generation_probe_under_startup_lock(endpoint, startup)
+        active_startup == 1 ? hyp_daemon_ipc_generation_probe_under_startup_lock(endpoint, startup)
                             : -1;
-    cbm_daemon_ipc_startup_lock_release(&startup);
+    hyp_daemon_ipc_startup_lock_release(&startup);
     startup = NULL;
-    cbm_daemon_ipc_listener_close(listener);
+    hyp_daemon_ipc_listener_close(listener);
 
-    cbm_daemon_ipc_endpoint_free(wrong_endpoint);
-    cbm_daemon_ipc_endpoint_free(endpoint);
+    hyp_daemon_ipc_endpoint_free(wrong_endpoint);
+    hyp_daemon_ipc_endpoint_free(endpoint);
     ipc_test_remove_tree(runtime_dir, parent);
 
     ASSERT_TRUE(parent_ok);
@@ -2379,61 +2379,61 @@ TEST(daemon_ipc_local_transition_coexists_with_active_daemon_lifetime) {
     static const char key[] = "5d5d6e6e7f7f8080";
     char parent[TEST_PATH_CAP] = {0};
     char runtime_dir[TEST_PATH_CAP] = {0};
-    cbm_daemon_ipc_endpoint_t *endpoint = NULL;
-    cbm_daemon_ipc_startup_lock_t *startup = NULL;
-    cbm_daemon_ipc_startup_lock_t *startup_during_local = NULL;
-    cbm_daemon_ipc_startup_lock_t *startup_after = NULL;
-    cbm_daemon_ipc_lifetime_reservation_t *lifetime = NULL;
-    cbm_daemon_ipc_participant_guard_t *daemon_participant = NULL;
-    cbm_daemon_ipc_local_transition_t *transition = NULL;
+    hyp_daemon_ipc_endpoint_t *endpoint = NULL;
+    hyp_daemon_ipc_startup_lock_t *startup = NULL;
+    hyp_daemon_ipc_startup_lock_t *startup_during_local = NULL;
+    hyp_daemon_ipc_startup_lock_t *startup_after = NULL;
+    hyp_daemon_ipc_lifetime_reservation_t *lifetime = NULL;
+    hyp_daemon_ipc_participant_guard_t *daemon_participant = NULL;
+    hyp_daemon_ipc_local_transition_t *transition = NULL;
 
     bool parent_ok = ipc_test_parent_new(parent, "local-transition");
     if (parent_ok) {
-        endpoint = cbm_daemon_ipc_endpoint_new(key, parent);
+        endpoint = hyp_daemon_ipc_endpoint_new(key, parent);
     }
     if (endpoint) {
-        ipc_test_copy_path(runtime_dir, cbm_daemon_ipc_endpoint_runtime_dir(endpoint));
+        ipc_test_copy_path(runtime_dir, hyp_daemon_ipc_endpoint_runtime_dir(endpoint));
     }
     int startup_result =
-        endpoint ? cbm_daemon_ipc_startup_lock_try_acquire(endpoint, &startup) : -1;
-    bool handoff = startup_result == 1 && cbm_daemon_ipc_startup_lock_prepare_handoff(startup);
+        endpoint ? hyp_daemon_ipc_startup_lock_try_acquire(endpoint, &startup) : -1;
+    bool handoff = startup_result == 1 && hyp_daemon_ipc_startup_lock_prepare_handoff(startup);
     int participant_result =
-        handoff ? cbm_daemon_ipc_participant_guard_try_join(endpoint, &daemon_participant) : -1;
+        handoff ? hyp_daemon_ipc_participant_guard_try_join(endpoint, &daemon_participant) : -1;
     int lifetime_result = participant_result == 1
-                              ? cbm_daemon_ipc_lifetime_reservation_try_acquire(endpoint, &lifetime)
+                              ? hyp_daemon_ipc_lifetime_reservation_try_acquire(endpoint, &lifetime)
                               : -1;
-    cbm_daemon_ipc_startup_lock_release(&startup);
+    hyp_daemon_ipc_startup_lock_release(&startup);
     startup = NULL;
 
     int transition_result = lifetime_result == 1
-                                ? cbm_daemon_ipc_local_transition_try_acquire(endpoint, &transition)
+                                ? hyp_daemon_ipc_local_transition_try_acquire(endpoint, &transition)
                                 : -1;
     int unsealed_lifetime =
         transition_result == 1
-            ? cbm_daemon_ipc_local_transition_lifetime_probe(endpoint, transition)
+            ? hyp_daemon_ipc_local_transition_lifetime_probe(endpoint, transition)
             : 0;
     int seal_result =
-        transition_result == 1 ? cbm_daemon_ipc_local_transition_seal_legacy(transition) : -1;
+        transition_result == 1 ? hyp_daemon_ipc_local_transition_seal_legacy(transition) : -1;
     int sealed_lifetime = seal_result == 1
-                              ? cbm_daemon_ipc_local_transition_lifetime_probe(endpoint, transition)
+                              ? hyp_daemon_ipc_local_transition_lifetime_probe(endpoint, transition)
                               : -1;
     bool work_begun =
-        sealed_lifetime == 1 && cbm_daemon_ipc_local_transition_begin_work(transition);
+        sealed_lifetime == 1 && hyp_daemon_ipc_local_transition_begin_work(transition);
     int startup_during_result =
-        work_begun ? cbm_daemon_ipc_startup_lock_try_acquire(endpoint, &startup_during_local) : -1;
-    cbm_daemon_ipc_startup_lock_release(&startup_during_local);
+        work_begun ? hyp_daemon_ipc_startup_lock_try_acquire(endpoint, &startup_during_local) : -1;
+    hyp_daemon_ipc_startup_lock_release(&startup_during_local);
     startup_during_local = NULL;
-    bool transition_released = cbm_daemon_ipc_local_transition_release(&transition);
+    bool transition_released = hyp_daemon_ipc_local_transition_release(&transition);
     int lifetime_after_transition =
-        endpoint ? cbm_daemon_ipc_lifetime_reservation_probe(endpoint) : -1;
+        endpoint ? hyp_daemon_ipc_lifetime_reservation_probe(endpoint) : -1;
 
-    cbm_daemon_ipc_lifetime_reservation_release(lifetime);
+    hyp_daemon_ipc_lifetime_reservation_release(lifetime);
     lifetime = NULL;
-    bool participant_released = cbm_daemon_ipc_participant_guard_release(&daemon_participant);
+    bool participant_released = hyp_daemon_ipc_participant_guard_release(&daemon_participant);
     int startup_after_result =
-        endpoint ? cbm_daemon_ipc_startup_lock_try_acquire(endpoint, &startup_after) : -1;
-    cbm_daemon_ipc_startup_lock_release(&startup_after);
-    cbm_daemon_ipc_endpoint_free(endpoint);
+        endpoint ? hyp_daemon_ipc_startup_lock_try_acquire(endpoint, &startup_after) : -1;
+    hyp_daemon_ipc_startup_lock_release(&startup_after);
+    hyp_daemon_ipc_endpoint_free(endpoint);
     ipc_test_remove_tree(runtime_dir, parent);
 
     ASSERT_TRUE(parent_ok);
@@ -2460,47 +2460,47 @@ TEST(daemon_ipc_local_participants_overlap_and_allow_modern_startup) {
     static const char key[] = "5e5e6f6f70708181";
     char parent[TEST_PATH_CAP] = {0};
     char runtime_dir[TEST_PATH_CAP] = {0};
-    cbm_daemon_ipc_endpoint_t *endpoint = NULL;
-    cbm_daemon_ipc_local_transition_t *first = NULL;
-    cbm_daemon_ipc_local_transition_t *second = NULL;
-    cbm_daemon_ipc_startup_lock_t *startup = NULL;
+    hyp_daemon_ipc_endpoint_t *endpoint = NULL;
+    hyp_daemon_ipc_local_transition_t *first = NULL;
+    hyp_daemon_ipc_local_transition_t *second = NULL;
+    hyp_daemon_ipc_startup_lock_t *startup = NULL;
 
     bool parent_ok = ipc_test_parent_new(parent, "local-overlap");
     if (parent_ok) {
-        endpoint = cbm_daemon_ipc_endpoint_new(key, parent);
+        endpoint = hyp_daemon_ipc_endpoint_new(key, parent);
     }
     if (endpoint) {
-        ipc_test_copy_path(runtime_dir, cbm_daemon_ipc_endpoint_runtime_dir(endpoint));
+        ipc_test_copy_path(runtime_dir, hyp_daemon_ipc_endpoint_runtime_dir(endpoint));
     }
     int first_acquired =
-        endpoint ? cbm_daemon_ipc_local_transition_try_acquire(endpoint, &first) : -1;
+        endpoint ? hyp_daemon_ipc_local_transition_try_acquire(endpoint, &first) : -1;
     int first_sealed =
-        first_acquired == 1 ? cbm_daemon_ipc_local_transition_seal_legacy(first) : -1;
+        first_acquired == 1 ? hyp_daemon_ipc_local_transition_seal_legacy(first) : -1;
     int first_presence =
-        first_sealed == 1 ? cbm_daemon_ipc_local_transition_lifetime_probe(endpoint, first) : -1;
-    bool first_begun = first_presence == 0 && cbm_daemon_ipc_local_transition_begin_work(first);
+        first_sealed == 1 ? hyp_daemon_ipc_local_transition_lifetime_probe(endpoint, first) : -1;
+    bool first_begun = first_presence == 0 && hyp_daemon_ipc_local_transition_begin_work(first);
 
     int second_acquired =
-        first_begun ? cbm_daemon_ipc_local_transition_try_acquire(endpoint, &second) : -1;
+        first_begun ? hyp_daemon_ipc_local_transition_try_acquire(endpoint, &second) : -1;
     int second_sealed =
-        second_acquired == 1 ? cbm_daemon_ipc_local_transition_seal_legacy(second) : -1;
+        second_acquired == 1 ? hyp_daemon_ipc_local_transition_seal_legacy(second) : -1;
     int second_presence =
-        second_sealed == 1 ? cbm_daemon_ipc_local_transition_lifetime_probe(endpoint, second) : -1;
-    bool second_begun = second_presence == 0 && cbm_daemon_ipc_local_transition_begin_work(second);
+        second_sealed == 1 ? hyp_daemon_ipc_local_transition_lifetime_probe(endpoint, second) : -1;
+    bool second_begun = second_presence == 0 && hyp_daemon_ipc_local_transition_begin_work(second);
     int startup_during =
-        second_begun ? cbm_daemon_ipc_startup_lock_try_acquire(endpoint, &startup) : -1;
-    cbm_daemon_ipc_startup_lock_release(&startup);
+        second_begun ? hyp_daemon_ipc_startup_lock_try_acquire(endpoint, &startup) : -1;
+    hyp_daemon_ipc_startup_lock_release(&startup);
     startup = NULL;
-    int legacy_while_both = second_begun ? cbm_daemon_ipc_legacy_generation_probe(endpoint) : -1;
-    bool first_released = cbm_daemon_ipc_local_transition_release(&first);
+    int legacy_while_both = second_begun ? hyp_daemon_ipc_legacy_generation_probe(endpoint) : -1;
+    bool first_released = hyp_daemon_ipc_local_transition_release(&first);
     int legacy_while_second =
-        first_released ? cbm_daemon_ipc_legacy_generation_probe(endpoint) : -1;
-    bool second_released = cbm_daemon_ipc_local_transition_release(&second);
-    int legacy_after = second_released ? cbm_daemon_ipc_legacy_generation_probe(endpoint) : -1;
+        first_released ? hyp_daemon_ipc_legacy_generation_probe(endpoint) : -1;
+    bool second_released = hyp_daemon_ipc_local_transition_release(&second);
+    int legacy_after = second_released ? hyp_daemon_ipc_legacy_generation_probe(endpoint) : -1;
 
-    (void)cbm_daemon_ipc_local_transition_release(&second);
-    (void)cbm_daemon_ipc_local_transition_release(&first);
-    cbm_daemon_ipc_endpoint_free(endpoint);
+    (void)hyp_daemon_ipc_local_transition_release(&second);
+    (void)hyp_daemon_ipc_local_transition_release(&first);
+    hyp_daemon_ipc_endpoint_free(endpoint);
     ipc_test_remove_tree(runtime_dir, parent);
 
     ASSERT_TRUE(parent_ok);
@@ -2528,35 +2528,35 @@ TEST(daemon_ipc_windows_local_transition_release_retries_retained_mutex) {
     static const char key[] = "5f5f606071718282";
     char parent[TEST_PATH_CAP] = {0};
     char runtime_dir[TEST_PATH_CAP] = {0};
-    cbm_daemon_ipc_endpoint_t *endpoint = NULL;
-    cbm_daemon_ipc_local_transition_t *transition = NULL;
-    cbm_daemon_ipc_startup_lock_t *after = NULL;
+    hyp_daemon_ipc_endpoint_t *endpoint = NULL;
+    hyp_daemon_ipc_local_transition_t *transition = NULL;
+    hyp_daemon_ipc_startup_lock_t *after = NULL;
 
     bool parent_ok = ipc_test_parent_new(parent, "local-release-retry");
     if (parent_ok) {
-        endpoint = cbm_daemon_ipc_endpoint_new(key, parent);
+        endpoint = hyp_daemon_ipc_endpoint_new(key, parent);
     }
     if (endpoint) {
-        ipc_test_copy_path(runtime_dir, cbm_daemon_ipc_endpoint_runtime_dir(endpoint));
+        ipc_test_copy_path(runtime_dir, hyp_daemon_ipc_endpoint_runtime_dir(endpoint));
     }
     int acquired =
-        endpoint ? cbm_daemon_ipc_local_transition_try_acquire(endpoint, &transition) : -1;
-    int sealed = acquired == 1 ? cbm_daemon_ipc_local_transition_seal_legacy(transition) : -1;
+        endpoint ? hyp_daemon_ipc_local_transition_try_acquire(endpoint, &transition) : -1;
+    int sealed = acquired == 1 ? hyp_daemon_ipc_local_transition_seal_legacy(transition) : -1;
     int lifetime =
-        sealed == 1 ? cbm_daemon_ipc_local_transition_lifetime_probe(endpoint, transition) : -1;
-    bool begun = lifetime == 0 && cbm_daemon_ipc_local_transition_begin_work(transition);
+        sealed == 1 ? hyp_daemon_ipc_local_transition_lifetime_probe(endpoint, transition) : -1;
+    bool begun = lifetime == 0 && hyp_daemon_ipc_local_transition_begin_work(transition);
     if (begun) {
-        cbm_daemon_ipc_windows_legacy_guard_release_failures_set_for_test(1);
+        hyp_daemon_ipc_windows_legacy_guard_release_failures_set_for_test(1);
     }
-    bool first_release = cbm_daemon_ipc_local_transition_release(&transition);
+    bool first_release = hyp_daemon_ipc_local_transition_release(&transition);
     bool retained_after_failure = transition != NULL;
-    bool retry_release = cbm_daemon_ipc_local_transition_release(&transition);
-    cbm_daemon_ipc_windows_legacy_guard_release_failures_set_for_test(0);
-    int legacy_after = endpoint ? cbm_daemon_ipc_legacy_generation_probe(endpoint) : -1;
-    int startup_after = endpoint ? cbm_daemon_ipc_startup_lock_try_acquire(endpoint, &after) : -1;
-    cbm_daemon_ipc_startup_lock_release(&after);
-    (void)cbm_daemon_ipc_local_transition_release(&transition);
-    cbm_daemon_ipc_endpoint_free(endpoint);
+    bool retry_release = hyp_daemon_ipc_local_transition_release(&transition);
+    hyp_daemon_ipc_windows_legacy_guard_release_failures_set_for_test(0);
+    int legacy_after = endpoint ? hyp_daemon_ipc_legacy_generation_probe(endpoint) : -1;
+    int startup_after = endpoint ? hyp_daemon_ipc_startup_lock_try_acquire(endpoint, &after) : -1;
+    hyp_daemon_ipc_startup_lock_release(&after);
+    (void)hyp_daemon_ipc_local_transition_release(&transition);
+    hyp_daemon_ipc_endpoint_free(endpoint);
     ipc_test_remove_tree(runtime_dir, parent);
 
     ASSERT_TRUE(parent_ok);
@@ -2581,34 +2581,34 @@ TEST(daemon_ipc_windows_startup_release_retains_retry_authority) {
     static const char key[] = "6f6f707081819292";
     char parent[TEST_PATH_CAP] = {0};
     char runtime_dir[TEST_PATH_CAP] = {0};
-    cbm_daemon_ipc_endpoint_t *endpoint = NULL;
-    cbm_daemon_ipc_startup_lock_t *startup = NULL;
-    cbm_daemon_ipc_startup_lock_t *blocked = NULL;
-    cbm_daemon_ipc_startup_lock_t *after = NULL;
+    hyp_daemon_ipc_endpoint_t *endpoint = NULL;
+    hyp_daemon_ipc_startup_lock_t *startup = NULL;
+    hyp_daemon_ipc_startup_lock_t *blocked = NULL;
+    hyp_daemon_ipc_startup_lock_t *after = NULL;
 
     bool parent_ok = ipc_test_parent_new(parent, "startup-release-retry");
     if (parent_ok) {
-        endpoint = cbm_daemon_ipc_endpoint_new(key, parent);
+        endpoint = hyp_daemon_ipc_endpoint_new(key, parent);
     }
     if (endpoint) {
-        ipc_test_copy_path(runtime_dir, cbm_daemon_ipc_endpoint_runtime_dir(endpoint));
+        ipc_test_copy_path(runtime_dir, hyp_daemon_ipc_endpoint_runtime_dir(endpoint));
     }
-    int acquired = endpoint ? cbm_daemon_ipc_startup_lock_try_acquire(endpoint, &startup) : -1;
+    int acquired = endpoint ? hyp_daemon_ipc_startup_lock_try_acquire(endpoint, &startup) : -1;
     if (acquired == 1) {
-        cbm_daemon_ipc_windows_legacy_guard_release_failures_set_for_test(1);
+        hyp_daemon_ipc_windows_legacy_guard_release_failures_set_for_test(1);
     }
-    bool first_release = cbm_daemon_ipc_startup_lock_release(&startup);
+    bool first_release = hyp_daemon_ipc_startup_lock_release(&startup);
     bool retained_after_failure = startup != NULL;
     int blocked_while_retained =
-        retained_after_failure ? cbm_daemon_ipc_startup_lock_try_acquire(endpoint, &blocked) : -1;
-    bool retry_release = cbm_daemon_ipc_startup_lock_release(&startup);
-    cbm_daemon_ipc_windows_legacy_guard_release_failures_set_for_test(0);
+        retained_after_failure ? hyp_daemon_ipc_startup_lock_try_acquire(endpoint, &blocked) : -1;
+    bool retry_release = hyp_daemon_ipc_startup_lock_release(&startup);
+    hyp_daemon_ipc_windows_legacy_guard_release_failures_set_for_test(0);
     int acquired_after =
-        retry_release ? cbm_daemon_ipc_startup_lock_try_acquire(endpoint, &after) : -1;
-    bool after_released = cbm_daemon_ipc_startup_lock_release(&after);
-    (void)cbm_daemon_ipc_startup_lock_release(&blocked);
-    (void)cbm_daemon_ipc_startup_lock_release(&startup);
-    cbm_daemon_ipc_endpoint_free(endpoint);
+        retry_release ? hyp_daemon_ipc_startup_lock_try_acquire(endpoint, &after) : -1;
+    bool after_released = hyp_daemon_ipc_startup_lock_release(&after);
+    (void)hyp_daemon_ipc_startup_lock_release(&blocked);
+    (void)hyp_daemon_ipc_startup_lock_release(&startup);
+    hyp_daemon_ipc_endpoint_free(endpoint);
     ipc_test_remove_tree(runtime_dir, parent);
 
     ASSERT_TRUE(parent_ok);
@@ -2633,11 +2633,11 @@ TEST(daemon_ipc_frame_timeout_poisons_connection) {
     static const uint8_t payload[] = {'a', 'f', 't', 'e', 'r'};
     char parent[TEST_PATH_CAP] = {0};
     char runtime_dir[TEST_PATH_CAP] = {0};
-    cbm_daemon_ipc_endpoint_t *endpoint = NULL;
-    cbm_daemon_ipc_listener_t *listener = NULL;
-    cbm_daemon_ipc_connection_t *client = NULL;
-    cbm_daemon_ipc_connection_t *server = NULL;
-    cbm_daemon_frame_t frame = {0};
+    hyp_daemon_ipc_endpoint_t *endpoint = NULL;
+    hyp_daemon_ipc_listener_t *listener = NULL;
+    hyp_daemon_ipc_connection_t *client = NULL;
+    hyp_daemon_ipc_connection_t *server = NULL;
+    hyp_daemon_frame_t frame = {0};
     uint8_t *received_payload = NULL;
     int accept_result = -1;
     int timeout_result = -1;
@@ -2646,37 +2646,37 @@ TEST(daemon_ipc_frame_timeout_poisons_connection) {
 
     bool parent_ok = ipc_test_parent_new(parent, "frame-timeout");
     if (parent_ok) {
-        endpoint = cbm_daemon_ipc_endpoint_new(key, parent);
+        endpoint = hyp_daemon_ipc_endpoint_new(key, parent);
     }
     if (endpoint) {
-        ipc_test_copy_path(runtime_dir, cbm_daemon_ipc_endpoint_runtime_dir(endpoint));
-        listener = cbm_daemon_ipc_listen(endpoint);
+        ipc_test_copy_path(runtime_dir, hyp_daemon_ipc_endpoint_runtime_dir(endpoint));
+        listener = hyp_daemon_ipc_listen(endpoint);
     }
     if (listener) {
-        client = cbm_daemon_ipc_connect(endpoint, 500);
+        client = hyp_daemon_ipc_connect(endpoint, 500);
     }
     if (client) {
-        accept_result = cbm_daemon_ipc_accept(listener, 500, &server);
+        accept_result = hyp_daemon_ipc_accept(listener, 500, &server);
     }
     if (accept_result == 1 && server) {
-        timeout_result = cbm_daemon_ipc_receive_frame(server, 20, &frame, &received_payload);
+        timeout_result = hyp_daemon_ipc_receive_frame(server, 20, &frame, &received_payload);
     }
     free(received_payload);
     received_payload = NULL;
     memset(&frame, 0, sizeof(frame));
     if (timeout_result == 0) {
-        sent_after_timeout = cbm_daemon_ipc_send_frame(client, CBM_DAEMON_FRAME_REQUEST, 0x1357,
+        sent_after_timeout = hyp_daemon_ipc_send_frame(client, HYP_DAEMON_FRAME_REQUEST, 0x1357,
                                                        payload, (uint32_t)sizeof(payload));
     }
     if (sent_after_timeout) {
-        reuse_result = cbm_daemon_ipc_receive_frame(server, 500, &frame, &received_payload);
+        reuse_result = hyp_daemon_ipc_receive_frame(server, 500, &frame, &received_payload);
     }
 
     free(received_payload);
-    cbm_daemon_ipc_connection_close(server);
-    cbm_daemon_ipc_connection_close(client);
-    cbm_daemon_ipc_listener_close(listener);
-    cbm_daemon_ipc_endpoint_free(endpoint);
+    hyp_daemon_ipc_connection_close(server);
+    hyp_daemon_ipc_connection_close(client);
+    hyp_daemon_ipc_listener_close(listener);
+    hyp_daemon_ipc_endpoint_free(endpoint);
     ipc_test_remove_tree(runtime_dir, parent);
 
     ASSERT_TRUE(parent_ok);
@@ -2770,7 +2770,7 @@ static bool ipc_test_socket_identity_path(char out[TEST_PATH_CAP], const char *s
 static bool ipc_test_socket_anchor_path(char out[TEST_PATH_CAP], const char *runtime_dir,
                                         const char *key) {
     int written =
-        runtime_dir && key ? snprintf(out, TEST_PATH_CAP, "%s/cbm-%s.anc", runtime_dir, key) : -1;
+        runtime_dir && key ? snprintf(out, TEST_PATH_CAP, "%s/hyp-%s.anc", runtime_dir, key) : -1;
     return written > 0 && written < TEST_PATH_CAP;
 }
 
@@ -2823,15 +2823,15 @@ static bool ipc_test_record_temp_path(char out[TEST_PATH_CAP], const char *runti
 }
 #endif
 
-static void ipc_test_publication_crash_hook(cbm_daemon_ipc_posix_publication_stage_t stage,
+static void ipc_test_publication_crash_hook(hyp_daemon_ipc_posix_publication_stage_t stage,
                                             void *opaque) {
-    const cbm_daemon_ipc_posix_publication_stage_t *target = opaque;
+    const hyp_daemon_ipc_posix_publication_stage_t *target = opaque;
     if (target && stage == *target) {
         _exit(40 + (int)stage);
     }
 }
 
-static int ipc_test_cross_process_lock_child(const cbm_daemon_ipc_endpoint_t *endpoint,
+static int ipc_test_cross_process_lock_child(const hyp_daemon_ipc_endpoint_t *endpoint,
                                              int command_fd, int result_fd) {
     for (int attempt = 0; attempt < 2; attempt++) {
         uint8_t command = 0;
@@ -2839,9 +2839,9 @@ static int ipc_test_cross_process_lock_child(const cbm_daemon_ipc_endpoint_t *en
             command != (uint8_t)(attempt + 1)) {
             return 10 + attempt;
         }
-        cbm_daemon_ipc_startup_lock_t *lock = NULL;
-        int result = cbm_daemon_ipc_startup_lock_try_acquire(endpoint, &lock);
-        cbm_daemon_ipc_startup_lock_release(&lock);
+        hyp_daemon_ipc_startup_lock_t *lock = NULL;
+        int result = hyp_daemon_ipc_startup_lock_try_acquire(endpoint, &lock);
+        hyp_daemon_ipc_startup_lock_release(&lock);
         if (!ipc_test_fd_write_all(result_fd, &result, sizeof(result))) {
             return 20 + attempt;
         }
@@ -2853,8 +2853,8 @@ TEST(daemon_ipc_posix_startup_lock_is_cross_process) {
     static const char key[] = "6666777788889999";
     char parent[TEST_PATH_CAP] = {0};
     char runtime_dir[TEST_PATH_CAP] = {0};
-    cbm_daemon_ipc_endpoint_t *endpoint = NULL;
-    cbm_daemon_ipc_startup_lock_t *parent_lock = NULL;
+    hyp_daemon_ipc_endpoint_t *endpoint = NULL;
+    hyp_daemon_ipc_startup_lock_t *parent_lock = NULL;
     int commands[2] = {-1, -1};
     int results[2] = {-1, -1};
     pid_t child = -1;
@@ -2868,10 +2868,10 @@ TEST(daemon_ipc_posix_startup_lock_is_cross_process) {
 
     bool parent_ok = ipc_test_parent_new(parent, "process-lock");
     if (parent_ok) {
-        endpoint = cbm_daemon_ipc_endpoint_new(key, parent);
+        endpoint = hyp_daemon_ipc_endpoint_new(key, parent);
     }
     if (endpoint) {
-        ipc_test_copy_path(runtime_dir, cbm_daemon_ipc_endpoint_runtime_dir(endpoint));
+        ipc_test_copy_path(runtime_dir, hyp_daemon_ipc_endpoint_runtime_dir(endpoint));
         if (pipe(commands) == 0) {
             if (pipe(results) == 0) {
                 pipes_ok = true;
@@ -2899,12 +2899,12 @@ TEST(daemon_ipc_posix_startup_lock_is_cross_process) {
         (void)close(results[1]);
         results[1] = -1;
 
-        parent_result = cbm_daemon_ipc_startup_lock_try_acquire(endpoint, &parent_lock);
+        parent_result = hyp_daemon_ipc_startup_lock_try_acquire(endpoint, &parent_lock);
         uint8_t command = 1;
         first_exchange_ok =
             ipc_test_fd_write_all(commands[1], &command, sizeof(command)) &&
             ipc_test_fd_read_all(results[0], &child_while_held, sizeof(child_while_held));
-        cbm_daemon_ipc_startup_lock_release(&parent_lock);
+        hyp_daemon_ipc_startup_lock_release(&parent_lock);
         parent_lock = NULL;
 
         if (first_exchange_ok) {
@@ -2920,7 +2920,7 @@ TEST(daemon_ipc_posix_startup_lock_is_cross_process) {
         while (waitpid(child, &child_status, 0) < 0 && errno == EINTR) {}
     }
 
-    cbm_daemon_ipc_startup_lock_release(&parent_lock);
+    hyp_daemon_ipc_startup_lock_release(&parent_lock);
     for (size_t i = 0; i < 2; i++) {
         if (commands[i] >= 0) {
             (void)close(commands[i]);
@@ -2929,7 +2929,7 @@ TEST(daemon_ipc_posix_startup_lock_is_cross_process) {
             (void)close(results[i]);
         }
     }
-    cbm_daemon_ipc_endpoint_free(endpoint);
+    hyp_daemon_ipc_endpoint_free(endpoint);
     ipc_test_remove_tree(runtime_dir, parent);
 
     ASSERT_TRUE(parent_ok);
@@ -2949,9 +2949,9 @@ TEST(daemon_ipc_posix_lifetime_reservation_rejects_fork_inheritance) {
     static const char key[] = "6a6a7b7b8c8c9d9d";
     char parent[TEST_PATH_CAP] = {0};
     char runtime_dir[TEST_PATH_CAP] = {0};
-    cbm_daemon_ipc_endpoint_t *endpoint = NULL;
-    cbm_daemon_ipc_lifetime_reservation_t *reservation = NULL;
-    cbm_daemon_ipc_listener_t *parent_listener = NULL;
+    hyp_daemon_ipc_endpoint_t *endpoint = NULL;
+    hyp_daemon_ipc_lifetime_reservation_t *reservation = NULL;
+    hyp_daemon_ipc_listener_t *parent_listener = NULL;
     int result_pipe[2] = {-1, -1};
     pid_t child = -1;
     uint8_t child_result = 0;
@@ -2962,23 +2962,23 @@ TEST(daemon_ipc_posix_lifetime_reservation_rejects_fork_inheritance) {
     int free_after_close = -1;
 
     if (ipc_test_parent_new(parent, "forked-lifetime")) {
-        endpoint = cbm_daemon_ipc_endpoint_new(key, parent);
+        endpoint = hyp_daemon_ipc_endpoint_new(key, parent);
     }
     if (endpoint) {
-        ipc_test_copy_path(runtime_dir, cbm_daemon_ipc_endpoint_runtime_dir(endpoint));
-        acquired = cbm_daemon_ipc_lifetime_reservation_try_acquire(endpoint, &reservation);
+        ipc_test_copy_path(runtime_dir, hyp_daemon_ipc_endpoint_runtime_dir(endpoint));
+        acquired = hyp_daemon_ipc_lifetime_reservation_try_acquire(endpoint, &reservation);
     }
     if (reservation && pipe(result_pipe) == 0) {
         child = fork();
     }
     if (child == 0) {
         (void)close(result_pipe[0]);
-        cbm_daemon_ipc_lifetime_reservation_t *inherited = reservation;
-        cbm_daemon_ipc_listener_t *unexpected =
-            cbm_daemon_ipc_listen_reserved(endpoint, &inherited);
+        hyp_daemon_ipc_lifetime_reservation_t *inherited = reservation;
+        hyp_daemon_ipc_listener_t *unexpected =
+            hyp_daemon_ipc_listen_reserved(endpoint, &inherited);
         child_result = unexpected == NULL && inherited == reservation ? 1 : 0;
-        cbm_daemon_ipc_listener_close(unexpected);
-        cbm_daemon_ipc_lifetime_reservation_release(inherited);
+        hyp_daemon_ipc_listener_close(unexpected);
+        hyp_daemon_ipc_lifetime_reservation_release(inherited);
         bool reported = ipc_test_fd_write_all(result_pipe[1], &child_result, sizeof(child_result));
         (void)close(result_pipe[1]);
         _exit(reported && child_result == 1 ? 0 : 1);
@@ -2995,21 +2995,21 @@ TEST(daemon_ipc_posix_lifetime_reservation_rejects_fork_inheritance) {
         while (waitpid(child, &child_status, 0) < 0 && errno == EINTR) {}
     }
     if (child_result == 1 && WIFEXITED(child_status) && WEXITSTATUS(child_status) == 0) {
-        held_after_child = cbm_daemon_ipc_lifetime_reservation_probe(endpoint);
-        parent_listener = cbm_daemon_ipc_listen_reserved(endpoint, &reservation);
+        held_after_child = hyp_daemon_ipc_lifetime_reservation_probe(endpoint);
+        parent_listener = hyp_daemon_ipc_listen_reserved(endpoint, &reservation);
         parent_transfer_consumed = parent_listener != NULL && reservation == NULL;
     }
-    cbm_daemon_ipc_listener_close(parent_listener);
-    cbm_daemon_ipc_lifetime_reservation_release(reservation);
+    hyp_daemon_ipc_listener_close(parent_listener);
+    hyp_daemon_ipc_lifetime_reservation_release(reservation);
     if (endpoint) {
-        free_after_close = cbm_daemon_ipc_lifetime_reservation_probe(endpoint);
+        free_after_close = hyp_daemon_ipc_lifetime_reservation_probe(endpoint);
     }
     for (size_t index = 0; index < 2; index++) {
         if (result_pipe[index] >= 0) {
             (void)close(result_pipe[index]);
         }
     }
-    cbm_daemon_ipc_endpoint_free(endpoint);
+    hyp_daemon_ipc_endpoint_free(endpoint);
     ipc_test_remove_tree(runtime_dir, parent);
 
     ASSERT_EQ(acquired, 1);
@@ -3031,8 +3031,8 @@ TEST(daemon_ipc_posix_child_participant_handoff_retains_legacy_bridge) {
     char parent[TEST_PATH_CAP] = {0};
     char runtime_dir[TEST_PATH_CAP] = {0};
     char legacy_path[TEST_PATH_CAP] = {0};
-    cbm_daemon_ipc_endpoint_t *endpoint = NULL;
-    cbm_daemon_ipc_startup_lock_t *startup = NULL;
+    hyp_daemon_ipc_endpoint_t *endpoint = NULL;
+    hyp_daemon_ipc_startup_lock_t *startup = NULL;
     int parent_to_child[2] = {-1, -1};
     int child_to_parent[2] = {-1, -1};
     pid_t child = -1;
@@ -3045,17 +3045,17 @@ TEST(daemon_ipc_posix_child_participant_handoff_retains_legacy_bridge) {
 
     bool parent_ok = ipc_test_parent_new(parent, "participant-handoff");
     if (parent_ok) {
-        endpoint = cbm_daemon_ipc_endpoint_new(key, parent);
+        endpoint = hyp_daemon_ipc_endpoint_new(key, parent);
     }
     if (endpoint) {
-        ipc_test_copy_path(runtime_dir, cbm_daemon_ipc_endpoint_runtime_dir(endpoint));
+        ipc_test_copy_path(runtime_dir, hyp_daemon_ipc_endpoint_runtime_dir(endpoint));
         int path_length =
-            snprintf(legacy_path, sizeof(legacy_path), "%s/cbm-%s.lock", runtime_dir, key);
+            snprintf(legacy_path, sizeof(legacy_path), "%s/hyp-%s.lock", runtime_dir, key);
         parent_ok = path_length > 0 && path_length < (int)sizeof(legacy_path);
     }
     int startup_result =
-        parent_ok ? cbm_daemon_ipc_startup_lock_try_acquire(endpoint, &startup) : -1;
-    bool prepared = startup_result == 1 && cbm_daemon_ipc_startup_lock_prepare_handoff(startup);
+        parent_ok ? hyp_daemon_ipc_startup_lock_try_acquire(endpoint, &startup) : -1;
+    bool prepared = startup_result == 1 && hyp_daemon_ipc_startup_lock_prepare_handoff(startup);
     bool pipes_ok = prepared && pipe(parent_to_child) == 0 && pipe(child_to_parent) == 0;
     if (pipes_ok) {
         child = fork();
@@ -3063,14 +3063,14 @@ TEST(daemon_ipc_posix_child_participant_handoff_retains_legacy_bridge) {
     if (child == 0) {
         (void)close(parent_to_child[1]);
         (void)close(child_to_parent[0]);
-        cbm_daemon_ipc_participant_guard_t *guard = NULL;
-        int join_result = cbm_daemon_ipc_participant_guard_try_join(endpoint, &guard);
+        hyp_daemon_ipc_participant_guard_t *guard = NULL;
+        int join_result = hyp_daemon_ipc_participant_guard_try_join(endpoint, &guard);
         uint8_t join_byte = join_result == 1 && guard ? 1 : 0;
         bool reported = ipc_test_fd_write_all(child_to_parent[1], &join_byte, sizeof(join_byte));
         uint8_t command = 0;
         bool commanded =
             reported && ipc_test_fd_read_all(parent_to_child[0], &command, sizeof(command));
-        bool guard_released = cbm_daemon_ipc_participant_guard_release(&guard);
+        bool guard_released = hyp_daemon_ipc_participant_guard_release(&guard);
         uint8_t release_byte = commanded && command == 1 && guard_released && !guard ? 1 : 0;
         bool release_reported =
             ipc_test_fd_write_all(child_to_parent[1], &release_byte, sizeof(release_byte));
@@ -3084,7 +3084,7 @@ TEST(daemon_ipc_posix_child_participant_handoff_retains_legacy_bridge) {
         (void)close(child_to_parent[1]);
         child_to_parent[1] = -1;
         bool joined_read = ipc_test_fd_read_all(child_to_parent[0], &joined, sizeof(joined));
-        cbm_daemon_ipc_startup_lock_release(&startup);
+        hyp_daemon_ipc_startup_lock_release(&startup);
         startup = NULL;
         legacy_fd = open(legacy_path, O_RDWR | O_CLOEXEC | O_NOFOLLOW);
         if (joined_read && joined == 1 && legacy_fd >= 0) {
@@ -3106,7 +3106,7 @@ TEST(daemon_ipc_posix_child_participant_handoff_retains_legacy_bridge) {
         }
     }
 
-    cbm_daemon_ipc_startup_lock_release(&startup);
+    hyp_daemon_ipc_startup_lock_release(&startup);
     if (legacy_fd >= 0) {
         (void)flock(legacy_fd, LOCK_UN);
         (void)close(legacy_fd);
@@ -3119,7 +3119,7 @@ TEST(daemon_ipc_posix_child_participant_handoff_retains_legacy_bridge) {
             (void)close(child_to_parent[index]);
         }
     }
-    cbm_daemon_ipc_endpoint_free(endpoint);
+    hyp_daemon_ipc_endpoint_free(endpoint);
     ipc_test_remove_tree(runtime_dir, parent);
 
     ASSERT_TRUE(parent_ok);
@@ -3142,12 +3142,12 @@ TEST(daemon_ipc_posix_publication_boundaries_recover_from_crash) {
     PASS();
 #else
     static const char key[] = "9f8e7d6c5b4a3210";
-    static cbm_daemon_ipc_posix_publication_stage_t stages[] = {
-        CBM_DAEMON_IPC_POSIX_PUBLICATION_ANCHOR_DURABLE,
-        CBM_DAEMON_IPC_POSIX_PUBLICATION_PENDING_DURABLE,
-        CBM_DAEMON_IPC_POSIX_PUBLICATION_STABLE_DURABLE,
-        CBM_DAEMON_IPC_POSIX_PUBLICATION_MARKER_DURABLE,
-        CBM_DAEMON_IPC_POSIX_PUBLICATION_PENDING_REMOVED,
+    static hyp_daemon_ipc_posix_publication_stage_t stages[] = {
+        HYP_DAEMON_IPC_POSIX_PUBLICATION_ANCHOR_DURABLE,
+        HYP_DAEMON_IPC_POSIX_PUBLICATION_PENDING_DURABLE,
+        HYP_DAEMON_IPC_POSIX_PUBLICATION_STABLE_DURABLE,
+        HYP_DAEMON_IPC_POSIX_PUBLICATION_MARKER_DURABLE,
+        HYP_DAEMON_IPC_POSIX_PUBLICATION_PENDING_REMOVED,
     };
     bool stage_ok[sizeof(stages) / sizeof(stages[0])] = {0};
 
@@ -3158,8 +3158,8 @@ TEST(daemon_ipc_posix_publication_boundaries_recover_from_crash) {
         char anchor_path[TEST_PATH_CAP] = {0};
         char identity_path[TEST_PATH_CAP] = {0};
         char pending_path[TEST_PATH_CAP] = {0};
-        cbm_daemon_ipc_endpoint_t *endpoint = NULL;
-        cbm_daemon_ipc_startup_lock_t *startup = NULL;
+        hyp_daemon_ipc_endpoint_t *endpoint = NULL;
+        hyp_daemon_ipc_startup_lock_t *startup = NULL;
         struct stat socket_status = {0};
         struct stat anchor_status = {0};
         struct stat record_status = {0};
@@ -3168,25 +3168,25 @@ TEST(daemon_ipc_posix_publication_boundaries_recover_from_crash) {
 
         bool parent_ok = ipc_test_parent_new(parent, "publish-boundary");
         if (parent_ok) {
-            endpoint = cbm_daemon_ipc_endpoint_new(key, parent);
+            endpoint = hyp_daemon_ipc_endpoint_new(key, parent);
         }
         if (endpoint) {
-            ipc_test_copy_path(runtime_dir, cbm_daemon_ipc_endpoint_runtime_dir(endpoint));
-            ipc_test_copy_path(socket_path, cbm_daemon_ipc_endpoint_address(endpoint));
+            ipc_test_copy_path(runtime_dir, hyp_daemon_ipc_endpoint_runtime_dir(endpoint));
+            ipc_test_copy_path(socket_path, hyp_daemon_ipc_endpoint_address(endpoint));
         }
         bool paths_ok = endpoint && ipc_test_socket_anchor_path(anchor_path, runtime_dir, key) &&
                         ipc_test_socket_identity_path(identity_path, socket_path) &&
                         ipc_test_socket_pending_path(pending_path, socket_path);
         if (paths_ok) {
-            cbm_daemon_ipc_posix_publication_hook_set_for_test(ipc_test_publication_crash_hook,
+            hyp_daemon_ipc_posix_publication_hook_set_for_test(ipc_test_publication_crash_hook,
                                                                &stages[index]);
             child = fork();
         }
         if (child == 0) {
-            cbm_daemon_ipc_listener_t *listener = cbm_daemon_ipc_listen(endpoint);
+            hyp_daemon_ipc_listener_t *listener = hyp_daemon_ipc_listen(endpoint);
             _exit(listener ? 90 : 91);
         }
-        cbm_daemon_ipc_posix_publication_hook_set_for_test(NULL, NULL);
+        hyp_daemon_ipc_posix_publication_hook_set_for_test(NULL, NULL);
         if (child > 0) {
             while (waitpid(child, &child_status, 0) < 0 && errno == EINTR) {}
         }
@@ -3201,22 +3201,22 @@ TEST(daemon_ipc_posix_publication_boundaries_recover_from_crash) {
             lstat(pending_path, &record_status) == 0 && S_ISREG(record_status.st_mode);
         bool marker_present =
             lstat(identity_path, &record_status) == 0 && S_ISREG(record_status.st_mode);
-        bool linked_shape = stages[index] < CBM_DAEMON_IPC_POSIX_PUBLICATION_STABLE_DURABLE
+        bool linked_shape = stages[index] < HYP_DAEMON_IPC_POSIX_PUBLICATION_STABLE_DURABLE
                                 ? anchor_present && anchor_status.st_nlink == 1 && !stable_present
                                 : anchor_present && stable_present && anchor_status.st_nlink == 2 &&
                                       socket_status.st_nlink == 2 &&
                                       anchor_status.st_dev == socket_status.st_dev &&
                                       anchor_status.st_ino == socket_status.st_ino;
         bool expected_records =
-            pending_present == (stages[index] >= CBM_DAEMON_IPC_POSIX_PUBLICATION_PENDING_DURABLE &&
-                                stages[index] < CBM_DAEMON_IPC_POSIX_PUBLICATION_PENDING_REMOVED) &&
-            marker_present == (stages[index] >= CBM_DAEMON_IPC_POSIX_PUBLICATION_MARKER_DURABLE);
+            pending_present == (stages[index] >= HYP_DAEMON_IPC_POSIX_PUBLICATION_PENDING_DURABLE &&
+                                stages[index] < HYP_DAEMON_IPC_POSIX_PUBLICATION_PENDING_REMOVED) &&
+            marker_present == (stages[index] >= HYP_DAEMON_IPC_POSIX_PUBLICATION_MARKER_DURABLE);
 
         int startup_result =
-            crashed_at_boundary ? cbm_daemon_ipc_startup_lock_try_acquire(endpoint, &startup) : -1;
+            crashed_at_boundary ? hyp_daemon_ipc_startup_lock_try_acquire(endpoint, &startup) : -1;
         int cleanup_result =
-            startup_result == 1 ? cbm_daemon_ipc_stale_generation_cleanup(endpoint, startup) : -1;
-        cbm_daemon_ipc_startup_lock_release(&startup);
+            startup_result == 1 ? hyp_daemon_ipc_stale_generation_cleanup(endpoint, startup) : -1;
+        hyp_daemon_ipc_startup_lock_release(&startup);
         errno = 0;
         bool stable_removed = lstat(socket_path, &record_status) != 0 && errno == ENOENT;
         errno = 0;
@@ -3229,7 +3229,7 @@ TEST(daemon_ipc_posix_publication_boundaries_recover_from_crash) {
                           expected_records && startup_result == 1 && cleanup_result == 1 &&
                           stable_removed && anchor_removed && pending_removed && marker_removed;
 
-        cbm_daemon_ipc_endpoint_free(endpoint);
+        hyp_daemon_ipc_endpoint_free(endpoint);
         ipc_test_remove_tree(runtime_dir, parent);
     }
 
@@ -3246,14 +3246,14 @@ TEST(daemon_ipc_posix_record_publication_windows_recover_from_crash) {
 #else
     static const char key[] = "1a2b3c4d5e6f7081";
     static const struct {
-        cbm_daemon_ipc_posix_publication_stage_t stage;
+        hyp_daemon_ipc_posix_publication_stage_t stage;
         bool marker;
         bool linked;
     } cases[] = {
-        {CBM_DAEMON_IPC_POSIX_PUBLICATION_PENDING_TEMP_SYNCED, false, false},
-        {CBM_DAEMON_IPC_POSIX_PUBLICATION_PENDING_RECORD_LINKED, false, true},
-        {CBM_DAEMON_IPC_POSIX_PUBLICATION_MARKER_TEMP_SYNCED, true, false},
-        {CBM_DAEMON_IPC_POSIX_PUBLICATION_MARKER_RECORD_LINKED, true, true},
+        {HYP_DAEMON_IPC_POSIX_PUBLICATION_PENDING_TEMP_SYNCED, false, false},
+        {HYP_DAEMON_IPC_POSIX_PUBLICATION_PENDING_RECORD_LINKED, false, true},
+        {HYP_DAEMON_IPC_POSIX_PUBLICATION_MARKER_TEMP_SYNCED, true, false},
+        {HYP_DAEMON_IPC_POSIX_PUBLICATION_MARKER_RECORD_LINKED, true, true},
     };
     bool case_ok[sizeof(cases) / sizeof(cases[0])] = {0};
 
@@ -3265,8 +3265,8 @@ TEST(daemon_ipc_posix_record_publication_windows_recover_from_crash) {
         char identity_path[TEST_PATH_CAP] = {0};
         char pending_path[TEST_PATH_CAP] = {0};
         char temp_path[TEST_PATH_CAP] = {0};
-        cbm_daemon_ipc_endpoint_t *endpoint = NULL;
-        cbm_daemon_ipc_startup_lock_t *startup = NULL;
+        hyp_daemon_ipc_endpoint_t *endpoint = NULL;
+        hyp_daemon_ipc_startup_lock_t *startup = NULL;
         struct stat socket_status = {0};
         struct stat anchor_status = {0};
         struct stat pending_status = {0};
@@ -3279,25 +3279,25 @@ TEST(daemon_ipc_posix_record_publication_windows_recover_from_crash) {
 
         bool parent_ok = ipc_test_parent_new(parent, "record-window");
         if (parent_ok) {
-            endpoint = cbm_daemon_ipc_endpoint_new(key, parent);
+            endpoint = hyp_daemon_ipc_endpoint_new(key, parent);
         }
         if (endpoint) {
-            ipc_test_copy_path(runtime_dir, cbm_daemon_ipc_endpoint_runtime_dir(endpoint));
-            ipc_test_copy_path(socket_path, cbm_daemon_ipc_endpoint_address(endpoint));
+            ipc_test_copy_path(runtime_dir, hyp_daemon_ipc_endpoint_runtime_dir(endpoint));
+            ipc_test_copy_path(socket_path, hyp_daemon_ipc_endpoint_address(endpoint));
         }
         bool paths_ok = endpoint && ipc_test_socket_anchor_path(anchor_path, runtime_dir, key) &&
                         ipc_test_socket_identity_path(identity_path, socket_path) &&
                         ipc_test_socket_pending_path(pending_path, socket_path);
         if (paths_ok) {
-            cbm_daemon_ipc_posix_publication_hook_set_for_test(ipc_test_publication_crash_hook,
+            hyp_daemon_ipc_posix_publication_hook_set_for_test(ipc_test_publication_crash_hook,
                                                                (void *)&cases[index].stage);
             child = fork();
         }
         if (child == 0) {
-            cbm_daemon_ipc_listener_t *listener = cbm_daemon_ipc_listen(endpoint);
+            hyp_daemon_ipc_listener_t *listener = hyp_daemon_ipc_listen(endpoint);
             _exit(listener ? 90 : 91);
         }
-        cbm_daemon_ipc_posix_publication_hook_set_for_test(NULL, NULL);
+        hyp_daemon_ipc_posix_publication_hook_set_for_test(NULL, NULL);
         if (child > 0) {
             while (waitpid(child, &child_status, 0) < 0 && errno == EINTR) {}
         }
@@ -3336,10 +3336,10 @@ TEST(daemon_ipc_posix_record_publication_windows_recover_from_crash) {
                 : lstat(identity_path, &marker_status) != 0 && errno == ENOENT;
 
         int startup_result =
-            crashed ? cbm_daemon_ipc_startup_lock_try_acquire(endpoint, &startup) : -1;
+            crashed ? hyp_daemon_ipc_startup_lock_try_acquire(endpoint, &startup) : -1;
         int cleanup_result =
-            startup_result == 1 ? cbm_daemon_ipc_stale_generation_cleanup(endpoint, startup) : -1;
-        cbm_daemon_ipc_startup_lock_release(&startup);
+            startup_result == 1 ? hyp_daemon_ipc_stale_generation_cleanup(endpoint, startup) : -1;
+        hyp_daemon_ipc_startup_lock_release(&startup);
         errno = 0;
         bool stable_removed = lstat(socket_path, &absent_status) != 0 && errno == ENOENT;
         errno = 0;
@@ -3356,7 +3356,7 @@ TEST(daemon_ipc_posix_record_publication_windows_recover_from_crash) {
                          cleanup_result == 1 && stable_removed && anchor_removed &&
                          pending_removed && marker_removed && temp_removed;
 
-        cbm_daemon_ipc_endpoint_free(endpoint);
+        hyp_daemon_ipc_endpoint_free(endpoint);
         ipc_test_remove_tree(runtime_dir, parent);
     }
 
@@ -3377,8 +3377,8 @@ TEST(daemon_ipc_posix_unknown_record_temp_pair_is_preserved) {
     char socket_path[TEST_PATH_CAP] = {0};
     char pending_path[TEST_PATH_CAP] = {0};
     char temp_path[TEST_PATH_CAP] = {0};
-    cbm_daemon_ipc_endpoint_t *endpoint = NULL;
-    cbm_daemon_ipc_startup_lock_t *startup = NULL;
+    hyp_daemon_ipc_endpoint_t *endpoint = NULL;
+    hyp_daemon_ipc_startup_lock_t *startup = NULL;
     struct stat pending_before = {0};
     struct stat temp_before = {0};
     struct stat pending_after = {0};
@@ -3386,11 +3386,11 @@ TEST(daemon_ipc_posix_unknown_record_temp_pair_is_preserved) {
 
     bool parent_ok = ipc_test_parent_new(parent, "unknown-record-temp");
     if (parent_ok) {
-        endpoint = cbm_daemon_ipc_endpoint_new(key, parent);
+        endpoint = hyp_daemon_ipc_endpoint_new(key, parent);
     }
     if (endpoint) {
-        ipc_test_copy_path(runtime_dir, cbm_daemon_ipc_endpoint_runtime_dir(endpoint));
-        ipc_test_copy_path(socket_path, cbm_daemon_ipc_endpoint_address(endpoint));
+        ipc_test_copy_path(runtime_dir, hyp_daemon_ipc_endpoint_runtime_dir(endpoint));
+        ipc_test_copy_path(socket_path, hyp_daemon_ipc_endpoint_address(endpoint));
     }
     bool pending_path_ok = endpoint && ipc_test_socket_pending_path(pending_path, socket_path);
     int temp_written =
@@ -3403,10 +3403,10 @@ TEST(daemon_ipc_posix_unknown_record_temp_pair_is_preserved) {
                         temp_before.st_nlink == 2 && pending_before.st_dev == temp_before.st_dev &&
                         pending_before.st_ino == temp_before.st_ino;
     int startup_result =
-        pair_created ? cbm_daemon_ipc_startup_lock_try_acquire(endpoint, &startup) : -1;
+        pair_created ? hyp_daemon_ipc_startup_lock_try_acquire(endpoint, &startup) : -1;
     int cleanup_result =
-        startup_result == 1 ? cbm_daemon_ipc_stale_generation_cleanup(endpoint, startup) : -1;
-    cbm_daemon_ipc_startup_lock_release(&startup);
+        startup_result == 1 ? hyp_daemon_ipc_stale_generation_cleanup(endpoint, startup) : -1;
+    hyp_daemon_ipc_startup_lock_release(&startup);
     bool pair_preserved =
         lstat(temp_path, &temp_after) == 0 && lstat(pending_path, &pending_after) == 0 &&
         temp_after.st_dev == temp_before.st_dev && temp_after.st_ino == temp_before.st_ino &&
@@ -3417,7 +3417,7 @@ TEST(daemon_ipc_posix_unknown_record_temp_pair_is_preserved) {
 
     (void)unlink(pending_path);
     (void)unlink(temp_path);
-    cbm_daemon_ipc_endpoint_free(endpoint);
+    hyp_daemon_ipc_endpoint_free(endpoint);
     ipc_test_remove_tree(runtime_dir, parent);
 
     ASSERT_TRUE(parent_ok);
@@ -3441,10 +3441,10 @@ TEST(daemon_ipc_posix_recovery_preserves_replaced_stable_socket) {
     char anchor_path[TEST_PATH_CAP] = {0};
     char identity_path[TEST_PATH_CAP] = {0};
     char pending_path[TEST_PATH_CAP] = {0};
-    cbm_daemon_ipc_endpoint_t *endpoint = NULL;
-    cbm_daemon_ipc_startup_lock_t *startup = NULL;
-    cbm_daemon_ipc_posix_publication_stage_t crash_stage =
-        CBM_DAEMON_IPC_POSIX_PUBLICATION_PENDING_REMOVED;
+    hyp_daemon_ipc_endpoint_t *endpoint = NULL;
+    hyp_daemon_ipc_startup_lock_t *startup = NULL;
+    hyp_daemon_ipc_posix_publication_stage_t crash_stage =
+        HYP_DAEMON_IPC_POSIX_PUBLICATION_PENDING_REMOVED;
     struct stat replacement_before = {0};
     struct stat replacement_after = {0};
     struct stat status = {0};
@@ -3456,26 +3456,26 @@ TEST(daemon_ipc_posix_recovery_preserves_replaced_stable_socket) {
 
     bool parent_ok = ipc_test_parent_new(parent, "stable-replacement");
     if (parent_ok) {
-        endpoint = cbm_daemon_ipc_endpoint_new(key, parent);
+        endpoint = hyp_daemon_ipc_endpoint_new(key, parent);
     }
     if (endpoint) {
-        ipc_test_copy_path(runtime_dir, cbm_daemon_ipc_endpoint_runtime_dir(endpoint));
-        ipc_test_copy_path(socket_path, cbm_daemon_ipc_endpoint_address(endpoint));
+        ipc_test_copy_path(runtime_dir, hyp_daemon_ipc_endpoint_runtime_dir(endpoint));
+        ipc_test_copy_path(socket_path, hyp_daemon_ipc_endpoint_address(endpoint));
     }
     bool paths_ok = endpoint && ipc_test_socket_anchor_path(anchor_path, runtime_dir, key) &&
                     ipc_test_socket_identity_path(identity_path, socket_path) &&
                     ipc_test_socket_pending_path(pending_path, socket_path) &&
                     ipc_test_unix_address_set(&address, socket_path, &address_length);
     if (paths_ok) {
-        cbm_daemon_ipc_posix_publication_hook_set_for_test(ipc_test_publication_crash_hook,
+        hyp_daemon_ipc_posix_publication_hook_set_for_test(ipc_test_publication_crash_hook,
                                                            &crash_stage);
         child = fork();
     }
     if (child == 0) {
-        cbm_daemon_ipc_listener_t *listener = cbm_daemon_ipc_listen(endpoint);
+        hyp_daemon_ipc_listener_t *listener = hyp_daemon_ipc_listen(endpoint);
         _exit(listener ? 90 : 91);
     }
-    cbm_daemon_ipc_posix_publication_hook_set_for_test(NULL, NULL);
+    hyp_daemon_ipc_posix_publication_hook_set_for_test(NULL, NULL);
     if (child > 0) {
         while (waitpid(child, &child_status, 0) < 0 && errno == EINTR) {}
     }
@@ -3491,10 +3491,10 @@ TEST(daemon_ipc_posix_recovery_preserves_replaced_stable_socket) {
         chmod(socket_path, 0600) == 0 && listen(replacement, 1) == 0 &&
         lstat(socket_path, &replacement_before) == 0 && S_ISSOCK(replacement_before.st_mode);
     int startup_result =
-        replacement_ready ? cbm_daemon_ipc_startup_lock_try_acquire(endpoint, &startup) : -1;
+        replacement_ready ? hyp_daemon_ipc_startup_lock_try_acquire(endpoint, &startup) : -1;
     int cleanup_result =
-        startup_result == 1 ? cbm_daemon_ipc_stale_generation_cleanup(endpoint, startup) : -1;
-    cbm_daemon_ipc_startup_lock_release(&startup);
+        startup_result == 1 ? hyp_daemon_ipc_stale_generation_cleanup(endpoint, startup) : -1;
+    hyp_daemon_ipc_startup_lock_release(&startup);
     bool replacement_preserved = lstat(socket_path, &replacement_after) == 0 &&
                                  S_ISSOCK(replacement_after.st_mode) &&
                                  replacement_after.st_dev == replacement_before.st_dev &&
@@ -3510,7 +3510,7 @@ TEST(daemon_ipc_posix_recovery_preserves_replaced_stable_socket) {
         (void)close(replacement);
     }
     (void)unlink(socket_path);
-    cbm_daemon_ipc_endpoint_free(endpoint);
+    hyp_daemon_ipc_endpoint_free(endpoint);
     ipc_test_remove_tree(runtime_dir, parent);
 
     ASSERT_TRUE(parent_ok);
@@ -3538,10 +3538,10 @@ TEST(daemon_ipc_posix_pending_without_anchor_never_deletes_stable) {
     char socket_path[TEST_PATH_CAP] = {0};
     char anchor_path[TEST_PATH_CAP] = {0};
     char pending_path[TEST_PATH_CAP] = {0};
-    cbm_daemon_ipc_endpoint_t *endpoint = NULL;
-    cbm_daemon_ipc_startup_lock_t *startup = NULL;
-    cbm_daemon_ipc_posix_publication_stage_t crash_stage =
-        CBM_DAEMON_IPC_POSIX_PUBLICATION_STABLE_DURABLE;
+    hyp_daemon_ipc_endpoint_t *endpoint = NULL;
+    hyp_daemon_ipc_startup_lock_t *startup = NULL;
+    hyp_daemon_ipc_posix_publication_stage_t crash_stage =
+        HYP_DAEMON_IPC_POSIX_PUBLICATION_STABLE_DURABLE;
     struct stat stable_before = {0};
     struct stat stable_after = {0};
     struct stat status = {0};
@@ -3550,24 +3550,24 @@ TEST(daemon_ipc_posix_pending_without_anchor_never_deletes_stable) {
 
     bool parent_ok = ipc_test_parent_new(parent, "pending-no-anchor");
     if (parent_ok) {
-        endpoint = cbm_daemon_ipc_endpoint_new(key, parent);
+        endpoint = hyp_daemon_ipc_endpoint_new(key, parent);
     }
     if (endpoint) {
-        ipc_test_copy_path(runtime_dir, cbm_daemon_ipc_endpoint_runtime_dir(endpoint));
-        ipc_test_copy_path(socket_path, cbm_daemon_ipc_endpoint_address(endpoint));
+        ipc_test_copy_path(runtime_dir, hyp_daemon_ipc_endpoint_runtime_dir(endpoint));
+        ipc_test_copy_path(socket_path, hyp_daemon_ipc_endpoint_address(endpoint));
     }
     bool paths_ok = endpoint && ipc_test_socket_anchor_path(anchor_path, runtime_dir, key) &&
                     ipc_test_socket_pending_path(pending_path, socket_path);
     if (paths_ok) {
-        cbm_daemon_ipc_posix_publication_hook_set_for_test(ipc_test_publication_crash_hook,
+        hyp_daemon_ipc_posix_publication_hook_set_for_test(ipc_test_publication_crash_hook,
                                                            &crash_stage);
         child = fork();
     }
     if (child == 0) {
-        cbm_daemon_ipc_listener_t *listener = cbm_daemon_ipc_listen(endpoint);
+        hyp_daemon_ipc_listener_t *listener = hyp_daemon_ipc_listen(endpoint);
         _exit(listener ? 90 : 91);
     }
-    cbm_daemon_ipc_posix_publication_hook_set_for_test(NULL, NULL);
+    hyp_daemon_ipc_posix_publication_hook_set_for_test(NULL, NULL);
     if (child > 0) {
         while (waitpid(child, &child_status, 0) < 0 && errno == EINTR) {}
     }
@@ -3576,10 +3576,10 @@ TEST(daemon_ipc_posix_pending_without_anchor_never_deletes_stable) {
     bool anchor_removed = crashed_before_marker && lstat(socket_path, &stable_before) == 0 &&
                           S_ISSOCK(stable_before.st_mode) && unlink(anchor_path) == 0;
     int startup_result =
-        anchor_removed ? cbm_daemon_ipc_startup_lock_try_acquire(endpoint, &startup) : -1;
+        anchor_removed ? hyp_daemon_ipc_startup_lock_try_acquire(endpoint, &startup) : -1;
     int cleanup_result =
-        startup_result == 1 ? cbm_daemon_ipc_stale_generation_cleanup(endpoint, startup) : -1;
-    cbm_daemon_ipc_startup_lock_release(&startup);
+        startup_result == 1 ? hyp_daemon_ipc_stale_generation_cleanup(endpoint, startup) : -1;
+    hyp_daemon_ipc_startup_lock_release(&startup);
     bool stable_preserved =
         lstat(socket_path, &stable_after) == 0 && S_ISSOCK(stable_after.st_mode) &&
         stable_after.st_dev == stable_before.st_dev && stable_after.st_ino == stable_before.st_ino;
@@ -3587,7 +3587,7 @@ TEST(daemon_ipc_posix_pending_without_anchor_never_deletes_stable) {
     bool pending_removed = lstat(pending_path, &status) != 0 && errno == ENOENT;
 
     (void)unlink(socket_path);
-    cbm_daemon_ipc_endpoint_free(endpoint);
+    hyp_daemon_ipc_endpoint_free(endpoint);
     ipc_test_remove_tree(runtime_dir, parent);
 
     ASSERT_TRUE(parent_ok);
@@ -3610,10 +3610,10 @@ TEST(daemon_ipc_posix_current_generation_crash_cleanup_requires_startup_lock) {
     char anchor_path[TEST_PATH_CAP] = {0};
     char identity_path[TEST_PATH_CAP] = {0};
     char pending_path[TEST_PATH_CAP] = {0};
-    cbm_daemon_ipc_endpoint_t *endpoint = NULL;
-    cbm_daemon_ipc_endpoint_t *wrong_endpoint = NULL;
-    cbm_daemon_ipc_startup_lock_t *startup = NULL;
-    cbm_daemon_ipc_startup_lock_t *wrong_startup = NULL;
+    hyp_daemon_ipc_endpoint_t *endpoint = NULL;
+    hyp_daemon_ipc_endpoint_t *wrong_endpoint = NULL;
+    hyp_daemon_ipc_startup_lock_t *startup = NULL;
+    hyp_daemon_ipc_startup_lock_t *wrong_startup = NULL;
     int ready_pipe[2] = {-1, -1};
     pid_t child = -1;
     int child_status = -1;
@@ -3631,11 +3631,11 @@ TEST(daemon_ipc_posix_current_generation_crash_cleanup_requires_startup_lock) {
     bool artifacts_removed = false;
 
     if (ipc_test_parent_new(parent, "crash-identity")) {
-        endpoint = cbm_daemon_ipc_endpoint_new(key, parent);
+        endpoint = hyp_daemon_ipc_endpoint_new(key, parent);
     }
     if (endpoint) {
-        ipc_test_copy_path(runtime_dir, cbm_daemon_ipc_endpoint_runtime_dir(endpoint));
-        ipc_test_copy_path(socket_path, cbm_daemon_ipc_endpoint_address(endpoint));
+        ipc_test_copy_path(runtime_dir, hyp_daemon_ipc_endpoint_runtime_dir(endpoint));
+        ipc_test_copy_path(socket_path, hyp_daemon_ipc_endpoint_address(endpoint));
         paths_ok = ipc_test_socket_anchor_path(anchor_path, runtime_dir, key) &&
                    ipc_test_socket_identity_path(identity_path, socket_path) &&
                    ipc_test_socket_pending_path(pending_path, socket_path) && pipe(ready_pipe) == 0;
@@ -3645,7 +3645,7 @@ TEST(daemon_ipc_posix_current_generation_crash_cleanup_requires_startup_lock) {
     }
     if (child == 0) {
         (void)close(ready_pipe[0]);
-        cbm_daemon_ipc_listener_t *listener = cbm_daemon_ipc_listen(endpoint);
+        hyp_daemon_ipc_listener_t *listener = hyp_daemon_ipc_listen(endpoint);
         uint8_t result = listener ? 'R' : 'E';
         bool reported = ipc_test_fd_write_all(ready_pipe[1], &result, sizeof(result));
         (void)close(ready_pipe[1]);
@@ -3666,20 +3666,20 @@ TEST(daemon_ipc_posix_current_generation_crash_cleanup_requires_startup_lock) {
                                    status.st_nlink == 2 && lstat(anchor_path, &status) == 0 &&
                                    S_ISSOCK(status.st_mode) && status.st_nlink == 2 &&
                                    lstat(identity_path, &status) == 0 && S_ISREG(status.st_mode);
-        lifetime_after_crash = cbm_daemon_ipc_lifetime_reservation_probe(endpoint);
-        cleanup_without_lock = cbm_daemon_ipc_stale_generation_cleanup(endpoint, NULL);
-        wrong_endpoint = cbm_daemon_ipc_endpoint_new("a1b2c3d4e5f60719", parent);
+        lifetime_after_crash = hyp_daemon_ipc_lifetime_reservation_probe(endpoint);
+        cleanup_without_lock = hyp_daemon_ipc_stale_generation_cleanup(endpoint, NULL);
+        wrong_endpoint = hyp_daemon_ipc_endpoint_new("a1b2c3d4e5f60719", parent);
         wrong_startup_result =
-            wrong_endpoint ? cbm_daemon_ipc_startup_lock_try_acquire(wrong_endpoint, &wrong_startup)
+            wrong_endpoint ? hyp_daemon_ipc_startup_lock_try_acquire(wrong_endpoint, &wrong_startup)
                            : -1;
         cleanup_with_wrong_lock =
-            wrong_startup ? cbm_daemon_ipc_stale_generation_cleanup(endpoint, wrong_startup) : -2;
-        cbm_daemon_ipc_startup_lock_release(&wrong_startup);
+            wrong_startup ? hyp_daemon_ipc_stale_generation_cleanup(endpoint, wrong_startup) : -2;
+        hyp_daemon_ipc_startup_lock_release(&wrong_startup);
         wrong_startup = NULL;
-        startup_result = cbm_daemon_ipc_startup_lock_try_acquire(endpoint, &startup);
+        startup_result = hyp_daemon_ipc_startup_lock_try_acquire(endpoint, &startup);
     }
     if (startup) {
-        cleanup_result = cbm_daemon_ipc_stale_generation_cleanup(endpoint, startup);
+        cleanup_result = hyp_daemon_ipc_stale_generation_cleanup(endpoint, startup);
         errno = 0;
         bool socket_removed = lstat(socket_path, &status) != 0 && errno == ENOENT;
         errno = 0;
@@ -3691,15 +3691,15 @@ TEST(daemon_ipc_posix_current_generation_crash_cleanup_requires_startup_lock) {
         artifacts_removed = socket_removed && anchor_removed && identity_removed && pending_removed;
     }
 
-    cbm_daemon_ipc_startup_lock_release(&startup);
-    cbm_daemon_ipc_startup_lock_release(&wrong_startup);
+    hyp_daemon_ipc_startup_lock_release(&startup);
+    hyp_daemon_ipc_startup_lock_release(&wrong_startup);
     for (size_t index = 0; index < 2; index++) {
         if (ready_pipe[index] >= 0) {
             (void)close(ready_pipe[index]);
         }
     }
-    cbm_daemon_ipc_endpoint_free(wrong_endpoint);
-    cbm_daemon_ipc_endpoint_free(endpoint);
+    hyp_daemon_ipc_endpoint_free(wrong_endpoint);
+    hyp_daemon_ipc_endpoint_free(endpoint);
     ipc_test_remove_tree(runtime_dir, parent);
 
     ASSERT_TRUE(paths_ok);
@@ -3724,9 +3724,9 @@ TEST(daemon_ipc_posix_unknown_socket_without_identity_refuses_cleanup) {
     char runtime_dir[TEST_PATH_CAP] = {0};
     char socket_path[TEST_PATH_CAP] = {0};
     char identity_path[TEST_PATH_CAP] = {0};
-    cbm_daemon_ipc_endpoint_t *endpoint = NULL;
-    cbm_daemon_ipc_startup_lock_t *startup = NULL;
-    cbm_daemon_ipc_local_transition_t *transition = NULL;
+    hyp_daemon_ipc_endpoint_t *endpoint = NULL;
+    hyp_daemon_ipc_startup_lock_t *startup = NULL;
+    hyp_daemon_ipc_local_transition_t *transition = NULL;
     int raw_listener = -1;
     struct sockaddr_un address;
     socklen_t address_length = 0;
@@ -3742,11 +3742,11 @@ TEST(daemon_ipc_posix_unknown_socket_without_identity_refuses_cleanup) {
     bool identity_absent = false;
 
     if (ipc_test_parent_new(parent, "unknown-socket")) {
-        endpoint = cbm_daemon_ipc_endpoint_new(key, parent);
+        endpoint = hyp_daemon_ipc_endpoint_new(key, parent);
     }
     if (endpoint) {
-        ipc_test_copy_path(runtime_dir, cbm_daemon_ipc_endpoint_runtime_dir(endpoint));
-        ipc_test_copy_path(socket_path, cbm_daemon_ipc_endpoint_address(endpoint));
+        ipc_test_copy_path(runtime_dir, hyp_daemon_ipc_endpoint_runtime_dir(endpoint));
+        ipc_test_copy_path(socket_path, hyp_daemon_ipc_endpoint_address(endpoint));
         paths_ok = ipc_test_socket_identity_path(identity_path, socket_path) &&
                    ipc_test_unix_address_set(&address, socket_path, &address_length);
     }
@@ -3763,30 +3763,30 @@ TEST(daemon_ipc_posix_unknown_socket_without_identity_refuses_cleanup) {
         raw_listener = -1;
     }
     if (unknown_created) {
-        startup_result = cbm_daemon_ipc_startup_lock_try_acquire(endpoint, &startup);
+        startup_result = hyp_daemon_ipc_startup_lock_try_acquire(endpoint, &startup);
     }
     if (startup) {
-        cleanup_result = cbm_daemon_ipc_stale_generation_cleanup(endpoint, startup);
+        cleanup_result = hyp_daemon_ipc_stale_generation_cleanup(endpoint, startup);
         unknown_unchanged = lstat(socket_path, &after) == 0 && S_ISSOCK(after.st_mode) &&
                             after.st_dev == before.st_dev && after.st_ino == before.st_ino;
         errno = 0;
         identity_absent = lstat(identity_path, &after) != 0 && errno == ENOENT;
     }
 
-    cbm_daemon_ipc_startup_lock_release(&startup);
+    hyp_daemon_ipc_startup_lock_release(&startup);
     startup = NULL;
     if (unknown_unchanged) {
-        transition_result = cbm_daemon_ipc_local_transition_try_acquire(endpoint, &transition);
+        transition_result = hyp_daemon_ipc_local_transition_try_acquire(endpoint, &transition);
     }
     if (transition) {
-        transition_seal_result = cbm_daemon_ipc_local_transition_seal_legacy(transition);
+        transition_seal_result = hyp_daemon_ipc_local_transition_seal_legacy(transition);
     }
-    (void)cbm_daemon_ipc_local_transition_release(&transition);
+    (void)hyp_daemon_ipc_local_transition_release(&transition);
     if (raw_listener >= 0) {
         (void)close(raw_listener);
     }
     (void)unlink(socket_path);
-    cbm_daemon_ipc_endpoint_free(endpoint);
+    hyp_daemon_ipc_endpoint_free(endpoint);
     ipc_test_remove_tree(runtime_dir, parent);
 
     ASSERT_TRUE(paths_ok);
@@ -3808,10 +3808,10 @@ TEST(daemon_ipc_posix_active_listener_is_never_cleaned_under_queue_pressure) {
     char socket_path[TEST_PATH_CAP] = {0};
     char anchor_path[TEST_PATH_CAP] = {0};
     char identity_path[TEST_PATH_CAP] = {0};
-    cbm_daemon_ipc_endpoint_t *endpoint = NULL;
-    cbm_daemon_ipc_listener_t *listener = NULL;
-    cbm_daemon_ipc_startup_lock_t *startup = NULL;
-    cbm_daemon_ipc_connection_t *clients[CLIENT_CAP] = {0};
+    hyp_daemon_ipc_endpoint_t *endpoint = NULL;
+    hyp_daemon_ipc_listener_t *listener = NULL;
+    hyp_daemon_ipc_startup_lock_t *startup = NULL;
+    hyp_daemon_ipc_connection_t *clients[CLIENT_CAP] = {0};
     size_t client_count = 0;
     struct stat socket_before = {0};
     struct stat anchor_before = {0};
@@ -3827,14 +3827,14 @@ TEST(daemon_ipc_posix_active_listener_is_never_cleaned_under_queue_pressure) {
     int endpoint_after_cleanup = -1;
 
     if (ipc_test_parent_new(parent, "active-cleanup")) {
-        endpoint = cbm_daemon_ipc_endpoint_new(key, parent);
+        endpoint = hyp_daemon_ipc_endpoint_new(key, parent);
     }
     if (endpoint) {
-        ipc_test_copy_path(runtime_dir, cbm_daemon_ipc_endpoint_runtime_dir(endpoint));
-        ipc_test_copy_path(socket_path, cbm_daemon_ipc_endpoint_address(endpoint));
+        ipc_test_copy_path(runtime_dir, hyp_daemon_ipc_endpoint_runtime_dir(endpoint));
+        ipc_test_copy_path(socket_path, hyp_daemon_ipc_endpoint_address(endpoint));
         paths_ok = ipc_test_socket_anchor_path(anchor_path, runtime_dir, key) &&
                    ipc_test_socket_identity_path(identity_path, socket_path);
-        listener = cbm_daemon_ipc_listen(endpoint);
+        listener = hyp_daemon_ipc_listen(endpoint);
     }
     if (listener) {
         artifacts_before =
@@ -3848,17 +3848,17 @@ TEST(daemon_ipc_posix_active_listener_is_never_cleaned_under_queue_pressure) {
      * listener can reject further connects with ECONNREFUSED. Cleanup must
      * rely only on the retained lifetime reservation, never on connect(). */
     while (listener && client_count < CLIENT_CAP) {
-        cbm_daemon_ipc_connection_t *client = cbm_daemon_ipc_connect(endpoint, 1);
+        hyp_daemon_ipc_connection_t *client = hyp_daemon_ipc_connect(endpoint, 1);
         if (!client) {
             break;
         }
         clients[client_count++] = client;
     }
     if (listener) {
-        startup_result = cbm_daemon_ipc_startup_lock_try_acquire(endpoint, &startup);
+        startup_result = hyp_daemon_ipc_startup_lock_try_acquire(endpoint, &startup);
     }
     if (startup) {
-        cleanup_result = cbm_daemon_ipc_stale_generation_cleanup(endpoint, startup);
+        cleanup_result = hyp_daemon_ipc_stale_generation_cleanup(endpoint, startup);
         artifacts_unchanged =
             lstat(socket_path, &socket_after) == 0 && S_ISSOCK(socket_after.st_mode) &&
             socket_after.st_dev == socket_before.st_dev &&
@@ -3868,15 +3868,15 @@ TEST(daemon_ipc_posix_active_listener_is_never_cleaned_under_queue_pressure) {
             lstat(identity_path, &identity_after) == 0 && S_ISREG(identity_after.st_mode) &&
             identity_after.st_dev == identity_before.st_dev &&
             identity_after.st_ino == identity_before.st_ino;
-        endpoint_after_cleanup = cbm_daemon_ipc_endpoint_probe(endpoint, 1);
+        endpoint_after_cleanup = hyp_daemon_ipc_endpoint_probe(endpoint, 1);
     }
 
-    cbm_daemon_ipc_startup_lock_release(&startup);
+    hyp_daemon_ipc_startup_lock_release(&startup);
     for (size_t index = 0; index < client_count; index++) {
-        cbm_daemon_ipc_connection_close(clients[index]);
+        hyp_daemon_ipc_connection_close(clients[index]);
     }
-    cbm_daemon_ipc_listener_close(listener);
-    cbm_daemon_ipc_endpoint_free(endpoint);
+    hyp_daemon_ipc_listener_close(listener);
+    hyp_daemon_ipc_endpoint_free(endpoint);
     ipc_test_remove_tree(runtime_dir, parent);
 
     ASSERT_TRUE(paths_ok);
@@ -3894,13 +3894,13 @@ TEST(daemon_ipc_posix_partial_frame_timeout_poisons_connection) {
     static const uint8_t payload[] = {'n', 'e', 'w'};
     char parent[TEST_PATH_CAP] = {0};
     char runtime_dir[TEST_PATH_CAP] = {0};
-    cbm_daemon_ipc_endpoint_t *endpoint = NULL;
-    cbm_daemon_ipc_listener_t *listener = NULL;
-    cbm_daemon_ipc_connection_t *server_connection = NULL;
+    hyp_daemon_ipc_endpoint_t *endpoint = NULL;
+    hyp_daemon_ipc_listener_t *listener = NULL;
+    hyp_daemon_ipc_connection_t *server_connection = NULL;
     int raw_client = -1;
-    uint8_t partial_header[CBM_DAEMON_FRAME_HEADER_SIZE] = {0};
-    uint8_t full_header[CBM_DAEMON_FRAME_HEADER_SIZE] = {0};
-    cbm_daemon_frame_t frame = {0};
+    uint8_t partial_header[HYP_DAEMON_FRAME_HEADER_SIZE] = {0};
+    uint8_t full_header[HYP_DAEMON_FRAME_HEADER_SIZE] = {0};
+    hyp_daemon_frame_t frame = {0};
     uint8_t *received_payload = NULL;
     bool raw_connected = false;
     bool partial_sent = false;
@@ -3911,11 +3911,11 @@ TEST(daemon_ipc_posix_partial_frame_timeout_poisons_connection) {
 
     bool parent_ok = ipc_test_parent_new(parent, "partial-frame");
     if (parent_ok) {
-        endpoint = cbm_daemon_ipc_endpoint_new(key, parent);
+        endpoint = hyp_daemon_ipc_endpoint_new(key, parent);
     }
     if (endpoint) {
-        ipc_test_copy_path(runtime_dir, cbm_daemon_ipc_endpoint_runtime_dir(endpoint));
-        listener = cbm_daemon_ipc_listen(endpoint);
+        ipc_test_copy_path(runtime_dir, hyp_daemon_ipc_endpoint_runtime_dir(endpoint));
+        listener = hyp_daemon_ipc_listen(endpoint);
     }
     if (listener) {
         raw_client = socket(AF_UNIX, SOCK_STREAM, 0);
@@ -3927,7 +3927,7 @@ TEST(daemon_ipc_posix_partial_frame_timeout_poisons_connection) {
 #endif
         struct sockaddr_un address;
         socklen_t address_length = 0;
-        if (ipc_test_unix_address_set(&address, cbm_daemon_ipc_endpoint_address(endpoint),
+        if (ipc_test_unix_address_set(&address, hyp_daemon_ipc_endpoint_address(endpoint),
                                       &address_length)) {
             int connect_result;
             do {
@@ -3938,38 +3938,38 @@ TEST(daemon_ipc_posix_partial_frame_timeout_poisons_connection) {
         }
     }
     if (raw_connected) {
-        accept_result = cbm_daemon_ipc_accept(listener, 500, &server_connection);
+        accept_result = hyp_daemon_ipc_accept(listener, 500, &server_connection);
     }
     if (accept_result == 1 && server_connection &&
-        cbm_daemon_frame_header_encode(partial_header, CBM_DAEMON_FRAME_REQUEST, 0, 0)) {
+        hyp_daemon_frame_header_encode(partial_header, HYP_DAEMON_FRAME_REQUEST, 0, 0)) {
         partial_sent =
-            ipc_test_socket_send_all(raw_client, partial_header, CBM_DAEMON_FRAME_HEADER_SIZE / 2);
+            ipc_test_socket_send_all(raw_client, partial_header, HYP_DAEMON_FRAME_HEADER_SIZE / 2);
     }
     if (partial_sent) {
         partial_receive_result =
-            cbm_daemon_ipc_receive_frame(server_connection, 50, &frame, &received_payload);
+            hyp_daemon_ipc_receive_frame(server_connection, 50, &frame, &received_payload);
     }
     free(received_payload);
     received_payload = NULL;
     memset(&frame, 0, sizeof(frame));
     if (partial_receive_result == 0 &&
-        cbm_daemon_frame_header_encode(full_header, CBM_DAEMON_FRAME_REQUEST, 0x55aa,
+        hyp_daemon_frame_header_encode(full_header, HYP_DAEMON_FRAME_REQUEST, 0x55aa,
                                        (uint32_t)sizeof(payload))) {
         full_frame_sent = ipc_test_socket_send_all(raw_client, full_header, sizeof(full_header)) &&
                           ipc_test_socket_send_all(raw_client, payload, sizeof(payload));
     }
     if (full_frame_sent) {
         reuse_result =
-            cbm_daemon_ipc_receive_frame(server_connection, 500, &frame, &received_payload);
+            hyp_daemon_ipc_receive_frame(server_connection, 500, &frame, &received_payload);
     }
 
     free(received_payload);
     if (raw_client >= 0) {
         (void)close(raw_client);
     }
-    cbm_daemon_ipc_connection_close(server_connection);
-    cbm_daemon_ipc_listener_close(listener);
-    cbm_daemon_ipc_endpoint_free(endpoint);
+    hyp_daemon_ipc_connection_close(server_connection);
+    hyp_daemon_ipc_listener_close(listener);
+    hyp_daemon_ipc_endpoint_free(endpoint);
     ipc_test_remove_tree(runtime_dir, parent);
 
     ASSERT_TRUE(parent_ok);
@@ -3988,7 +3988,7 @@ TEST(daemon_ipc_macos_clears_inherited_deny_acl_from_new_runtime) {
     char parent[TEST_PATH_CAP] = {0};
     char control[TEST_PATH_CAP] = {0};
     char runtime_dir[TEST_PATH_CAP] = {0};
-    cbm_daemon_ipc_endpoint_t *endpoint = NULL;
+    hyp_daemon_ipc_endpoint_t *endpoint = NULL;
     struct stat parent_status = {0};
     struct stat control_status = {0};
     struct stat runtime_status = {0};
@@ -4015,13 +4015,13 @@ TEST(daemon_ipc_macos_clears_inherited_deny_acl_from_new_runtime) {
     bool control_removed = !control_created || rmdir(control) == 0;
 
     /* A deny-only ancestor is safe to traverse, but its inherited deny entry
-     * still must be stripped from CBM's final private directory.  The control
+     * still must be stripped from HYP's final private directory.  The control
      * child proves that this filesystem propagated the ACL. */
     if (control_removed && control_acl_entries > 0) {
-        endpoint = cbm_daemon_ipc_endpoint_new(key, parent);
+        endpoint = hyp_daemon_ipc_endpoint_new(key, parent);
     }
     if (endpoint) {
-        ipc_test_copy_path(runtime_dir, cbm_daemon_ipc_endpoint_runtime_dir(endpoint));
+        ipc_test_copy_path(runtime_dir, hyp_daemon_ipc_endpoint_runtime_dir(endpoint));
     }
     bool runtime_mode_stayed_private =
         runtime_dir[0] != '\0' && lstat(runtime_dir, &runtime_status) == 0 &&
@@ -4030,7 +4030,7 @@ TEST(daemon_ipc_macos_clears_inherited_deny_acl_from_new_runtime) {
         runtime_dir[0] != '\0' ? ipc_test_macos_extended_acl_entry_count(runtime_dir) : -1;
 
     bool endpoint_created = endpoint != NULL;
-    cbm_daemon_ipc_endpoint_free(endpoint);
+    hyp_daemon_ipc_endpoint_free(endpoint);
     ipc_test_remove_tree(runtime_dir, parent);
 
     ASSERT_TRUE(parent_ok);
@@ -4055,7 +4055,7 @@ TEST(daemon_ipc_macos_rejects_allow_acl_on_ancestor_without_mutation) {
 
     bool parent_ok = ipc_test_parent_new(parent, "mac-acl-ancestor-allow");
     int runtime_written = parent_ok
-                              ? snprintf(runtime_dir, sizeof(runtime_dir), "%s/cbm-daemon-%lu",
+                              ? snprintf(runtime_dir, sizeof(runtime_dir), "%s/hyp-daemon-%lu",
                                          parent, (unsigned long)geteuid())
                               : -1;
     int acl_fixture = parent_ok ? ipc_test_macos_set_mutating_acl(parent, false) : -1;
@@ -4066,8 +4066,8 @@ TEST(daemon_ipc_macos_rejects_allow_acl_on_ancestor_without_mutation) {
     int entries_before = acl_fixture == 1 ? ipc_test_macos_extended_acl_entry_count(parent) : -1;
     bool snapshot_before = entries_before > 0 && lstat(parent, &before) == 0;
 
-    cbm_daemon_ipc_endpoint_t *endpoint =
-        snapshot_before ? cbm_daemon_ipc_endpoint_new(key, parent) : NULL;
+    hyp_daemon_ipc_endpoint_t *endpoint =
+        snapshot_before ? hyp_daemon_ipc_endpoint_new(key, parent) : NULL;
 
     int entries_after = ipc_test_macos_extended_acl_entry_count(parent);
     bool parent_unchanged = lstat(parent, &after) == 0 && before.st_dev == after.st_dev &&
@@ -4078,7 +4078,7 @@ TEST(daemon_ipc_macos_rejects_allow_acl_on_ancestor_without_mutation) {
     bool runtime_absent = runtime_written > 0 && runtime_written < (int)sizeof(runtime_dir) &&
                           lstat(runtime_dir, &after) != 0 && errno == ENOENT;
 
-    cbm_daemon_ipc_endpoint_free(endpoint);
+    hyp_daemon_ipc_endpoint_free(endpoint);
     ipc_test_remove_flat_dir(parent);
 
     ASSERT_TRUE(parent_ok);
@@ -4094,20 +4094,20 @@ TEST(daemon_ipc_macos_repairs_or_rejects_existing_runtime_mutating_acl) {
     static const char key[] = "ee55aa66bb77cc88";
     char parent[TEST_PATH_CAP] = {0};
     char runtime_dir[TEST_PATH_CAP] = {0};
-    cbm_daemon_ipc_endpoint_t *seed = NULL;
-    cbm_daemon_ipc_endpoint_t *endpoint = NULL;
-    cbm_daemon_ipc_startup_lock_t *startup = NULL;
+    hyp_daemon_ipc_endpoint_t *seed = NULL;
+    hyp_daemon_ipc_endpoint_t *endpoint = NULL;
+    hyp_daemon_ipc_startup_lock_t *startup = NULL;
     struct stat runtime_status = {0};
 
     bool parent_ok = ipc_test_parent_new(parent, "mac-acl-existing");
     if (parent_ok) {
-        seed = cbm_daemon_ipc_endpoint_new(key, parent);
+        seed = hyp_daemon_ipc_endpoint_new(key, parent);
     }
     if (seed) {
-        ipc_test_copy_path(runtime_dir, cbm_daemon_ipc_endpoint_runtime_dir(seed));
+        ipc_test_copy_path(runtime_dir, hyp_daemon_ipc_endpoint_runtime_dir(seed));
     }
     bool runtime_seeded = runtime_dir[0] != '\0';
-    cbm_daemon_ipc_endpoint_free(seed);
+    hyp_daemon_ipc_endpoint_free(seed);
     seed = NULL;
 
     int acl_fixture = runtime_seeded ? ipc_test_macos_set_mutating_acl(runtime_dir, false) : -1;
@@ -4122,10 +4122,10 @@ TEST(daemon_ipc_macos_repairs_or_rejects_existing_runtime_mutating_acl) {
         acl_fixture == 1 ? ipc_test_macos_extended_acl_entry_count(runtime_dir) : -1;
 
     if (acl_entries_before > 0) {
-        endpoint = cbm_daemon_ipc_endpoint_new(key, parent);
+        endpoint = hyp_daemon_ipc_endpoint_new(key, parent);
     }
     int startup_status =
-        endpoint ? cbm_daemon_ipc_startup_lock_try_acquire(endpoint, &startup) : -1;
+        endpoint ? hyp_daemon_ipc_startup_lock_try_acquire(endpoint, &startup) : -1;
     int acl_entries_after = ipc_test_macos_extended_acl_entry_count(runtime_dir);
 
     /* A constructor rejection or a lock-use rejection is fail-closed.  If use
@@ -4134,8 +4134,8 @@ TEST(daemon_ipc_macos_repairs_or_rejects_existing_runtime_mutating_acl) {
     bool rejected_before_use = endpoint == NULL || startup_status == -1;
     bool repaired_before_use = endpoint != NULL && startup_status == 1 && acl_entries_after == 0;
 
-    cbm_daemon_ipc_startup_lock_release(&startup);
-    cbm_daemon_ipc_endpoint_free(endpoint);
+    hyp_daemon_ipc_startup_lock_release(&startup);
+    hyp_daemon_ipc_endpoint_free(endpoint);
     ipc_test_remove_tree(runtime_dir, parent);
 
     ASSERT_TRUE(parent_ok);
@@ -4151,21 +4151,21 @@ TEST(daemon_ipc_macos_runtime_acl_injection_invalidates_existing_endpoint) {
     static const char key[] = "aa77bb88cc99dd00";
     char parent[TEST_PATH_CAP] = {0};
     char runtime_dir[TEST_PATH_CAP] = {0};
-    cbm_daemon_ipc_endpoint_t *endpoint = NULL;
-    cbm_daemon_ipc_startup_lock_t *startup = NULL;
+    hyp_daemon_ipc_endpoint_t *endpoint = NULL;
+    hyp_daemon_ipc_startup_lock_t *startup = NULL;
     struct stat runtime_status = {0};
 
     bool parent_ok = ipc_test_parent_new(parent, "mac-acl-injected");
     if (parent_ok) {
-        endpoint = cbm_daemon_ipc_endpoint_new(key, parent);
+        endpoint = hyp_daemon_ipc_endpoint_new(key, parent);
     }
     if (endpoint) {
-        ipc_test_copy_path(runtime_dir, cbm_daemon_ipc_endpoint_runtime_dir(endpoint));
+        ipc_test_copy_path(runtime_dir, hyp_daemon_ipc_endpoint_runtime_dir(endpoint));
     }
     int acl_fixture =
         runtime_dir[0] != '\0' ? ipc_test_macos_set_mutating_acl(runtime_dir, false) : -1;
     if (acl_fixture == 0) {
-        cbm_daemon_ipc_endpoint_free(endpoint);
+        hyp_daemon_ipc_endpoint_free(endpoint);
         ipc_test_remove_tree(runtime_dir, parent);
         SKIP_PLATFORM("macOS fixture filesystem has no extended ACL support");
     }
@@ -4173,10 +4173,10 @@ TEST(daemon_ipc_macos_runtime_acl_injection_invalidates_existing_endpoint) {
                                S_ISDIR(runtime_status.st_mode) &&
                                (runtime_status.st_mode & 07777) == 0700;
     int startup_status =
-        mode_stayed_private ? cbm_daemon_ipc_startup_lock_try_acquire(endpoint, &startup) : 0;
+        mode_stayed_private ? hyp_daemon_ipc_startup_lock_try_acquire(endpoint, &startup) : 0;
 
-    cbm_daemon_ipc_startup_lock_release(&startup);
-    cbm_daemon_ipc_endpoint_free(endpoint);
+    hyp_daemon_ipc_startup_lock_release(&startup);
+    hyp_daemon_ipc_endpoint_free(endpoint);
     ipc_test_remove_tree(runtime_dir, parent);
 
     ASSERT_TRUE(parent_ok);
@@ -4193,37 +4193,37 @@ TEST(daemon_ipc_macos_lock_acl_injection_invalidates_retained_startup) {
     char parent[TEST_PATH_CAP] = {0};
     char runtime_dir[TEST_PATH_CAP] = {0};
     char startup_path[TEST_PATH_CAP] = {0};
-    cbm_daemon_ipc_endpoint_t *endpoint = NULL;
-    cbm_daemon_ipc_startup_lock_t *startup = NULL;
+    hyp_daemon_ipc_endpoint_t *endpoint = NULL;
+    hyp_daemon_ipc_startup_lock_t *startup = NULL;
     struct stat startup_status = {0};
 
     bool parent_ok = ipc_test_parent_new(parent, "mac-acl-lock");
     if (parent_ok) {
-        endpoint = cbm_daemon_ipc_endpoint_new(key, parent);
+        endpoint = hyp_daemon_ipc_endpoint_new(key, parent);
     }
     if (endpoint) {
-        ipc_test_copy_path(runtime_dir, cbm_daemon_ipc_endpoint_runtime_dir(endpoint));
+        ipc_test_copy_path(runtime_dir, hyp_daemon_ipc_endpoint_runtime_dir(endpoint));
     }
     int startup_result =
-        endpoint ? cbm_daemon_ipc_startup_lock_try_acquire(endpoint, &startup) : -1;
+        endpoint ? hyp_daemon_ipc_startup_lock_try_acquire(endpoint, &startup) : -1;
     int path_written = startup_result == 1 ? snprintf(startup_path, sizeof(startup_path),
-                                                      "%s/cbm-%s.startup-v2.lock", runtime_dir, key)
+                                                      "%s/hyp-%s.startup-v2.lock", runtime_dir, key)
                                            : -1;
     bool path_ok = path_written > 0 && path_written < (int)sizeof(startup_path);
     int acl_fixture = path_ok ? ipc_test_macos_set_mutating_acl(startup_path, false) : -1;
     if (acl_fixture == 0) {
-        cbm_daemon_ipc_startup_lock_release(&startup);
-        cbm_daemon_ipc_endpoint_free(endpoint);
+        hyp_daemon_ipc_startup_lock_release(&startup);
+        hyp_daemon_ipc_endpoint_free(endpoint);
         ipc_test_remove_tree(runtime_dir, parent);
         SKIP_PLATFORM("macOS fixture filesystem has no extended ACL support");
     }
     bool mode_stayed_private = acl_fixture == 1 && lstat(startup_path, &startup_status) == 0 &&
                                S_ISREG(startup_status.st_mode) &&
                                (startup_status.st_mode & 07777) == 0600;
-    bool prepared = mode_stayed_private && cbm_daemon_ipc_startup_lock_prepare_handoff(startup);
+    bool prepared = mode_stayed_private && hyp_daemon_ipc_startup_lock_prepare_handoff(startup);
 
-    cbm_daemon_ipc_startup_lock_release(&startup);
-    cbm_daemon_ipc_endpoint_free(endpoint);
+    hyp_daemon_ipc_startup_lock_release(&startup);
+    hyp_daemon_ipc_endpoint_free(endpoint);
     ipc_test_remove_tree(runtime_dir, parent);
 
     ASSERT_TRUE(parent_ok);
@@ -4244,8 +4244,8 @@ TEST(daemon_ipc_posix_runtime_and_socket_are_owner_only) {
     char anchor_path[TEST_PATH_CAP] = {0};
     char identity_path[TEST_PATH_CAP] = {0};
     char pending_path[TEST_PATH_CAP] = {0};
-    cbm_daemon_ipc_endpoint_t *endpoint = NULL;
-    cbm_daemon_ipc_listener_t *listener = NULL;
+    hyp_daemon_ipc_endpoint_t *endpoint = NULL;
+    hyp_daemon_ipc_listener_t *listener = NULL;
     struct stat runtime_stat = {0};
     struct stat socket_stat = {0};
     struct stat anchor_stat = {0};
@@ -4260,17 +4260,17 @@ TEST(daemon_ipc_posix_runtime_and_socket_are_owner_only) {
     bool identity_removed = false;
 
     if (ipc_test_parent_new(parent, "permissions")) {
-        endpoint = cbm_daemon_ipc_endpoint_new(key, parent);
+        endpoint = hyp_daemon_ipc_endpoint_new(key, parent);
     }
     if (endpoint) {
-        ipc_test_copy_path(runtime_dir, cbm_daemon_ipc_endpoint_runtime_dir(endpoint));
-        ipc_test_copy_path(socket_path, cbm_daemon_ipc_endpoint_address(endpoint));
+        ipc_test_copy_path(runtime_dir, hyp_daemon_ipc_endpoint_runtime_dir(endpoint));
+        ipc_test_copy_path(socket_path, hyp_daemon_ipc_endpoint_address(endpoint));
         (void)ipc_test_socket_anchor_path(anchor_path, runtime_dir, key);
         (void)ipc_test_socket_identity_path(identity_path, socket_path);
         (void)ipc_test_socket_pending_path(pending_path, socket_path);
         runtime_ok = lstat(runtime_dir, &runtime_stat) == 0 && S_ISDIR(runtime_stat.st_mode) &&
                      (runtime_stat.st_mode & 0777) == 0700 && runtime_stat.st_uid == geteuid();
-        listener = cbm_daemon_ipc_listen(endpoint);
+        listener = hyp_daemon_ipc_listen(endpoint);
     }
     if (listener) {
         socket_ok = lstat(socket_path, &socket_stat) == 0 && S_ISSOCK(socket_stat.st_mode) &&
@@ -4286,7 +4286,7 @@ TEST(daemon_ipc_posix_runtime_and_socket_are_owner_only) {
         errno = 0;
         pending_absent = lstat(pending_path, &identity_stat) != 0 && errno == ENOENT;
     }
-    cbm_daemon_ipc_listener_close(listener);
+    hyp_daemon_ipc_listener_close(listener);
     if (socket_path[0] != '\0') {
         errno = 0;
         socket_removed = lstat(socket_path, &socket_stat) != 0 && errno == ENOENT;
@@ -4299,7 +4299,7 @@ TEST(daemon_ipc_posix_runtime_and_socket_are_owner_only) {
         errno = 0;
         anchor_removed = lstat(anchor_path, &anchor_stat) != 0 && errno == ENOENT;
     }
-    cbm_daemon_ipc_endpoint_free(endpoint);
+    hyp_daemon_ipc_endpoint_free(endpoint);
     ipc_test_remove_tree(runtime_dir, parent);
 
     ASSERT_TRUE(runtime_ok);
@@ -4349,7 +4349,7 @@ TEST(daemon_ipc_posix_private_log_creates_first_ever_cache_tree_safely) {
     if (paths_ok) {
         errno = 0;
         absent_before = lstat(first, &status) != 0 && errno == ENOENT;
-        log = cbm_daemon_ipc_private_log_open(logs, "daemon.log", 4096);
+        log = hyp_daemon_ipc_private_log_open(logs, "daemon.log", 4096);
         opened = log != NULL;
     }
     if (log) {
@@ -4400,7 +4400,7 @@ TEST(daemon_ipc_posix_private_directory_hardens_existing_cache_root) {
     if (paths_ok) {
         deliberately_public = chmod(cache, 0755) == 0;
     }
-    if (deliberately_public && cbm_daemon_ipc_private_directory_secure(cache)) {
+    if (deliberately_public && hyp_daemon_ipc_private_directory_secure(cache)) {
         hardened = lstat(cache, &status) == 0 && S_ISDIR(status.st_mode) &&
                    status.st_uid == geteuid() && (status.st_mode & 07777) == 0700;
     }
@@ -4436,7 +4436,7 @@ TEST(daemon_ipc_posix_private_directory_rejects_world_writable_ancestor) {
         unsafe_mode_set = chmod(unsafe, 0777) == 0;
     }
     if (unsafe_mode_set) {
-        rejected = !cbm_daemon_ipc_private_directory_secure(cache);
+        rejected = !hyp_daemon_ipc_private_directory_secure(cache);
         ancestor_unchanged = lstat(unsafe, &status) == 0 && S_ISDIR(status.st_mode) &&
                              (status.st_mode & 07777) == 0777;
         errno = 0;
@@ -4489,7 +4489,7 @@ TEST(daemon_ipc_posix_private_log_rejects_symlinks_and_is_owner_only) {
         directory_symlink_created = symlink(victim_dir, logs) == 0;
     }
     if (directory_symlink_created) {
-        log = cbm_daemon_ipc_private_log_open(logs, "daemon.log", 4096);
+        log = hyp_daemon_ipc_private_log_open(logs, "daemon.log", 4096);
         directory_symlink_rejected = log == NULL;
         if (log) {
             (void)fclose(log);
@@ -4498,7 +4498,7 @@ TEST(daemon_ipc_posix_private_log_rejects_symlinks_and_is_owner_only) {
         (void)unlink(logs);
     }
     if (directory_symlink_rejected) {
-        log = cbm_daemon_ipc_private_log_open(logs, "daemon.log", 4096);
+        log = hyp_daemon_ipc_private_log_open(logs, "daemon.log", 4096);
         secure_log_opened = log != NULL;
         if (log) {
             (void)fputs("secure\n", log);
@@ -4515,7 +4515,7 @@ TEST(daemon_ipc_posix_private_log_rejects_symlinks_and_is_owner_only) {
         file_symlink_created = symlink(victim_file, log_path) == 0;
     }
     if (file_symlink_created) {
-        log = cbm_daemon_ipc_private_log_open(logs, "daemon.log", 4096);
+        log = hyp_daemon_ipc_private_log_open(logs, "daemon.log", 4096);
         file_symlink_rejected = log == NULL;
         if (log) {
             (void)fclose(log);
@@ -4550,8 +4550,8 @@ TEST(daemon_ipc_posix_rejects_non_socket_and_symlink_endpoints) {
     char runtime_dir[TEST_PATH_CAP] = {0};
     char socket_path[TEST_PATH_CAP] = {0};
     char sentinel_path[TEST_PATH_CAP] = {0};
-    cbm_daemon_ipc_endpoint_t *endpoint = NULL;
-    cbm_daemon_ipc_listener_t *unexpected_listener = NULL;
+    hyp_daemon_ipc_endpoint_t *endpoint = NULL;
+    hyp_daemon_ipc_listener_t *unexpected_listener = NULL;
     struct stat st = {0};
     bool regular_created = false;
     bool regular_rejected_unchanged = false;
@@ -4561,19 +4561,19 @@ TEST(daemon_ipc_posix_rejects_non_socket_and_symlink_endpoints) {
     bool sentinel_unchanged = false;
 
     if (ipc_test_parent_new(parent, "stale-path")) {
-        endpoint = cbm_daemon_ipc_endpoint_new(key, parent);
+        endpoint = hyp_daemon_ipc_endpoint_new(key, parent);
     }
     if (endpoint) {
-        ipc_test_copy_path(runtime_dir, cbm_daemon_ipc_endpoint_runtime_dir(endpoint));
-        ipc_test_copy_path(socket_path, cbm_daemon_ipc_endpoint_address(endpoint));
+        ipc_test_copy_path(runtime_dir, hyp_daemon_ipc_endpoint_runtime_dir(endpoint));
+        ipc_test_copy_path(socket_path, hyp_daemon_ipc_endpoint_address(endpoint));
         (void)snprintf(sentinel_path, sizeof(sentinel_path), "%s/sentinel", parent);
         regular_created = ipc_test_write_byte(socket_path, 0x42);
     }
     if (regular_created) {
-        unexpected_listener = cbm_daemon_ipc_listen(endpoint);
+        unexpected_listener = hyp_daemon_ipc_listen(endpoint);
         regular_rejected_unchanged = unexpected_listener == NULL && lstat(socket_path, &st) == 0 &&
                                      S_ISREG(st.st_mode) && st.st_size == 1;
-        cbm_daemon_ipc_listener_close(unexpected_listener);
+        hyp_daemon_ipc_listener_close(unexpected_listener);
         unexpected_listener = NULL;
         (void)unlink(socket_path);
         sentinel_created = ipc_test_write_byte(sentinel_path, 0x7e);
@@ -4582,12 +4582,12 @@ TEST(daemon_ipc_posix_rejects_non_socket_and_symlink_endpoints) {
         symlink_created = symlink(sentinel_path, socket_path) == 0;
     }
     if (symlink_created) {
-        unexpected_listener = cbm_daemon_ipc_listen(endpoint);
+        unexpected_listener = hyp_daemon_ipc_listen(endpoint);
         symlink_rejected_unchanged =
             unexpected_listener == NULL && lstat(socket_path, &st) == 0 && S_ISLNK(st.st_mode);
         sentinel_unchanged =
             stat(sentinel_path, &st) == 0 && S_ISREG(st.st_mode) && st.st_size == 1;
-        cbm_daemon_ipc_listener_close(unexpected_listener);
+        hyp_daemon_ipc_listener_close(unexpected_listener);
     }
 
     if (socket_path[0] != '\0') {
@@ -4596,7 +4596,7 @@ TEST(daemon_ipc_posix_rejects_non_socket_and_symlink_endpoints) {
     if (sentinel_path[0] != '\0') {
         (void)unlink(sentinel_path);
     }
-    cbm_daemon_ipc_endpoint_free(endpoint);
+    hyp_daemon_ipc_endpoint_free(endpoint);
     ipc_test_remove_tree(runtime_dir, parent);
 
     ASSERT_TRUE(regular_created);

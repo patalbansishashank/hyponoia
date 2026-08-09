@@ -23,8 +23,8 @@ for required in \
     'FAIL: soak DACL stamp' \
     'FAIL: soak child DACL reset' \
     'SOAK_NATIVE_WINDOWS=false' \
-    "eval 'coproc CBM_SOAK_SERVER {" \
-    'SERVER_PID=$CBM_SOAK_SERVER_PID' \
+    "eval 'coproc HYP_SOAK_SERVER {" \
+    'SERVER_PID=$HYP_SOAK_SERVER_PID' \
     'start_mcp_server truncate' \
     'start_mcp_server append' \
     'def handle_${i}(request):' \

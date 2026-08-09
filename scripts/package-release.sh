@@ -27,7 +27,7 @@ local artifact-flow smoke lane.
              arm64-portable, ...)
   --variant  standard (default) | ui — selects the archive NAME prefix; the
              matching binary must already have been built (--with-ui for ui).
-             UI archives add exactly one root-level cbm-ui-<sha256>.pack.
+             UI archives add exactly one root-level hyp-ui-<sha256>.pack.
   --out-dir  where to place the archive (default: repository root).
 
 Make passthrough (VAR=VAL, forwarded to the build):
@@ -37,17 +37,17 @@ Environment:
   BUILD_DIR  build tree to archive from (default build/c).
 
 Archive contents (defined here, canonical) — ONE executable per runtime set:
-  unix:    codebase-memory-mcp cbm-integrations.json LICENSE install.sh
-           THIRD_PARTY_NOTICES.md [cbm-ui-<sha256>.pack] (.tar.gz)
-  windows: codebase-memory-mcp.exe cbm-integrations.json LICENSE install.ps1
-           THIRD_PARTY_NOTICES.md [cbm-ui-<sha256>.pack] (.zip)
+  unix:    hyponoia hyp-integrations.json LICENSE install.sh
+           THIRD_PARTY_NOTICES.md [hyp-ui-<sha256>.pack] (.tar.gz)
+  windows: hyponoia.exe hyp-integrations.json LICENSE install.ps1
+           THIRD_PARTY_NOTICES.md [hyp-ui-<sha256>.pack] (.zip)
 
 The bracketed pack is required only for the ui variant and forbidden from the
 standard archive. The pack FORMAT is uncompressed before archiving; the tar/zip
 container may compress it. Release extraction retains it as a standalone input
 so scanners can inspect the frontend independently of the native image.
 
-cbm-integrations.json is the integration-template data file: the binary
+hyp-integrations.json is the integration-template data file: the binary
 embeds only its SHA-256 and refuses to install integrations without a
 verified copy, so an archive without it produces a binary that cannot
 install. It ships NEXT TO the binary — the resolution path install.sh /
@@ -101,7 +101,7 @@ esac
 
 BUILD_DIR="${BUILD_DIR:-build/c}"
 OUT_DIR="$(mkdir -p "$OUT_DIR" && cd "$OUT_DIR" && pwd)"
-NAME="codebase-memory-mcp${SUFFIX}-${GOOS}-${GOARCH}"
+NAME="hyponoia${SUFFIX}-${GOOS}-${GOARCH}"
 
 sha256_file() {
     local path="$1"
@@ -119,7 +119,7 @@ verify_ui_pack_digest() {
     local path="$1"
     local name expected actual
     name="$(basename "$path")"
-    expected="${name#cbm-ui-}"
+    expected="${name#hyp-ui-}"
     expected="${expected%.pack}"
     if ! actual="$(sha256_file "$path")"; then
         return 1
@@ -138,15 +138,15 @@ UI_PACK_NAME=""
 UI_PACK_SOURCE=""
 if [ "$VARIANT" = "ui" ]; then
     shopt -s nullglob
-    UI_PACK_CANDIDATES=("$BUILD_DIR"/cbm-ui-*.pack)
+    UI_PACK_CANDIDATES=("$BUILD_DIR"/hyp-ui-*.pack)
     shopt -u nullglob
     if [ "${#UI_PACK_CANDIDATES[@]}" -ne 1 ]; then
-        echo "package-release: ui build must contain exactly one cbm-ui-<sha256>.pack" >&2
+        echo "package-release: ui build must contain exactly one hyp-ui-<sha256>.pack" >&2
         exit 2
     fi
     UI_PACK_SOURCE="${UI_PACK_CANDIDATES[0]}"
     UI_PACK_NAME="$(basename "$UI_PACK_SOURCE")"
-    if ! [[ "$UI_PACK_NAME" =~ ^cbm-ui-[0-9a-f]{64}\.pack$ ]] || [ ! -s "$UI_PACK_SOURCE" ]; then
+    if ! [[ "$UI_PACK_NAME" =~ ^hyp-ui-[0-9a-f]{64}\.pack$ ]] || [ ! -s "$UI_PACK_SOURCE" ]; then
         echo "package-release: invalid UI asset pack: $UI_PACK_SOURCE" >&2
         exit 2
     fi
@@ -221,15 +221,15 @@ if [ "$GOOS" = "windows" ]; then
     # causation. Self-update — the launcher's whole reason to exist — moves OUT
     # of the running process into install.ps1: Windows' executable lock only
     # blocks a process from replacing ITSELF.
-    PAYLOAD="$BUILD_DIR/codebase-memory-mcp"
+    PAYLOAD="$BUILD_DIR/hyponoia"
     [ -f "${PAYLOAD}.exe" ] && PAYLOAD="${PAYLOAD}.exe"
     [ -f "$PAYLOAD" ] || { echo "package-release: build first; missing $PAYLOAD" >&2; exit 2; }
-    STAGED_BINARY_NAME="codebase-memory-mcp.exe"
+    STAGED_BINARY_NAME="hyponoia.exe"
     INSTALLER="install.ps1"
 else
-    PAYLOAD="$BUILD_DIR/codebase-memory-mcp"
+    PAYLOAD="$BUILD_DIR/hyponoia"
     [ -f "$PAYLOAD" ] || { echo "package-release: build first; missing $PAYLOAD" >&2; exit 2; }
-    STAGED_BINARY_NAME="codebase-memory-mcp"
+    STAGED_BINARY_NAME="hyponoia"
     INSTALLER="install.sh"
 fi
 
@@ -238,7 +238,7 @@ fi
 # so the executable that validates the adjacent sidecars is byte-for-byte the
 # executable users receive. Keeping the stage beside the build also avoids a
 # system /tmp mounted noexec: the validation probe must actually execute.
-PACK_DIR="$(mktemp -d "$BUILD_DIR/.cbm-package.XXXXXX")"
+PACK_DIR="$(mktemp -d "$BUILD_DIR/.hyp-package.XXXXXX")"
 trap 'rm -rf "$PACK_DIR"' EXIT
 STAGED_BINARY="$PACK_DIR/$STAGED_BINARY_NAME"
 cp "$PAYLOAD" "$STAGED_BINARY"
@@ -253,7 +253,7 @@ bash scripts/ci/check-binary-composition.sh --variant="$VARIANT" \
 # sidecars are regular copies in an otherwise empty private directory. The UI
 # pack's filename is self-authenticating, but only the executable knows whether
 # that otherwise-valid pack (and integration manifest) belong to THIS build.
-cp assets/cbm-integrations.json "$PACK_DIR/cbm-integrations.json"
+cp assets/hyp-integrations.json "$PACK_DIR/hyp-integrations.json"
 if [ "$VARIANT" = "ui" ]; then
     cp "$UI_PACK_SOURCE" "$PACK_DIR/$UI_PACK_NAME"
 fi
@@ -271,7 +271,7 @@ if [ "$GOOS" = "windows" ]; then
         cd "$PACK_DIR"
         rm -f "$OUT_DIR/$NAME.zip"
         ARCHIVE_MEMBERS=(
-            codebase-memory-mcp.exe cbm-integrations.json LICENSE install.ps1
+            hyponoia.exe hyp-integrations.json LICENSE install.ps1
             THIRD_PARTY_NOTICES.md
         )
         [ "$VARIANT" = "ui" ] && ARCHIVE_MEMBERS+=("$UI_PACK_NAME")
@@ -280,7 +280,7 @@ if [ "$GOOS" = "windows" ]; then
     echo "=== package-release: $OUT_DIR/$NAME.zip ==="
 else
     ARCHIVE_MEMBERS=(
-        codebase-memory-mcp cbm-integrations.json LICENSE install.sh
+        hyponoia hyp-integrations.json LICENSE install.sh
         THIRD_PARTY_NOTICES.md
     )
     [ "$VARIANT" = "ui" ] && ARCHIVE_MEMBERS+=("$UI_PACK_NAME")

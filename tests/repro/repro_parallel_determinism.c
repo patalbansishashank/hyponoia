@@ -55,8 +55,8 @@
 
 /* Sorted (source_qn|type|target_qn) fingerprint of the whole project graph.
  * Heap string (caller frees) or NULL on error. */
-static char *rpd_edge_fingerprint(cbm_store_t *s, const char *project) {
-    struct sqlite3 *db = cbm_store_get_db(s);
+static char *rpd_edge_fingerprint(hyp_store_t *s, const char *project) {
+    struct sqlite3 *db = hyp_store_get_db(s);
     if (!db)
         return NULL;
     const char *sql = "SELECT s.qualified_name, e.type, t.qualified_name "
@@ -102,7 +102,7 @@ static char *rpd_edge_fingerprint(cbm_store_t *s, const char *project) {
 }
 
 /* Index `repo` into a freshly-unlinked isolated store and return the edge
- * fingerprint. Honors CBM_INDEX_SINGLE_THREAD from the environment. */
+ * fingerprint. Honors HYP_INDEX_SINGLE_THREAD from the environment. */
 static char *rpd_index_and_fingerprint(const char *repo, const char *dbpath) {
     unlink(dbpath);
     char wal[600], shm[600];
@@ -111,21 +111,21 @@ static char *rpd_index_and_fingerprint(const char *repo, const char *dbpath) {
     unlink(wal);
     unlink(shm);
 
-    cbm_pipeline_t *p = cbm_pipeline_new(repo, dbpath, CBM_MODE_FULL);
+    hyp_pipeline_t *p = hyp_pipeline_new(repo, dbpath, HYP_MODE_FULL);
     if (!p)
         return NULL;
-    int rc = cbm_pipeline_run(p);
-    cbm_pipeline_free(p);
+    int rc = hyp_pipeline_run(p);
+    hyp_pipeline_free(p);
     if (rc != 0)
         return NULL;
 
-    char *project = cbm_project_name_from_path(repo);
+    char *project = hyp_project_name_from_path(repo);
     if (!project)
         return NULL;
-    cbm_store_t *s = cbm_store_open_path(dbpath);
+    hyp_store_t *s = hyp_store_open_path(dbpath);
     char *fp = s ? rpd_edge_fingerprint(s, project) : NULL;
     if (s)
-        cbm_store_close(s);
+        hyp_store_close(s);
     free(project);
     return fp;
 }
@@ -145,7 +145,7 @@ TEST(repro_parallel_edge_determinism) {
     }
 
     char dbpath[512];
-    snprintf(dbpath, sizeof(dbpath), "%s/cbm_rpd_par_det.db", cbm_tmpdir());
+    snprintf(dbpath, sizeof(dbpath), "%s/hyp_rpd_par_det.db", hyp_tmpdir());
 
     /* First multi-threaded run = reference; every further MT run must match. */
     char *fp_ref = rpd_index_and_fingerprint(RPD_CORPUS, dbpath);
@@ -181,11 +181,11 @@ TEST(repro_seq_parallel_equivalence) {
     }
 
     char dbpath[512];
-    snprintf(dbpath, sizeof(dbpath), "%s/cbm_rpd_seq_par.db", cbm_tmpdir());
+    snprintf(dbpath, sizeof(dbpath), "%s/hyp_rpd_seq_par.db", hyp_tmpdir());
 
-    cbm_setenv("CBM_INDEX_SINGLE_THREAD", "1", 1);
+    hyp_setenv("HYP_INDEX_SINGLE_THREAD", "1", 1);
     char *fp_st = rpd_index_and_fingerprint(RPD_CORPUS, dbpath);
-    cbm_unsetenv("CBM_INDEX_SINGLE_THREAD");
+    hyp_unsetenv("HYP_INDEX_SINGLE_THREAD");
     ASSERT_NOT_NULL(fp_st);
 
     char *fp_mt = rpd_index_and_fingerprint(RPD_CORPUS, dbpath);

@@ -33,7 +33,7 @@ WORK=$(mktemp -d 2>/dev/null || mktemp -d -t memlab)
 # reason soak-test.sh and the guard suites copy their binaries there.
 if [[ "$BINARY" == *.exe ]] && command -v cygpath >/dev/null 2>&1 &&
     ! command -v winepath >/dev/null 2>&1; then
-    WIN_ROOT=$(mktemp -d "$(cygpath "$USERPROFILE")/cbm-memlab.XXXXXX")
+    WIN_ROOT=$(mktemp -d "$(cygpath "$USERPROFILE")/hyp-memlab.XXXXXX")
     WIN_ROOT_W="$(cygpath -w "$WIN_ROOT")"
     ME="$(whoami | tr -d '\r')"
     MSYS2_ARG_CONV_EXCL='*' icacls "$WIN_ROOT_W" /reset /Q >/dev/null 2>&1 || true
@@ -43,8 +43,8 @@ if [[ "$BINARY" == *.exe ]] && command -v cygpath >/dev/null 2>&1 &&
         echo "FAIL: could not stamp $WIN_ROOT_W" >&2
         exit 1
     fi
-    cp "$BINARY" "$WIN_ROOT/codebase-memory-mcp.exe"
-    BINARY="$WIN_ROOT/codebase-memory-mcp.exe"
+    cp "$BINARY" "$WIN_ROOT/hyponoia.exe"
+    BINARY="$WIN_ROOT/hyponoia.exe"
     WORK="$WIN_ROOT"
     MSYS2_ARG_CONV_EXCL='*' icacls "${WIN_ROOT_W}\\*" /reset /T /C /Q >/dev/null 2>&1 || true
 fi
@@ -88,16 +88,16 @@ echo "corpus: $(find "$CORPUS" -name '*.py' | wc -l | tr -d ' ') files"
 # The Windows binary needs a native path here; an msys /c/... path is not one.
 if command -v cygpath >/dev/null 2>&1 && ! command -v winepath >/dev/null 2>&1; then
     mkdir -p "$WORK/cache"
-    export CBM_CACHE_DIR="$(cygpath -w "$WORK/cache")"
+    export HYP_CACHE_DIR="$(cygpath -w "$WORK/cache")"
 else
-    export CBM_CACHE_DIR="$WORK/cache"
+    export HYP_CACHE_DIR="$WORK/cache"
 fi
-export CBM_MEM_PROFILE=1
-export CBM_MEM_PROFILE_OUT="$PROFILE_OUT"
-export CBM_MEM_CENSUS=1
-export CBM_LOG_LEVEL=info
-export CBM_LOG_FORMAT=text
-mkdir -p "$CBM_CACHE_DIR"
+export HYP_MEM_PROFILE=1
+export HYP_MEM_PROFILE_OUT="$PROFILE_OUT"
+export HYP_MEM_CENSUS=1
+export HYP_LOG_LEVEL=info
+export HYP_LOG_FORMAT=text
+mkdir -p "$HYP_CACHE_DIR"
 
 # Drive the MCP stdio path via the request/response driver (see its header for
 # why batching into a closed stdin does not work).
@@ -114,7 +114,7 @@ if command -v cygpath >/dev/null 2>&1 && ! command -v winepath >/dev/null 2>&1; 
 fi
 python3 "$(dirname "$0")/memlab-drive.py" "$DRIVE_BINARY" "$DRIVE_CORPUS" "$REQUESTS" --tool "${MEMLAB_TOOL:-search_graph}" --idle-seconds "${MEMLAB_IDLE:-0}" --stderr "$DRIVE_STDERR" > "$WORK/drive.out" 2>&1
 RC=$?
-# With CBM_CACHE_DIR set the process logs to its own file rather than stderr,
+# With HYP_CACHE_DIR set the process logs to its own file rather than stderr,
 # so fold that in or the census series is invisible.
 cat "$WORK"/cache/logs/*.log >> "$RUN_LOG" 2>/dev/null || true
 cat "$WORK/server-stderr.log" >> "$RUN_LOG" 2>/dev/null || true
@@ -129,7 +129,7 @@ if [ "$RESPONSES" -eq 0 ]; then
     cat "$WORK/drive.out" 2>/dev/null | tail -15 >&2
 fi
 if [ "$CENSUS" -eq 0 ]; then
-    echo "WARN: no census samples — check CBM_MEM_CENSUS wiring" >&2
+    echo "WARN: no census samples — check HYP_MEM_CENSUS wiring" >&2
 fi
 if [ "$SITES" -eq 0 ]; then
     # Not fatal, but never silent: on macOS there is no --wrap, so the

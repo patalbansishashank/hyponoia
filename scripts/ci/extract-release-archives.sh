@@ -9,12 +9,12 @@
 #
 # The output directory is published as one atomic bundle:
 #   objects/          one file per distinct byte sequence
-#   associations.tsv  every extracted member and CBMUIPK asset -> scan object
+#   associations.tsv  every extracted member and HYPUIPK asset -> scan object
 #   scan-set.tsv      the exact path/hash/size set the VT action must return
 #
 # Every archive is validated and hashed for provenance, but downloadable
 # .tar.gz/.zip release containers are not scanned. Their exact members and the
-# uncompressed HTML/JavaScript/CSS/etc payloads inside every CBMUIPK v1 pack are
+# uncompressed HTML/JavaScript/CSS/etc payloads inside every HYPUIPK v1 pack are
 # covered. Identical bytes are uploaded once, but no extracted member/asset
 # association is discarded.
 set -euo pipefail
@@ -74,20 +74,20 @@ UNIX_TARGETS = (
 WINDOWS_TARGETS = ("windows-amd64", "windows-arm64")
 UI_ARCHIVES = frozenset(
     [
-        f"codebase-memory-mcp-ui-{target}.tar.gz"
+        f"hyponoia-ui-{target}.tar.gz"
         for target in UNIX_TARGETS
     ]
     + [
-        f"codebase-memory-mcp-ui-{target}.zip"
+        f"hyponoia-ui-{target}.zip"
         for target in WINDOWS_TARGETS
     ]
 )
 STANDARD_ARCHIVES = frozenset(
-    [f"codebase-memory-mcp-{target}.tar.gz" for target in UNIX_TARGETS]
-    + [f"codebase-memory-mcp-{target}.zip" for target in WINDOWS_TARGETS]
+    [f"hyponoia-{target}.tar.gz" for target in UNIX_TARGETS]
+    + [f"hyponoia-{target}.zip" for target in WINDOWS_TARGETS]
 )
 CANONICAL_ARCHIVES = UI_ARCHIVES | STANDARD_ARCHIVES
-PACK_NAME = re.compile(r"cbm-ui-([0-9a-f]{64})\.pack\Z")
+PACK_NAME = re.compile(r"hyp-ui-([0-9a-f]{64})\.pack\Z")
 SAFE_LABEL = re.compile(r"[^A-Za-z0-9._-]+")
 SAFE_ASSET_PATH = re.compile(rb"\A[A-Za-z0-9._/-]+\Z")
 COUNT_OPTIONS = {
@@ -329,12 +329,12 @@ def validate_namespace(archive_name: str, names: Iterable[str]) -> Tuple[str, Di
         duplicate = next(name for name in names_list if names_list.count(name) > 1)
         raise ContractError(f"duplicate archive member in {archive_name}: {duplicate}")
     windows = archive_name.endswith(".zip")
-    variant = "ui" if archive_name.startswith("codebase-memory-mcp-ui-") else "standard"
-    binary = "codebase-memory-mcp.exe" if windows else "codebase-memory-mcp"
+    variant = "ui" if archive_name.startswith("hyponoia-ui-") else "standard"
+    binary = "hyponoia.exe" if windows else "hyponoia"
     installer = "install.ps1" if windows else "install.sh"
     fixed = {
         binary: "binary",
-        "cbm-integrations.json": "runtime",
+        "hyp-integrations.json": "runtime",
         "LICENSE": "runtime",
         installer: "runtime",
         "THIRD_PARTY_NOTICES.md": "runtime",
@@ -386,11 +386,11 @@ def valid_asset_path(raw: bytes) -> bool:
 def parse_pack_assets(path: pathlib.Path) -> List[PackAsset]:
     size = path.stat().st_size
     if size < PACK_HEADER_BYTES or size > MAX_PACK_BYTES:
-        raise ContractError(f"CBMUIPK size is outside bounds: {size}")
+        raise ContractError(f"HYPUIPK size is outside bounds: {size}")
     with path.open("rb") as handle:
         header = handle.read(PACK_HEADER_BYTES)
         if len(header) != PACK_HEADER_BYTES:
-            raise ContractError("CBMUIPK header is truncated")
+            raise ContractError("HYPUIPK header is truncated")
         try:
             (
                 magic,
@@ -408,9 +408,9 @@ def parse_pack_assets(path: pathlib.Path) -> List[PackAsset]:
                 total_size,
             ) = struct.unpack("<8sHHIIIQQQQQQQ", header)
         except struct.error as error:
-            raise ContractError(f"CBMUIPK header is malformed: {error}") from error
+            raise ContractError(f"HYPUIPK header is malformed: {error}") from error
         if (
-            magic != b"CBMUIPK\0"
+            magic != b"HYPUIPK\0"
             or version != 1
             or header_bytes != PACK_HEADER_BYTES
             or flags != 0
@@ -425,12 +425,12 @@ def parse_pack_assets(path: pathlib.Path) -> List[PackAsset]:
             or total_size != payload_offset + payload_size
             or total_size != size
         ):
-            raise ContractError("CBMUIPK header/offset contract failed")
+            raise ContractError("HYPUIPK header/offset contract failed")
         handle.seek(index_offset)
         index = handle.read(index_size)
         paths = handle.read(paths_size)
         if len(index) != index_size or len(paths) != paths_size:
-            raise ContractError("CBMUIPK index or path table is truncated")
+            raise ContractError("HYPUIPK index or path table is truncated")
 
     assets: List[PackAsset] = []
     expected_path_offset = 0
@@ -448,21 +448,21 @@ def parse_pack_assets(path: pathlib.Path) -> List[PackAsset]:
             or data_length == 0
             or data_length > payload_size - expected_data_offset
         ):
-            raise ContractError("CBMUIPK entry bounds/contiguity contract failed")
+            raise ContractError("HYPUIPK entry bounds/contiguity contract failed")
         raw_path = paths[path_offset : path_offset + path_length]
         if not valid_asset_path(raw_path) or (previous_path is not None and previous_path >= raw_path):
-            raise ContractError("CBMUIPK asset path is invalid, duplicate or unsorted")
+            raise ContractError("HYPUIPK asset path is invalid, duplicate or unsorted")
         try:
             asset_path = raw_path.decode("ascii")
         except UnicodeDecodeError as error:
-            raise ContractError("CBMUIPK asset path is not ASCII") from error
+            raise ContractError("HYPUIPK asset path is not ASCII") from error
         extension = pathlib.PurePosixPath(asset_path).suffix
         mapping = MIME_BY_EXTENSION.get(extension)
         if mapping is None or mime_id != mapping[0]:
-            raise ContractError(f"CBMUIPK MIME/path contract failed: {asset_path}")
+            raise ContractError(f"HYPUIPK MIME/path contract failed: {asset_path}")
         is_index = asset_path == "/index.html"
         if cache_id != (1 if is_index else 2) or (is_index and has_index):
-            raise ContractError(f"CBMUIPK cache/index contract failed: {asset_path}")
+            raise ContractError(f"HYPUIPK cache/index contract failed: {asset_path}")
         has_index = has_index or is_index
         assets.append(
             PackAsset(
@@ -476,7 +476,7 @@ def parse_pack_assets(path: pathlib.Path) -> List[PackAsset]:
         expected_path_offset += path_length
         expected_data_offset += data_length
     if not has_index or expected_path_offset != paths_size or expected_data_offset != payload_size:
-        raise ContractError("CBMUIPK tables do not cover exactly one complete payload")
+        raise ContractError("HYPUIPK tables do not cover exactly one complete payload")
     return assets
 
 
@@ -731,14 +731,14 @@ def main(argv: Sequence[str]) -> None:
     }
     total_members = 0
 
-    with tempfile.TemporaryDirectory(prefix=".cbm-release-scan-", dir=str(output_dir.parent)) as temporary:
+    with tempfile.TemporaryDirectory(prefix=".hyp-release-scan-", dir=str(output_dir.parent)) as temporary:
         staged_output = pathlib.Path(temporary) / "bundle"
         staged_output.mkdir(mode=0o700)
         store = ObjectStore(staged_output / "objects")
         archive_store = ObjectStore(pathlib.Path(temporary) / "archives")
         for archive_path in archive_paths:
             archive_name = archive_path.name
-            variant = "ui" if archive_name.startswith("codebase-memory-mcp-ui-") else "standard"
+            variant = "ui" if archive_name.startswith("hyponoia-ui-") else "standard"
             archive_object = archive_store.ingest_path(
                 archive_path,
                 ceiling=MAX_ARCHIVE_BYTES,
@@ -802,7 +802,7 @@ def main(argv: Sequence[str]) -> None:
         )
         write_tsv(
             staged_output / "associations.tsv",
-            marker="cbm-release-scan-associations-v3",
+            marker="hyp-release-scan-associations-v3",
             metadata=((key, counts[key]) for key in metadata_order),
             fields=ASSOCIATION_FIELDS,
             rows=rows,
@@ -819,7 +819,7 @@ def main(argv: Sequence[str]) -> None:
         ]
         write_tsv(
             staged_output / "scan-set.tsv",
-            marker="cbm-release-scan-set-v2",
+            marker="hyp-release-scan-set-v2",
             metadata=((key, counts[key]) for key in ("scan_objects", "associations")),
             fields=SCAN_SET_FIELDS,
             rows=scan_rows,

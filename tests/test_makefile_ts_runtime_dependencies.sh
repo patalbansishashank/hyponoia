@@ -13,10 +13,10 @@ BUILD_DIR="$WORKDIR/build"
 mkdir -p "$BUILD_DIR"
 
 DEPENDENCIES=(
-    internal/cbm/vendored/ts_runtime/src/stack.c
-    internal/cbm/vendored/ts_runtime/src/stack.h
-    internal/cbm/vendored/ts_runtime/src/unicode/utf8.h
-    internal/cbm/vendored/ts_runtime/include/tree_sitter/api.h
+    internal/hyp/vendored/ts_runtime/src/stack.c
+    internal/hyp/vendored/ts_runtime/src/stack.h
+    internal/hyp/vendored/ts_runtime/src/unicode/utf8.h
+    internal/hyp/vendored/ts_runtime/include/tree_sitter/api.h
 )
 TARGETS=(
     "$BUILD_DIR/ts_runtime.o"
@@ -39,7 +39,7 @@ for dependency in "${DEPENDENCIES[@]}"; do
         touch "$target"
 
         status=0
-        make -f Makefile.cbm -q -W "$dependency" \
+        make -f Makefile.hyp -q -W "$dependency" \
             BUILD_DIR="$BUILD_DIR" "$target" || status=$?
 
         if [[ $status -eq 0 ]]; then

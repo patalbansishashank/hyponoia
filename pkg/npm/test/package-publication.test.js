@@ -51,13 +51,13 @@ test('release archives require the integrations sidecar', () => {
 });
 
 test('UI Unix archive validation accepts exactly one content-addressed pack', () => {
-  const pack = `cbm-ui-${'a'.repeat(64)}.pack`;
+  const pack = `hyp-ui-${'a'.repeat(64)}.pack`;
   assert.doesNotThrow(() => validateExactTarMemberListing(
     exactUnixListing([pack]), UNIX_ARCHIVE_NAMES, true,
   ));
   assert.throws(
     () => validateExactTarMemberListing(
-      exactUnixListing([pack, `cbm-ui-${'b'.repeat(64)}.pack`]),
+      exactUnixListing([pack, `hyp-ui-${'b'.repeat(64)}.pack`]),
       UNIX_ARCHIVE_NAMES,
       true,
     ),
@@ -80,7 +80,7 @@ test('Unix extraction requests only the validated runtime set', () => {
 
   extractExactTarArchive(
     '/tmp/release.tar.gz', '/tmp/extract', UNIX_ARCHIVE_NAMES,
-    ['codebase-memory-mcp', INTEGRATIONS_NAME], false, runner,
+    ['hyponoia', INTEGRATIONS_NAME], false, runner,
   );
 
   assert.deepEqual(calls[0].args, ['-tzf', '/tmp/release.tar.gz']);
@@ -89,7 +89,7 @@ test('Unix extraction requests only the validated runtime set', () => {
     calls[2].args,
     [
       '-xzf', '/tmp/release.tar.gz', '-C', '/tmp/extract',
-      'codebase-memory-mcp', INTEGRATIONS_NAME,
+      'hyponoia', INTEGRATIONS_NAME,
     ],
   );
 });
@@ -112,10 +112,10 @@ function writeRuntimeSet(directory, tag, variant = 'standard') {
     const contents = Buffer.from(`pack:${tag}`);
     const digest = crypto.createHash('sha256').update(contents).digest('hex');
     fs.writeFileSync(
-      path.join(directory, `cbm-ui-${digest}.pack`),
+      path.join(directory, `hyp-ui-${digest}.pack`),
       contents,
     );
-    return `cbm-ui-${digest}.pack`;
+    return `hyp-ui-${digest}.pack`;
   }
   return null;
 }
@@ -128,7 +128,7 @@ function fakeBinaryVerifier(binaryPath) {
 }
 
 function withBinaryDirectories(callback) {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cbm-npm-binary-test-'));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hyp-npm-binary-test-'));
   const source = path.join(root, 'source');
   const destination = path.join(root, 'destination');
   fs.mkdirSync(destination);
@@ -226,7 +226,7 @@ test('runtime readiness requires the complete variant-specific set', () => {
       true,
     );
     fs.writeFileSync(
-      path.join(destination, `cbm-ui-${'b'.repeat(64)}.pack`),
+      path.join(destination, `hyp-ui-${'b'.repeat(64)}.pack`),
       'second pack',
     );
     assert.equal(
@@ -270,7 +270,7 @@ test('runtime publication commits sidecars before the binary', () => {
       const name = path.basename(destinationPath);
       if (path.dirname(destinationPath) === destination &&
           (name === WINDOWS_BINARY_NAME || name === INTEGRATIONS_NAME ||
-           /^cbm-ui-[0-9a-f]{64}\.pack$/.test(name))) {
+           /^hyp-ui-[0-9a-f]{64}\.pack$/.test(name))) {
         committed.push(name);
       }
       return renameSync(sourcePath, destinationPath);
@@ -284,7 +284,7 @@ test('runtime publication commits sidecars before the binary', () => {
     }
 
     assert.equal(committed[0], INTEGRATIONS_NAME);
-    assert.match(committed[1], /^cbm-ui-[0-9a-f]{64}\.pack$/);
+    assert.match(committed[1], /^hyp-ui-[0-9a-f]{64}\.pack$/);
     assert.equal(committed[2], WINDOWS_BINARY_NAME);
   });
 });
@@ -319,7 +319,7 @@ test('a killed publisher is reconciled on the next locked readiness check', asyn
     [INTEGRATIONS_NAME, false],
     [WINDOWS_BINARY_NAME, true],
   ]) {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cbm-npm-crash-test-'));
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hyp-npm-crash-test-'));
     const source = path.join(root, 'source');
     const destination = path.join(root, 'destination');
     const marker = path.join(root, 'crash-reached');
@@ -344,7 +344,7 @@ test('a killed publisher is reconciled on the next locked readiness check', asyn
     try {
       await waitForCrashMarker(marker, child, () => stderr);
       const backups = fs.readdirSync(destination)
-        .filter((name) => name.startsWith('.cbm-runtime-backup-'));
+        .filter((name) => name.startsWith('.hyp-runtime-backup-'));
       assert.equal(backups.length, 1, 'killed publisher did not retain one transaction');
       assert.equal(
         fs.lstatSync(path.join(destination, backups[0])).isDirectory(),
@@ -391,12 +391,12 @@ test('a killed publisher is reconciled on the next locked readiness check', asyn
       assertBinary(destination, 'candidate');
       assert.equal(
         fs.readdirSync(destination).some(
-          (name) => name.startsWith('.cbm-runtime-backup-'),
+          (name) => name.startsWith('.hyp-runtime-backup-'),
         ),
         false,
       );
       assert.equal(
-        fs.existsSync(path.join(destination, '.codebase-memory-mcp-runtime.lock')),
+        fs.existsSync(path.join(destination, '.hyponoia-runtime.lock')),
         false,
       );
     } finally {
@@ -449,7 +449,7 @@ test('runtime readiness rejects multiply-linked cache leaves', () => {
 test('orphan reconciliation rejects multiply-linked backup members', () => {
   withBinaryDirectories(({ destination }) => {
     const backup = path.join(
-      destination, `.cbm-runtime-backup-${'a'.repeat(32)}`,
+      destination, `.hyp-runtime-backup-${'a'.repeat(32)}`,
     );
     fs.mkdirSync(backup);
     fs.writeFileSync(path.join(backup, '.retirement-complete'), '');
@@ -468,7 +468,7 @@ test('orphan reconciliation rejects multiply-linked backup members', () => {
     );
     assert.equal(fs.existsSync(backup), true, 'unsafe backup was mutated');
     assert.equal(
-      fs.existsSync(path.join(destination, '.codebase-memory-mcp-runtime.lock')),
+      fs.existsSync(path.join(destination, '.hyponoia-runtime.lock')),
       false,
     );
   });
@@ -476,7 +476,7 @@ test('orphan reconciliation rejects multiply-linked backup members', () => {
 
 test('an expired lease never reclaims a live owner', () => {
   withBinaryDirectories(({ destination }) => {
-    const lockPath = path.join(destination, '.codebase-memory-mcp-runtime.lock');
+    const lockPath = path.join(destination, '.hyponoia-runtime.lock');
     const owner = {
       pid: process.pid,
       token: 'a'.repeat(32),
@@ -497,7 +497,7 @@ test('an expired lease never reclaims a live owner', () => {
 
 test('a stale legacy lock never reclaims a live owner', () => {
   withBinaryDirectories(({ destination }) => {
-    const lockPath = path.join(destination, '.codebase-memory-mcp-runtime.lock');
+    const lockPath = path.join(destination, '.hyponoia-runtime.lock');
     const ownerRecord = `${JSON.stringify({
       pid: process.pid,
       token: 'a'.repeat(32),
@@ -518,7 +518,7 @@ test('a stale legacy lock never reclaims a live owner', () => {
 
 test('a stale ownerless lock is reclaimed', () => {
   withBinaryDirectories(({ destination }) => {
-    const lockPath = path.join(destination, '.codebase-memory-mcp-runtime.lock');
+    const lockPath = path.join(destination, '.hyponoia-runtime.lock');
     fs.writeFileSync(lockPath, '');
     const stale = new Date(Date.now() - 30_001);
     fs.utimesSync(lockPath, stale, stale);

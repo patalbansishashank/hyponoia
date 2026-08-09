@@ -31,9 +31,9 @@ Environment:
   SMOKE_VARIANT   standard (default) | ui. ui requires the external UI pack:
                   Phase 15's "no assets" SKIP becomes a FAILURE, so a standard
                   binary cannot pass a ui run.
-  CBM_SMOKE_ARTIFACT_DIR
+  HYP_SMOKE_ARTIFACT_DIR
                   Release mode: an EXTRACTED windows release artifact
-                  (codebase-memory-mcp.exe + cbm-integrations.json + LICENSE +
+                  (hyponoia.exe + hyp-integrations.json + LICENSE +
                   install.ps1 + THIRD_PARTY_NOTICES.md + the UI pack when selected). The
                   exact variant set is served verbatim; an incomplete archive
                   fails the smoke.
@@ -56,17 +56,17 @@ ROOT="$PWD"
 # venue smokes the bytes it is about to publish rather than a local rebuild of
 # them. Requiring the sidecars here also makes an incomplete archive a smoke
 # failure instead of a discovery made after publishing.
-ARTIFACT_DIR="${CBM_SMOKE_ARTIFACT_DIR:-}"
+ARTIFACT_DIR="${HYP_SMOKE_ARTIFACT_DIR:-}"
 if [ -n "$ARTIFACT_DIR" ]; then
     ARTIFACT_DIR="$(cd "$ARTIFACT_DIR" && pwd)"
-    for required in codebase-memory-mcp.exe \
-        cbm-integrations.json LICENSE install.ps1 THIRD_PARTY_NOTICES.md; do
+    for required in hyponoia.exe \
+        hyp-integrations.json LICENSE install.ps1 THIRD_PARTY_NOTICES.md; do
         [ -s "$ARTIFACT_DIR/$required" ] ||
             { echo "vm-smoke: release artifact is missing $required" >&2; exit 2; }
     done
-    BINARY_SRC="$ARTIFACT_DIR/codebase-memory-mcp.exe"
+    BINARY_SRC="$ARTIFACT_DIR/hyponoia.exe"
 else
-    BINARY_SRC="build/c/codebase-memory-mcp.exe"
+    BINARY_SRC="build/c/hyponoia.exe"
     [ -x "$BINARY_SRC" ] || { echo "build first; missing $BINARY_SRC" >&2; exit 2; }
 fi
 
@@ -92,7 +92,7 @@ else
     UI_PACK_SOURCE_DIR="$(dirname "$BINARY_SRC")"
 fi
 shopt -s nullglob
-UI_PACK_CANDIDATES=("$UI_PACK_SOURCE_DIR"/cbm-ui-*.pack)
+UI_PACK_CANDIDATES=("$UI_PACK_SOURCE_DIR"/hyp-ui-*.pack)
 shopt -u nullglob
 UI_PACK_COUNT=0
 UI_PACK_NAME=""
@@ -101,7 +101,7 @@ for candidate in "${UI_PACK_CANDIDATES[@]+"${UI_PACK_CANDIDATES[@]}"}"; do
     UI_PACK_COUNT=$((UI_PACK_COUNT + 1))
     UI_PACK_SOURCE="$candidate"
     candidate_name="$(basename "$candidate")"
-    if ! [[ "$candidate_name" =~ ^cbm-ui-[0-9a-f]{64}\.pack$ ]]; then
+    if ! [[ "$candidate_name" =~ ^hyp-ui-[0-9a-f]{64}\.pack$ ]]; then
         echo "vm-smoke: invalid UI pack name beside artifact: $candidate_name" >&2
         exit 2
     fi
@@ -118,7 +118,7 @@ elif [ "$UI_PACK_COUNT" -ne 0 ]; then
 fi
 
 PROFILE_ROOT="$(cygpath -u "$USERPROFILE")"
-SMOKE_DIR="$(mktemp -d "$PROFILE_ROOT/cbm-vm-smoke.XXXXXX")"
+SMOKE_DIR="$(mktemp -d "$PROFILE_ROOT/hyp-vm-smoke.XXXXXX")"
 FIXTURE_DIR="$SMOKE_DIR/artifacts"
 SMOKE_HOME="$SMOKE_DIR/home"
 SMOKE_XDG_CONFIG="$SMOKE_DIR/xdg-config"
@@ -176,8 +176,8 @@ MSYS2_ARG_CONV_EXCL='*' powershell.exe -NoProfile -ExecutionPolicy Bypass \
     -RunId "$PATH_RUN_ID" \
     -SnapshotPath "$(cygpath -w "$PATH_SNAPSHOT")" \
     -SmokeRoot "$(cygpath -w "$SMOKE_DIR")"
-cp "$BINARY_SRC" "$SMOKE_DIR/codebase-memory-mcp.exe"
-cp "$SMOKE_DIR/codebase-memory-mcp.exe" "$FIXTURE_DIR/"
+cp "$BINARY_SRC" "$SMOKE_DIR/hyponoia.exe"
+cp "$SMOKE_DIR/hyponoia.exe" "$FIXTURE_DIR/"
 if [ -n "$UI_PACK_SOURCE" ]; then
     cp "$UI_PACK_SOURCE" "$SMOKE_DIR/$UI_PACK_NAME"
     cp "$UI_PACK_SOURCE" "$FIXTURE_DIR/$UI_PACK_NAME"
@@ -187,32 +187,32 @@ fi
 # resolve the asset next to the binary, and without it those render-template
 # operations fail closed. Its own copy lands in the served archive below.
 if [ -n "$ARTIFACT_DIR" ]; then
-    ASSET_SRC="$ARTIFACT_DIR/cbm-integrations.json"
+    ASSET_SRC="$ARTIFACT_DIR/hyp-integrations.json"
 else
-    ASSET_SRC="$(dirname "$BINARY_SRC")/cbm-integrations.json"
+    ASSET_SRC="$(dirname "$BINARY_SRC")/hyp-integrations.json"
 fi
-cp "$ASSET_SRC" "$SMOKE_DIR/cbm-integrations.json"
+cp "$ASSET_SRC" "$SMOKE_DIR/hyp-integrations.json"
 # The install/update phases fetch these out of the served archive, so they must
 # be the artifact's own copies whenever one was supplied — regenerating them
 # here would smoke a sidecar the release never ships.
 if [ -n "$ARTIFACT_DIR" ]; then
-    cp "$ARTIFACT_DIR/cbm-integrations.json" "$ARTIFACT_DIR/LICENSE" \
+    cp "$ARTIFACT_DIR/hyp-integrations.json" "$ARTIFACT_DIR/LICENSE" \
         "$ARTIFACT_DIR/install.ps1" "$ARTIFACT_DIR/THIRD_PARTY_NOTICES.md" "$FIXTURE_DIR/"
 else
-    # build.sh stages cbm-integrations.json next to the binary; ship it in the
+    # build.sh stages hyp-integrations.json next to the binary; ship it in the
     # archive so the installed binary can verify and render its templates.
-    cp "$(dirname "$BINARY_SRC")/cbm-integrations.json" LICENSE install.ps1 "$FIXTURE_DIR/"
+    cp "$(dirname "$BINARY_SRC")/hyp-integrations.json" LICENSE install.ps1 "$FIXTURE_DIR/"
     scripts/gen-third-party-notices.sh "$FIXTURE_DIR/THIRD_PARTY_NOTICES.md"
 fi
 
 # Member set + ORDER mirror scripts/package-release.sh (Windows): the install
-# verifies cbm-integrations.json against the binary's embedded SHA-256 and fails
+# verifies hyp-integrations.json against the binary's embedded SHA-256 and fails
 # closed without it.
-EXPECTED_ARTIFACT="codebase-memory-mcp${SUFFIX}-windows-${SMOKE_ARCH}.zip"
+EXPECTED_ARTIFACT="hyponoia${SUFFIX}-windows-${SMOKE_ARCH}.zip"
 (
     cd "$FIXTURE_DIR"
     ARCHIVE_MEMBERS=(
-        codebase-memory-mcp.exe cbm-integrations.json LICENSE install.ps1
+        hyponoia.exe hyp-integrations.json LICENSE install.ps1
         THIRD_PARTY_NOTICES.md
     )
     [ -n "$UI_PACK_NAME" ] && ARCHIVE_MEMBERS+=("$UI_PACK_NAME")
@@ -276,11 +276,11 @@ env \
     -u VIBE_HOME \
     -u GLAB_CONFIG_DIR \
     -u KIMI_CODE_HOME \
-    -u CBM_CONTINUE_CONFIG_PATH \
-    -u CBM_TRAE_CONFIG_PATH \
-    -u CBM_ROO_CONFIG_PATH \
-    -u CBM_CODY_CONFIG_PATH \
-    -u CBM_TEST_WINDOWS_USER_PATH_RUN_ID \
+    -u HYP_CONTINUE_CONFIG_PATH \
+    -u HYP_TRAE_CONFIG_PATH \
+    -u HYP_ROO_CONFIG_PATH \
+    -u HYP_CODY_CONFIG_PATH \
+    -u HYP_TEST_WINDOWS_USER_PATH_RUN_ID \
     HOME="$(cygpath -m "$SMOKE_HOME")" \
     USERPROFILE="$(cygpath -m "$SMOKE_HOME")" \
     XDG_CONFIG_HOME="$(cygpath -m "$SMOKE_XDG_CONFIG")" \
@@ -290,14 +290,14 @@ env \
     TEMP="$(cygpath -m "$SMOKE_TEMP_DIR")" \
     TMP="$(cygpath -m "$SMOKE_TEMP_DIR")" \
     SHELL="/usr/bin/bash" \
-    CBM_CACHE_DIR="$(cygpath -m "$SMOKE_DIR/cache")" \
-    CBM_TEST_WINDOWS_USER_PATH_RUN_ID="$PATH_RUN_ID" \
+    HYP_CACHE_DIR="$(cygpath -m "$SMOKE_DIR/cache")" \
+    HYP_TEST_WINDOWS_USER_PATH_RUN_ID="$PATH_RUN_ID" \
     SMOKE_TEMP_ROOT="$SMOKE_DIR" \
     SMOKE_DOWNLOAD_URL="http://127.0.0.1:$PORT" \
     SMOKE_UPDATE_FIXTURE_DIR="$FIXTURE_DIR" \
     SMOKE_ARCH="$SMOKE_ARCH" \
     SMOKE_REQUIRE_UI="$REQUIRE_UI" \
-    scripts/smoke-test.sh "$SMOKE_DIR/codebase-memory-mcp.exe"
+    scripts/smoke-test.sh "$SMOKE_DIR/hyponoia.exe"
 
 MSYS2_ARG_CONV_EXCL='*' powershell.exe -NoProfile -ExecutionPolicy Bypass \
     -File "$(cygpath -w "$PATH_GUARD")" \

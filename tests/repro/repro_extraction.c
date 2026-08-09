@@ -5,22 +5,22 @@
  * Keep one TEST() per issue; name it repro_issue<N>_<slug> and lead with a
  * comment naming the issue, the root cause, and expected-vs-actual.
  *
- * Cluster (TIER A, in-process via cbm_extract_file):
+ * Cluster (TIER A, in-process via hyp_extract_file):
  *   #554 — C++ out-of-line method CALLS source = Module, not enclosing Method
  *   (more added per wave: #495 #521 #382 #408 #523 #56 #333)
  */
 #include "test_framework.h"
-#include "cbm.h"
+#include "hyp.h"
 
 /* Convenience: extract, return result (caller frees). Mirrors test_extraction.c. */
-static CBMFileResult *rx(const char *src, CBMLanguage lang, const char *proj, const char *path) {
-    return cbm_extract_file(src, (int)strlen(src), lang, proj, path, 0, NULL, NULL);
+static HYPFileResult *rx(const char *src, HYPLanguage lang, const char *proj, const char *path) {
+    return hyp_extract_file(src, (int)strlen(src), lang, proj, path, 0, NULL, NULL);
 }
 
 /* Find the first definition matching label+name (either may be NULL = wildcard). */
-static CBMDefinition *find_def(CBMFileResult *r, const char *label, const char *name) {
+static HYPDefinition *find_def(HYPFileResult *r, const char *label, const char *name) {
     for (int i = 0; i < r->defs.count; i++) {
-        CBMDefinition *d = &r->defs.items[i];
+        HYPDefinition *d = &r->defs.items[i];
         if (label && (!d->label || strcmp(d->label, label) != 0))
             continue;
         if (name && (!d->name || strcmp(d->name, name) != 0))
@@ -47,16 +47,16 @@ static CBMDefinition *find_def(CBMFileResult *r, const char *label, const char *
  * Actual (buggy): enclosing_func_qn loses "Foo" → mismatch → RED.
  * ─────────────────────────────────────────────────────────────────── */
 TEST(repro_issue554_cpp_out_of_line_method_class_qualified) {
-    CBMFileResult *r = rx("struct Foo { void bar(); };\n"
+    HYPFileResult *r = rx("struct Foo { void bar(); };\n"
                           "int helper(int x) { return x; }\n"
                           "void Foo::bar() { helper(1); }\n",
-                          CBM_LANG_CPP, "t", "m.cpp");
+                          HYP_LANG_CPP, "t", "m.cpp");
     ASSERT_NOT_NULL(r);
     ASSERT_FALSE(r->has_error);
 
     /* The out-of-line method definition: its qualified_name is the ground truth
      * the inner CALLS edge must point at. */
-    CBMDefinition *method = find_def(r, "Method", "bar");
+    HYPDefinition *method = find_def(r, "Method", "bar");
     if (!method)
         method = find_def(r, NULL, "bar"); /* tolerate label variance */
     ASSERT_NOT_NULL(method);
@@ -83,7 +83,7 @@ TEST(repro_issue554_cpp_out_of_line_method_class_qualified) {
     }
     ASSERT_TRUE(saw_helper);
 
-    cbm_free_result(r);
+    hyp_free_result(r);
     PASS();
 }
 

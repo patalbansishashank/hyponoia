@@ -20,11 +20,11 @@ enum { WP_TRUE = 1, WP_MIN = 1, WP_STEP = 1 };
 
 /* 8 MB stack per worker — matches main thread default.
  * Required for deep AST recursion (tree-sitter + walk_defs). */
-#define CBM_WORKER_STACK_SIZE ((size_t)8 * CBM_SZ_1K * CBM_SZ_1K)
+#define HYP_WORKER_STACK_SIZE ((size_t)8 * HYP_SZ_1K * HYP_SZ_1K)
 
 /* ── Serial fallback ─────────────────────────────────────────────── */
 
-static void run_serial(int count, cbm_parallel_fn fn, void *ctx) {
+static void run_serial(int count, hyp_parallel_fn fn, void *ctx) {
     for (int i = 0; i < count; i++) {
         fn(i, ctx);
     }
@@ -33,7 +33,7 @@ static void run_serial(int count, cbm_parallel_fn fn, void *ctx) {
 /* ── pthreads backend ────────────────────────────────────────────── */
 
 typedef struct {
-    cbm_parallel_fn fn;
+    hyp_parallel_fn fn;
     void *ctx;
     _Atomic int *next_idx;
     int count;
@@ -51,7 +51,7 @@ static void *pthread_worker(void *arg) {
     return NULL;
 }
 
-static void run_pthreads(int count, cbm_parallel_fn fn, void *ctx, int nworkers) {
+static void run_pthreads(int count, hyp_parallel_fn fn, void *ctx, int nworkers) {
     _Atomic int next_idx = 0;
 
     pthread_worker_arg_t wa = {
@@ -61,14 +61,14 @@ static void run_pthreads(int count, cbm_parallel_fn fn, void *ctx, int nworkers)
         .count = count,
     };
 
-    cbm_thread_t *threads = (cbm_thread_t *)malloc((size_t)nworkers * sizeof(cbm_thread_t));
+    hyp_thread_t *threads = (hyp_thread_t *)malloc((size_t)nworkers * sizeof(hyp_thread_t));
     if (!threads) {
         run_serial(count, fn, ctx);
         return;
     }
 
     for (int i = 0; i < nworkers; i++) {
-        if (cbm_thread_create(&threads[i], CBM_WORKER_STACK_SIZE, pthread_worker, &wa) != 0) {
+        if (hyp_thread_create(&threads[i], HYP_WORKER_STACK_SIZE, pthread_worker, &wa) != 0) {
             /* Failed to create thread — let remaining work run in main thread */
             nworkers = i;
             break;
@@ -85,7 +85,7 @@ static void run_pthreads(int count, cbm_parallel_fn fn, void *ctx, int nworkers)
     }
 
     for (int i = 0; i < nworkers; i++) {
-        cbm_thread_join(&threads[i]);
+        hyp_thread_join(&threads[i]);
     }
 
     free(threads);
@@ -93,7 +93,7 @@ static void run_pthreads(int count, cbm_parallel_fn fn, void *ctx, int nworkers)
 
 /* ── Public API ──────────────────────────────────────────────────── */
 
-void cbm_parallel_for(int count, cbm_parallel_fn fn, void *ctx, cbm_parallel_for_opts_t opts) {
+void hyp_parallel_for(int count, hyp_parallel_fn fn, void *ctx, hyp_parallel_for_opts_t opts) {
     if (count <= 0 || !fn) {
         return;
     }
@@ -101,7 +101,7 @@ void cbm_parallel_for(int count, cbm_parallel_fn fn, void *ctx, cbm_parallel_for
     /* Determine worker count */
     int nworkers = opts.max_workers;
     if (nworkers <= 0) {
-        nworkers = cbm_default_worker_count(true);
+        nworkers = hyp_default_worker_count(true);
     }
     if (nworkers < WP_MIN) {
         nworkers = SKIP_ONE;

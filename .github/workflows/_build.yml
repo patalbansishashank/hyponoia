@@ -76,7 +76,7 @@ jobs:
 
       - name: Ad-hoc sign macOS release binary
         if: startsWith(matrix.os, 'macos')
-        run: codesign --sign - --force build/c/codebase-memory-mcp
+        run: codesign --sign - --force build/c/hyponoia
 
       - name: Frontend integrity scan
         if: matrix.goos == 'linux' && matrix.goarch == 'amd64'
@@ -91,7 +91,7 @@ jobs:
         if: ${{ inputs.attest }}
         uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
         with:
-          subject-path: codebase-memory-mcp-ui-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz
+          subject-path: hyponoia-ui-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -139,7 +139,7 @@ jobs:
         if: ${{ inputs.attest }}
         uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
         with:
-          subject-path: codebase-memory-mcp-ui-windows-amd64.zip
+          subject-path: hyponoia-ui-windows-amd64.zip
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -189,7 +189,7 @@ jobs:
         if: ${{ inputs.attest }}
         uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
         with:
-          subject-path: codebase-memory-mcp-ui-windows-arm64.zip
+          subject-path: hyponoia-ui-windows-arm64.zip
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -231,8 +231,8 @@ jobs:
 
       - name: Verify release static linking
         run: |
-          file build/c/codebase-memory-mcp
-          ldd build/c/codebase-memory-mcp 2>&1 | grep -q "not a dynamic executable" || ldd build/c/codebase-memory-mcp 2>&1 | grep -q "statically linked"
+          file build/c/hyponoia
+          ldd build/c/hyponoia 2>&1 | grep -q "not a dynamic executable" || ldd build/c/hyponoia 2>&1 | grep -q "statically linked"
 
       - name: Archive release binary (canonical package-release.sh)
         run: scripts/package-release.sh linux ${{ matrix.arch }}-portable --variant ui
@@ -241,7 +241,7 @@ jobs:
         if: ${{ inputs.attest }}
         uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
         with:
-          subject-path: codebase-memory-mcp-ui-linux-${{ matrix.arch }}-portable.tar.gz
+          subject-path: hyponoia-ui-linux-${{ matrix.arch }}-portable.tar.gz
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:

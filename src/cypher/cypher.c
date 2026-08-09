@@ -1,7 +1,7 @@
 /*
  * cypher.c — Cypher query engine: lexer, parser, planner, executor.
  *
- * Translates a subset of Cypher into SQL queries against cbm_store.
+ * Translates a subset of Cypher into SQL queries against hyp_store.
  * Supports MATCH patterns with relationships, WHERE filters,
  * RETURN with COUNT/ORDER BY/LIMIT/DISTINCT.
  */
@@ -71,32 +71,32 @@ static char *heap_strndup(const char *s, size_t n) {
  *  LEXER
  * ══════════════════════════════════════════════════════════════════ */
 
-static void lex_push(cbm_lex_result_t *r, cbm_token_type_t type, const char *text, int pos) {
+static void lex_push(hyp_lex_result_t *r, hyp_token_type_t type, const char *text, int pos) {
     if (r->count >= r->capacity) {
-        r->capacity = r->capacity ? r->capacity * PAIR_LEN : CBM_SZ_32;
-        r->tokens = safe_realloc(r->tokens, r->capacity * sizeof(cbm_token_t));
+        r->capacity = r->capacity ? r->capacity * PAIR_LEN : HYP_SZ_32;
+        r->tokens = safe_realloc(r->tokens, r->capacity * sizeof(hyp_token_t));
     }
-    r->tokens[r->count++] = (cbm_token_t){.type = type, .text = heap_strdup(text), .pos = pos};
+    r->tokens[r->count++] = (hyp_token_t){.type = type, .text = heap_strdup(text), .pos = pos};
 }
 
-static void lex_push_n(cbm_lex_result_t *r, cbm_token_type_t type, const char *start, size_t len,
+static void lex_push_n(hyp_lex_result_t *r, hyp_token_type_t type, const char *start, size_t len,
                        int pos) {
     if (r->count >= r->capacity) {
-        r->capacity = r->capacity ? r->capacity * PAIR_LEN : CBM_SZ_32;
-        r->tokens = safe_realloc(r->tokens, r->capacity * sizeof(cbm_token_t));
+        r->capacity = r->capacity ? r->capacity * PAIR_LEN : HYP_SZ_32;
+        r->tokens = safe_realloc(r->tokens, r->capacity * sizeof(hyp_token_t));
     }
     r->tokens[r->count++] =
-        (cbm_token_t){.type = type, .text = heap_strndup(start, len), .pos = pos};
+        (hyp_token_t){.type = type, .text = heap_strndup(start, len), .pos = pos};
 }
 
 /* Parse a string literal (with escape handling) into the token list.
  * *pos points at the character after the opening quote; updated past closing quote. */
 static void lex_string_literal(const char *input, int len, int *pos, char quote,
-                               cbm_lex_result_t *out) {
+                               hyp_lex_result_t *out) {
     int start = *pos;
-    char buf[CBM_SZ_4K];
+    char buf[HYP_SZ_4K];
     int blen = 0;
-    const int max_blen = CBM_SZ_4K - 1;
+    const int max_blen = HYP_SZ_4K - 1;
     while (*pos < len && input[*pos] != quote) {
         if (input[*pos] == '\\' && *pos + SKIP_ONE < len) {
             (*pos)++;
@@ -133,7 +133,7 @@ static void lex_string_literal(const char *input, int len, int *pos, char quote,
 /* Keyword table (case-insensitive lookup) */
 typedef struct {
     const char *name;
-    cbm_token_type_t type;
+    hyp_token_type_t type;
 } kw_entry_t;
 static const kw_entry_t keywords[] = {
     /* Core query */
@@ -212,7 +212,7 @@ static const kw_entry_t keywords[] = {
     {"UNIQUE", TOK_UNIQUE},
     {NULL, 0}};
 
-static cbm_token_type_t keyword_lookup(const char *word) {
+static hyp_token_type_t keyword_lookup(const char *word) {
     /* Case-insensitive compare */
     for (const kw_entry_t *kw = keywords; kw->name; kw++) {
         if (strcasecmp(word, kw->name) == 0) {
@@ -223,10 +223,10 @@ static cbm_token_type_t keyword_lookup(const char *word) {
 }
 
 /* Try to match a two-character token at position i. Returns true and advances i if matched. */
-static bool lex_try_two_char(const char *input, int len, int *i, cbm_lex_result_t *out) {
+static bool lex_try_two_char(const char *input, int len, int *i, hyp_lex_result_t *out) {
     static const struct {
         char c1, c2;
-        cbm_token_type_t type;
+        hyp_token_type_t type;
         const char *text;
     } pairs[] = {
         {'!', '=', TOK_NEQ, "!="}, {'<', '>', TOK_NEQ, "<>"}, {'=', '~', TOK_EQTILDE, "=~"},
@@ -248,7 +248,7 @@ static bool lex_try_two_char(const char *input, int len, int *i, cbm_lex_result_
 }
 
 /* Try to match a single-character token. Returns TOK_EOF if not matched. */
-static cbm_token_type_t lex_single_char(char c) {
+static hyp_token_type_t lex_single_char(char c) {
     switch (c) {
     case '(':
         return TOK_LPAREN;
@@ -286,7 +286,7 @@ static cbm_token_type_t lex_single_char(char c) {
 }
 
 /* Try to lex an identifier or keyword starting at position i. Returns true if matched. */
-static bool lex_try_ident(const char *input, int len, int *i, cbm_lex_result_t *out) {
+static bool lex_try_ident(const char *input, int len, int *i, hyp_lex_result_t *out) {
     char c = input[*i];
     if (!isalpha((unsigned char)c) && c != '_') {
         return false;
@@ -295,20 +295,20 @@ static bool lex_try_ident(const char *input, int len, int *i, cbm_lex_result_t *
     while (*i < len && (isalnum((unsigned char)input[*i]) || input[*i] == '_')) {
         (*i)++;
     }
-    char word[CBM_SZ_256];
+    char word[HYP_SZ_256];
     int wlen = *i - start;
     if (wlen >= (int)sizeof(word)) {
         wlen = (int)sizeof(word) - SKIP_ONE;
     }
     memcpy(word, input + start, wlen);
     word[wlen] = '\0';
-    cbm_token_type_t type = keyword_lookup(word);
+    hyp_token_type_t type = keyword_lookup(word);
     lex_push_n(out, type, input + start, *i - start, start);
     return true;
 }
 
 /* Try to lex a number starting at position i. Returns true if matched. */
-static bool lex_try_number(const char *input, int len, int *i, cbm_lex_result_t *out) {
+static bool lex_try_number(const char *input, int len, int *i, hyp_lex_result_t *out) {
     char c = input[*i];
     if (!isdigit((unsigned char)c) &&
         !(c == '.' && *i + SKIP_ONE < len && isdigit((unsigned char)input[*i + SKIP_ONE]))) {
@@ -355,10 +355,10 @@ static bool lex_skip_whitespace_comments(const char *input, int len, int *i) {
     return false;
 }
 
-int cbm_lex(const char *input, cbm_lex_result_t *out) {
+int hyp_lex(const char *input, hyp_lex_result_t *out) {
     memset(out, 0, sizeof(*out));
     if (!input) {
-        return CBM_NOT_FOUND;
+        return HYP_NOT_FOUND;
     }
 
     int len = (int)strlen(input);
@@ -398,7 +398,7 @@ int cbm_lex(const char *input, cbm_lex_result_t *out) {
         }
 
         /* Single-character tokens */
-        cbm_token_type_t stype = lex_single_char(c);
+        hyp_token_type_t stype = lex_single_char(c);
 
         if (stype != TOK_EOF) {
             char buf[PAIR_LEN] = {c, '\0'};
@@ -416,7 +416,7 @@ int cbm_lex(const char *input, cbm_lex_result_t *out) {
     return 0;
 }
 
-void cbm_lex_free(cbm_lex_result_t *r) {
+void hyp_lex_free(hyp_lex_result_t *r) {
     if (!r) {
         return;
     }
@@ -439,11 +439,11 @@ void cbm_lex_free(cbm_lex_result_t *r) {
 enum { CYPHER_MAX_PARSE_DEPTH = 256 };
 
 typedef struct {
-    const cbm_token_t *tokens;
+    const hyp_token_t *tokens;
     int count;
     int pos;
     int depth; /* current recursive-descent depth; see CYPHER_MAX_PARSE_DEPTH */
-    char error[CBM_SZ_512];
+    char error[HYP_SZ_512];
 } parser_t;
 
 /* Enter one level of recursive descent. Returns false when the cap is hit, in
@@ -462,25 +462,25 @@ static void parse_depth_leave(parser_t *p) {
     p->depth--;
 }
 
-static const cbm_token_t *peek(parser_t *p) {
+static const hyp_token_t *peek(parser_t *p) {
     if (p->pos >= p->count) {
         return &p->tokens[p->count - SKIP_ONE]; /* EOF */
     }
     return &p->tokens[p->pos];
 }
 
-static const cbm_token_t *advance(parser_t *p) {
+static const hyp_token_t *advance(parser_t *p) {
     if (p->pos >= p->count) {
         return &p->tokens[p->count - SKIP_ONE];
     }
     return &p->tokens[p->pos++];
 }
 
-static bool check(parser_t *p, cbm_token_type_t type) {
+static bool check(parser_t *p, hyp_token_type_t type) {
     return peek(p)->type == type;
 }
 
-static bool match(parser_t *p, cbm_token_type_t type) {
+static bool match(parser_t *p, hyp_token_type_t type) {
     if (check(p, type)) {
         advance(p);
         return true;
@@ -488,7 +488,7 @@ static bool match(parser_t *p, cbm_token_type_t type) {
     return false;
 }
 
-static const cbm_token_t *expect(parser_t *p, cbm_token_type_t type) {
+static const hyp_token_t *expect(parser_t *p, hyp_token_type_t type) {
     if (check(p, type)) {
         return advance(p);
     }
@@ -498,7 +498,7 @@ static const cbm_token_t *expect(parser_t *p, cbm_token_type_t type) {
 }
 
 /* Parse inline properties: {key: "value", ...} */
-static int parse_props(parser_t *p, cbm_prop_filter_t **out, int *count) {
+static int parse_props(parser_t *p, hyp_prop_filter_t **out, int *count) {
     *out = NULL;
     *count = 0;
     if (!match(p, TOK_LBRACE)) {
@@ -507,37 +507,37 @@ static int parse_props(parser_t *p, cbm_prop_filter_t **out, int *count) {
 
     int cap = CYP_INIT_CAP4;
     int n = 0;
-    cbm_prop_filter_t *arr = malloc(cap * sizeof(cbm_prop_filter_t));
+    hyp_prop_filter_t *arr = malloc(cap * sizeof(hyp_prop_filter_t));
     if (!arr) {
-        return CBM_NOT_FOUND;
+        return HYP_NOT_FOUND;
     }
 
     while (!check(p, TOK_RBRACE) && !check(p, TOK_EOF)) {
-        const cbm_token_t *key = expect(p, TOK_IDENT);
+        const hyp_token_t *key = expect(p, TOK_IDENT);
         if (!key) {
             free(arr);
-            return CBM_NOT_FOUND;
+            return HYP_NOT_FOUND;
         }
         if (!expect(p, TOK_COLON)) {
             free(arr);
-            return CBM_NOT_FOUND;
+            return HYP_NOT_FOUND;
         }
-        const cbm_token_t *val = expect(p, TOK_STRING);
+        const hyp_token_t *val = expect(p, TOK_STRING);
         if (!val) {
             free(arr);
-            return CBM_NOT_FOUND;
+            return HYP_NOT_FOUND;
         }
 
         if (n >= cap) {
             int new_cap = cap * PAIR_LEN;
-            void *tmp = realloc(arr, new_cap * sizeof(cbm_prop_filter_t));
+            void *tmp = realloc(arr, new_cap * sizeof(hyp_prop_filter_t));
             if (!tmp) {
                 for (int i = 0; i < n; i++) {
                     safe_str_free(&arr[i].key);
                     safe_str_free(&arr[i].value);
                 }
                 free(arr);
-                return CBM_NOT_FOUND;
+                return HYP_NOT_FOUND;
             }
             arr = tmp;
             cap = new_cap;
@@ -552,7 +552,7 @@ static int parse_props(parser_t *p, cbm_prop_filter_t **out, int *count) {
                 safe_str_free(&arr[i].value);
             }
             free(arr);
-            return CBM_NOT_FOUND;
+            return HYP_NOT_FOUND;
         }
         arr[n].key = new_key;
         arr[n].value = new_val;
@@ -568,10 +568,10 @@ static int parse_props(parser_t *p, cbm_prop_filter_t **out, int *count) {
 }
 
 /* Parse node: (variable:Label {props}) */
-static int parse_node(parser_t *p, cbm_node_pattern_t *out) {
+static int parse_node(parser_t *p, hyp_node_pattern_t *out) {
     memset(out, 0, sizeof(*out));
     if (!expect(p, TOK_LPAREN)) {
-        return CBM_NOT_FOUND;
+        return HYP_NOT_FOUND;
     }
 
     /* Optional variable */
@@ -584,16 +584,16 @@ static int parse_node(parser_t *p, cbm_node_pattern_t *out) {
     /* Optional :Label, with openCypher label alternation :A|B|C (#242).
      * Stored as a single "A|B|C" string; the matcher splits on '|'. */
     if (match(p, TOK_COLON)) {
-        const cbm_token_t *label = expect(p, TOK_IDENT);
+        const hyp_token_t *label = expect(p, TOK_IDENT);
         if (!label) {
-            return CBM_NOT_FOUND;
+            return HYP_NOT_FOUND;
         }
-        char lbuf[CBM_SZ_256];
+        char lbuf[HYP_SZ_256];
         int ll = snprintf(lbuf, sizeof(lbuf), "%s", label->text);
         while (match(p, TOK_PIPE)) {
-            const cbm_token_t *alt = expect(p, TOK_IDENT);
+            const hyp_token_t *alt = expect(p, TOK_IDENT);
             if (!alt) {
-                return CBM_NOT_FOUND;
+                return HYP_NOT_FOUND;
             }
             int w = snprintf(lbuf + ll, (ll < (int)sizeof(lbuf)) ? sizeof(lbuf) - (size_t)ll : 0,
                              "|%s", alt->text);
@@ -610,12 +610,12 @@ static int parse_node(parser_t *p, cbm_node_pattern_t *out) {
     /* Optional {props} */
     if (check(p, TOK_LBRACE)) {
         if (parse_props(p, &out->props, &out->prop_count) < 0) {
-            return CBM_NOT_FOUND;
+            return HYP_NOT_FOUND;
         }
     }
 
     if (!expect(p, TOK_RPAREN)) {
-        return CBM_NOT_FOUND;
+        return HYP_NOT_FOUND;
     }
     return 0;
 }
@@ -623,12 +623,12 @@ static int parse_node(parser_t *p, cbm_node_pattern_t *out) {
 /* Parse *min..max hop range after the star token has been consumed */
 static void parse_hop_range(parser_t *p, int *min_hops, int *max_hops) {
     if (check(p, TOK_NUMBER)) {
-        int val = (int)strtol(peek(p)->text, NULL, CBM_DECIMAL_BASE);
+        int val = (int)strtol(peek(p)->text, NULL, HYP_DECIMAL_BASE);
         advance(p);
         if (match(p, TOK_DOTDOT)) {
             *min_hops = val;
             *max_hops =
-                check(p, TOK_NUMBER) ? (int)strtol(advance(p)->text, NULL, CBM_DECIMAL_BASE) : 0;
+                check(p, TOK_NUMBER) ? (int)strtol(advance(p)->text, NULL, HYP_DECIMAL_BASE) : 0;
         } else {
             /* *N means 1..N */
             *min_hops = SKIP_ONE;
@@ -637,7 +637,7 @@ static void parse_hop_range(parser_t *p, int *min_hops, int *max_hops) {
     } else if (match(p, TOK_DOTDOT)) {
         *min_hops = SKIP_ONE;
         *max_hops =
-            check(p, TOK_NUMBER) ? (int)strtol(advance(p)->text, NULL, CBM_DECIMAL_BASE) : 0;
+            check(p, TOK_NUMBER) ? (int)strtol(advance(p)->text, NULL, HYP_DECIMAL_BASE) : 0;
     } else {
         /* * alone = unbounded */
         *min_hops = SKIP_ONE;
@@ -646,23 +646,23 @@ static void parse_hop_range(parser_t *p, int *min_hops, int *max_hops) {
 }
 
 /* Parse relationship type list after ':' inside brackets. Returns -1 on error. */
-static int parse_rel_types(parser_t *p, cbm_rel_pattern_t *out) {
+static int parse_rel_types(parser_t *p, hyp_rel_pattern_t *out) {
     int cap = CYP_INIT_CAP4;
     int n = 0;
     const char **types = malloc(cap * sizeof(const char *));
     if (!types) {
-        return CBM_NOT_FOUND;
+        return HYP_NOT_FOUND;
     }
 
-    const cbm_token_t *t = expect(p, TOK_IDENT);
+    const hyp_token_t *t = expect(p, TOK_IDENT);
     if (!t) {
         free(types);
-        return CBM_NOT_FOUND;
+        return HYP_NOT_FOUND;
     }
     const char *first_type = heap_strdup(t->text);
     if (!first_type) {
         free(types);
-        return CBM_NOT_FOUND;
+        return HYP_NOT_FOUND;
     }
     types[n++] = first_type;
 
@@ -673,7 +673,7 @@ static int parse_rel_types(parser_t *p, cbm_rel_pattern_t *out) {
                 safe_str_free(&types[i]);
             }
             free(types);
-            return CBM_NOT_FOUND;
+            return HYP_NOT_FOUND;
         }
         if (n >= cap) {
             int new_cap = cap * PAIR_LEN;
@@ -683,7 +683,7 @@ static int parse_rel_types(parser_t *p, cbm_rel_pattern_t *out) {
                     safe_str_free(&types[i]);
                 }
                 free(types);
-                return CBM_NOT_FOUND;
+                return HYP_NOT_FOUND;
             }
             types = (const char **)tmp;
             cap = new_cap;
@@ -694,7 +694,7 @@ static int parse_rel_types(parser_t *p, cbm_rel_pattern_t *out) {
                 safe_str_free(&types[i]);
             }
             free(types);
-            return CBM_NOT_FOUND;
+            return HYP_NOT_FOUND;
         }
         types[n++] = next_type;
     }
@@ -705,7 +705,7 @@ static int parse_rel_types(parser_t *p, cbm_rel_pattern_t *out) {
 }
 
 /* Parse bracket content of a relationship: [var:TYPE*hops] */
-static int parse_rel_bracket(parser_t *p, cbm_rel_pattern_t *out) {
+static int parse_rel_bracket(parser_t *p, hyp_rel_pattern_t *out) {
     /* Optional variable */
     if (check(p, TOK_IDENT) && !check(p, TOK_COLON)) {
         out->variable = heap_strdup(advance(p)->text);
@@ -713,7 +713,7 @@ static int parse_rel_bracket(parser_t *p, cbm_rel_pattern_t *out) {
     /* Optional :Types */
     if (match(p, TOK_COLON)) {
         if (parse_rel_types(p, out) < 0) {
-            return CBM_NOT_FOUND;
+            return HYP_NOT_FOUND;
         }
     }
     /* Optional *hop_range */
@@ -721,13 +721,13 @@ static int parse_rel_bracket(parser_t *p, cbm_rel_pattern_t *out) {
         parse_hop_range(p, &out->min_hops, &out->max_hops);
     }
     if (!expect(p, TOK_RBRACKET)) {
-        return CBM_NOT_FOUND;
+        return HYP_NOT_FOUND;
     }
     return 0;
 }
 
 /* Parse relationship: -[:TYPE|TYPE2*min..max]-> or <-[...]-  */
-static int parse_rel(parser_t *p, cbm_rel_pattern_t *out) {
+static int parse_rel(parser_t *p, hyp_rel_pattern_t *out) {
     memset(out, 0, sizeof(*out));
     out->min_hops = SKIP_ONE;
     out->max_hops = SKIP_ONE;
@@ -735,18 +735,18 @@ static int parse_rel(parser_t *p, cbm_rel_pattern_t *out) {
     /* Check for leading < (inbound) */
     bool leading_lt = match(p, TOK_LT);
     if (!expect(p, TOK_DASH)) {
-        return CBM_NOT_FOUND;
+        return HYP_NOT_FOUND;
     }
 
     /* Optional bracket content */
     if (match(p, TOK_LBRACKET)) {
         if (parse_rel_bracket(p, out) < 0) {
-            return CBM_NOT_FOUND;
+            return HYP_NOT_FOUND;
         }
     }
 
     if (!expect(p, TOK_DASH)) {
-        return CBM_NOT_FOUND;
+        return HYP_NOT_FOUND;
     }
 
     /* Check for trailing > (outbound) */
@@ -766,15 +766,15 @@ static int parse_rel(parser_t *p, cbm_rel_pattern_t *out) {
 
 /* ── Expression tree helpers ────────────────────────────────────── */
 
-static void expr_free(cbm_expr_t *e) {
+static void expr_free(hyp_expr_t *e) {
     enum { EXPR_FREE_STACK = 128 };
-    cbm_expr_t *stack[EXPR_FREE_STACK];
+    hyp_expr_t *stack[EXPR_FREE_STACK];
     int top = 0;
     if (e) {
         stack[top++] = e;
     }
     while (top > 0) {
-        cbm_expr_t *cur = stack[--top];
+        hyp_expr_t *cur = stack[--top];
         if (cur->type == EXPR_CONDITION) {
             safe_str_free(&cur->cond.variable);
             safe_str_free(&cur->cond.property);
@@ -811,23 +811,23 @@ static void expr_free(cbm_expr_t *e) {
     }
 }
 
-static cbm_expr_t *expr_leaf(cbm_condition_t c) {
-    cbm_expr_t *e = calloc(CBM_ALLOC_ONE, sizeof(cbm_expr_t));
+static hyp_expr_t *expr_leaf(hyp_condition_t c) {
+    hyp_expr_t *e = calloc(HYP_ALLOC_ONE, sizeof(hyp_expr_t));
     e->type = EXPR_CONDITION;
     e->cond = c;
     return e;
 }
 
-static cbm_expr_t *expr_binary(cbm_expr_type_t type, cbm_expr_t *left, cbm_expr_t *right) {
-    cbm_expr_t *e = calloc(CBM_ALLOC_ONE, sizeof(cbm_expr_t));
+static hyp_expr_t *expr_binary(hyp_expr_type_t type, hyp_expr_t *left, hyp_expr_t *right) {
+    hyp_expr_t *e = calloc(HYP_ALLOC_ONE, sizeof(hyp_expr_t));
     e->type = type;
     e->left = left;
     e->right = right;
     return e;
 }
 
-static cbm_expr_t *expr_not(cbm_expr_t *child) {
-    cbm_expr_t *e = calloc(CBM_ALLOC_ONE, sizeof(cbm_expr_t));
+static hyp_expr_t *expr_not(hyp_expr_t *child) {
+    hyp_expr_t *e = calloc(HYP_ALLOC_ONE, sizeof(hyp_expr_t));
     e->type = EXPR_NOT;
     e->left = child;
     return e;
@@ -835,7 +835,7 @@ static cbm_expr_t *expr_not(cbm_expr_t *child) {
 
 /* ── Unsupported keyword detection ─────────────────────────────── */
 
-static const char *unsupported_clause_error(cbm_token_type_t type) {
+static const char *unsupported_clause_error(hyp_token_type_t type) {
     switch (type) {
     case TOK_CREATE:
         return "unsupported Cypher feature: CREATE clause (write operations not supported)";
@@ -869,13 +869,13 @@ static const char *unsupported_clause_error(cbm_token_type_t type) {
 /* ── Recursive descent WHERE parser (Phase 2) ──────────────────── */
 
 /* Forward declarations for recursive descent */
-static cbm_expr_t *parse_or_expr(parser_t *p);
+static hyp_expr_t *parse_or_expr(parser_t *p);
 /* Multi-arg scalar function support, shared with the RETURN-item parser (#874) */
 static bool is_multiarg_func_call(parser_t *p);
-static int parse_multiarg_func_item(parser_t *p, cbm_return_item_t *item);
+static int parse_multiarg_func_item(parser_t *p, hyp_return_item_t *item);
 
 /* Free a multi-arg function argument array. */
-static void func_args_free(cbm_func_arg_t *args, int count) {
+static void func_args_free(hyp_func_arg_t *args, int count) {
     for (int i = 0; i < count; i++) {
         safe_str_free(&args[i].variable);
         safe_str_free(&args[i].property);
@@ -885,7 +885,7 @@ static void func_args_free(cbm_func_arg_t *args, int count) {
 }
 
 /* Free the fields of a partially-parsed multi-arg function item. */
-static void func_item_fields_free(cbm_return_item_t *item) {
+static void func_item_fields_free(hyp_return_item_t *item) {
     safe_str_free(&item->variable);
     safe_str_free(&item->property);
     safe_str_free(&item->func);
@@ -895,7 +895,7 @@ static void func_item_fields_free(cbm_return_item_t *item) {
 }
 
 /* Free the function-call fields of a WHERE condition (#874). */
-static void cond_func_fields_free(cbm_condition_t *c) {
+static void cond_func_fields_free(hyp_condition_t *c) {
     safe_str_free(&c->func);
     func_args_free(c->args, c->arg_count);
     c->args = NULL;
@@ -903,7 +903,7 @@ static void cond_func_fields_free(cbm_condition_t *c) {
 }
 
 /* Parse IN [val, val, ...] list. Returns expr_leaf or NULL on error. */
-static cbm_expr_t *parse_in_list(parser_t *p, cbm_condition_t *c) {
+static hyp_expr_t *parse_in_list(parser_t *p, hyp_condition_t *c) {
     advance(p);
     c->op = heap_strdup("IN");
     if (!c->op) {
@@ -1011,7 +1011,7 @@ static char *parse_comparison_op(parser_t *p) {
 
 /* Parse a single condition: var.prop OP value | var.prop IS [NOT] NULL | var.prop IN [...] */
 /* Free the heap fields of a standalone node pattern (not owned by a pattern). */
-static void free_one_node_pattern(cbm_node_pattern_t *n) {
+static void free_one_node_pattern(hyp_node_pattern_t *n) {
     safe_str_free(&n->variable);
     safe_str_free(&n->label);
     for (int j = 0; j < n->prop_count; j++) {
@@ -1023,7 +1023,7 @@ static void free_one_node_pattern(cbm_node_pattern_t *n) {
 }
 
 /* Free the heap fields of a standalone relationship pattern. */
-static void free_one_rel_pattern(cbm_rel_pattern_t *r) {
+static void free_one_rel_pattern(hyp_rel_pattern_t *r) {
     safe_str_free(&r->variable);
     for (int j = 0; j < r->type_count; j++) {
         safe_str_free(&r->types[j]);
@@ -1037,15 +1037,15 @@ static void free_one_rel_pattern(cbm_rel_pattern_t *r) {
  * single-hop, edge-type-specific existence check anchored on a bound variable
  * (e.g. WHERE NOT EXISTS { (f)<-[:CALLS]-() } finds functions with no callers).
  * Multi-hop / nested-WHERE EXISTS is intentionally unsupported. */
-static cbm_expr_t *parse_exists_predicate(parser_t *p, bool negated) {
+static hyp_expr_t *parse_exists_predicate(parser_t *p, bool negated) {
     advance(p); /* EXISTS */
     if (!match(p, TOK_LBRACE)) {
         snprintf(p->error, sizeof(p->error), "expected '{' after EXISTS at pos %d", peek(p)->pos);
         return NULL;
     }
-    cbm_node_pattern_t anchor = {0};
-    cbm_rel_pattern_t rel = {0};
-    cbm_node_pattern_t far_node = {0};
+    hyp_node_pattern_t anchor = {0};
+    hyp_rel_pattern_t rel = {0};
+    hyp_node_pattern_t far_node = {0};
     if (parse_node(p, &anchor) < 0 || parse_rel(p, &rel) < 0 || parse_node(p, &far_node) < 0) {
         free_one_node_pattern(&anchor);
         free_one_rel_pattern(&rel);
@@ -1057,7 +1057,7 @@ static cbm_expr_t *parse_exists_predicate(parser_t *p, bool negated) {
     }
     expect(p, TOK_RBRACE);
 
-    cbm_condition_t c = {0};
+    hyp_condition_t c = {0};
     c.negated = negated;
     c.op = heap_strdup("EXISTS");
     c.variable = heap_strdup(anchor.variable ? anchor.variable : "");
@@ -1074,7 +1074,7 @@ static cbm_expr_t *parse_exists_predicate(parser_t *p, bool negated) {
 /* Parse the operator + value tail shared by every condition subject
  * (var[.prop] and multi-arg functions like coalesce(...)): IS [NOT] NULL,
  * IN [...], or a comparison operator with a literal value. */
-static cbm_expr_t *parse_condition_op(parser_t *p, cbm_condition_t *c) {
+static hyp_expr_t *parse_condition_op(parser_t *p, hyp_condition_t *c) {
     /* IS NULL / IS NOT NULL */
     if (check(p, TOK_IS)) {
         advance(p);
@@ -1090,7 +1090,7 @@ static cbm_expr_t *parse_condition_op(parser_t *p, cbm_condition_t *c) {
 
     /* IN [...] */
     if (check(p, TOK_IN)) {
-        cbm_expr_t *e = parse_in_list(p, c);
+        hyp_expr_t *e = parse_in_list(p, c);
         if (!e) {
             cond_func_fields_free(c);
         }
@@ -1134,17 +1134,17 @@ static cbm_expr_t *parse_condition_op(parser_t *p, cbm_condition_t *c) {
 enum { COND_LHS_COMPLETE = 1 };
 
 /* Parse the left-hand side of a WHERE condition into c.
- * Returns CBM_NOT_FOUND on error, 0 when an operator/value should follow, and
+ * Returns HYP_NOT_FOUND on error, 0 when an operator/value should follow, and
  * COND_LHS_COMPLETE when the condition is already complete (label test). */
-static int parse_condition_lhs(parser_t *p, cbm_condition_t *c) {
+static int parse_condition_lhs(parser_t *p, hyp_condition_t *c) {
     if (is_multiarg_func_call(p)) {
         /* Multi-arg scalar function LHS: coalesce(f.depth, 0) >= 2 (#874).
          * Reuse the RETURN-item parser, then move ownership into the condition. */
-        cbm_return_item_t fitem;
+        hyp_return_item_t fitem;
         memset(&fitem, 0, sizeof(fitem));
         if (parse_multiarg_func_item(p, &fitem) < 0) {
             func_item_fields_free(&fitem);
-            return CBM_NOT_FOUND;
+            return HYP_NOT_FOUND;
         }
         c->variable = fitem.variable;
         c->property = fitem.property;
@@ -1162,21 +1162,21 @@ static int parse_condition_lhs(parser_t *p, cbm_condition_t *c) {
                  "unsupported function '%s' in WHERE (supported: coalesce, substring, replace, "
                  "left, right)",
                  peek(p)->text);
-        return CBM_NOT_FOUND;
+        return HYP_NOT_FOUND;
     }
 
-    const cbm_token_t *var = expect(p, TOK_IDENT);
+    const hyp_token_t *var = expect(p, TOK_IDENT);
     if (!var) {
-        return CBM_NOT_FOUND;
+        return HYP_NOT_FOUND;
     }
 
     /* Label test: WHERE n:Label (openCypher, #241). Modelled as a leaf with
      * op="HAS_LABEL" and value=Label, evaluated against the bound node's label. */
     if (check(p, TOK_COLON)) {
         advance(p);
-        const cbm_token_t *lbl = expect(p, TOK_IDENT);
+        const hyp_token_t *lbl = expect(p, TOK_IDENT);
         if (!lbl) {
-            return CBM_NOT_FOUND;
+            return HYP_NOT_FOUND;
         }
         c->variable = heap_strdup(var->text);
         c->op = heap_strdup("HAS_LABEL");
@@ -1185,9 +1185,9 @@ static int parse_condition_lhs(parser_t *p, cbm_condition_t *c) {
     }
 
     if (match(p, TOK_DOT)) {
-        const cbm_token_t *prop = expect(p, TOK_IDENT);
+        const hyp_token_t *prop = expect(p, TOK_IDENT);
         if (!prop) {
-            return CBM_NOT_FOUND;
+            return HYP_NOT_FOUND;
         }
         c->variable = heap_strdup(var->text);
         c->property = heap_strdup(prop->text);
@@ -1199,7 +1199,7 @@ static int parse_condition_lhs(parser_t *p, cbm_condition_t *c) {
     return 0;
 }
 
-static cbm_expr_t *parse_condition_expr(parser_t *p) {
+static hyp_expr_t *parse_condition_expr(parser_t *p) {
     /* Check for NOT prefix at condition level (e.g. NOT n.name CONTAINS "x") */
     bool negated = match(p, TOK_NOT);
 
@@ -1208,7 +1208,7 @@ static cbm_expr_t *parse_condition_expr(parser_t *p) {
         return parse_exists_predicate(p, negated);
     }
 
-    cbm_condition_t c = {0};
+    hyp_condition_t c = {0};
     c.negated = negated;
 
     int lhs_rc = parse_condition_lhs(p, &c);
@@ -1224,12 +1224,12 @@ static cbm_expr_t *parse_condition_expr(parser_t *p) {
 }
 
 /* Atom: ( expr ) | condition */
-static cbm_expr_t *parse_atom_expr(parser_t *p) { // NOLINT(misc-no-recursion)
+static hyp_expr_t *parse_atom_expr(parser_t *p) { // NOLINT(misc-no-recursion)
     if (match(p, TOK_LPAREN)) {
         if (!parse_depth_enter(p)) {
             return NULL;
         }
-        cbm_expr_t *e = parse_or_expr(p);
+        hyp_expr_t *e = parse_or_expr(p);
         parse_depth_leave(p);
         expect(p, TOK_RPAREN);
         return e;
@@ -1238,12 +1238,12 @@ static cbm_expr_t *parse_atom_expr(parser_t *p) { // NOLINT(misc-no-recursion)
 }
 
 /* NOT: NOT atom | atom */
-static cbm_expr_t *parse_not_expr(parser_t *p) { // NOLINT(misc-no-recursion)
+static hyp_expr_t *parse_not_expr(parser_t *p) { // NOLINT(misc-no-recursion)
     if (match(p, TOK_NOT)) {
         if (!parse_depth_enter(p)) {
             return NULL;
         }
-        cbm_expr_t *child = parse_not_expr(p);
+        hyp_expr_t *child = parse_not_expr(p);
         parse_depth_leave(p);
         return child ? expr_not(child) : NULL;
     }
@@ -1251,14 +1251,14 @@ static cbm_expr_t *parse_not_expr(parser_t *p) { // NOLINT(misc-no-recursion)
 }
 
 /* AND: not (AND not)* */
-static cbm_expr_t *parse_and_expr(parser_t *p) { // NOLINT(misc-no-recursion)
-    cbm_expr_t *left = parse_not_expr(p);
+static hyp_expr_t *parse_and_expr(parser_t *p) { // NOLINT(misc-no-recursion)
+    hyp_expr_t *left = parse_not_expr(p);
     if (!left) {
         return NULL;
     }
     while (check(p, TOK_AND)) {
         advance(p);
-        cbm_expr_t *right = parse_not_expr(p);
+        hyp_expr_t *right = parse_not_expr(p);
         if (!right) {
             expr_free(left);
             return NULL;
@@ -1269,14 +1269,14 @@ static cbm_expr_t *parse_and_expr(parser_t *p) { // NOLINT(misc-no-recursion)
 }
 
 /* XOR: and (XOR and)* */
-static cbm_expr_t *parse_xor_expr(parser_t *p) { // NOLINT(misc-no-recursion)
-    cbm_expr_t *left = parse_and_expr(p);
+static hyp_expr_t *parse_xor_expr(parser_t *p) { // NOLINT(misc-no-recursion)
+    hyp_expr_t *left = parse_and_expr(p);
     if (!left) {
         return NULL;
     }
     while (check(p, TOK_XOR)) {
         advance(p);
-        cbm_expr_t *right = parse_and_expr(p);
+        hyp_expr_t *right = parse_and_expr(p);
         if (!right) {
             expr_free(left);
             return NULL;
@@ -1287,14 +1287,14 @@ static cbm_expr_t *parse_xor_expr(parser_t *p) { // NOLINT(misc-no-recursion)
 }
 
 /* OR: xor (OR xor)* */
-static cbm_expr_t *parse_or_expr(parser_t *p) { // NOLINT(misc-no-recursion)
-    cbm_expr_t *left = parse_xor_expr(p);
+static hyp_expr_t *parse_or_expr(parser_t *p) { // NOLINT(misc-no-recursion)
+    hyp_expr_t *left = parse_xor_expr(p);
     if (!left) {
         return NULL;
     }
     while (check(p, TOK_OR)) {
         advance(p);
-        cbm_expr_t *right = parse_xor_expr(p);
+        hyp_expr_t *right = parse_xor_expr(p);
         if (!right) {
             expr_free(left);
             return NULL;
@@ -1305,17 +1305,17 @@ static cbm_expr_t *parse_or_expr(parser_t *p) { // NOLINT(misc-no-recursion)
 }
 
 /* Parse WHERE clause — builds expression tree */
-static int parse_where(parser_t *p, cbm_where_clause_t **out) {
+static int parse_where(parser_t *p, hyp_where_clause_t **out) {
     if (!match(p, TOK_WHERE)) {
         *out = NULL;
         return 0;
     }
 
-    cbm_where_clause_t *w = calloc(CBM_ALLOC_ONE, sizeof(cbm_where_clause_t));
+    hyp_where_clause_t *w = calloc(HYP_ALLOC_ONE, sizeof(hyp_where_clause_t));
     w->root = parse_or_expr(p);
     if (!w->root && p->error[0]) {
         free(w);
-        return CBM_NOT_FOUND;
+        return HYP_NOT_FOUND;
     }
 
     *out = w;
@@ -1323,18 +1323,18 @@ static int parse_where(parser_t *p, cbm_where_clause_t **out) {
 }
 
 /* Helper: is token an aggregate function? */
-static bool is_aggregate_tok(cbm_token_type_t t) {
+static bool is_aggregate_tok(hyp_token_type_t t) {
     return (t == TOK_COUNT || t == TOK_SUM || t == TOK_AVG || t == TOK_MIN_KW || t == TOK_MAX_KW ||
             t == TOK_COLLECT) != 0;
 }
 
 /* Helper: is token a string function? */
-static bool is_string_func_tok(cbm_token_type_t t) {
+static bool is_string_func_tok(hyp_token_type_t t) {
     return (t == TOK_TOLOWER || t == TOK_TOUPPER || t == TOK_TOSTRING) != 0;
 }
 
 /* Token type to function name */
-static const char *agg_func_name(cbm_token_type_t t) {
+static const char *agg_func_name(hyp_token_type_t t) {
     switch (t) {
     case TOK_COUNT:
         return "COUNT";
@@ -1353,7 +1353,7 @@ static const char *agg_func_name(cbm_token_type_t t) {
     }
 }
 
-static const char *str_func_name(cbm_token_type_t t) {
+static const char *str_func_name(hyp_token_type_t t) {
     switch (t) {
     case TOK_TOLOWER:
         return "toLower";
@@ -1372,10 +1372,10 @@ static const char *parse_value_literal(parser_t *p) {
         return heap_strdup(advance(p)->text);
     }
     if (check(p, TOK_IDENT)) {
-        char buf[CBM_SZ_256];
-        const cbm_token_t *v = advance(p);
+        char buf[HYP_SZ_256];
+        const hyp_token_t *v = advance(p);
         if (match(p, TOK_DOT)) {
-            const cbm_token_t *pr = expect(p, TOK_IDENT);
+            const hyp_token_t *pr = expect(p, TOK_IDENT);
             snprintf(buf, sizeof(buf), "%s.%s", v->text, pr ? pr->text : "");
         } else {
             snprintf(buf, sizeof(buf), "%s", v->text);
@@ -1394,14 +1394,14 @@ static const char *parse_value_literal(parser_t *p) {
 }
 
 /* Parse CASE WHEN ... THEN ... [ELSE ...] END */
-static cbm_case_expr_t *parse_case_expr(parser_t *p) {
+static hyp_case_expr_t *parse_case_expr(parser_t *p) {
     /* CASE already consumed */
-    cbm_case_expr_t *kase = calloc(CBM_ALLOC_ONE, sizeof(cbm_case_expr_t));
+    hyp_case_expr_t *kase = calloc(HYP_ALLOC_ONE, sizeof(hyp_case_expr_t));
     if (!kase) {
         return NULL;
     }
     int bcap = CYP_INIT_CAP4;
-    kase->branches = malloc(bcap * sizeof(cbm_case_branch_t));
+    kase->branches = malloc(bcap * sizeof(hyp_case_branch_t));
     if (!kase->branches) {
         free(kase);
         return NULL;
@@ -1409,7 +1409,7 @@ static cbm_case_expr_t *parse_case_expr(parser_t *p) {
 
     while (check(p, TOK_WHEN)) {
         advance(p);
-        cbm_expr_t *when = parse_or_expr(p);
+        hyp_expr_t *when = parse_or_expr(p);
         if (!expect(p, TOK_THEN)) {
             expr_free(when);
             break;
@@ -1417,7 +1417,7 @@ static cbm_case_expr_t *parse_case_expr(parser_t *p) {
         const char *then_val = parse_value_literal(p);
         if (kase->branch_count >= bcap) {
             int new_bcap = bcap * PAIR_LEN;
-            void *tmp = realloc(kase->branches, new_bcap * sizeof(cbm_case_branch_t));
+            void *tmp = realloc(kase->branches, new_bcap * sizeof(hyp_case_branch_t));
             if (!tmp) {
                 expr_free(when);
                 safe_str_free(&then_val);
@@ -1433,7 +1433,7 @@ static cbm_case_expr_t *parse_case_expr(parser_t *p) {
             bcap = new_bcap;
         }
         kase->branches[kase->branch_count++] =
-            (cbm_case_branch_t){.when_expr = when, .then_val = then_val};
+            (hyp_case_branch_t){.when_expr = when, .then_val = then_val};
     }
 
     if (match(p, TOK_ELSE)) {
@@ -1485,14 +1485,14 @@ static bool is_scalar_value_func(const char *f) {
                  strcmp(f, "ltrim") == 0 || strcmp(f, "rtrim") == 0 || strcmp(f, "reverse") == 0);
 }
 
-static int parse_var_dot_prop(parser_t *p, cbm_return_item_t *item) {
-    const cbm_token_t *var = expect(p, TOK_IDENT);
+static int parse_var_dot_prop(parser_t *p, hyp_return_item_t *item) {
+    const hyp_token_t *var = expect(p, TOK_IDENT);
     if (!var) {
-        return CBM_NOT_FOUND;
+        return HYP_NOT_FOUND;
     }
     item->variable = heap_strdup(var->text);
     if (match(p, TOK_DOT)) {
-        const cbm_token_t *prop = expect(p, TOK_IDENT);
+        const hyp_token_t *prop = expect(p, TOK_IDENT);
         if (prop) {
             item->property = heap_strdup(prop->text);
         }
@@ -1513,12 +1513,12 @@ static bool is_named_func_call(parser_t *p) {
 
 /* Parse a single-argument scalar / introspection call: labels(n), type(r),
  * id(n), keys(n), properties(n), toInteger(n.start_line), ... */
-static int parse_named_func_item(parser_t *p, cbm_return_item_t *item) {
+static int parse_named_func_item(parser_t *p, hyp_return_item_t *item) {
     const char *canon = scalar_func_canonical(peek(p)->text);
     advance(p); /* consume the function name */
     expect(p, TOK_LPAREN);
     if (parse_var_dot_prop(p, item) < 0) {
-        return CBM_NOT_FOUND;
+        return HYP_NOT_FOUND;
     }
     expect(p, TOK_RPAREN);
     item->func = heap_strdup(canon);
@@ -1547,20 +1547,20 @@ static bool is_multiarg_func_call(parser_t *p) {
 }
 
 /* Parse one function argument: a string/number literal or a var[.prop]. */
-static int parse_func_arg(parser_t *p, cbm_func_arg_t *arg) {
+static int parse_func_arg(parser_t *p, hyp_func_arg_t *arg) {
     memset(arg, 0, sizeof(*arg));
     if (check(p, TOK_STRING) || check(p, TOK_NUMBER)) {
         arg->literal = heap_strdup(peek(p)->text);
         advance(p);
         return 0;
     }
-    const cbm_token_t *var = expect(p, TOK_IDENT);
+    const hyp_token_t *var = expect(p, TOK_IDENT);
     if (!var) {
-        return CBM_NOT_FOUND;
+        return HYP_NOT_FOUND;
     }
     arg->variable = heap_strdup(var->text);
     if (match(p, TOK_DOT)) {
-        const cbm_token_t *prop = expect(p, TOK_IDENT);
+        const hyp_token_t *prop = expect(p, TOK_IDENT);
         if (prop) {
             arg->property = heap_strdup(prop->text);
         }
@@ -1570,12 +1570,12 @@ static int parse_func_arg(parser_t *p, cbm_func_arg_t *arg) {
 
 /* Parse a multi-argument scalar call: coalesce(a, b, ...), substring(s, i[, n]),
  * replace(s, from, to), left(s, n), right(s, n). */
-static int parse_multiarg_func_item(parser_t *p, cbm_return_item_t *item) {
+static int parse_multiarg_func_item(parser_t *p, hyp_return_item_t *item) {
     const char *canon = multiarg_func_canonical(peek(p)->text);
     advance(p); /* function name */
     expect(p, TOK_LPAREN);
     int cap = CYP_INIT_CAP4;
-    item->args = malloc((size_t)cap * sizeof(cbm_func_arg_t));
+    item->args = malloc((size_t)cap * sizeof(hyp_func_arg_t));
     item->arg_count = 0;
     while (!check(p, TOK_RPAREN) && !check(p, TOK_EOF)) {
         if (item->arg_count > 0 && !match(p, TOK_COMMA)) {
@@ -1583,10 +1583,10 @@ static int parse_multiarg_func_item(parser_t *p, cbm_return_item_t *item) {
         }
         if (item->arg_count >= cap) {
             cap *= PAIR_LEN;
-            item->args = safe_realloc(item->args, (size_t)cap * sizeof(cbm_func_arg_t));
+            item->args = safe_realloc(item->args, (size_t)cap * sizeof(hyp_func_arg_t));
         }
         if (parse_func_arg(p, &item->args[item->arg_count]) < 0) {
-            return CBM_NOT_FOUND;
+            return HYP_NOT_FOUND;
         }
         item->arg_count++;
     }
@@ -1603,8 +1603,8 @@ static int parse_multiarg_func_item(parser_t *p, cbm_return_item_t *item) {
 }
 
 /* Parse aggregate function call: COUNT(var.prop) */
-static int parse_aggregate_item(parser_t *p, cbm_return_item_t *item) {
-    cbm_token_type_t ft = peek(p)->type;
+static int parse_aggregate_item(parser_t *p, hyp_return_item_t *item) {
+    hyp_token_type_t ft = peek(p)->type;
     advance(p);
     expect(p, TOK_LPAREN);
     /* Optional DISTINCT inside the call: COUNT(DISTINCT x) (#239). */
@@ -1613,7 +1613,7 @@ static int parse_aggregate_item(parser_t *p, cbm_return_item_t *item) {
         item->variable = heap_strdup("*");
     } else {
         if (parse_var_dot_prop(p, item) < 0) {
-            return CBM_NOT_FOUND;
+            return HYP_NOT_FOUND;
         }
     }
     expect(p, TOK_RPAREN);
@@ -1622,19 +1622,19 @@ static int parse_aggregate_item(parser_t *p, cbm_return_item_t *item) {
 }
 
 /* Parse string function call: toLower(var.prop) */
-static int parse_string_func_item(parser_t *p, cbm_return_item_t *item) {
-    cbm_token_type_t ft = peek(p)->type;
+static int parse_string_func_item(parser_t *p, hyp_return_item_t *item) {
+    hyp_token_type_t ft = peek(p)->type;
     advance(p);
     expect(p, TOK_LPAREN);
     if (parse_var_dot_prop(p, item) < 0) {
-        return CBM_NOT_FOUND;
+        return HYP_NOT_FOUND;
     }
     expect(p, TOK_RPAREN);
     item->func = heap_strdup(str_func_name(ft));
     return 0;
 }
 
-static int parse_return_item(parser_t *p, cbm_return_item_t *item) {
+static int parse_return_item(parser_t *p, hyp_return_item_t *item) {
     memset(item, 0, sizeof(*item));
     int rc = 0;
     if (check(p, TOK_CASE)) {
@@ -1653,7 +1653,7 @@ static int parse_return_item(parser_t *p, cbm_return_item_t *item) {
         rc = parse_var_dot_prop(p, item);
     }
     if (rc < 0) {
-        return CBM_NOT_FOUND;
+        return HYP_NOT_FOUND;
     }
     /* A bare identifier followed by '(' is a function we don't recognise
      * (recognised aggregates / string funcs / scalar funcs are handled above),
@@ -1674,11 +1674,11 @@ static int parse_return_item(parser_t *p, cbm_return_item_t *item) {
         }
         safe_str_free(&item->variable);
         safe_str_free(&item->property);
-        return CBM_NOT_FOUND;
+        return HYP_NOT_FOUND;
     }
     /* Optional AS alias */
     if (match(p, TOK_AS)) {
-        const cbm_token_t *alias = expect(p, TOK_IDENT);
+        const hyp_token_t *alias = expect(p, TOK_IDENT);
         if (alias) {
             item->alias = heap_strdup(alias->text);
         }
@@ -1694,7 +1694,7 @@ static void parse_order_by_agg(parser_t *p, char *buf, size_t buf_sz) {
     if (match(p, TOK_STAR)) {
         snprintf(buf, buf_sz, "%s(*)", fn);
     } else {
-        const cbm_token_t *var = expect(p, TOK_IDENT);
+        const hyp_token_t *var = expect(p, TOK_IDENT);
         snprintf(buf, buf_sz, "%s(%s)", fn, var ? var->text : "");
     }
     expect(p, TOK_RPAREN);
@@ -1702,13 +1702,13 @@ static void parse_order_by_agg(parser_t *p, char *buf, size_t buf_sz) {
 
 /* Parse var[.prop] for ORDER BY */
 static void parse_order_by_var(parser_t *p, char *buf, size_t buf_sz) {
-    const cbm_token_t *var = expect(p, TOK_IDENT);
+    const hyp_token_t *var = expect(p, TOK_IDENT);
     if (!var) {
         return;
     }
     snprintf(buf, buf_sz, "%s", var->text);
     if (match(p, TOK_DOT)) {
-        const cbm_token_t *prop = expect(p, TOK_IDENT);
+        const hyp_token_t *prop = expect(p, TOK_IDENT);
         if (prop) {
             snprintf(buf, buf_sz, "%s.%s", var->text, prop->text);
         }
@@ -1729,14 +1729,14 @@ static char *parse_order_by_expr(parser_t *p, char *buf, size_t buf_sz) {
 /* Parse the full comma-separated ORDER BY key list (#1334). Consuming only the
  * first key left ", key2 ... LIMIT n" unparsed, which silently dropped the
  * LIMIT and flooded the caller with the whole result set. Returns 0 on
- * success, CBM_NOT_FOUND when the key list exceeds the modeled maximum. */
-static int parse_order_by_clause(parser_t *p, cbm_return_clause_t *r) {
+ * success, HYP_NOT_FOUND when the key list exceeds the modeled maximum. */
+static int parse_order_by_clause(parser_t *p, hyp_return_clause_t *r) {
     expect(p, TOK_BY);
     do {
-        if (r->order_key_count >= CBM_CYPHER_ORDER_KEYS_MAX) {
-            return CBM_NOT_FOUND;
+        if (r->order_key_count >= HYP_CYPHER_ORDER_KEYS_MAX) {
+            return HYP_NOT_FOUND;
         }
-        char order_buf[CBM_SZ_256];
+        char order_buf[HYP_SZ_256];
         parse_order_by_expr(p, order_buf, sizeof(order_buf));
         bool desc = false;
         if (match(p, TOK_ASC)) {
@@ -1751,24 +1751,24 @@ static int parse_order_by_clause(parser_t *p, cbm_return_clause_t *r) {
     return 0;
 }
 
-static void free_return_clause(cbm_return_clause_t *r);
+static void free_return_clause(hyp_return_clause_t *r);
 
 /* Parse RETURN/WITH clause (shared logic) */
-static int parse_return_or_with(parser_t *p, cbm_return_clause_t **out, bool is_with) {
-    cbm_token_type_t tok = (int)is_with ? TOK_WITH : TOK_RETURN;
+static int parse_return_or_with(parser_t *p, hyp_return_clause_t **out, bool is_with) {
+    hyp_token_type_t tok = (int)is_with ? TOK_WITH : TOK_RETURN;
     /* For WITH, we need to check it's standalone (not preceded by STARTS) */
     if (!match(p, tok)) {
         *out = NULL;
         return 0;
     }
 
-    cbm_return_clause_t *r = calloc(CBM_ALLOC_ONE, sizeof(cbm_return_clause_t));
+    hyp_return_clause_t *r = calloc(HYP_ALLOC_ONE, sizeof(hyp_return_clause_t));
     /* -1 = no LIMIT clause (return all). An explicit `LIMIT 0` parses to 0 below
      * and must return 0 rows — distinguishing the two requires a sentinel, since
      * calloc zeroes limit and `limit > 0` would treat LIMIT 0 as "no limit". */
     r->limit = -1;
     int cap = CYP_INIT_CAP8;
-    r->items = malloc(cap * sizeof(cbm_return_item_t));
+    r->items = malloc(cap * sizeof(hyp_return_item_t));
 
     r->distinct = match(p, TOK_DISTINCT);
 
@@ -1784,27 +1784,27 @@ static int parse_return_or_with(parser_t *p, cbm_return_clause_t **out, bool is_
             break;
         }
 
-        cbm_return_item_t item = {0};
+        hyp_return_item_t item = {0};
         if (parse_return_item(p, &item) < 0) {
             free_return_clause(r);
-            return CBM_NOT_FOUND;
+            return HYP_NOT_FOUND;
         }
 
         if (r->count >= cap) {
             cap *= PAIR_LEN;
-            r->items = safe_realloc(r->items, cap * sizeof(cbm_return_item_t));
+            r->items = safe_realloc(r->items, cap * sizeof(hyp_return_item_t));
         }
         r->items[r->count++] = item;
 
     } while (check(p, TOK_COMMA));
 
     /* Projection is materialized per row into fixed-width stack arrays sized at
-     * CBM_SZ_32 columns (execute_return_simple and its siblings). Bound the
+     * HYP_SZ_32 columns (execute_return_simple and its siblings). Bound the
      * parsed item count to that width so an over-wide RETURN is rejected here
      * instead of writing past those arrays downstream. */
-    if (r->count > CBM_SZ_32) {
+    if (r->count > HYP_SZ_32) {
         free_return_clause(r);
-        return CBM_NOT_FOUND;
+        return HYP_NOT_FOUND;
     }
 
 tail:
@@ -1812,23 +1812,23 @@ tail:
     if (match(p, TOK_ORDER)) {
         if (parse_order_by_clause(p, r) < 0) {
             free_return_clause(r);
-            return CBM_NOT_FOUND;
+            return HYP_NOT_FOUND;
         }
     }
 
     /* Optional SKIP */
     if (match(p, TOK_SKIP)) {
-        const cbm_token_t *num = expect(p, TOK_NUMBER);
+        const hyp_token_t *num = expect(p, TOK_NUMBER);
         if (num) {
-            r->skip = (int)strtol(num->text, NULL, CBM_DECIMAL_BASE);
+            r->skip = (int)strtol(num->text, NULL, HYP_DECIMAL_BASE);
         }
     }
 
     /* Optional LIMIT */
     if (match(p, TOK_LIMIT)) {
-        const cbm_token_t *num = expect(p, TOK_NUMBER);
+        const hyp_token_t *num = expect(p, TOK_NUMBER);
         if (num) {
-            r->limit = (int)strtol(num->text, NULL, CBM_DECIMAL_BASE);
+            r->limit = (int)strtol(num->text, NULL, HYP_DECIMAL_BASE);
         }
     }
 
@@ -1837,39 +1837,39 @@ tail:
 }
 
 /* Parse RETURN clause */
-static int parse_return(parser_t *p, cbm_return_clause_t **out) {
+static int parse_return(parser_t *p, hyp_return_clause_t **out) {
     return parse_return_or_with(p, out, false);
 }
 
 /* Parse a single MATCH pattern into pat */
-static int parse_match_pattern(parser_t *p, cbm_pattern_t *pat) {
+static int parse_match_pattern(parser_t *p, hyp_pattern_t *pat) {
     memset(pat, 0, sizeof(*pat));
     int node_cap = CYP_INIT_CAP4;
     int rel_cap = CYP_INIT_CAP4;
-    pat->nodes = malloc(node_cap * sizeof(cbm_node_pattern_t));
-    pat->rels = calloc(rel_cap, sizeof(cbm_rel_pattern_t));
+    pat->nodes = malloc(node_cap * sizeof(hyp_node_pattern_t));
+    pat->rels = calloc(rel_cap, sizeof(hyp_rel_pattern_t));
 
     if (parse_node(p, &pat->nodes[0]) < 0) {
-        return CBM_NOT_FOUND;
+        return HYP_NOT_FOUND;
     }
     pat->node_count = SKIP_ONE;
 
     while (check(p, TOK_DASH) || check(p, TOK_LT)) {
         if (pat->rel_count >= rel_cap) {
             rel_cap *= PAIR_LEN;
-            pat->rels = safe_realloc(pat->rels, rel_cap * sizeof(cbm_rel_pattern_t));
+            pat->rels = safe_realloc(pat->rels, rel_cap * sizeof(hyp_rel_pattern_t));
         }
         if (parse_rel(p, &pat->rels[pat->rel_count]) < 0) {
-            return CBM_NOT_FOUND;
+            return HYP_NOT_FOUND;
         }
         pat->rel_count++;
 
         if (pat->node_count >= node_cap) {
             node_cap *= PAIR_LEN;
-            pat->nodes = safe_realloc(pat->nodes, node_cap * sizeof(cbm_node_pattern_t));
+            pat->nodes = safe_realloc(pat->nodes, node_cap * sizeof(hyp_node_pattern_t));
         }
         if (parse_node(p, &pat->nodes[pat->node_count]) < 0) {
-            return CBM_NOT_FOUND;
+            return HYP_NOT_FOUND;
         }
         pat->node_count++;
     }
@@ -1877,15 +1877,15 @@ static int parse_match_pattern(parser_t *p, cbm_pattern_t *pat) {
 }
 
 /* Parse UNWIND [...] AS var clause into query */
-static void parse_unwind_clause(parser_t *p, cbm_query_t *q) {
+static void parse_unwind_clause(parser_t *p, hyp_query_t *q) {
     advance(p);
     if (check(p, TOK_LBRACKET)) {
         /* Literal list: [1, 2, 3] — collect as JSON array string */
         advance(p);
-        char buf[CBM_SZ_2K] = "[";
+        char buf[HYP_SZ_2K] = "[";
         int blen = SKIP_ONE;
         /* snprintf returns the length it WOULD have written, so a single
-         * oversized token (string literals lex up to CBM_SZ_4K-1) can push
+         * oversized token (string literals lex up to HYP_SZ_4K-1) can push
          * blen past sizeof(buf). Clamp after every write and guard the raw
          * buf[blen++] stores, mirroring format_collect_list(). */
         const int cap = (int)sizeof(buf);
@@ -1917,7 +1917,7 @@ static void parse_unwind_clause(parser_t *p, cbm_query_t *q) {
         q->unwind_expr = heap_strdup(advance(p)->text);
     }
     expect(p, TOK_AS);
-    const cbm_token_t *alias = expect(p, TOK_IDENT);
+    const hyp_token_t *alias = expect(p, TOK_IDENT);
     if (alias) {
         q->unwind_alias = heap_strdup(alias->text);
     }
@@ -1925,7 +1925,7 @@ static void parse_unwind_clause(parser_t *p, cbm_query_t *q) {
 
 /* Parse a chain of MATCH / OPTIONAL MATCH patterns into query.
  * Returns -1 on error (fills p->error). */
-static int parse_match_chain(parser_t *p, cbm_query_t *q, int *pat_cap) {
+static int parse_match_chain(parser_t *p, hyp_query_t *q, int *pat_cap) {
     while (check(p, TOK_MATCH) || check(p, TOK_OPTIONAL)) {
         bool opt = false;
         if (check(p, TOK_OPTIONAL)) {
@@ -1937,11 +1937,11 @@ static int parse_match_chain(parser_t *p, cbm_query_t *q, int *pat_cap) {
         }
         if (q->pattern_count >= *pat_cap) {
             *pat_cap *= PAIR_LEN;
-            q->patterns = safe_realloc(q->patterns, *pat_cap * sizeof(cbm_pattern_t));
+            q->patterns = safe_realloc(q->patterns, *pat_cap * sizeof(hyp_pattern_t));
             q->pattern_optional = safe_realloc(q->pattern_optional, *pat_cap * sizeof(bool));
         }
         if (parse_match_pattern(p, &q->patterns[q->pattern_count]) < 0) {
-            return CBM_NOT_FOUND;
+            return HYP_NOT_FOUND;
         }
         q->pattern_optional[q->pattern_count] = opt;
         q->pattern_count++;
@@ -1950,53 +1950,53 @@ static int parse_match_chain(parser_t *p, cbm_query_t *q, int *pat_cap) {
 }
 
 /* Parse post-WHERE clauses: additional MATCH, WITH, RETURN, UNION */
-static int parse_post_where(parser_t *p, cbm_query_t *q, // NOLINT(misc-no-recursion)
+static int parse_post_where(parser_t *p, hyp_query_t *q, // NOLINT(misc-no-recursion)
                             int *pat_cap) {
     /* More MATCH / OPTIONAL MATCH after WHERE */
     if (parse_match_chain(p, q, pat_cap) < 0) {
-        return CBM_NOT_FOUND;
+        return HYP_NOT_FOUND;
     }
     /* Check for unsupported keywords */
     const char *unsup = unsupported_clause_error(peek(p)->type);
     if (unsup) {
         snprintf(p->error, sizeof(p->error), "%s", unsup);
-        return CBM_NOT_FOUND;
+        return HYP_NOT_FOUND;
     }
     /* Optional WITH clause (standalone, not STARTS WITH) */
     if (check(p, TOK_WITH) &&
         (p->pos < PAIR_LEN || p->tokens[p->pos - SKIP_ONE].type != TOK_STARTS)) {
         if (parse_return_or_with(p, &q->with_clause, true) < 0) {
-            return CBM_NOT_FOUND;
+            return HYP_NOT_FOUND;
         }
         if (parse_where(p, &q->post_with_where) < 0) {
-            return CBM_NOT_FOUND;
+            return HYP_NOT_FOUND;
         }
     }
     /* Optional RETURN */
     if (parse_return(p, &q->ret) < 0) {
-        return CBM_NOT_FOUND;
+        return HYP_NOT_FOUND;
     }
     /* UNION [ALL] */
     if (check(p, TOK_UNION)) {
         advance(p);
         q->union_all = match(p, TOK_ALL);
-        cbm_parse_result_t sub = {0};
-        if (cbm_parse(&p->tokens[p->pos], p->count - p->pos, &sub) < 0) {
+        hyp_parse_result_t sub = {0};
+        if (hyp_parse(&p->tokens[p->pos], p->count - p->pos, &sub) < 0) {
             if (sub.error) {
                 snprintf(p->error, sizeof(p->error), "%s", sub.error);
             }
-            cbm_parse_free(&sub);
-            return CBM_NOT_FOUND;
+            hyp_parse_free(&sub);
+            return HYP_NOT_FOUND;
         }
         q->union_next = sub.query;
         sub.query = NULL;
-        cbm_parse_free(&sub);
+        hyp_parse_free(&sub);
     }
     return 0;
 }
 
-int cbm_parse(const cbm_token_t *tokens, int token_count, // NOLINT(misc-no-recursion)
-              cbm_parse_result_t *out) {
+int hyp_parse(const hyp_token_t *tokens, int token_count, // NOLINT(misc-no-recursion)
+              hyp_parse_result_t *out) {
     memset(out, 0, sizeof(*out));
     parser_t p = {.tokens = tokens, .count = token_count, .pos = 0};
 
@@ -2004,10 +2004,10 @@ int cbm_parse(const cbm_token_t *tokens, int token_count, // NOLINT(misc-no-recu
     const char *unsup = unsupported_clause_error(peek(&p)->type);
     if (unsup) {
         out->error = heap_strdup(unsup);
-        return CBM_NOT_FOUND;
+        return HYP_NOT_FOUND;
     }
 
-    cbm_query_t *q = calloc(CBM_ALLOC_ONE, sizeof(cbm_query_t));
+    hyp_query_t *q = calloc(HYP_ALLOC_ONE, sizeof(hyp_query_t));
 
     if (check(&p, TOK_UNWIND)) {
         parse_unwind_clause(&p, q);
@@ -2020,58 +2020,58 @@ int cbm_parse(const cbm_token_t *tokens, int token_count, // NOLINT(misc-no-recu
     }
     if (!expect(&p, TOK_MATCH)) {
         out->error = heap_strdup(p.error[0] ? p.error : "expected MATCH");
-        cbm_query_free(q);
-        return CBM_NOT_FOUND;
+        hyp_query_free(q);
+        return HYP_NOT_FOUND;
     }
 
     int pat_cap = CYP_INIT_CAP4;
-    q->patterns = malloc(pat_cap * sizeof(cbm_pattern_t));
+    q->patterns = malloc(pat_cap * sizeof(hyp_pattern_t));
     q->pattern_optional = malloc(pat_cap * sizeof(bool));
 
     if (parse_match_pattern(&p, &q->patterns[0]) < 0) {
         out->error = heap_strdup(p.error[0] ? p.error : "failed to parse pattern");
-        cbm_query_free(q);
-        return CBM_NOT_FOUND;
+        hyp_query_free(q);
+        return HYP_NOT_FOUND;
     }
     q->pattern_optional[0] = first_optional;
     q->pattern_count = SKIP_ONE;
 
     if (parse_match_chain(&p, q, &pat_cap) < 0) {
         out->error = heap_strdup(p.error[0] ? p.error : "failed to parse additional pattern");
-        cbm_query_free(q);
-        return CBM_NOT_FOUND;
+        hyp_query_free(q);
+        return HYP_NOT_FOUND;
     }
 
     if (parse_where(&p, &q->where) < 0) {
         out->error = heap_strdup(p.error[0] ? p.error : "failed to parse WHERE");
-        cbm_query_free(q);
-        return CBM_NOT_FOUND;
+        hyp_query_free(q);
+        return HYP_NOT_FOUND;
     }
 
     if (parse_post_where(&p, q, &pat_cap) < 0) {
         out->error = heap_strdup(p.error[0] ? p.error : "failed to parse query");
-        cbm_query_free(q);
-        return CBM_NOT_FOUND;
+        hyp_query_free(q);
+        return HYP_NOT_FOUND;
     }
 
     out->query = q;
     return 0;
 }
 
-void cbm_parse_free(cbm_parse_result_t *r) {
+void hyp_parse_free(hyp_parse_result_t *r) {
     if (!r) {
         return;
     }
-    cbm_query_free(r->query);
+    hyp_query_free(r->query);
     free(r->error);
     memset(r, 0, sizeof(*r));
 }
 
 /* ── Query free ─────────────────────────────────────────────────── */
 
-static void free_pattern(cbm_pattern_t *pat) {
+static void free_pattern(hyp_pattern_t *pat) {
     for (int i = 0; i < pat->node_count; i++) {
-        cbm_node_pattern_t *n = &pat->nodes[i];
+        hyp_node_pattern_t *n = &pat->nodes[i];
         safe_str_free(&n->variable);
         safe_str_free(&n->label);
         for (int j = 0; j < n->prop_count; j++) {
@@ -2082,7 +2082,7 @@ static void free_pattern(cbm_pattern_t *pat) {
     }
     free(pat->nodes);
     for (int i = 0; i < pat->rel_count; i++) {
-        cbm_rel_pattern_t *r = &pat->rels[i];
+        hyp_rel_pattern_t *r = &pat->rels[i];
         safe_str_free(&r->variable);
         for (int j = 0; j < r->type_count; j++) {
             safe_str_free(&r->types[j]);
@@ -2093,7 +2093,7 @@ static void free_pattern(cbm_pattern_t *pat) {
     free(pat->rels);
 }
 
-static void free_where(cbm_where_clause_t *w) {
+static void free_where(hyp_where_clause_t *w) {
     if (!w) {
         return;
     }
@@ -2115,7 +2115,7 @@ static void free_where(cbm_where_clause_t *w) {
     free(w);
 }
 
-static void free_case_expr(cbm_case_expr_t *k) {
+static void free_case_expr(hyp_case_expr_t *k) {
     if (!k) {
         return;
     }
@@ -2128,7 +2128,7 @@ static void free_case_expr(cbm_case_expr_t *k) {
     free(k);
 }
 
-static void free_return_clause(cbm_return_clause_t *r) {
+static void free_return_clause(hyp_return_clause_t *r) {
     if (!r) {
         return;
     }
@@ -2152,9 +2152,9 @@ static void free_return_clause(cbm_return_clause_t *r) {
     free(r);
 }
 
-void cbm_query_free(cbm_query_t *q) {
+void hyp_query_free(hyp_query_t *q) {
     while (q) {
-        cbm_query_t *next = q->union_next;
+        hyp_query_t *next = q->union_next;
         for (int i = 0; i < q->pattern_count; i++) {
             free_pattern(&q->patterns[i]);
         }
@@ -2173,29 +2173,29 @@ void cbm_query_free(cbm_query_t *q) {
 
 /* ── Convenience: lex + parse ───────────────────────────────────── */
 
-int cbm_cypher_parse(const char *query, cbm_query_t **out, char **error) {
+int hyp_cypher_parse(const char *query, hyp_query_t **out, char **error) {
     *out = NULL;
     *error = NULL;
 
-    cbm_lex_result_t lr = {0};
-    if (cbm_lex(query, &lr) < 0 || lr.error) {
+    hyp_lex_result_t lr = {0};
+    if (hyp_lex(query, &lr) < 0 || lr.error) {
         *error = heap_strdup(lr.error ? lr.error : "lex error");
-        cbm_lex_free(&lr);
-        return CBM_NOT_FOUND;
+        hyp_lex_free(&lr);
+        return HYP_NOT_FOUND;
     }
 
-    cbm_parse_result_t pr = {0};
-    if (cbm_parse(lr.tokens, lr.count, &pr) < 0) {
+    hyp_parse_result_t pr = {0};
+    if (hyp_parse(lr.tokens, lr.count, &pr) < 0) {
         *error = heap_strdup(pr.error ? pr.error : "parse error");
-        cbm_parse_free(&pr);
-        cbm_lex_free(&lr);
-        return CBM_NOT_FOUND;
+        hyp_parse_free(&pr);
+        hyp_lex_free(&lr);
+        return HYP_NOT_FOUND;
     }
 
     *out = pr.query;
     pr.query = NULL;
-    cbm_parse_free(&pr);
-    cbm_lex_free(&lr);
+    hyp_parse_free(&pr);
+    hyp_lex_free(&lr);
     return 0;
 }
 
@@ -2206,29 +2206,29 @@ int cbm_cypher_parse(const char *query, cbm_query_t **out, char **error) {
 /* A binding: maps variable names to nodes and/or edges */
 typedef struct {
     const char *var_names[CYP_MAX_VARS]; /* variable names (nodes) */
-    cbm_node_t var_nodes[CYP_MAX_VARS];  /* node data */
+    hyp_node_t var_nodes[CYP_MAX_VARS];  /* node data */
     int var_count;
     const char *edge_var_names[CYP_MAX_EDGE_VARS]; /* variable names (edges) */
-    cbm_edge_t edge_vars[CYP_MAX_EDGE_VARS];       /* edge data */
+    hyp_edge_t edge_vars[CYP_MAX_EDGE_VARS];       /* edge data */
     int edge_var_count;
-    cbm_store_t *store; /* for computing in_degree/out_degree on demand */
+    hyp_store_t *store; /* for computing in_degree/out_degree on demand */
 } binding_t;
 
 /* Return a string field from a node by property name.  NULL-safe. */
-static const char *node_string_field(const cbm_node_t *n, const char *prop) {
+static const char *node_string_field(const hyp_node_t *n, const char *prop) {
     static const struct {
         const char *key;
         size_t offset;
     } fields[] = {
-        {"name", offsetof(cbm_node_t, name)},
-        {"qualified_name", offsetof(cbm_node_t, qualified_name)},
+        {"name", offsetof(hyp_node_t, name)},
+        {"qualified_name", offsetof(hyp_node_t, qualified_name)},
         /* Aliases: field-eval agents reach for the short names, and a miss
          * used to return a silent empty column costing a round-trip. */
-        {"qn", offsetof(cbm_node_t, qualified_name)},
-        {"label", offsetof(cbm_node_t, label)},
-        {"file_path", offsetof(cbm_node_t, file_path)},
-        {"file", offsetof(cbm_node_t, file_path)},
-        {"path", offsetof(cbm_node_t, file_path)},
+        {"qn", offsetof(hyp_node_t, qualified_name)},
+        {"label", offsetof(hyp_node_t, label)},
+        {"file_path", offsetof(hyp_node_t, file_path)},
+        {"file", offsetof(hyp_node_t, file_path)},
+        {"path", offsetof(hyp_node_t, file_path)},
     };
     for (size_t i = 0; i < sizeof(fields) / sizeof(fields[0]); i++) {
         if (strcmp(prop, fields[i].key) == 0) {
@@ -2242,9 +2242,9 @@ static const char *node_string_field(const cbm_node_t *n, const char *prop) {
 /* Get node property by name.
  * store may be NULL; only needed for virtual degree properties. */
 static const char *json_extract_prop(const char *json, const char *key, char *buf, size_t buf_sz);
-static void node_fields_free(cbm_node_t *n); /* defined below; used by the stub re-fetch */
+static void node_fields_free(hyp_node_t *n); /* defined below; used by the stub re-fetch */
 
-static const char *node_prop(const cbm_node_t *n, const char *prop, cbm_store_t *store) {
+static const char *node_prop(const hyp_node_t *n, const char *prop, hyp_store_t *store) {
     if (!n || !prop) {
         return "";
     }
@@ -2258,17 +2258,17 @@ static const char *node_prop(const cbm_node_t *n, const char *prop, cbm_store_t 
      * a single row (or an ORDER-BY comparison) reads several of these before any
      * of them is copied out, so returning one shared static buffer would alias
      * every column to the last value read. Mirrors edge_prop's rotation. */
-    static _Thread_local char bufs[CYP_BUF_8][CBM_SZ_512];
+    static _Thread_local char bufs[CYP_BUF_8][HYP_SZ_512];
     static _Thread_local int buf_idx = 0;
     char *out = bufs[buf_idx];
     buf_idx = (buf_idx + SKIP_ONE) % CYP_BUF_8;
 
     if (strcmp(prop, "start_line") == 0) {
-        snprintf(out, CBM_SZ_512, "%d", n->start_line);
+        snprintf(out, HYP_SZ_512, "%d", n->start_line);
         return out;
     }
     if (strcmp(prop, "end_line") == 0) {
-        snprintf(out, CBM_SZ_512, "%d", n->end_line);
+        snprintf(out, HYP_SZ_512, "%d", n->end_line);
         return out;
     }
     /* Virtual computed properties: in_degree/out_degree via CALLS edges.
@@ -2276,9 +2276,9 @@ static const char *node_prop(const cbm_node_t *n, const char *prop, cbm_store_t 
     if (store && (strcmp(prop, "in_degree") == 0 || strcmp(prop, "out_degree") == 0)) {
         int in_deg = 0;
         int out_deg = 0;
-        cbm_store_node_degree(store, n->id, &in_deg, &out_deg);
+        hyp_store_node_degree(store, n->id, &in_deg, &out_deg);
         int val = (strcmp(prop, "in_degree") == 0) ? in_deg : out_deg;
-        snprintf(out, CBM_SZ_512, "%d", val);
+        snprintf(out, HYP_SZ_512, "%d", val);
         return out;
     }
     /* Fall back to any value stored in the node's properties JSON — exposes the
@@ -2286,7 +2286,7 @@ static const char *node_prop(const cbm_node_t *n, const char *prop, cbm_store_t 
      * transitive_loop_depth, recursive) and any other persisted property to
      * WHERE/RETURN, e.g. WHERE n.loop_depth >= 2. */
     if (n->properties_json && n->properties_json[0] == '{') {
-        const char *v = json_extract_prop(n->properties_json, prop, out, CBM_SZ_512);
+        const char *v = json_extract_prop(n->properties_json, prop, out, HYP_SZ_512);
         if (v && v[0]) {
             return v;
         }
@@ -2300,21 +2300,21 @@ static const char *node_prop(const cbm_node_t *n, const char *prop, cbm_store_t 
      * also match, but in that case the worst case is one redundant indexed fetch
      * that returns the same value — never a wrong result. */
     if (store && n->id > 0 && !n->file_path && !n->label) {
-        cbm_node_t full = {0};
-        if (cbm_store_find_node_by_id(store, n->id, &full) == CBM_STORE_OK) {
+        hyp_node_t full = {0};
+        if (hyp_store_find_node_by_id(store, n->id, &full) == HYP_STORE_OK) {
             const char *res = NULL;
             const char *rv = node_string_field(&full, prop);
             if (rv && rv[0]) {
-                snprintf(out, CBM_SZ_512, "%s", rv);
+                snprintf(out, HYP_SZ_512, "%s", rv);
                 res = out;
             } else if (strcmp(prop, "start_line") == 0) {
-                snprintf(out, CBM_SZ_512, "%d", full.start_line);
+                snprintf(out, HYP_SZ_512, "%d", full.start_line);
                 res = out;
             } else if (strcmp(prop, "end_line") == 0) {
-                snprintf(out, CBM_SZ_512, "%d", full.end_line);
+                snprintf(out, HYP_SZ_512, "%d", full.end_line);
                 res = out;
             } else if (full.properties_json && full.properties_json[0] == '{') {
-                const char *jv = json_extract_prop(full.properties_json, prop, out, CBM_SZ_512);
+                const char *jv = json_extract_prop(full.properties_json, prop, out, HYP_SZ_512);
                 if (jv && jv[0]) {
                     res = out;
                 }
@@ -2337,7 +2337,7 @@ static const char *json_extract_prop(const char *json, const char *key, char *bu
         return buf;
     }
     /* Build search pattern: "key": */
-    char pattern[CBM_SZ_256];
+    char pattern[HYP_SZ_256];
     snprintf(pattern, sizeof(pattern), "\"%s\":", key);
     const char *p = strstr(json, pattern);
     if (!p) {
@@ -2405,7 +2405,7 @@ static const char *json_extract_prop(const char *json, const char *key, char *bu
 /* Get edge property by name. Uses rotating thread-local buffers to allow
  * multiple concurrent calls (e.g. projecting r.url_path, r.confidence
  * in the same row). */
-static const char *edge_prop(const cbm_edge_t *e, const char *prop) {
+static const char *edge_prop(const hyp_edge_t *e, const char *prop) {
     if (!e || !prop) {
         return "";
     }
@@ -2413,15 +2413,15 @@ static const char *edge_prop(const cbm_edge_t *e, const char *prop) {
         return e->type ? e->type : "";
     }
     /* Rotate through 8 thread-local buffers so multiple props can be accessed per row. */
-    static CBM_TLS char ebufs[CYP_BUF_8][CBM_SZ_512];
-    static CBM_TLS int ebuf_idx = 0;
+    static HYP_TLS char ebufs[CYP_BUF_8][HYP_SZ_512];
+    static HYP_TLS int ebuf_idx = 0;
     char *buf = ebufs[ebuf_idx++ & CYP_EBUF_MASK];
-    json_extract_prop(e->properties_json, prop, buf, CBM_SZ_512);
+    json_extract_prop(e->properties_json, prop, buf, HYP_SZ_512);
     return buf;
 }
 
 /* Find an edge variable in a binding */
-static cbm_edge_t *binding_get_edge(binding_t *b, const char *var) {
+static hyp_edge_t *binding_get_edge(binding_t *b, const char *var) {
     for (int i = 0; i < b->edge_var_count; i++) {
         if (strcmp(b->edge_var_names[i], var) == 0) {
             return &b->edge_vars[i];
@@ -2431,7 +2431,7 @@ static cbm_edge_t *binding_get_edge(binding_t *b, const char *var) {
 }
 
 /* Find a variable's node in a binding */
-static cbm_node_t *binding_get(binding_t *b, const char *var) {
+static hyp_node_t *binding_get(binding_t *b, const char *var) {
     for (int i = 0; i < b->var_count; i++) {
         if (strcmp(b->var_names[i], var) == 0) {
             return &b->var_nodes[i];
@@ -2441,7 +2441,7 @@ static cbm_node_t *binding_get(binding_t *b, const char *var) {
 }
 
 /* Deep copy a node: heap-dup all string fields so the binding owns them */
-static void node_deep_copy(cbm_node_t *dst, const cbm_node_t *src) {
+static void node_deep_copy(hyp_node_t *dst, const hyp_node_t *src) {
     *dst = *src;
     dst->project = heap_strdup(src->project);
     dst->label = heap_strdup(src->label);
@@ -2451,7 +2451,7 @@ static void node_deep_copy(cbm_node_t *dst, const cbm_node_t *src) {
     dst->properties_json = heap_strdup(src->properties_json);
 }
 
-static void node_fields_free(cbm_node_t *n) {
+static void node_fields_free(hyp_node_t *n) {
     if (!n) {
         return;
     }
@@ -2464,21 +2464,21 @@ static void node_fields_free(cbm_node_t *n) {
 }
 
 /* Deep copy an edge (binding owns the strings) */
-static void edge_deep_copy(cbm_edge_t *dst, const cbm_edge_t *src) {
+static void edge_deep_copy(hyp_edge_t *dst, const hyp_edge_t *src) {
     *dst = *src;
     dst->project = heap_strdup(src->project);
     dst->type = heap_strdup(src->type);
     dst->properties_json = heap_strdup(src->properties_json);
 }
 
-static void edge_fields_free(cbm_edge_t *e) {
+static void edge_fields_free(hyp_edge_t *e) {
     safe_str_free(&e->project);
     safe_str_free(&e->type);
     safe_str_free(&e->properties_json);
 }
 
 /* Set an edge variable in a binding */
-static void binding_set_edge(binding_t *b, const char *var, const cbm_edge_t *edge) {
+static void binding_set_edge(binding_t *b, const char *var, const hyp_edge_t *edge) {
     /* Check existing — free old fields first */
     for (int i = 0; i < b->edge_var_count; i++) {
         if (strcmp(b->edge_var_names[i], var) == 0) {
@@ -2521,7 +2521,7 @@ static void binding_copy(binding_t *dst, const binding_t *src) {
 }
 
 /* Deep-copy a node into a binding (binding owns the strings) */
-static void binding_set(binding_t *b, const char *var, const cbm_node_t *node) {
+static void binding_set(binding_t *b, const char *var, const hyp_node_t *node) {
     /* Check existing — free old fields first */
     for (int i = 0; i < b->var_count; i++) {
         if (strcmp(b->var_names[i], var) == 0) {
@@ -2538,18 +2538,18 @@ static void binding_set(binding_t *b, const char *var, const cbm_node_t *node) {
     b->var_count++;
 }
 
-static const char *eval_multiarg_func(binding_t *b, const cbm_return_item_t *item, char *buf,
+static const char *eval_multiarg_func(binding_t *b, const hyp_return_item_t *item, char *buf,
                                       size_t bufsz);
 
 /* Resolve the actual property value for a condition from a binding */
-static const char *resolve_condition_value(const cbm_condition_t *c, binding_t *b) {
+static const char *resolve_condition_value(const hyp_condition_t *c, binding_t *b) {
     /* Multi-arg scalar function LHS: coalesce(f.depth, 0) >= 2 (#874).
      * Evaluated through the same code path as RETURN projections. The value is
      * consumed by eval_condition before any other condition is resolved, so a
      * single thread-local buffer per call is safe. */
     if (c->func) {
-        static _Thread_local char func_buf[CBM_SZ_512];
-        cbm_return_item_t item = {0};
+        static _Thread_local char func_buf[HYP_SZ_512];
+        hyp_return_item_t item = {0};
         item.variable = c->variable;
         item.property = c->property;
         item.func = c->func;
@@ -2558,11 +2558,11 @@ static const char *resolve_condition_value(const cbm_condition_t *c, binding_t *
         return eval_multiarg_func(b, &item, func_buf, sizeof(func_buf));
     }
 
-    cbm_edge_t *e = binding_get_edge(b, c->variable);
+    hyp_edge_t *e = binding_get_edge(b, c->variable);
     if (e) {
         return edge_prop(e, c->property);
     }
-    cbm_node_t *n = binding_get(b, c->variable);
+    hyp_node_t *n = binding_get(b, c->variable);
     if (!n) {
         return NULL; /* unbound variable */
     }
@@ -2582,12 +2582,12 @@ static bool eval_comparison_op(const char *op, const char *actual, const char *e
         return strcmp(actual, expected) != 0;
     }
     if (strcmp(op, "=~") == 0) {
-        cbm_regex_t re;
-        if (cbm_regcomp(&re, expected, CBM_REG_EXTENDED | CBM_REG_NOSUB) != 0) {
+        hyp_regex_t re;
+        if (hyp_regcomp(&re, expected, HYP_REG_EXTENDED | HYP_REG_NOSUB) != 0) {
             return false;
         }
-        int rc = cbm_regexec(&re, actual, 0, NULL, 0);
-        cbm_regfree(&re);
+        int rc = hyp_regexec(&re, actual, 0, NULL, 0);
+        hyp_regfree(&re);
         return rc == 0;
     }
     if (strcmp(op, "CONTAINS") == 0) {
@@ -2620,11 +2620,11 @@ static bool eval_comparison_op(const char *op, const char *actual, const char *e
 }
 
 /* Evaluate a WHERE condition against a binding */
-static bool eval_condition(const cbm_condition_t *c, binding_t *b) {
+static bool eval_condition(const hyp_condition_t *c, binding_t *b) {
     /* Label test: WHERE n:Label (#241) — compare the bound node's label
      * directly rather than a property value. */
     if (strcmp(c->op, "HAS_LABEL") == 0) {
-        cbm_node_t *n = binding_get(b, c->variable);
+        hyp_node_t *n = binding_get(b, c->variable);
         bool result = n && n->label && c->value && strcmp(n->label, c->value) == 0;
         return c->negated ? !result : result;
     }
@@ -2632,30 +2632,30 @@ static bool eval_condition(const cbm_condition_t *c, binding_t *b) {
     /* EXISTS { (var)-[:TYPE]->() }: does the bound node have any edge of the
      * given type in the requested direction? (dir 0=out, 1=in, 2=any) */
     if (strcmp(c->op, "EXISTS") == 0) {
-        cbm_node_t *n = binding_get(b, c->variable);
+        hyp_node_t *n = binding_get(b, c->variable);
         bool result = false;
         if (n && b->store) {
-            cbm_edge_t *edges = NULL;
+            hyp_edge_t *edges = NULL;
             int cnt = 0;
             if (c->exists_dir != 1) { /* outbound or any */
                 if (c->value) {
-                    cbm_store_find_edges_by_source_type(b->store, n->id, c->value, &edges, &cnt);
+                    hyp_store_find_edges_by_source_type(b->store, n->id, c->value, &edges, &cnt);
                 } else {
-                    cbm_store_find_edges_by_source(b->store, n->id, &edges, &cnt);
+                    hyp_store_find_edges_by_source(b->store, n->id, &edges, &cnt);
                 }
                 result = cnt > 0;
-                cbm_store_free_edges(edges, cnt);
+                hyp_store_free_edges(edges, cnt);
             }
             if (!result && c->exists_dir != 0) { /* inbound or any */
                 edges = NULL;
                 cnt = 0;
                 if (c->value) {
-                    cbm_store_find_edges_by_target_type(b->store, n->id, c->value, &edges, &cnt);
+                    hyp_store_find_edges_by_target_type(b->store, n->id, c->value, &edges, &cnt);
                 } else {
-                    cbm_store_find_edges_by_target(b->store, n->id, &edges, &cnt);
+                    hyp_store_find_edges_by_target(b->store, n->id, &edges, &cnt);
                 }
                 result = cnt > 0;
-                cbm_store_free_edges(edges, cnt);
+                hyp_store_free_edges(edges, cnt);
             }
         }
         return c->negated ? !result : result;
@@ -2700,7 +2700,7 @@ static bool eval_condition(const cbm_condition_t *c, binding_t *b) {
 }
 
 /* Recursive expression tree evaluator */
-static bool eval_expr(const cbm_expr_t *e, binding_t *b) { // NOLINT(misc-no-recursion)
+static bool eval_expr(const hyp_expr_t *e, binding_t *b) { // NOLINT(misc-no-recursion)
     if (!e) {
         return true;
     }
@@ -2720,7 +2720,7 @@ static bool eval_expr(const cbm_expr_t *e, binding_t *b) { // NOLINT(misc-no-rec
 }
 
 /* Evaluate WHERE clause — uses expression tree if available, falls back to legacy */
-static bool eval_where(const cbm_where_clause_t *w, binding_t *b) {
+static bool eval_where(const hyp_where_clause_t *w, binding_t *b) {
     if (!w) {
         return true;
     }
@@ -2757,15 +2757,15 @@ static bool looks_like_regex(const char *s) {
 /* Check inline property filters.
  * Values that look like regex patterns are matched with POSIX ERE;
  * plain values use exact strcmp. */
-static bool check_inline_props(const cbm_node_t *n, const cbm_prop_filter_t *props, int count,
-                               cbm_store_t *store) {
+static bool check_inline_props(const hyp_node_t *n, const hyp_prop_filter_t *props, int count,
+                               hyp_store_t *store) {
     for (int i = 0; i < count; i++) {
         const char *actual = node_prop(n, props[i].key, store);
         if (looks_like_regex(props[i].value)) {
-            cbm_regex_t re;
-            if (cbm_regcomp(&re, props[i].value, CBM_REG_EXTENDED | CBM_REG_NOSUB) == 0) {
-                bool matched = cbm_regexec(&re, actual, 0, NULL, 0) == 0;
-                cbm_regfree(&re);
+            hyp_regex_t re;
+            if (hyp_regcomp(&re, props[i].value, HYP_REG_EXTENDED | HYP_REG_NOSUB) == 0) {
+                bool matched = hyp_regexec(&re, actual, 0, NULL, 0) == 0;
+                hyp_regfree(&re);
                 if (!matched) {
                     return false;
                 }
@@ -2791,7 +2791,7 @@ typedef struct {
 
 static void rb_init(result_builder_t *rb) {
     memset(rb, 0, sizeof(*rb));
-    rb->row_cap = CBM_SZ_32;
+    rb->row_cap = HYP_SZ_32;
     rb->rows = malloc(rb->row_cap * sizeof(const char **));
 }
 
@@ -2840,7 +2840,7 @@ static void cypher_deadline_arm(void) {
     g_cypher_timed_out = false;
     int64_t budget = g_cypher_deadline_override_ms >= 0 ? g_cypher_deadline_override_ms
                                                         : CYPHER_DEADLINE_BUDGET_MS;
-    g_cypher_deadline_ms = cbm_now_ms() + (uint64_t)budget;
+    g_cypher_deadline_ms = hyp_now_ms() + (uint64_t)budget;
 }
 
 /* True once the query has run past its wall-clock budget. Sticky: after the
@@ -2852,7 +2852,7 @@ static bool cypher_deadline_exceeded(void) {
     if (g_cypher_deadline_ms == 0) {
         return false;
     }
-    if (cbm_now_ms() >= g_cypher_deadline_ms) {
+    if (hyp_now_ms() >= g_cypher_deadline_ms) {
         g_cypher_timed_out = true;
         return true;
     }
@@ -2861,7 +2861,7 @@ static bool cypher_deadline_exceeded(void) {
 
 /* Test-only: force the execution budget (ms) for subsequent queries on this
  * thread. 0 = trip on the first hot-loop check; <0 restores the default. */
-void cbm_cypher_test_set_deadline_ms(int64_t budget_ms) {
+void hyp_cypher_test_set_deadline_ms(int64_t budget_ms) {
     g_cypher_deadline_override_ms = budget_ms;
 }
 
@@ -2872,7 +2872,7 @@ static const char *binding_get_virtual(binding_t *b, const char *var, const char
         return "";
     }
     /* Check virtual vars first (from WITH projection) */
-    char full[CBM_SZ_256];
+    char full[HYP_SZ_256];
     if (prop) {
         snprintf(full, sizeof(full), "%s.%s", var, prop);
     } else {
@@ -2884,14 +2884,14 @@ static const char *binding_get_virtual(binding_t *b, const char *var, const char
         }
     }
     /* Fall through to normal lookup */
-    cbm_edge_t *e = binding_get_edge(b, var);
+    hyp_edge_t *e = binding_get_edge(b, var);
     if (e) {
         /* Bare `RETURN r` on an edge: surface the full properties JSON
          * (or "{}" if none) so callers can inspect timestamps, weights,
          * etc. without naming each property. */
         return prop ? edge_prop(e, prop) : (e->properties_json ? e->properties_json : "{}");
     }
-    cbm_node_t *n = binding_get(b, var);
+    hyp_node_t *n = binding_get(b, var);
     if (n) {
         if (prop) {
             return node_prop(n, prop, b->store);
@@ -2928,7 +2928,7 @@ static const char *apply_string_func(const char *func, const char *val, char *bu
     }
     if (strcmp(func, "toInteger") == 0) {
         char *end = NULL;
-        long long v = strtoll(val, &end, CBM_DECIMAL_BASE);
+        long long v = strtoll(val, &end, HYP_DECIMAL_BASE);
         if (end == val) {
             /* Not an integer literal — accept a float string and truncate. */
             char *fend = NULL;
@@ -2999,7 +2999,7 @@ static const char *apply_string_func(const char *func, const char *val, char *bu
 
 /* ── CASE expression evaluation ───────────────────────────────── */
 
-static const char *eval_case_expr(const cbm_case_expr_t *k, binding_t *b) {
+static const char *eval_case_expr(const hyp_case_expr_t *k, binding_t *b) {
     if (!k) {
         return "";
     }
@@ -3044,8 +3044,8 @@ static bool label_alt_matches(const char *actual, const char *pat) {
 /* Seed nodes for a label alternation "A|B|C": union the per-label results.
  * Node-struct fields are moved (shallow) into out_nodes; each per-label array
  * container is freed. */
-static void scan_alternation_labels(cbm_store_t *store, const char *project, const char *labels,
-                                    cbm_node_t **out_nodes, int *out_count) {
+static void scan_alternation_labels(hyp_store_t *store, const char *project, const char *labels,
+                                    hyp_node_t **out_nodes, int *out_count) {
     *out_nodes = NULL;
     *out_count = 0;
     int cap = 0;
@@ -3055,15 +3055,15 @@ static void scan_alternation_labels(cbm_store_t *store, const char *project, con
     }
     char *save = NULL;
     for (char *tok = strtok_r(copy, "|", &save); tok; tok = strtok_r(NULL, "|", &save)) {
-        cbm_node_t *part = NULL;
+        hyp_node_t *part = NULL;
         int pc = 0;
-        cbm_store_find_nodes_by_label(store, project, tok, &part, &pc);
+        hyp_store_find_nodes_by_label(store, project, tok, &part, &pc);
         if (pc > 0 && part) {
             if (*out_count + pc > cap) {
                 cap = (*out_count + pc) * PAIR_LEN;
-                *out_nodes = safe_realloc(*out_nodes, (size_t)cap * sizeof(cbm_node_t));
+                *out_nodes = safe_realloc(*out_nodes, (size_t)cap * sizeof(hyp_node_t));
             }
-            memcpy(*out_nodes + *out_count, part, (size_t)pc * sizeof(cbm_node_t));
+            memcpy(*out_nodes + *out_count, part, (size_t)pc * sizeof(hyp_node_t));
             *out_count += pc;
         }
         free(part); /* container only — node fields moved to out_nodes */
@@ -3071,21 +3071,21 @@ static void scan_alternation_labels(cbm_store_t *store, const char *project, con
     free(copy);
 }
 
-static void scan_pattern_nodes(cbm_store_t *store, const char *project, int max_rows,
-                               cbm_node_pattern_t *first, cbm_node_t **out_nodes, int *out_count) {
+static void scan_pattern_nodes(hyp_store_t *store, const char *project, int max_rows,
+                               hyp_node_pattern_t *first, hyp_node_t **out_nodes, int *out_count) {
     if (first->label && strchr(first->label, '|')) {
         scan_alternation_labels(store, project, first->label, out_nodes, out_count);
     } else if (first->label) {
-        cbm_store_find_nodes_by_label(store, project, first->label, out_nodes, out_count);
+        hyp_store_find_nodes_by_label(store, project, first->label, out_nodes, out_count);
     } else {
-        cbm_search_params_t params = {.project = project,
+        hyp_search_params_t params = {.project = project,
                                       .min_degree = CYP_FOUND_NONE,
                                       .max_degree = CYP_FOUND_NONE,
                                       .limit = max_rows * CYP_GROWTH_10};
-        cbm_search_output_t sout = {0};
-        cbm_store_search(store, &params, &sout);
+        hyp_search_output_t sout = {0};
+        hyp_store_search(store, &params, &sout);
         *out_count = sout.count;
-        *out_nodes = malloc(sout.count * sizeof(cbm_node_t));
+        *out_nodes = malloc(sout.count * sizeof(hyp_node_t));
         for (int i = 0; i < sout.count; i++) {
             (*out_nodes)[i] = sout.results[i].node;
             sout.results[i].node.name = NULL;
@@ -3095,7 +3095,7 @@ static void scan_pattern_nodes(cbm_store_t *store, const char *project, int max_
             sout.results[i].node.file_path = NULL;
             sout.results[i].node.properties_json = NULL;
         }
-        cbm_store_search_free(&sout);
+        hyp_store_search_free(&sout);
     }
     /* Apply inline property filters — free rejected nodes' strings */
     if (first->prop_count > 0) {
@@ -3118,8 +3118,8 @@ static void scan_pattern_nodes(cbm_store_t *store, const char *project, int max_
 
 /* Process edges: look up target node, filter by label/props, add binding.
  * `inbound` controls which end of the edge is the target id. */
-static void process_edges(cbm_store_t *store, cbm_edge_t *edges, int edge_count, bool inbound,
-                          const cbm_node_pattern_t *target_node, binding_t *b, const char *to_var,
+static void process_edges(hyp_store_t *store, hyp_edge_t *edges, int edge_count, bool inbound,
+                          const hyp_node_pattern_t *target_node, binding_t *b, const char *to_var,
                           const char *rel_var, binding_t *new_bindings, int *new_count, int max_new,
                           int *match_count) {
     /* When the terminal node variable is ALREADY bound (e.g. the second pattern
@@ -3127,7 +3127,7 @@ static void process_edges(cbm_store_t *store, cbm_edge_t *edges, int edge_count,
      * to edges that actually reach the bound node — not overwrite the caller's
      * `f` binding with whatever node the edge leads to. Overwriting corrupted
      * the result of dead-code queries and produced wrong rows (#627). */
-    cbm_node_t *bound_to = binding_get(b, to_var);
+    hyp_node_t *bound_to = binding_get(b, to_var);
     int64_t bound_to_id = bound_to ? bound_to->id : 0;
     /* The budget caps MATERIALISATION, not detection: `match_count` must stay
      * truthful even after `new_count` hits `max_new`. Gating the loop itself
@@ -3142,8 +3142,8 @@ static void process_edges(cbm_store_t *store, cbm_edge_t *edges, int edge_count,
         if (bound_to && tid != bound_to_id) {
             continue; /* edge does not reach the already-bound terminal node */
         }
-        cbm_node_t found = {0};
-        if (cbm_store_find_node_by_id(store, tid, &found) != CBM_STORE_OK) {
+        hyp_node_t found = {0};
+        if (hyp_store_find_node_by_id(store, tid, &found) != HYP_STORE_OK) {
             continue;
         }
         if (target_node->label && !label_alt_matches(found.label, target_node->label)) {
@@ -3170,39 +3170,39 @@ static void process_edges(cbm_store_t *store, cbm_edge_t *edges, int edge_count,
 
 /* Expand variable-length relationship via BFS */
 /* Set when a variable-length hop range is clamped to the engine ceiling
- * during the CURRENT execution; cbm_cypher_execute turns it into
+ * during the CURRENT execution; hyp_cypher_execute turns it into
  * result->warning so callers can tell "clamped" from "no such path" (#797). */
 /* C11 _Thread_local directly: cypher.c stays windows.h-free (compat.h pulls
  * in windows.h, whose legacy `far` macro breaks this file's identifiers). */
 static _Thread_local int g_cypher_depth_clamped = 0;
 
-static void expand_var_length(cbm_store_t *store, cbm_rel_pattern_t *rel,
-                              cbm_node_pattern_t *target_node, binding_t *b, cbm_node_t *src,
+static void expand_var_length(hyp_store_t *store, hyp_rel_pattern_t *rel,
+                              hyp_node_pattern_t *target_node, binding_t *b, hyp_node_t *src,
                               const char *to_var, binding_t *new_bindings, int *new_count,
                               int max_new, int *match_count) {
     /* Clamp BOTH the explicit (`*1..N`) and unbounded (`*`, `*..m`) forms to the
      * engine ceiling: an explicit N above the cap was previously honoured
-     * verbatim, driving cbm_store_bfs to an unbounded hop count (#887). WARN on
+     * verbatim, driving hyp_store_bfs to an unbounded hop count (#887). WARN on
      * clamp — never a silent truncation. */
-    int depth_cap = cbm_cypher_max_depth();
+    int depth_cap = hyp_cypher_max_depth();
     int max_depth = rel->max_hops > 0 ? rel->max_hops : depth_cap;
     if (max_depth > depth_cap) {
         char req_buf[16];
         char cap_buf[16];
         snprintf(req_buf, sizeof(req_buf), "%d", max_depth);
         snprintf(cap_buf, sizeof(cap_buf), "%d", depth_cap);
-        cbm_log_warn("cypher.depth_capped", "requested", req_buf, "cap", cap_buf);
+        hyp_log_warn("cypher.depth_capped", "requested", req_buf, "cap", cap_buf);
         g_cypher_depth_clamped = depth_cap; /* surfaced as result->warning (#797) */
         max_depth = depth_cap;
     }
-    cbm_traverse_result_t tr = {0};
+    hyp_traverse_result_t tr = {0};
     const char *dir = rel->direction ? rel->direction : "outbound";
-    cbm_store_bfs(store, src->id, dir, rel->types, rel->type_count, max_depth, CBM_PERCENT, &tr);
+    hyp_store_bfs(store, src->id, dir, rel->types, rel->type_count, max_depth, HYP_PERCENT, &tr);
     /* Same contract as process_edges: the budget caps materialisation, never
      * detection, so a saturated source cannot report match_count == 0 and get a
      * fabricated OPTIONAL "no match" row. */
     for (int v = 0; v < tr.visited_count; v++) {
-        cbm_node_hop_t *hop = &tr.visited[v];
+        hyp_node_hop_t *hop = &tr.visited[v];
         if (hop->hop < rel->min_hops) {
             continue;
         }
@@ -3220,12 +3220,12 @@ static void expand_var_length(cbm_store_t *store, cbm_rel_pattern_t *rel,
             new_bindings[(*new_count)++] = nb;
         }
     }
-    cbm_store_traverse_free(&tr);
+    hyp_store_traverse_free(&tr);
 }
 
 /* Expand fixed-length (1-hop) relationship edges */
-static void expand_fixed_length(cbm_store_t *store, cbm_rel_pattern_t *rel,
-                                cbm_node_pattern_t *target_node, binding_t *b, cbm_node_t *src,
+static void expand_fixed_length(hyp_store_t *store, hyp_rel_pattern_t *rel,
+                                hyp_node_pattern_t *target_node, binding_t *b, hyp_node_t *src,
                                 const char *to_var, binding_t *new_bindings, int *new_count,
                                 int max_new, int *match_count) {
     bool is_inbound = rel->direction && strcmp(rel->direction, "inbound") == 0;
@@ -3234,53 +3234,53 @@ static void expand_fixed_length(cbm_store_t *store, cbm_rel_pattern_t *rel,
 
     if (rel->type_count > 0) {
         for (int ti = 0; ti < rel->type_count; ti++) {
-            cbm_edge_t *edges = NULL;
+            hyp_edge_t *edges = NULL;
             int edge_count = 0;
             if (is_inbound) {
-                cbm_store_find_edges_by_target_type(store, src->id, rel->types[ti], &edges,
+                hyp_store_find_edges_by_target_type(store, src->id, rel->types[ti], &edges,
                                                     &edge_count);
             } else {
-                cbm_store_find_edges_by_source_type(store, src->id, rel->types[ti], &edges,
+                hyp_store_find_edges_by_source_type(store, src->id, rel->types[ti], &edges,
                                                     &edge_count);
             }
             process_edges(store, edges, edge_count, is_inbound, target_node, b, to_var, rel_var,
                           new_bindings, new_count, max_new, match_count);
-            cbm_store_free_edges(edges, edge_count);
+            hyp_store_free_edges(edges, edge_count);
         }
         if (is_any) {
             for (int ti = 0; ti < rel->type_count; ti++) {
-                cbm_edge_t *edges = NULL;
+                hyp_edge_t *edges = NULL;
                 int edge_count = 0;
-                cbm_store_find_edges_by_target_type(store, src->id, rel->types[ti], &edges,
+                hyp_store_find_edges_by_target_type(store, src->id, rel->types[ti], &edges,
                                                     &edge_count);
                 process_edges(store, edges, edge_count, true, target_node, b, to_var, rel_var,
                               new_bindings, new_count, max_new, match_count);
-                cbm_store_free_edges(edges, edge_count);
+                hyp_store_free_edges(edges, edge_count);
             }
         }
     } else {
-        cbm_edge_t *edges = NULL;
+        hyp_edge_t *edges = NULL;
         int edge_count = 0;
         if (is_inbound) {
-            cbm_store_find_edges_by_target(store, src->id, &edges, &edge_count);
+            hyp_store_find_edges_by_target(store, src->id, &edges, &edge_count);
         } else {
-            cbm_store_find_edges_by_source(store, src->id, &edges, &edge_count);
+            hyp_store_find_edges_by_source(store, src->id, &edges, &edge_count);
         }
         process_edges(store, edges, edge_count, is_inbound, target_node, b, to_var, rel_var,
                       new_bindings, new_count, max_new, match_count);
-        cbm_store_free_edges(edges, edge_count);
+        hyp_store_free_edges(edges, edge_count);
         if (is_any) {
             edges = NULL;
             edge_count = 0;
-            cbm_store_find_edges_by_target(store, src->id, &edges, &edge_count);
+            hyp_store_find_edges_by_target(store, src->id, &edges, &edge_count);
             process_edges(store, edges, edge_count, true, target_node, b, to_var, rel_var,
                           new_bindings, new_count, max_new, match_count);
-            cbm_store_free_edges(edges, edge_count);
+            hyp_store_free_edges(edges, edge_count);
         }
     }
 }
 
-static void expand_pattern_rels(cbm_store_t *store, cbm_pattern_t *pat, binding_t **bindings,
+static void expand_pattern_rels(hyp_store_t *store, hyp_pattern_t *pat, binding_t **bindings,
                                 int *bind_count, const int *bind_cap, const char **var_name,
                                 bool is_optional) {
     for (int ri = 0; ri < pat->rel_count; ri++) {
@@ -3289,8 +3289,8 @@ static void expand_pattern_rels(cbm_store_t *store, cbm_pattern_t *pat, binding_
         if (cypher_deadline_exceeded()) {
             return;
         }
-        cbm_rel_pattern_t *rel = &pat->rels[ri];
-        cbm_node_pattern_t *target_node = &pat->nodes[ri + SKIP_ONE];
+        hyp_rel_pattern_t *rel = &pat->rels[ri];
+        hyp_node_pattern_t *target_node = &pat->nodes[ri + SKIP_ONE];
         const char *to_var = target_node->variable ? target_node->variable : "_n_t";
 
         bool is_variable_length = (rel->min_hops != SKIP_ONE || rel->max_hops != SKIP_ONE);
@@ -3315,7 +3315,7 @@ static void expand_pattern_rels(cbm_store_t *store, cbm_pattern_t *pat, binding_
                 break;
             }
             binding_t *b = &(*bindings)[bi];
-            cbm_node_t *src = binding_get(b, *var_name);
+            hyp_node_t *src = binding_get(b, *var_name);
             if (!src) {
                 continue;
             }
@@ -3357,7 +3357,7 @@ static void expand_pattern_rels(cbm_store_t *store, cbm_pattern_t *pat, binding_
 
 /* Find the column index for one ORDER BY key, checking both column names and
  * aliases. Returns -1 if not found. */
-static int rb_find_order_column(const result_builder_t *rb, const cbm_return_clause_t *ret,
+static int rb_find_order_column(const result_builder_t *rb, const hyp_return_clause_t *ret,
                                 const char *key) {
     for (int ci = 0; ci < rb->col_count; ci++) {
         if (strcmp(rb->columns[ci], key) == 0) {
@@ -3369,7 +3369,7 @@ static int rb_find_order_column(const result_builder_t *rb, const cbm_return_cla
             return ci;
         }
     }
-    return CBM_NOT_FOUND;
+    return HYP_NOT_FOUND;
 }
 
 /* Check whether a column contains numeric data by examining the first non-empty value */
@@ -3392,16 +3392,16 @@ static bool rb_is_numeric_column(const result_builder_t *rb, int col) {
     return false;
 }
 
-static void rb_apply_order_by(result_builder_t *rb, const cbm_return_clause_t *ret) {
+static void rb_apply_order_by(result_builder_t *rb, const hyp_return_clause_t *ret) {
     if (ret->order_key_count == 0) {
         return;
     }
     /* Resolve every key up front; an unresolvable key is skipped, matching the
      * single-key forgiveness (sorting on what can be resolved beats dropping
      * the whole ORDER BY). */
-    int cols[CBM_CYPHER_ORDER_KEYS_MAX];
-    bool numeric[CBM_CYPHER_ORDER_KEYS_MAX];
-    bool descs[CBM_CYPHER_ORDER_KEYS_MAX];
+    int cols[HYP_CYPHER_ORDER_KEYS_MAX];
+    bool numeric[HYP_CYPHER_ORDER_KEYS_MAX];
+    bool descs[HYP_CYPHER_ORDER_KEYS_MAX];
     int keys = 0;
     for (int k = 0; k < ret->order_key_count; k++) {
         int order_col = rb_find_order_column(rb, ret, ret->order_keys[k]);
@@ -3421,8 +3421,8 @@ static void rb_apply_order_by(result_builder_t *rb, const cbm_return_clause_t *r
             int cmp = 0;
             for (int k = 0; k < keys && cmp == 0; k++) {
                 if (numeric[k]) {
-                    cmp = (int)strtol(rb->rows[j][cols[k]], NULL, CBM_DECIMAL_BASE) -
-                          (int)strtol(rb->rows[j + SKIP_ONE][cols[k]], NULL, CBM_DECIMAL_BASE);
+                    cmp = (int)strtol(rb->rows[j][cols[k]], NULL, HYP_DECIMAL_BASE) -
+                          (int)strtol(rb->rows[j + SKIP_ONE][cols[k]], NULL, HYP_DECIMAL_BASE);
                 } else {
                     cmp = strcmp(rb->rows[j][cols[k]], rb->rows[j + SKIP_ONE][cols[k]]);
                 }
@@ -3521,7 +3521,7 @@ static void rb_free(result_builder_t *rb) {
 /* ── Get projection value for a binding + return item ─────────── */
 
 /* Build a JSON list of a node's non-null property keys: keys(n). */
-static const char *node_keys_list(const cbm_node_t *n, char *buf, size_t buf_sz) {
+static const char *node_keys_list(const hyp_node_t *n, char *buf, size_t buf_sz) {
     const struct {
         const char *k;
         bool present;
@@ -3557,7 +3557,7 @@ static const char *node_keys_list(const cbm_node_t *n, char *buf, size_t buf_sz)
 }
 
 /* Resolve a function argument to its string value (literal or var.prop). */
-static const char *eval_func_arg(binding_t *b, const cbm_func_arg_t *a) {
+static const char *eval_func_arg(binding_t *b, const hyp_func_arg_t *a) {
     if (a->literal) {
         return a->literal;
     }
@@ -3565,7 +3565,7 @@ static const char *eval_func_arg(binding_t *b, const cbm_func_arg_t *a) {
 }
 
 /* Evaluate a multi-argument scalar function into func_buf (or a direct value). */
-static const char *eval_multiarg_func(binding_t *b, const cbm_return_item_t *item, char *buf,
+static const char *eval_multiarg_func(binding_t *b, const hyp_return_item_t *item, char *buf,
                                       size_t bufsz) {
     const char *f = item->func;
     int n = item->arg_count;
@@ -3580,14 +3580,14 @@ static const char *eval_multiarg_func(binding_t *b, const cbm_return_item_t *ite
     }
     if (strcmp(f, "substring") == 0 && n >= 2) {
         const char *s = eval_func_arg(b, &item->args[0]);
-        long start = strtol(eval_func_arg(b, &item->args[1]), NULL, CBM_DECIMAL_BASE);
+        long start = strtol(eval_func_arg(b, &item->args[1]), NULL, HYP_DECIMAL_BASE);
         size_t slen = strlen(s);
         if (start < 0 || (size_t)start >= slen) {
             return "";
         }
         size_t take = slen - (size_t)start;
         if (n >= 3) {
-            long len = strtol(eval_func_arg(b, &item->args[2]), NULL, CBM_DECIMAL_BASE);
+            long len = strtol(eval_func_arg(b, &item->args[2]), NULL, HYP_DECIMAL_BASE);
             if (len < 0) {
                 len = 0;
             }
@@ -3604,7 +3604,7 @@ static const char *eval_multiarg_func(binding_t *b, const cbm_return_item_t *ite
     }
     if ((strcmp(f, "left") == 0 || strcmp(f, "right") == 0) && n >= 2) {
         const char *s = eval_func_arg(b, &item->args[0]);
-        long k = strtol(eval_func_arg(b, &item->args[1]), NULL, CBM_DECIMAL_BASE);
+        long k = strtol(eval_func_arg(b, &item->args[1]), NULL, HYP_DECIMAL_BASE);
         if (k < 0) {
             k = 0;
         }
@@ -3648,7 +3648,7 @@ static const char *eval_multiarg_func(binding_t *b, const cbm_return_item_t *ite
     return ""; /* wrong arity → null */
 }
 
-static const char *project_item(binding_t *b, cbm_return_item_t *item, char *func_buf,
+static const char *project_item(binding_t *b, hyp_return_item_t *item, char *func_buf,
                                 size_t buf_sz) {
     if (item->kase) {
         return eval_case_expr(item->kase, b);
@@ -3660,7 +3660,7 @@ static const char *project_item(binding_t *b, cbm_return_item_t *item, char *fun
      * not on a scalar property value. */
     if (item->func) {
         if (strcmp(item->func, "labels") == 0) {
-            cbm_node_t *n = binding_get(b, item->variable);
+            hyp_node_t *n = binding_get(b, item->variable);
             if (n && n->label) {
                 snprintf(func_buf, buf_sz, "[\"%s\"]", n->label);
                 return func_buf;
@@ -3668,16 +3668,16 @@ static const char *project_item(binding_t *b, cbm_return_item_t *item, char *fun
             return "[]";
         }
         if (strcmp(item->func, "type") == 0) {
-            cbm_edge_t *e = binding_get_edge(b, item->variable);
+            hyp_edge_t *e = binding_get_edge(b, item->variable);
             return (e && e->type) ? e->type : "";
         }
         if (strcmp(item->func, "id") == 0) {
-            cbm_node_t *n = binding_get(b, item->variable);
+            hyp_node_t *n = binding_get(b, item->variable);
             if (n) {
                 snprintf(func_buf, buf_sz, "%lld", (long long)n->id);
                 return func_buf;
             }
-            cbm_edge_t *e = binding_get_edge(b, item->variable);
+            hyp_edge_t *e = binding_get_edge(b, item->variable);
             if (e) {
                 snprintf(func_buf, buf_sz, "%lld", (long long)e->id);
                 return func_buf;
@@ -3685,15 +3685,15 @@ static const char *project_item(binding_t *b, cbm_return_item_t *item, char *fun
             return "";
         }
         if (strcmp(item->func, "keys") == 0) {
-            cbm_node_t *n = binding_get(b, item->variable);
+            hyp_node_t *n = binding_get(b, item->variable);
             return n ? node_keys_list(n, func_buf, buf_sz) : "[]";
         }
         if (strcmp(item->func, "properties") == 0) {
-            cbm_node_t *n = binding_get(b, item->variable);
+            hyp_node_t *n = binding_get(b, item->variable);
             if (n) {
                 return n->properties_json ? n->properties_json : "{}";
             }
-            cbm_edge_t *e = binding_get_edge(b, item->variable);
+            hyp_edge_t *e = binding_get_edge(b, item->variable);
             if (e) {
                 return e->properties_json ? e->properties_json : "{}";
             }
@@ -3742,7 +3742,7 @@ static void distinct_list_add(char ***list, int *count, const char *val) {
 
 /* Sort bindings by the ORDER BY key list (virtual variables) using bubble
  * sort; later keys break ties, direction is per key (#1334). */
-static void sort_bindings(binding_t *vbindings, int count, const cbm_return_clause_t *wc) {
+static void sort_bindings(binding_t *vbindings, int count, const hyp_return_clause_t *wc) {
     for (int i = 0; i < count - SKIP_ONE; i++) {
         for (int j = 0; j < count - i - SKIP_ONE; j++) {
             int cmp = 0;
@@ -3791,7 +3791,7 @@ static void bindings_skip_limit(binding_t *vbindings, int *count, int skip, int 
 }
 
 /* Sort, skip, and limit binding array in-place */
-static void with_sort_skip_limit(const cbm_return_clause_t *wc, binding_t *vbindings, int *vcount) {
+static void with_sort_skip_limit(const hyp_return_clause_t *wc, binding_t *vbindings, int *vcount) {
     if (wc->order_key_count > 0) {
         sort_bindings(vbindings, *vcount, wc);
     }
@@ -3799,7 +3799,7 @@ static void with_sort_skip_limit(const cbm_return_clause_t *wc, binding_t *vbind
 }
 
 /* Resolve the alias or compute a default name for a WITH/RETURN item */
-static const char *resolve_item_alias(const cbm_return_item_t *item, char *name_buf,
+static const char *resolve_item_alias(const hyp_return_item_t *item, char *name_buf,
                                       size_t buf_sz) {
     if (item->alias) {
         return item->alias;
@@ -3816,7 +3816,7 @@ static const char *resolve_item_alias(const cbm_return_item_t *item, char *name_
 
 /* WITH aggregation group entry */
 typedef struct {
-    char group_key[CBM_SZ_1K];
+    char group_key[HYP_SZ_1K];
     const char **group_vals;
     double *sums;
     int *counts;
@@ -3827,13 +3827,13 @@ typedef struct {
 } with_agg_t;
 
 /* Build a group key from non-aggregate WITH items */
-static int with_agg_build_key(cbm_return_clause_t *wc, binding_t *b, char *key, size_t key_sz) {
+static int with_agg_build_key(hyp_return_clause_t *wc, binding_t *b, char *key, size_t key_sz) {
     int kl = 0;
     for (int ci = 0; ci < wc->count; ci++) {
         if (is_aggregate_func(wc->items[ci].func)) {
             continue;
         }
-        char vbuf[CBM_SZ_512];
+        char vbuf[HYP_SZ_512];
         const char *v = project_item(b, &wc->items[ci], vbuf, sizeof(vbuf));
         kl += snprintf(key + kl, key_sz - (size_t)kl, "%s|", v);
         if (kl >= (int)key_sz) {
@@ -3845,7 +3845,7 @@ static int with_agg_build_key(cbm_return_clause_t *wc, binding_t *b, char *key, 
 
 /* Find or create an aggregation group. Returns index. */
 static int with_agg_find_or_create(with_agg_t **aggs, int *agg_cnt, int *agg_cap,
-                                   cbm_return_clause_t *wc, binding_t *b, const char *key) {
+                                   hyp_return_clause_t *wc, binding_t *b, const char *key) {
     for (int a = 0; a < *agg_cnt; a++) {
         if (strcmp((*aggs)[a].group_key, key) == 0) {
             return a;
@@ -3874,7 +3874,7 @@ static int with_agg_find_or_create(with_agg_t **aggs, int *agg_cnt, int *agg_cap
             (*aggs)[found].group_vals[ci] = heap_strdup("0");
             continue;
         }
-        char vbuf[CBM_SZ_512];
+        char vbuf[HYP_SZ_512];
         const char *v = project_item(b, &wc->items[ci], vbuf, sizeof(vbuf));
         (*aggs)[found].group_vals[ci] = heap_strdup(v);
         /* If this group item is a bare node variable, remember its id so the
@@ -3885,7 +3885,7 @@ static int with_agg_find_or_create(with_agg_t **aggs, int *agg_cnt, int *agg_cap
          * later alias.property re-fetches the source node's real properties
          * instead of returning empty for the non-node alias. */
         if (!wc->items[ci].func && !wc->items[ci].property && wc->items[ci].variable) {
-            cbm_node_t *gn = binding_get(b, wc->items[ci].variable);
+            hyp_node_t *gn = binding_get(b, wc->items[ci].variable);
             if (gn) {
                 (*aggs)[found].group_node_ids[ci] = gn->id;
             }
@@ -3895,7 +3895,7 @@ static int with_agg_find_or_create(with_agg_t **aggs, int *agg_cnt, int *agg_cap
 }
 
 /* Accumulate aggregation values for a binding */
-static void with_agg_accumulate(with_agg_t *agg, cbm_return_clause_t *wc, binding_t *b) {
+static void with_agg_accumulate(with_agg_t *agg, hyp_return_clause_t *wc, binding_t *b) {
     for (int ci = 0; ci < wc->count; ci++) {
         if (!is_aggregate_func(wc->items[ci].func)) {
             continue;
@@ -3933,7 +3933,7 @@ static void with_agg_format(const char *func, with_agg_t *agg, int ci, char *buf
 
 /* Add a virtual variable binding for one WITH item */
 static void with_add_vbinding_var(binding_t *vb, const char *alias, const char *val) {
-    cbm_node_t vn = {.name = heap_strdup(val), .qualified_name = heap_strdup(alias)};
+    hyp_node_t vn = {.name = heap_strdup(val), .qualified_name = heap_strdup(alias)};
     if (vb->var_count < CYP_BUF_16) {
         vb->var_names[vb->var_count] = vn.qualified_name;
         vb->var_nodes[vb->var_count] = vn;
@@ -3966,14 +3966,14 @@ static void with_agg_free(with_agg_t *aggs, int agg_cnt, int item_count) {
 }
 
 /* Execute WITH aggregation path */
-static void execute_with_aggregate(cbm_return_clause_t *wc, binding_t *bindings, int bind_count,
+static void execute_with_aggregate(hyp_return_clause_t *wc, binding_t *bindings, int bind_count,
                                    binding_t **vbindings, int *vcount) {
-    int agg_cap = CBM_SZ_256;
+    int agg_cap = HYP_SZ_256;
     with_agg_t *aggs = calloc(agg_cap, sizeof(with_agg_t));
     int agg_cnt = 0;
 
     for (int bi = 0; bi < bind_count; bi++) {
-        char key[CBM_SZ_1K] = "";
+        char key[HYP_SZ_1K] = "";
         with_agg_build_key(wc, &bindings[bi], key, sizeof(key));
         int found = with_agg_find_or_create(&aggs, &agg_cnt, &agg_cap, wc, &bindings[bi], key);
         with_agg_accumulate(&aggs[found], wc, &bindings[bi]);
@@ -3990,10 +3990,10 @@ static void execute_with_aggregate(cbm_return_clause_t *wc, binding_t *bindings,
          * (and compute in_degree/out_degree) on the projected virtual binding. */
         vb.store = (bind_count > 0) ? bindings[0].store : NULL;
         for (int ci = 0; ci < wc->count; ci++) {
-            char name_buf[CBM_SZ_256];
+            char name_buf[HYP_SZ_256];
             const char *alias = resolve_item_alias(&wc->items[ci], name_buf, sizeof(name_buf));
             if (is_aggregate_func(wc->items[ci].func)) {
-                char vbuf[CBM_SZ_64];
+                char vbuf[HYP_SZ_64];
                 if (wc->items[ci].distinct && strcmp(wc->items[ci].func, "COUNT") == 0) {
                     snprintf(vbuf, sizeof(vbuf), "%d", aggs[a].distinct_n[ci]); /* #239 */
                 } else {
@@ -4015,15 +4015,15 @@ static void execute_with_aggregate(cbm_return_clause_t *wc, binding_t *bindings,
 }
 
 /* Execute WITH simple (non-aggregate) projection */
-static void execute_with_simple(cbm_return_clause_t *wc, binding_t *bindings, int bind_count,
+static void execute_with_simple(hyp_return_clause_t *wc, binding_t *bindings, int bind_count,
                                 binding_t *vbindings, int *vcount) {
     for (int bi = 0; bi < bind_count; bi++) {
         binding_t vb = {0};
         vb.store = bindings[bi].store; /* so node_prop can re-fetch / compute on the projection */
         for (int ci = 0; ci < wc->count; ci++) {
-            char name_buf[CBM_SZ_256];
+            char name_buf[HYP_SZ_256];
             const char *alias = resolve_item_alias(&wc->items[ci], name_buf, sizeof(name_buf));
-            char func_buf[CBM_SZ_512];
+            char func_buf[HYP_SZ_512];
             const char *val =
                 project_item(&bindings[bi], &wc->items[ci], func_buf, sizeof(func_buf));
             with_add_vbinding_var(&vb, alias, val);
@@ -4033,7 +4033,7 @@ static void execute_with_simple(cbm_return_clause_t *wc, binding_t *bindings, in
 }
 
 /* Apply post-WITH WHERE filter */
-static void filter_bindings_where(const cbm_where_clause_t *where, binding_t *vbindings,
+static void filter_bindings_where(const hyp_where_clause_t *where, binding_t *vbindings,
                                   int *vcount) {
     int kept = 0;
     for (int i = 0; i < *vcount; i++) {
@@ -4051,10 +4051,10 @@ static void filter_bindings_where(const cbm_where_clause_t *where, binding_t *vb
 
 /* Build a key from a projected vbinding's value tuple (all WITH output items),
  * used to detect duplicate rows for WITH DISTINCT (#238). */
-static void with_proj_key(cbm_return_clause_t *wc, binding_t *b, char *key, size_t key_sz) {
+static void with_proj_key(hyp_return_clause_t *wc, binding_t *b, char *key, size_t key_sz) {
     int kl = 0;
     key[0] = '\0';
-    char name_buf[CBM_SZ_256];
+    char name_buf[HYP_SZ_256];
     for (int ci = 0; ci < wc->count; ci++) {
         const char *alias = resolve_item_alias(&wc->items[ci], name_buf, sizeof(name_buf));
         const char *v = binding_get_virtual(b, alias, NULL);
@@ -4070,14 +4070,14 @@ static void with_proj_key(cbm_return_clause_t *wc, binding_t *b, char *key, size
 
 /* Apply WITH DISTINCT: drop projected rows whose value tuple duplicates an
  * earlier one, keeping first occurrence (#238 — previously silently ignored). */
-static void with_apply_distinct(cbm_return_clause_t *wc, binding_t *vbindings, int *vcount) {
+static void with_apply_distinct(hyp_return_clause_t *wc, binding_t *vbindings, int *vcount) {
     int kept = 0;
     for (int i = 0; i < *vcount; i++) {
-        char key[CBM_SZ_1K];
+        char key[HYP_SZ_1K];
         with_proj_key(wc, &vbindings[i], key, sizeof(key));
         bool dup = false;
         for (int j = 0; j < kept; j++) {
-            char pkey[CBM_SZ_1K];
+            char pkey[HYP_SZ_1K];
             with_proj_key(wc, &vbindings[j], pkey, sizeof(pkey));
             if (strcmp(key, pkey) == 0) {
                 dup = true;
@@ -4096,8 +4096,8 @@ static void with_apply_distinct(cbm_return_clause_t *wc, binding_t *vbindings, i
     *vcount = kept;
 }
 
-static void execute_with_clause(cbm_query_t *q, binding_t **bindings_ptr, int *bind_count_ptr) {
-    cbm_return_clause_t *wc = q->with_clause;
+static void execute_with_clause(hyp_query_t *q, binding_t **bindings_ptr, int *bind_count_ptr) {
+    hyp_return_clause_t *wc = q->with_clause;
     if (!wc) {
         return;
     }
@@ -4146,7 +4146,7 @@ static void execute_with_clause(cbm_query_t *q, binding_t **bindings_ptr, int *b
 
 /* Project RETURN * — all bound variable properties */
 /* Collect all variable names from query patterns */
-static int collect_pattern_vars(cbm_query_t *q, const char **vars, int max_vars) {
+static int collect_pattern_vars(hyp_query_t *q, const char **vars, int max_vars) {
     int vc = 0;
     for (int pi = 0; pi < q->pattern_count; pi++) {
         for (int ni = 0; ni < q->patterns[pi].node_count && vc < max_vars; ni++) {
@@ -4166,9 +4166,9 @@ static int collect_pattern_vars(cbm_query_t *q, const char **vars, int max_vars)
 /* Build star-projection columns: var.name, var.qualified_name, var.label, var.file_path */
 static void build_star_columns(result_builder_t *rb, const char **vars, int vc) {
     int col_n = vc * CYP_NODE_COLS;
-    const char *col_names[CBM_SZ_128];
+    const char *col_names[HYP_SZ_128];
     for (int v = 0; v < vc; v++) {
-        char buf[CBM_SZ_128];
+        char buf[HYP_SZ_128];
         snprintf(buf, sizeof(buf), "%s.name", vars[v]);
         col_names[(size_t)v * CYP_NODE_COLS] = heap_strdup(buf);
         snprintf(buf, sizeof(buf), "%s.qualified_name", vars[v]);
@@ -4186,7 +4186,7 @@ static void build_star_columns(result_builder_t *rb, const char **vars, int vc) 
 
 /* Project one variable's 4 columns for RETURN * */
 static void project_star_var(binding_t *b, const char *var, const char **vals) {
-    cbm_edge_t *edge = binding_get_edge(b, var);
+    hyp_edge_t *edge = binding_get_edge(b, var);
     if (edge) {
         vals[0] = edge_prop(edge, "type");
         vals[SKIP_ONE] = "";
@@ -4194,7 +4194,7 @@ static void project_star_var(binding_t *b, const char *var, const char **vals) {
         vals[CYP_TRIPLE] = "";
         return;
     }
-    cbm_node_t *n = binding_get(b, var);
+    hyp_node_t *n = binding_get(b, var);
     vals[0] = n && n->name ? n->name : "";
     vals[SKIP_ONE] = n && n->qualified_name ? n->qualified_name : "";
     vals[PAIR_LEN] = n && n->label ? n->label : "";
@@ -4208,13 +4208,13 @@ static void project_star_row(binding_t *b, const char **vars, int vc, const char
     }
 }
 
-static void execute_return_star(cbm_query_t *q, binding_t *bindings, int bind_count, int max_rows,
+static void execute_return_star(hyp_query_t *q, binding_t *bindings, int bind_count, int max_rows,
                                 result_builder_t *rb) {
-    const char *vars[CBM_SZ_32];
-    int vc = collect_pattern_vars(q, vars, CBM_SZ_32);
+    const char *vars[HYP_SZ_32];
+    int vc = collect_pattern_vars(q, vars, HYP_SZ_32);
     build_star_columns(rb, vars, vc);
     for (int bi = 0; bi < bind_count && rb->row_count < max_rows; bi++) {
-        const char *vals[CBM_SZ_128];
+        const char *vals[HYP_SZ_128];
         project_star_row(&bindings[bi], vars, vc, vals);
         rb_add_row(rb, vals);
     }
@@ -4223,7 +4223,7 @@ static void execute_return_star(cbm_query_t *q, binding_t *bindings, int bind_co
 /* Format an aggregate value into buf based on function name */
 /* Format a COLLECT list as JSON array string */
 static void format_collect_list(char **items, int item_count, char *buf, size_t buf_sz) {
-    char cbuf[CBM_SZ_2K] = "[";
+    char cbuf[HYP_SZ_2K] = "[";
     int bl = SKIP_ONE;
     for (int i = 0; i < item_count; i++) {
         if (i > 0) {
@@ -4261,7 +4261,7 @@ static void format_agg_value(const char *func, int count, double sum, double min
 
 /* RETURN aggregation entry */
 typedef struct {
-    char group_key[CBM_SZ_1K];
+    char group_key[HYP_SZ_1K];
     const char **group_vals;
     double *sums;
     int *counts;
@@ -4292,7 +4292,7 @@ static void ret_agg_init_group(ret_agg_entry_t *entry, const char *key, int item
 }
 
 /* Accumulate a binding into RETURN aggregation */
-static void ret_agg_accumulate(ret_agg_entry_t *entry, cbm_return_clause_t *ret, binding_t *b) {
+static void ret_agg_accumulate(ret_agg_entry_t *entry, hyp_return_clause_t *ret, binding_t *b) {
     for (int ci = 0; ci < ret->count; ci++) {
         if (!is_aggregate_func(ret->items[ci].func)) {
             continue;
@@ -4342,8 +4342,8 @@ static void ret_agg_free(ret_agg_entry_t *aggs, int agg_count, int item_count) {
 
 /* Execute RETURN with aggregation */
 /* Build group key and projected values for one binding */
-static void ret_agg_build_key(cbm_return_clause_t *ret, binding_t *b, char *key, size_t key_sz,
-                              const char **vals, char valbufs[][CBM_SZ_512]) {
+static void ret_agg_build_key(hyp_return_clause_t *ret, binding_t *b, char *key, size_t key_sz,
+                              const char **vals, char valbufs[][HYP_SZ_512]) {
     int klen = 0;
     for (int ci = 0; ci < ret->count; ci++) {
         if (is_aggregate_func(ret->items[ci].func)) {
@@ -4353,9 +4353,9 @@ static void ret_agg_build_key(cbm_return_clause_t *ret, binding_t *b, char *key,
         /* project_item may return its own scratch (stable static or a per-column
          * buffer it copied into); persist the value in the caller-owned valbufs
          * so vals[] survives until ret_agg_init_group strdup's it. */
-        const char *v = project_item(b, &ret->items[ci], valbufs[ci], CBM_SZ_512);
+        const char *v = project_item(b, &ret->items[ci], valbufs[ci], HYP_SZ_512);
         if (v != valbufs[ci]) {
-            snprintf(valbufs[ci], CBM_SZ_512, "%s", v ? v : "");
+            snprintf(valbufs[ci], HYP_SZ_512, "%s", v ? v : "");
         }
         vals[ci] = valbufs[ci];
         klen += snprintf(key + klen, key_sz - (size_t)klen, "%s|", vals[ci]);
@@ -4366,9 +4366,9 @@ static void ret_agg_build_key(cbm_return_clause_t *ret, binding_t *b, char *key,
 }
 
 /* Emit one aggregated row into the result builder */
-static void ret_agg_emit_row(cbm_return_clause_t *ret, ret_agg_entry_t *agg, result_builder_t *rb) {
-    const char *row[CBM_SZ_32];
-    char bufs[CBM_SZ_32][CBM_SZ_64];
+static void ret_agg_emit_row(hyp_return_clause_t *ret, ret_agg_entry_t *agg, result_builder_t *rb) {
+    const char *row[HYP_SZ_32];
+    char bufs[HYP_SZ_32][HYP_SZ_64];
     for (int ci = 0; ci < ret->count; ci++) {
         if (!is_aggregate_func(ret->items[ci].func)) {
             row[ci] = agg->group_vals[ci];
@@ -4388,9 +4388,9 @@ static void ret_agg_emit_row(cbm_return_clause_t *ret, ret_agg_entry_t *agg, res
     rb_add_row(rb, row);
 }
 
-static void execute_return_agg(cbm_return_clause_t *ret, binding_t *bindings, int bind_count,
+static void execute_return_agg(hyp_return_clause_t *ret, binding_t *bindings, int bind_count,
                                result_builder_t *rb) {
-    int agg_cap = CBM_SZ_256;
+    int agg_cap = HYP_SZ_256;
     ret_agg_entry_t *aggs = calloc(agg_cap, sizeof(ret_agg_entry_t));
     int agg_count = 0;
 
@@ -4400,9 +4400,9 @@ static void execute_return_agg(cbm_return_clause_t *ret, binding_t *bindings, in
         if ((bi & CYPHER_DEADLINE_CHECK_MASK) == 0 && cypher_deadline_exceeded()) {
             break;
         }
-        char key[CBM_SZ_1K] = "";
-        const char *vals[CBM_SZ_32];
-        char valbufs[CBM_SZ_32][CBM_SZ_512];
+        char key[HYP_SZ_1K] = "";
+        const char *vals[HYP_SZ_32];
+        char valbufs[HYP_SZ_32][HYP_SZ_512];
         ret_agg_build_key(ret, &bindings[bi], key, sizeof(key), vals, valbufs);
 
         int found = CYP_FOUND_NONE;
@@ -4430,20 +4430,20 @@ static void execute_return_agg(cbm_return_clause_t *ret, binding_t *bindings, in
 }
 
 /* Build RETURN column names from items */
-static void build_return_columns(result_builder_t *rb, cbm_return_clause_t *ret) {
-    const char *col_names[CBM_SZ_32];
-    for (int i = 0; i < ret->count && i < CBM_SZ_32; i++) {
-        cbm_return_item_t *item = &ret->items[i];
+static void build_return_columns(result_builder_t *rb, hyp_return_clause_t *ret) {
+    const char *col_names[HYP_SZ_32];
+    for (int i = 0; i < ret->count && i < HYP_SZ_32; i++) {
+        hyp_return_item_t *item = &ret->items[i];
         if (item->alias) {
             col_names[i] = item->alias;
         } else if (item->func) {
-            char buf[CBM_SZ_128];
+            char buf[HYP_SZ_128];
             snprintf(buf, sizeof(buf), "%s(%s)", item->func, item->variable);
             col_names[i] = heap_strdup(buf);
         } else if (item->kase) {
             col_names[i] = "CASE";
         } else if (item->property) {
-            char buf[CBM_SZ_128];
+            char buf[HYP_SZ_128];
             snprintf(buf, sizeof(buf), "%s.%s", item->variable, item->property);
             col_names[i] = heap_strdup(buf);
         } else {
@@ -4451,8 +4451,8 @@ static void build_return_columns(result_builder_t *rb, cbm_return_clause_t *ret)
         }
     }
     rb_set_columns(rb, col_names, ret->count);
-    for (int i = 0; i < ret->count && i < CBM_SZ_32; i++) {
-        cbm_return_item_t *item = &ret->items[i];
+    for (int i = 0; i < ret->count && i < HYP_SZ_32; i++) {
+        hyp_return_item_t *item = &ret->items[i];
         if (!item->alias && (item->func || (!item->kase && item->property))) {
             safe_str_free(&col_names[i]);
         }
@@ -4460,15 +4460,15 @@ static void build_return_columns(result_builder_t *rb, cbm_return_clause_t *ret)
 }
 
 /* Execute simple (non-aggregate) RETURN projection */
-static void execute_return_simple(cbm_return_clause_t *ret, binding_t *bindings, int bind_count,
+static void execute_return_simple(hyp_return_clause_t *ret, binding_t *bindings, int bind_count,
                                   int max_rows, result_builder_t *rb) {
     int proj_cap = max_rows;
     if (ret->limit > 0 && !ret->distinct && ret->order_key_count == 0 && ret->skip <= 0) {
         proj_cap = ret->limit;
     }
     for (int bi = 0; bi < bind_count && rb->row_count < proj_cap; bi++) {
-        const char *vals[CBM_SZ_32];
-        char func_bufs[CBM_SZ_32][CBM_SZ_512];
+        const char *vals[HYP_SZ_32];
+        char func_bufs[HYP_SZ_32][HYP_SZ_512];
         for (int ci = 0; ci < ret->count; ci++) {
             vals[ci] =
                 project_item(&bindings[bi], &ret->items[ci], func_bufs[ci], sizeof(func_bufs[ci]));
@@ -4482,7 +4482,7 @@ static void build_default_columns(result_builder_t *rb, const char **vars, int v
     int col_n = vc * CYP_EDGE_COLS;
     const char *col_names[CYP_COL_BUF];
     for (int v = 0; v < vc; v++) {
-        char buf[CBM_SZ_128];
+        char buf[HYP_SZ_128];
         snprintf(buf, sizeof(buf), "%s.name", vars[v]);
         col_names[(size_t)v * CYP_EDGE_COLS] = heap_strdup(buf);
         snprintf(buf, sizeof(buf), "%s.qualified_name", vars[v]);
@@ -4497,7 +4497,7 @@ static void build_default_columns(result_builder_t *rb, const char **vars, int v
 }
 
 /* Default projection when no RETURN clause */
-static void execute_default_projection(cbm_pattern_t *pat0, binding_t *bindings, int bind_count,
+static void execute_default_projection(hyp_pattern_t *pat0, binding_t *bindings, int bind_count,
                                        int max_rows, result_builder_t *rb) {
     const char *vars[CYP_MAX_VARS];
     int vc = 0;
@@ -4510,7 +4510,7 @@ static void execute_default_projection(cbm_pattern_t *pat0, binding_t *bindings,
     for (int bi = 0; bi < bind_count && rb->row_count < max_rows; bi++) {
         const char *vals[CYP_COL_BUF];
         for (int v = 0; v < vc; v++) {
-            cbm_node_t *n = binding_get(&bindings[bi], vars[v]);
+            hyp_node_t *n = binding_get(&bindings[bi], vars[v]);
             vals[(size_t)v * CYP_EDGE_COLS] = n && n->name ? n->name : "";
             vals[((size_t)v * CYP_EDGE_COLS) + SKIP_ONE] =
                 n && n->qualified_name ? n->qualified_name : "";
@@ -4528,35 +4528,35 @@ static void execute_default_projection(cbm_pattern_t *pat0, binding_t *bindings,
  * malloc size on large graphs (the failure mode fixed for cross_join_with_rels),
  * so the count is computed in size_t and rejected if it would not fit the int
  * binding counter or would overflow the size_t byte size. Returns 0 and writes
- * *out_n on success, CBM_NOT_FOUND on overflow. Non-static so the arithmetic
+ * *out_n on success, HYP_NOT_FOUND on overflow. Non-static so the arithmetic
  * boundary can be unit-tested directly. */
-int cbm_cypher_cross_join_alloc(int bind_count, int extra_count, bool opt, size_t *out_n) {
+int hyp_cypher_cross_join_alloc(int bind_count, int extra_count, bool opt, size_t *out_n) {
     size_t per_binding = extra_count > 0 ? (size_t)extra_count : (opt ? (size_t)SKIP_ONE : 0U);
     size_t rows = (size_t)bind_count * per_binding;
     if (rows > (size_t)INT_MAX) {
-        return CBM_NOT_FOUND; /* new_count would not fit the int binding counter */
+        return HYP_NOT_FOUND; /* new_count would not fit the int binding counter */
     }
     size_t n = rows + SKIP_ONE;
     if (n > SIZE_MAX / sizeof(binding_t)) {
-        return CBM_NOT_FOUND; /* alloc_n * sizeof(binding_t) would overflow size_t */
+        return HYP_NOT_FOUND; /* alloc_n * sizeof(binding_t) would overflow size_t */
     }
     *out_n = n;
     return 0;
 }
 
 /* Cross-join node-only pattern into existing bindings. Returns 0 on success,
- * CBM_NOT_FOUND when the allocation is refused (overflow) or fails (OOM); the
+ * HYP_NOT_FOUND when the allocation is refused (overflow) or fails (OOM); the
  * caller propagates that as a query error rather than silently skipping the
  * MATCH, which would return a wrong (short) result. */
-static int cross_join_nodes(binding_t **bindings, int *bind_count, cbm_node_t *extra_nodes,
+static int cross_join_nodes(binding_t **bindings, int *bind_count, hyp_node_t *extra_nodes,
                             int extra_count, const char *nvar, bool opt) {
     size_t alloc_n = 0;
-    if (cbm_cypher_cross_join_alloc(*bind_count, extra_count, opt, &alloc_n) != 0) {
-        return CBM_NOT_FOUND; /* product overflows int/size_t: fail the query */
+    if (hyp_cypher_cross_join_alloc(*bind_count, extra_count, opt, &alloc_n) != 0) {
+        return HYP_NOT_FOUND; /* product overflows int/size_t: fail the query */
     }
     binding_t *new_bindings = malloc(alloc_n * sizeof(binding_t));
     if (!new_bindings) {
-        return CBM_NOT_FOUND; /* OOM: propagate, don't silently skip the MATCH */
+        return HYP_NOT_FOUND; /* OOM: propagate, don't silently skip the MATCH */
     }
     size_t new_count = 0;
     for (int bi = 0; bi < *bind_count; bi++) {
@@ -4582,8 +4582,8 @@ static int cross_join_nodes(binding_t **bindings, int *bind_count, cbm_node_t *e
 }
 
 /* Cross-join pattern-with-rels into existing bindings */
-static void cross_join_with_rels(cbm_store_t *store, cbm_pattern_t *patn, binding_t **bindings,
-                                 int *bind_count, cbm_node_t *extra_nodes, int extra_count,
+static void cross_join_with_rels(hyp_store_t *store, hyp_pattern_t *patn, binding_t **bindings,
+                                 int *bind_count, hyp_node_t *extra_nodes, int extra_count,
                                  const char *nvar, bool opt) {
     /* size_t arithmetic: bind_count * extra_count can exceed INT_MAX on large
      * graphs (e.g. an unbound `c` scanned against ~29 K `f` bindings), wrapping
@@ -4635,11 +4635,11 @@ static void cross_join_with_rels(cbm_store_t *store, cbm_pattern_t *patn, bindin
  * Instead we scan only the bound terminal's edges and bind `c` to real
  * neighbours; with OPTIONAL we keep the row with `c` unbound when there are
  * none — the correct dead-code semantics. */
-static void expand_from_bound_terminal(cbm_store_t *store, cbm_pattern_t *patn,
+static void expand_from_bound_terminal(hyp_store_t *store, hyp_pattern_t *patn,
                                        binding_t **bindings, int *bind_count, const char *start_var,
                                        bool opt) {
-    cbm_rel_pattern_t *rel = &patn->rels[0];
-    const cbm_node_pattern_t *start_node = &patn->nodes[0];
+    hyp_rel_pattern_t *rel = &patn->rels[0];
+    const hyp_node_pattern_t *start_node = &patn->nodes[0];
     /* The relationship is written start-[r]->terminal. To enumerate the start
      * nodes reachable from the bound terminal we invert the stored direction. */
     bool rel_inbound = rel->direction && strcmp(rel->direction, "inbound") == 0;
@@ -4656,30 +4656,30 @@ static void expand_from_bound_terminal(cbm_store_t *store, cbm_pattern_t *patn,
 
     for (int bi = 0; bi < *bind_count && new_count < max_new; bi++) {
         binding_t *b = &(*bindings)[bi];
-        cbm_node_t *term = binding_get(b, patn->nodes[1].variable ? patn->nodes[1].variable : "");
+        hyp_node_t *term = binding_get(b, patn->nodes[1].variable ? patn->nodes[1].variable : "");
         int match_count = 0;
         if (term) {
             for (int ti = 0;
                  ti < (rel->type_count > 0 ? rel->type_count : 1) && new_count < max_new; ti++) {
-                cbm_edge_t *edges = NULL;
+                hyp_edge_t *edges = NULL;
                 int edge_count = 0;
                 if (rel->type_count > 0) {
                     if (scan_targets) {
-                        cbm_store_find_edges_by_target_type(store, term->id, rel->types[ti], &edges,
+                        hyp_store_find_edges_by_target_type(store, term->id, rel->types[ti], &edges,
                                                             &edge_count);
                     } else {
-                        cbm_store_find_edges_by_source_type(store, term->id, rel->types[ti], &edges,
+                        hyp_store_find_edges_by_source_type(store, term->id, rel->types[ti], &edges,
                                                             &edge_count);
                     }
                 } else if (scan_targets) {
-                    cbm_store_find_edges_by_target(store, term->id, &edges, &edge_count);
+                    hyp_store_find_edges_by_target(store, term->id, &edges, &edge_count);
                 } else {
-                    cbm_store_find_edges_by_source(store, term->id, &edges, &edge_count);
+                    hyp_store_find_edges_by_source(store, term->id, &edges, &edge_count);
                 }
                 for (int ei = 0; ei < edge_count && new_count < max_new; ei++) {
                     int64_t sid = scan_targets ? edges[ei].source_id : edges[ei].target_id;
-                    cbm_node_t found = {0};
-                    if (cbm_store_find_node_by_id(store, sid, &found) != CBM_STORE_OK) {
+                    hyp_node_t found = {0};
+                    if (hyp_store_find_node_by_id(store, sid, &found) != HYP_STORE_OK) {
                         continue;
                     }
                     if (start_node->label && !label_alt_matches(found.label, start_node->label)) {
@@ -4696,7 +4696,7 @@ static void expand_from_bound_terminal(cbm_store_t *store, cbm_pattern_t *patn,
                     new_bindings[new_count++] = nb;
                     match_count++;
                 }
-                cbm_store_free_edges(edges, edge_count);
+                hyp_store_free_edges(edges, edge_count);
             }
         }
         if (opt && match_count == 0 && new_count < max_new) {
@@ -4717,11 +4717,11 @@ static void expand_from_bound_terminal(cbm_store_t *store, cbm_pattern_t *patn,
 }
 
 /* Expand additional MATCH patterns (pi >= 1) */
-static int expand_additional_patterns(cbm_store_t *store, cbm_query_t *q, const char *project,
+static int expand_additional_patterns(hyp_store_t *store, hyp_query_t *q, const char *project,
                                       int max_rows, binding_t **bindings, int *bind_count,
                                       int *bind_cap) {
     for (int pi = SKIP_ONE; pi < q->pattern_count; pi++) {
-        cbm_pattern_t *patn = &q->patterns[pi];
+        hyp_pattern_t *patn = &q->patterns[pi];
         bool opt = q->pattern_optional[pi];
         const char *nvar = patn->nodes[0].variable ? patn->nodes[0].variable : "_n_extra";
         bool start_bound = *bind_count > 0 && binding_get(&(*bindings)[0], nvar) != NULL;
@@ -4745,7 +4745,7 @@ static int expand_additional_patterns(cbm_store_t *store, cbm_query_t *q, const 
             }
         }
 
-        cbm_node_t *extra_nodes = NULL;
+        hyp_node_t *extra_nodes = NULL;
         int extra_count = 0;
         scan_pattern_nodes(store, project, max_rows, &patn->nodes[0], &extra_nodes, &extra_count);
         int rc = 0;
@@ -4755,7 +4755,7 @@ static int expand_additional_patterns(cbm_store_t *store, cbm_query_t *q, const 
             cross_join_with_rels(store, patn, bindings, bind_count, extra_nodes, extra_count, nvar,
                                  opt);
         }
-        cbm_store_free_nodes(extra_nodes, extra_count);
+        hyp_store_free_nodes(extra_nodes, extra_count);
         if (rc != 0) {
             return rc; /* allocation refused/failed: propagate as a query error */
         }
@@ -4764,7 +4764,7 @@ static int expand_additional_patterns(cbm_store_t *store, cbm_query_t *q, const 
 }
 
 /* Project RETURN clause results */
-static void execute_return_clause(cbm_query_t *q, cbm_return_clause_t *ret, binding_t *bindings,
+static void execute_return_clause(hyp_query_t *q, hyp_return_clause_t *ret, binding_t *bindings,
                                   int bind_count, int max_rows, result_builder_t *rb) {
     bool has_agg = false;
     for (int i = 0; i < ret->count; i++) {
@@ -4792,12 +4792,12 @@ static void execute_return_clause(cbm_query_t *q, cbm_return_clause_t *ret, bind
     rb_apply_skip_limit(rb, ret->skip, ret->limit >= 0 ? ret->limit : max_rows);
 }
 
-static int execute_single(cbm_store_t *store, cbm_query_t *q, const char *project, int max_rows,
+static int execute_single(hyp_store_t *store, hyp_query_t *q, const char *project, int max_rows,
                           result_builder_t *rb) {
-    cbm_pattern_t *pat0 = &q->patterns[0];
+    hyp_pattern_t *pat0 = &q->patterns[0];
 
     /* Step 1: Scan initial nodes */
-    cbm_node_t *scanned = NULL;
+    hyp_node_t *scanned = NULL;
     int scan_count = 0;
     scan_pattern_nodes(store, project, max_rows, &pat0->nodes[0], &scanned, &scan_count);
 
@@ -4833,8 +4833,8 @@ static int execute_single(cbm_store_t *store, cbm_query_t *q, const char *projec
             binding_free(&bindings[bi]);
         }
         free(bindings);
-        cbm_store_free_nodes(scanned, scan_count);
-        return CBM_NOT_FOUND; /* cross-join allocation refused/failed */
+        hyp_store_free_nodes(scanned, scan_count);
+        return HYP_NOT_FOUND; /* cross-join allocation refused/failed */
     }
 
     /* Step 3: Late WHERE */
@@ -4857,14 +4857,14 @@ static int execute_single(cbm_store_t *store, cbm_query_t *q, const char *projec
         binding_free(&bindings[bi]);
     }
     free(bindings);
-    cbm_store_free_nodes(scanned, scan_count);
+    hyp_store_free_nodes(scanned, scan_count);
     return 0;
 }
 
 /* ── Main entry point ─────────────────────────────────────────── */
 
-int cbm_cypher_execute(cbm_store_t *store, const char *query, const char *project, int max_rows,
-                       cbm_cypher_result_t *out) {
+int hyp_cypher_execute(hyp_store_t *store, const char *query, const char *project, int max_rows,
+                       hyp_cypher_result_t *out) {
     memset(out, 0, sizeof(*out));
     g_cypher_depth_clamped = 0;
     cypher_deadline_arm(); /* #601: start the wall-clock budget for this query */
@@ -4872,32 +4872,32 @@ int cbm_cypher_execute(cbm_store_t *store, const char *query, const char *projec
         max_rows = CYPHER_RESULT_CEILING;
     }
 
-    cbm_query_t *q = NULL;
+    hyp_query_t *q = NULL;
     char *err = NULL;
-    if (cbm_cypher_parse(query, &q, &err) < 0) {
+    if (hyp_cypher_parse(query, &q, &err) < 0) {
         out->error = err;
-        return CBM_NOT_FOUND;
+        return HYP_NOT_FOUND;
     }
 
     result_builder_t rb = {0};
     if (execute_single(store, q, project, max_rows, &rb) < 0) {
         rb_free(&rb);
-        cbm_query_free(q);
+        hyp_query_free(q);
         out->error = heap_strdup("query aborted: out of memory or an allocation limit was reached");
-        return CBM_NOT_FOUND;
+        return HYP_NOT_FOUND;
     }
 
     /* UNION chain */
-    cbm_query_t *uq = q->union_next;
+    hyp_query_t *uq = q->union_next;
     while (uq) {
         result_builder_t rb2 = {0};
         if (execute_single(store, uq, project, max_rows, &rb2) < 0) {
             rb_free(&rb);
             rb_free(&rb2);
-            cbm_query_free(q);
+            hyp_query_free(q);
             out->error =
                 heap_strdup("query aborted: out of memory or an allocation limit was reached");
-            return CBM_NOT_FOUND;
+            return HYP_NOT_FOUND;
         }
         /* Concatenate rows from rb2 into rb */
         for (int i = 0; i < rb2.row_count; i++) {
@@ -4917,20 +4917,20 @@ int cbm_cypher_execute(cbm_store_t *store, const char *query, const char *projec
      * return a misleading partial result. Checked before the row ceiling. */
     if (g_cypher_timed_out) {
         rb_free(&rb);
-        cbm_query_free(q);
+        hyp_query_free(q);
         out->error =
             heap_strdup("query exceeded the execution time limit — narrow the pattern with a WHERE "
                         "filter, use a directed MATCH instead of an unbounded OPTIONAL MATCH, or "
                         "add LIMIT");
-        return CBM_NOT_FOUND;
+        return HYP_NOT_FOUND;
     }
 
     /* Check ceiling */
     if (rb.row_count >= CYPHER_RESULT_CEILING) {
         rb_free(&rb);
-        cbm_query_free(q);
+        hyp_query_free(q);
         out->error = heap_strdup("result exceeded 100k rows — use narrower filters or add LIMIT");
-        return CBM_NOT_FOUND;
+        return HYP_NOT_FOUND;
     }
 
     out->columns = rb.columns;
@@ -4938,7 +4938,7 @@ int cbm_cypher_execute(cbm_store_t *store, const char *query, const char *projec
     out->rows = rb.rows;
     out->row_count = rb.row_count;
     if (g_cypher_depth_clamped > 0) {
-        char wbuf[CBM_SZ_256];
+        char wbuf[HYP_SZ_256];
         snprintf(wbuf, sizeof(wbuf),
                  "variable-length hop range clamped to the engine ceiling (%d) — an empty "
                  "result may mean \"clamped\", not \"no such path\"",
@@ -4946,11 +4946,11 @@ int cbm_cypher_execute(cbm_store_t *store, const char *query, const char *projec
         out->warning = heap_strdup(wbuf);
     }
 
-    cbm_query_free(q);
+    hyp_query_free(q);
     return 0;
 }
 
-void cbm_cypher_result_free(cbm_cypher_result_t *r) {
+void hyp_cypher_result_free(hyp_cypher_result_t *r) {
     if (!r) {
         return;
     }

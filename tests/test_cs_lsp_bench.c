@@ -27,7 +27,7 @@
  * the gap is dominated by ctor-synthetic 0.50 markers and BCL long tail).
  */
 #include "test_framework.h"
-#include "cbm.h"
+#include "hyp.h"
 #include "lsp/cs_lsp.h"
 #include <stdlib.h>
 #include <time.h>
@@ -195,7 +195,7 @@ TEST(cslsp_bench_resolution_ratio) {
     struct timespec t0;
     struct timespec t1;
     clock_gettime(CLOCK_MONOTONIC, &t0);
-    CBMFileResult *r = cbm_extract_file(bench_source, slen, CBM_LANG_CSHARP,
+    HYPFileResult *r = hyp_extract_file(bench_source, slen, HYP_LANG_CSHARP,
                                         "test", "bench.cs", 0, NULL, NULL);
     clock_gettime(CLOCK_MONOTONIC, &t1);
     ASSERT_NOT_NULL(r);
@@ -220,7 +220,7 @@ TEST(cslsp_bench_resolution_ratio) {
            ms);
 
     /* Free the result BEFORE asserting so a budget miss doesn't leak. */
-    cbm_free_result(r);
+    hyp_free_result(r);
 
     ASSERT_GTE(calls, 1);
     ASSERT_GTE(resolved, 1);
@@ -238,7 +238,7 @@ TEST(cslsp_bench_resolution_ratio) {
     /* Time budget. ASan+UBSan instrumentation slows the parse ~5-10×, so
      * scale the budget when a sanitizer is active. Native: 200 ms for a
      * ~260-line fixture; sanitized: 2000 ms. */
-#if defined(CBM_SANITIZED_BUILD) || defined(__SANITIZE_ADDRESS__)
+#if defined(HYP_SANITIZED_BUILD) || defined(__SANITIZE_ADDRESS__)
     ASSERT(ms < 2000.0);
 #else
     ASSERT(ms < 200.0);

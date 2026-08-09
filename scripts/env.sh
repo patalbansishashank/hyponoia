@@ -33,8 +33,8 @@ case "$HW_ARCH" in
     x86_64|amd64)  HW_ARCH="x86_64" ;;
 esac
 
-# CBM_ARCH env var or --arch flag override (parsed by calling script)
-ARCH="${CBM_ARCH:-$HW_ARCH}"
+# HYP_ARCH env var or --arch flag override (parsed by calling script)
+ARCH="${HYP_ARCH:-$HW_ARCH}"
 
 # ── Target-architecture flags (macOS only) ─────────────────────
 # Select the target slice explicitly with clang/ld's -arch instead of
@@ -42,7 +42,7 @@ ARCH="${CBM_ARCH:-$HW_ARCH}"
 # that works across toolchains: a Nix/Homebrew clang wrapper has a fixed
 # target triple, so `arch -x86_64 make` would still emit native arm64. It also
 # lets host tools (node, codegen) keep running natively during a cross-build.
-# Makefile.cbm folds $(ARCHFLAGS) into CC/CXX so it reaches every compile and
+# Makefile.hyp folds $(ARCHFLAGS) into CC/CXX so it reaches every compile and
 # link, including the vendored objects. Empty on Linux/Windows.
 ARCHFLAGS=""
 if [[ "$OS" == "darwin" ]]; then
@@ -71,7 +71,7 @@ verify_compiler() {
 
     if [[ "$OS" == "darwin" ]]; then
         local probe_out
-        probe_out="$(mktemp -t cbm-archprobe.XXXXXX)"
+        probe_out="$(mktemp -t hyp-archprobe.XXXXXX)"
         if ! printf 'int main(void){return 0;}\n' \
             | "$compiler" -arch "$ARCH" -x c - -o "$probe_out" >/dev/null 2>&1; then
             rm -f "$probe_out"
@@ -98,7 +98,7 @@ if [[ -z "${CC:-}" ]]; then
     fi
 fi
 
-# ── Verified compiler cache (ccache, opt-out CBM_NO_CCACHE=1) ──
+# ── Verified compiler cache (ccache, opt-out HYP_NO_CCACHE=1) ──
 # Activated through ccache's masquerade directories so $CC keeps its plain
 # name everywhere (verify_compiler, make, link lines are untouched).
 # Zero-staleness guarantee: CCACHE_COMPILERCHECK=content keys every entry on
@@ -106,21 +106,21 @@ fi
 # unit, so a cache hit is provably the identical compilation — a stale or
 # foreign cache can only MISS, never return wrong output. No CCACHE_BASEDIR
 # and no path rewriting: debug-info and sanitizer report paths stay exact.
-if [[ "${CBM_NO_CCACHE:-0}" != "1" ]] && command -v ccache >/dev/null 2>&1; then
-    for _cbm_ccache_masq in \
+if [[ "${HYP_NO_CCACHE:-0}" != "1" ]] && command -v ccache >/dev/null 2>&1; then
+    for _hyp_ccache_masq in \
         /usr/lib/ccache \
         /opt/homebrew/opt/ccache/libexec \
         /usr/local/opt/ccache/libexec \
         /clang64/lib/ccache/bin \
         /clangarm64/lib/ccache/bin; do
-        if [[ -d "$_cbm_ccache_masq" ]]; then
+        if [[ -d "$_hyp_ccache_masq" ]]; then
             case ":$PATH:" in
-            *":$_cbm_ccache_masq:"*) ;;
-            *) PATH="$_cbm_ccache_masq:$PATH" ;;
+            *":$_hyp_ccache_masq:"*) ;;
+            *) PATH="$_hyp_ccache_masq:$PATH" ;;
             esac
         fi
     done
-    unset _cbm_ccache_masq
+    unset _hyp_ccache_masq
     export PATH
     export CCACHE_COMPILERCHECK=content
 fi

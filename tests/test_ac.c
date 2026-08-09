@@ -1,7 +1,7 @@
 /*
  * test_ac.c — Tests for the Aho-Corasick multi-pattern matcher.
  *
- * Exercises cbm_ac_build(), cbm_ac_scan_bitmask(), cbm_ac_scan_batch()
+ * Exercises hyp_ac_build(), hyp_ac_scan_bitmask(), hyp_ac_scan_batch()
  * against the existing ac.c implementation.
  */
 #include "test_framework.h"
@@ -9,22 +9,22 @@
 #include <string.h>
 
 /* Declarations from ac.c (no public header yet — these are the C API) */
-typedef struct CBMAutomaton CBMAutomaton;
+typedef struct HYPAutomaton HYPAutomaton;
 
-CBMAutomaton *cbm_ac_build(const char **patterns, const int *lengths, int count,
+HYPAutomaton *hyp_ac_build(const char **patterns, const int *lengths, int count,
                            const uint8_t *alpha_map, int alpha_size);
-void cbm_ac_free(CBMAutomaton *ac);
-uint64_t cbm_ac_scan_bitmask(const CBMAutomaton *ac, const char *text, int text_len);
-int cbm_ac_num_states(const CBMAutomaton *ac);
-int cbm_ac_num_patterns(const CBMAutomaton *ac);
-int cbm_ac_table_bytes(const CBMAutomaton *ac);
+void hyp_ac_free(HYPAutomaton *ac);
+uint64_t hyp_ac_scan_bitmask(const HYPAutomaton *ac, const char *text, int text_len);
+int hyp_ac_num_states(const HYPAutomaton *ac);
+int hyp_ac_num_patterns(const HYPAutomaton *ac);
+int hyp_ac_table_bytes(const HYPAutomaton *ac);
 
 typedef struct {
     int name_index;
     int pattern_id;
-} CBMMatchResult;
-int cbm_ac_scan_batch(const CBMAutomaton *ac, const char *names_buf, const int *name_offsets,
-                      const int *name_lengths, int num_names, CBMMatchResult *out_matches,
+} HYPMatchResult;
+int hyp_ac_scan_batch(const HYPAutomaton *ac, const char *names_buf, const int *name_offsets,
+                      const int *name_lengths, int num_names, HYPMatchResult *out_matches,
                       int max_matches);
 
 /* ── Tests ─────────────────────────────────────────────────────── */
@@ -32,57 +32,57 @@ int cbm_ac_scan_batch(const CBMAutomaton *ac, const char *names_buf, const int *
 TEST(ac_build_single) {
     const char *patterns[] = {"hello"};
     int lengths[] = {5};
-    CBMAutomaton *ac = cbm_ac_build(patterns, lengths, 1, NULL, 256);
+    HYPAutomaton *ac = hyp_ac_build(patterns, lengths, 1, NULL, 256);
     ASSERT_NOT_NULL(ac);
-    ASSERT_EQ(cbm_ac_num_patterns(ac), 1);
-    ASSERT_GT(cbm_ac_num_states(ac), 0);
-    cbm_ac_free(ac);
+    ASSERT_EQ(hyp_ac_num_patterns(ac), 1);
+    ASSERT_GT(hyp_ac_num_states(ac), 0);
+    hyp_ac_free(ac);
     PASS();
 }
 
 TEST(ac_build_multiple) {
     const char *patterns[] = {"he", "she", "his", "hers"};
     int lengths[] = {2, 3, 3, 4};
-    CBMAutomaton *ac = cbm_ac_build(patterns, lengths, 4, NULL, 256);
+    HYPAutomaton *ac = hyp_ac_build(patterns, lengths, 4, NULL, 256);
     ASSERT_NOT_NULL(ac);
-    ASSERT_EQ(cbm_ac_num_patterns(ac), 4);
-    cbm_ac_free(ac);
+    ASSERT_EQ(hyp_ac_num_patterns(ac), 4);
+    hyp_ac_free(ac);
     PASS();
 }
 
 TEST(ac_scan_single_match) {
     const char *patterns[] = {"hello"};
     int lengths[] = {5};
-    CBMAutomaton *ac = cbm_ac_build(patterns, lengths, 1, NULL, 256);
+    HYPAutomaton *ac = hyp_ac_build(patterns, lengths, 1, NULL, 256);
 
-    uint64_t result = cbm_ac_scan_bitmask(ac, "say hello world", 15);
+    uint64_t result = hyp_ac_scan_bitmask(ac, "say hello world", 15);
     ASSERT_EQ(result, 1ULL); /* pattern 0 matched */
-    cbm_ac_free(ac);
+    hyp_ac_free(ac);
     PASS();
 }
 
 TEST(ac_scan_no_match) {
     const char *patterns[] = {"xyz"};
     int lengths[] = {3};
-    CBMAutomaton *ac = cbm_ac_build(patterns, lengths, 1, NULL, 256);
+    HYPAutomaton *ac = hyp_ac_build(patterns, lengths, 1, NULL, 256);
 
-    uint64_t result = cbm_ac_scan_bitmask(ac, "hello world", 11);
+    uint64_t result = hyp_ac_scan_bitmask(ac, "hello world", 11);
     ASSERT_EQ(result, 0);
-    cbm_ac_free(ac);
+    hyp_ac_free(ac);
     PASS();
 }
 
 TEST(ac_scan_multiple_matches) {
     const char *patterns[] = {"he", "she", "his", "hers"};
     int lengths[] = {2, 3, 3, 4};
-    CBMAutomaton *ac = cbm_ac_build(patterns, lengths, 4, NULL, 256);
+    HYPAutomaton *ac = hyp_ac_build(patterns, lengths, 4, NULL, 256);
 
     /* "ushers" should match "she" (1), "he" (0), "hers" (3) */
-    uint64_t result = cbm_ac_scan_bitmask(ac, "ushers", 6);
+    uint64_t result = hyp_ac_scan_bitmask(ac, "ushers", 6);
     ASSERT(result & (1ULL << 0)); /* "he" */
     ASSERT(result & (1ULL << 1)); /* "she" */
     ASSERT(result & (1ULL << 3)); /* "hers" */
-    cbm_ac_free(ac);
+    hyp_ac_free(ac);
     PASS();
 }
 
@@ -90,24 +90,24 @@ TEST(ac_scan_overlapping) {
     /* Overlapping patterns at same position */
     const char *patterns[] = {"ab", "abc", "abcd"};
     int lengths[] = {2, 3, 4};
-    CBMAutomaton *ac = cbm_ac_build(patterns, lengths, 3, NULL, 256);
+    HYPAutomaton *ac = hyp_ac_build(patterns, lengths, 3, NULL, 256);
 
-    uint64_t result = cbm_ac_scan_bitmask(ac, "xabcdy", 6);
+    uint64_t result = hyp_ac_scan_bitmask(ac, "xabcdy", 6);
     ASSERT(result & (1ULL << 0)); /* "ab" */
     ASSERT(result & (1ULL << 1)); /* "abc" */
     ASSERT(result & (1ULL << 2)); /* "abcd" */
-    cbm_ac_free(ac);
+    hyp_ac_free(ac);
     PASS();
 }
 
 TEST(ac_scan_empty_text) {
     const char *patterns[] = {"test"};
     int lengths[] = {4};
-    CBMAutomaton *ac = cbm_ac_build(patterns, lengths, 1, NULL, 256);
+    HYPAutomaton *ac = hyp_ac_build(patterns, lengths, 1, NULL, 256);
 
-    uint64_t result = cbm_ac_scan_bitmask(ac, "", 0);
+    uint64_t result = hyp_ac_scan_bitmask(ac, "", 0);
     ASSERT_EQ(result, 0);
-    cbm_ac_free(ac);
+    hyp_ac_free(ac);
     PASS();
 }
 
@@ -120,59 +120,59 @@ TEST(ac_custom_alphabet) {
 
     const char *patterns[] = {"hello"};
     int lengths[] = {5};
-    CBMAutomaton *ac = cbm_ac_build(patterns, lengths, 1, alpha_map, alpha_size);
+    HYPAutomaton *ac = hyp_ac_build(patterns, lengths, 1, alpha_map, alpha_size);
     ASSERT_NOT_NULL(ac);
 
-    uint64_t result = cbm_ac_scan_bitmask(ac, "say hello world", 15);
+    uint64_t result = hyp_ac_scan_bitmask(ac, "say hello world", 15);
     ASSERT_EQ(result, 1ULL);
 
     /* Table should be much smaller with compact alphabet */
-    int full_bytes = cbm_ac_num_states(ac) * 256 * 4;
-    int compact_bytes = cbm_ac_table_bytes(ac);
+    int full_bytes = hyp_ac_num_states(ac) * 256 * 4;
+    int compact_bytes = hyp_ac_table_bytes(ac);
     ASSERT_LT(compact_bytes, full_bytes);
 
-    cbm_ac_free(ac);
+    hyp_ac_free(ac);
     PASS();
 }
 
 TEST(ac_batch_scan) {
     const char *patterns[] = {"foo", "bar", "baz"};
     int lengths[] = {3, 3, 3};
-    CBMAutomaton *ac = cbm_ac_build(patterns, lengths, 3, NULL, 256);
+    HYPAutomaton *ac = hyp_ac_build(patterns, lengths, 3, NULL, 256);
 
     /* Batch: scan 4 names */
     const char names_buf[] = "hello\0foobar\0nothing\0bazinga";
     int offsets[] = {0, 6, 13, 21};
     int lens[] = {5, 6, 7, 7};
 
-    CBMMatchResult matches[16];
-    int n = cbm_ac_scan_batch(ac, names_buf, offsets, lens, 4, matches, 16);
+    HYPMatchResult matches[16];
+    int n = hyp_ac_scan_batch(ac, names_buf, offsets, lens, 4, matches, 16);
 
     /* "foobar" matches "foo" and "bar", "bazinga" matches "baz" → ≥3 matches */
     ASSERT_GTE(n, 3);
 
-    cbm_ac_free(ac);
+    hyp_ac_free(ac);
     PASS();
 }
 
 TEST(ac_table_bytes) {
     const char *patterns[] = {"test"};
     int lengths[] = {4};
-    CBMAutomaton *ac = cbm_ac_build(patterns, lengths, 1, NULL, 256);
+    HYPAutomaton *ac = hyp_ac_build(patterns, lengths, 1, NULL, 256);
 
-    int bytes = cbm_ac_table_bytes(ac);
+    int bytes = hyp_ac_table_bytes(ac);
     ASSERT_GT(bytes, 0);
     /* states * 256 * sizeof(int) */
-    ASSERT_EQ(bytes, cbm_ac_num_states(ac) * 256 * 4);
+    ASSERT_EQ(bytes, hyp_ac_num_states(ac) * 256 * 4);
 
-    cbm_ac_free(ac);
+    hyp_ac_free(ac);
     PASS();
 }
 
 TEST(ac_null_input) {
-    CBMAutomaton *ac = cbm_ac_build(NULL, NULL, 0, NULL, 256);
+    HYPAutomaton *ac = hyp_ac_build(NULL, NULL, 0, NULL, 256);
     ASSERT_NULL(ac);
-    cbm_ac_free(NULL); /* should not crash */
+    hyp_ac_free(NULL); /* should not crash */
     PASS();
 }
 
@@ -180,11 +180,11 @@ TEST(ac_null_input) {
 TEST(ac_scan_string) {
     const char *patterns[] = {"foo", "bar"};
     int lengths[] = {3, 3};
-    CBMAutomaton *ac = cbm_ac_build(patterns, lengths, 2, NULL, 256);
+    HYPAutomaton *ac = hyp_ac_build(patterns, lengths, 2, NULL, 256);
     ASSERT_NOT_NULL(ac);
-    uint64_t mask = cbm_ac_scan_bitmask(ac, "foobar", 6);
+    uint64_t mask = hyp_ac_scan_bitmask(ac, "foobar", 6);
     ASSERT_EQ(mask, 3ULL); /* both pattern 0 and 1 */
-    cbm_ac_free(ac);
+    hyp_ac_free(ac);
     PASS();
 }
 
@@ -192,40 +192,40 @@ TEST(ac_scan_string) {
 TEST(ac_free_double_call) {
     const char *patterns[] = {"test"};
     int lengths[] = {4};
-    CBMAutomaton *ac = cbm_ac_build(patterns, lengths, 1, NULL, 256);
+    HYPAutomaton *ac = hyp_ac_build(patterns, lengths, 1, NULL, 256);
     ASSERT_NOT_NULL(ac);
-    cbm_ac_free(ac);
+    hyp_ac_free(ac);
     /* ac is now freed — calling free again should not crash.
-       Note: in C the pointer is dangling, but cbm_ac_free checks for NULL
+       Note: in C the pointer is dangling, but hyp_ac_free checks for NULL
        internally. We already test free(NULL) in ac_null_input.
        This test verifies the Go test expectation. */
     PASS();
 }
 
 /* --- Ported from ac_test.go: TestACScanLZ4Bitmask --- */
-extern int cbm_lz4_compress_hc(const char *src, int srcLen, char *dst, int dstCap);
-extern int cbm_lz4_bound(int inputSize);
+extern int hyp_lz4_compress_hc(const char *src, int srcLen, char *dst, int dstCap);
+extern int hyp_lz4_bound(int inputSize);
 
 /* Structs defined in ac.c */
 typedef struct {
     const char *data;
     int compressed_len;
     int original_len;
-} CBMLz4Entry;
+} HYPLz4Entry;
 typedef struct {
     int file_index;
     uint64_t bitmask;
-} CBMLz4Match;
+} HYPLz4Match;
 
-extern uint64_t cbm_ac_scan_lz4_bitmask(const CBMAutomaton *ac, const char *compressed,
+extern uint64_t hyp_ac_scan_lz4_bitmask(const HYPAutomaton *ac, const char *compressed,
                                         int compressed_len, int original_len);
-extern int cbm_ac_scan_lz4_batch(const CBMAutomaton *ac, const CBMLz4Entry *entries,
-                                 int num_entries, CBMLz4Match *out_matches, int max_matches);
+extern int hyp_ac_scan_lz4_batch(const HYPAutomaton *ac, const HYPLz4Entry *entries,
+                                 int num_entries, HYPLz4Match *out_matches, int max_matches);
 
 TEST(ac_scan_lz4_bitmask) {
     const char *patterns[] = {"http.Get", "fetch("};
     int lengths[] = {8, 6};
-    CBMAutomaton *ac = cbm_ac_build(patterns, lengths, 2, NULL, 256);
+    HYPAutomaton *ac = hyp_ac_build(patterns, lengths, 2, NULL, 256);
     ASSERT_NOT_NULL(ac);
 
     const char *source = "package main\nimport \"net/http\"\n"
@@ -233,27 +233,27 @@ TEST(ac_scan_lz4_bitmask) {
                          "    resp, err := http.Get(\"https://example.com\")\n"
                          "    _ = resp\n    _ = err\n}\n";
     int src_len = (int)strlen(source);
-    int bound = cbm_lz4_bound(src_len);
+    int bound = hyp_lz4_bound(src_len);
     char *compressed = malloc(bound);
     ASSERT_NOT_NULL(compressed);
-    int comp_len = cbm_lz4_compress_hc(source, src_len, compressed, bound);
+    int comp_len = hyp_lz4_compress_hc(source, src_len, compressed, bound);
     ASSERT_GT(comp_len, 0);
 
-    uint64_t mask = cbm_ac_scan_lz4_bitmask(ac, compressed, comp_len, src_len);
+    uint64_t mask = hyp_ac_scan_lz4_bitmask(ac, compressed, comp_len, src_len);
     ASSERT_EQ(mask, 1ULL); /* http.Get matched */
 
     /* No match */
     const char *no_http = "package main\nfunc main() { println(42) }\n";
     int nh_len = (int)strlen(no_http);
-    int bound2 = cbm_lz4_bound(nh_len);
+    int bound2 = hyp_lz4_bound(nh_len);
     char *comp2 = malloc(bound2);
-    int comp2_len = cbm_lz4_compress_hc(no_http, nh_len, comp2, bound2);
-    mask = cbm_ac_scan_lz4_bitmask(ac, comp2, comp2_len, nh_len);
+    int comp2_len = hyp_lz4_compress_hc(no_http, nh_len, comp2, bound2);
+    mask = hyp_ac_scan_lz4_bitmask(ac, comp2, comp2_len, nh_len);
     ASSERT_EQ(mask, 0ULL);
 
     free(compressed);
     free(comp2);
-    cbm_ac_free(ac);
+    hyp_ac_free(ac);
     PASS();
 }
 
@@ -261,27 +261,27 @@ TEST(ac_scan_lz4_bitmask) {
 TEST(ac_scan_lz4_batch) {
     const char *patterns[] = {"http.Get", "fetch(", "Route::get"};
     int lengths[] = {8, 6, 10};
-    CBMAutomaton *ac = cbm_ac_build(patterns, lengths, 3, NULL, 256);
+    HYPAutomaton *ac = hyp_ac_build(patterns, lengths, 3, NULL, 256);
     ASSERT_NOT_NULL(ac);
 
     /* Three files: one with http.Get, one empty, one with Route::get */
     const char *files[] = {"resp := http.Get(\"https://example.com\")",
                            "func main() { println(42) }",
                            "Route::get(\"/users\", \"UserController@index\")"};
-    CBMLz4Entry entries[3];
+    HYPLz4Entry entries[3];
     char *comp_bufs[3];
     for (int i = 0; i < 3; i++) {
         int slen = (int)strlen(files[i]);
-        int bound = cbm_lz4_bound(slen);
+        int bound = hyp_lz4_bound(slen);
         comp_bufs[i] = malloc(bound);
-        int clen = cbm_lz4_compress_hc(files[i], slen, comp_bufs[i], bound);
+        int clen = hyp_lz4_compress_hc(files[i], slen, comp_bufs[i], bound);
         entries[i].data = comp_bufs[i];
         entries[i].compressed_len = clen;
         entries[i].original_len = slen;
     }
 
-    CBMLz4Match matches[8];
-    int n = cbm_ac_scan_lz4_batch(ac, entries, 3, matches, 8);
+    HYPLz4Match matches[8];
+    int n = hyp_ac_scan_lz4_batch(ac, entries, 3, matches, 8);
     ASSERT_EQ(n, 2); /* files 0 and 2 */
     ASSERT_EQ(matches[0].file_index, 0);
     ASSERT(matches[0].bitmask & 1ULL); /* http.Get */
@@ -290,7 +290,7 @@ TEST(ac_scan_lz4_batch) {
 
     for (int i = 0; i < 3; i++)
         free(comp_bufs[i]);
-    cbm_ac_free(ac);
+    hyp_ac_free(ac);
     PASS();
 }
 
@@ -298,12 +298,12 @@ TEST(ac_scan_lz4_batch) {
 TEST(ac_scan_lz4_batch_empty) {
     const char *patterns[] = {"test"};
     int lengths[] = {4};
-    CBMAutomaton *ac = cbm_ac_build(patterns, lengths, 1, NULL, 256);
+    HYPAutomaton *ac = hyp_ac_build(patterns, lengths, 1, NULL, 256);
     ASSERT_NOT_NULL(ac);
-    CBMLz4Match matches[1];
-    int n = cbm_ac_scan_lz4_batch(ac, NULL, 0, matches, 1);
+    HYPLz4Match matches[1];
+    int n = hyp_ac_scan_lz4_batch(ac, NULL, 0, matches, 1);
     ASSERT_EQ(n, 0);
-    cbm_ac_free(ac);
+    hyp_ac_free(ac);
     PASS();
 }
 
@@ -331,9 +331,9 @@ TEST(ac_large_pattern_set) {
     for (int i = 0; i < count; i++)
         lengths[i] = (int)strlen(patterns[i]);
 
-    CBMAutomaton *ac = cbm_ac_build(patterns, lengths, count, NULL, 256);
+    HYPAutomaton *ac = hyp_ac_build(patterns, lengths, count, NULL, 256);
     ASSERT_NOT_NULL(ac);
-    ASSERT_GT(cbm_ac_num_states(ac), 0);
+    ASSERT_GT(hyp_ac_num_states(ac), 0);
 
     /* Scan Go source with http.Get and CreateTask */
     const char *source = "package main\nimport \"net/http\"\n"
@@ -341,7 +341,7 @@ TEST(ac_large_pattern_set) {
                          "    resp, _ := http.Get(\"https://api.example.com/data\")\n"
                          "    defer resp.Body.Close()\n}\n"
                          "func createTask() {\n    client.CreateTask(ctx, req)\n}\n";
-    uint64_t mask = cbm_ac_scan_bitmask(ac, source, (int)strlen(source));
+    uint64_t mask = hyp_ac_scan_bitmask(ac, source, (int)strlen(source));
     /* Find indices for http.Get and CreateTask */
     int http_get_idx = -1, create_task_idx = -1;
     for (int i = 0; i < count; i++) {
@@ -354,11 +354,11 @@ TEST(ac_large_pattern_set) {
     ASSERT(mask & (1ULL << create_task_idx));
 
     /* Non-matching source */
-    mask = cbm_ac_scan_bitmask(ac, "func main() { fmt.Println(42) }", 31);
+    mask = hyp_ac_scan_bitmask(ac, "func main() { fmt.Println(42) }", 31);
     ASSERT_EQ(mask, 0ULL);
 
     free(lengths);
-    cbm_ac_free(ac);
+    hyp_ac_free(ac);
     PASS();
 }
 
@@ -366,9 +366,9 @@ TEST(ac_large_pattern_set) {
 TEST(ac_http_patterns) {
     const char *patterns[] = {"http.Get", "fetch(", "requests.post", "axios."};
     int lengths[] = {8, 6, 13, 6};
-    CBMAutomaton *ac = cbm_ac_build(patterns, lengths, 4, NULL, 256);
+    HYPAutomaton *ac = hyp_ac_build(patterns, lengths, 4, NULL, 256);
     ASSERT_NOT_NULL(ac);
-    ASSERT_EQ(cbm_ac_num_patterns(ac), 4);
+    ASSERT_EQ(hyp_ac_num_patterns(ac), 4);
 
     struct {
         const char *input;
@@ -383,10 +383,10 @@ TEST(ac_http_patterns) {
         {"", 0},
     };
     for (int i = 0; i < 7; i++) {
-        uint64_t mask = cbm_ac_scan_bitmask(ac, tests[i].input, (int)strlen(tests[i].input));
+        uint64_t mask = hyp_ac_scan_bitmask(ac, tests[i].input, (int)strlen(tests[i].input));
         ASSERT_EQ(mask, tests[i].expected);
     }
-    cbm_ac_free(ac);
+    hyp_ac_free(ac);
     PASS();
 }
 
@@ -404,22 +404,22 @@ TEST(ac_compact_alphabet_extended) {
 
     const char *patterns[] = {"database_url", "api_key", "port"};
     int lengths[] = {12, 7, 4};
-    CBMAutomaton *ac = cbm_ac_build(patterns, lengths, 3, alpha_map, alpha_size);
+    HYPAutomaton *ac = hyp_ac_build(patterns, lengths, 3, alpha_map, alpha_size);
     ASSERT_NOT_NULL(ac);
 
     /* Exact match */
-    uint64_t mask = cbm_ac_scan_bitmask(ac, "database_url", 12);
+    uint64_t mask = hyp_ac_scan_bitmask(ac, "database_url", 12);
     ASSERT(mask & 1ULL);
 
     /* Substring match */
-    mask = cbm_ac_scan_bitmask(ac, "my_database_url_setting", 23);
+    mask = hyp_ac_scan_bitmask(ac, "my_database_url_setting", 23);
     ASSERT(mask & 1ULL);
 
     /* Verify table size = states * alpha_size * sizeof(int) */
-    int table_bytes = cbm_ac_table_bytes(ac);
-    ASSERT_EQ(table_bytes, cbm_ac_num_states(ac) * alpha_size * 4);
+    int table_bytes = hyp_ac_table_bytes(ac);
+    ASSERT_EQ(table_bytes, hyp_ac_num_states(ac) * alpha_size * 4);
 
-    cbm_ac_free(ac);
+    hyp_ac_free(ac);
     PASS();
 }
 
@@ -427,7 +427,7 @@ TEST(ac_compact_alphabet_extended) {
 TEST(ac_batch_scan_detailed) {
     const char *patterns[] = {"database", "port", "host"};
     int lengths[] = {8, 4, 4};
-    CBMAutomaton *ac = cbm_ac_build(patterns, lengths, 3, NULL, 256);
+    HYPAutomaton *ac = hyp_ac_build(patterns, lengths, 3, NULL, 256);
     ASSERT_NOT_NULL(ac);
 
     /* 5 names: database_url, server_port, api_key, database_host, max_retries */
@@ -435,8 +435,8 @@ TEST(ac_batch_scan_detailed) {
     int offsets[] = {0, 13, 25, 33, 47};
     int lens[] = {12, 11, 7, 13, 11};
 
-    CBMMatchResult matches[16];
-    int n = cbm_ac_scan_batch(ac, names_buf, offsets, lens, 5, matches, 16);
+    HYPMatchResult matches[16];
+    int n = hyp_ac_scan_batch(ac, names_buf, offsets, lens, 5, matches, 16);
 
     /* Expect:
      *   name 0 (database_url) → pattern 0 (database)
@@ -464,7 +464,7 @@ TEST(ac_batch_scan_detailed) {
     ASSERT_TRUE(found_name3_db);
     ASSERT_TRUE(found_name3_host);
 
-    cbm_ac_free(ac);
+    hyp_ac_free(ac);
     PASS();
 }
 

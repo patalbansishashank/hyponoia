@@ -31,7 +31,7 @@ typedef struct {
     bool rooted;   /* contains / (anchored to root) */
 } gi_pattern_t;
 
-struct cbm_gitignore {
+struct hyp_gitignore {
     gi_pattern_t *patterns;
     int count;
     int capacity;
@@ -41,7 +41,7 @@ struct cbm_gitignore {
 
 /* Backtracking budget. `**` retries the remainder at every position, and
  * consecutive literal + `**` groups multiply, so cost is exponential in the
- * number of groups. Patterns come from a committed .gitignore / .cbmignore and
+ * number of groups. Patterns come from a committed .gitignore / .hypignore and
  * every discovered path is matched against every pattern, so a small ignore file
  * can make discovery take unbounded time. Cap the match steps per
  * (pattern, path) pair.
@@ -200,7 +200,7 @@ static bool glob_match_bounded(const char *pat, const char *str) {
 
 /* ── Pattern parsing ─────────────────────────────────────────────── */
 
-static void gi_add_pattern(cbm_gitignore_t *gi, const char *line, int len) {
+static void gi_add_pattern(hyp_gitignore_t *gi, const char *line, int len) {
     /* Trim trailing whitespace */
     while (len > 0 && (line[len - SKIP_ONE] == ' ' || line[len - SKIP_ONE] == '\t' ||
                        line[len - SKIP_ONE] == '\r')) {
@@ -280,12 +280,12 @@ static void gi_add_pattern(cbm_gitignore_t *gi, const char *line, int len) {
 
 /* ── Public API ──────────────────────────────────────────────────── */
 
-cbm_gitignore_t *cbm_gitignore_parse(const char *content) {
+hyp_gitignore_t *hyp_gitignore_parse(const char *content) {
     if (!content) {
         return NULL;
     }
 
-    cbm_gitignore_t *gi = calloc(CBM_ALLOC_ONE, sizeof(cbm_gitignore_t));
+    hyp_gitignore_t *gi = calloc(HYP_ALLOC_ONE, sizeof(hyp_gitignore_t));
     if (!gi) {
         return NULL;
     }
@@ -310,12 +310,12 @@ cbm_gitignore_t *cbm_gitignore_parse(const char *content) {
     return gi;
 }
 
-cbm_gitignore_t *cbm_gitignore_load(const char *path) {
+hyp_gitignore_t *hyp_gitignore_load(const char *path) {
     if (!path) {
         return NULL;
     }
 
-    FILE *f = cbm_fopen(path, "r");
+    FILE *f = hyp_fopen(path, "r");
     if (!f) {
         return NULL;
     }
@@ -327,7 +327,7 @@ cbm_gitignore_t *cbm_gitignore_load(const char *path) {
 
     if (size <= 0) {
         (void)fclose(f);
-        return cbm_gitignore_parse("");
+        return hyp_gitignore_parse("");
     }
 
     char *buf = malloc(size + SKIP_ONE);
@@ -340,7 +340,7 @@ cbm_gitignore_t *cbm_gitignore_load(const char *path) {
     buf[n] = '\0';
     (void)fclose(f);
 
-    cbm_gitignore_t *gi = cbm_gitignore_parse(buf);
+    hyp_gitignore_t *gi = hyp_gitignore_parse(buf);
     free(buf);
     return gi;
 }
@@ -368,7 +368,7 @@ static bool match_unrooted(const char *pattern, const char *rel_path, const char
     return false;
 }
 
-int cbm_gitignore_match_result(const cbm_gitignore_t *gi, const char *rel_path, bool is_dir) {
+int hyp_gitignore_match_result(const hyp_gitignore_t *gi, const char *rel_path, bool is_dir) {
     if (!gi || !rel_path) {
         return 0;
     }
@@ -397,11 +397,11 @@ int cbm_gitignore_match_result(const cbm_gitignore_t *gi, const char *rel_path, 
     return matched;
 }
 
-bool cbm_gitignore_matches(const cbm_gitignore_t *gi, const char *rel_path, bool is_dir) {
-    return cbm_gitignore_match_result(gi, rel_path, is_dir) > 0;
+bool hyp_gitignore_matches(const hyp_gitignore_t *gi, const char *rel_path, bool is_dir) {
+    return hyp_gitignore_match_result(gi, rel_path, is_dir) > 0;
 }
 
-void cbm_gitignore_free(cbm_gitignore_t *gi) {
+void hyp_gitignore_free(hyp_gitignore_t *gi) {
     if (!gi) {
         return;
     }
@@ -414,9 +414,9 @@ void cbm_gitignore_free(cbm_gitignore_t *gi) {
 
 /* Test seam: lets a unit test simulate strdup() failure mid-merge so the
  * atomic-rollback path can be exercised without real OOM. NULL = use strdup. */
-char *(*cbm_gitignore_merge_dup_hook_for_test)(const char *) = NULL;
+char *(*hyp_gitignore_merge_dup_hook_for_test)(const char *) = NULL;
 
-bool cbm_gitignore_merge(cbm_gitignore_t *dst, const cbm_gitignore_t *src) {
+bool hyp_gitignore_merge(hyp_gitignore_t *dst, const hyp_gitignore_t *src) {
     if (!dst) {
         return false;
     }
@@ -434,8 +434,8 @@ bool cbm_gitignore_merge(cbm_gitignore_t *dst, const cbm_gitignore_t *src) {
     }
     int start_count = dst->count;
     for (int i = 0; i < src->count; i++) {
-        char *pat = cbm_gitignore_merge_dup_hook_for_test
-                        ? cbm_gitignore_merge_dup_hook_for_test(src->patterns[i].pattern)
+        char *pat = hyp_gitignore_merge_dup_hook_for_test
+                        ? hyp_gitignore_merge_dup_hook_for_test(src->patterns[i].pattern)
                         : strdup(src->patterns[i].pattern);
         if (!pat) {
             /* Roll back partial copies so dst is unchanged on failure (atomic

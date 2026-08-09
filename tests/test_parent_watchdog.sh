@@ -11,7 +11,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-BINARY="${CBM_TEST_BINARY:-${ROOT}/build/c/codebase-memory-mcp}"
+BINARY="${HYP_TEST_BINARY:-${ROOT}/build/c/hyponoia}"
 
 case "$(uname -s)" in
   MINGW*|MSYS*|CYGWIN*)
@@ -44,14 +44,14 @@ cat >"${tmpdir}/wrapper.sh" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
 exec 3<>"${FIFO}"
-"${CBM_BINARY}" <&3 >"${TMPDIR_PATH}/child.out" 2>"${TMPDIR_PATH}/child.err" &
+"${HYP_BINARY}" <&3 >"${TMPDIR_PATH}/child.out" 2>"${TMPDIR_PATH}/child.err" &
 echo "$!" >"${TMPDIR_PATH}/child.pid"
 wait
 SH
 chmod +x "${tmpdir}/wrapper.sh"
 mkfifo "${tmpdir}/stdin"
 
-CBM_BINARY="${BINARY}" FIFO="${tmpdir}/stdin" TMPDIR_PATH="${tmpdir}" \
+HYP_BINARY="${BINARY}" FIFO="${tmpdir}/stdin" TMPDIR_PATH="${tmpdir}" \
   "${tmpdir}/wrapper.sh" &
 wrapper_pid=$!
 
@@ -114,6 +114,6 @@ while (( SECONDS < deadline )); do
   sleep 0.2
 done
 
-echo "codebase-memory-mcp child ${child_pid} survived parent death" >&2
+echo "hyponoia child ${child_pid} survived parent death" >&2
 [[ -s "${tmpdir}/child.err" ]] && cat "${tmpdir}/child.err" >&2
 exit 1

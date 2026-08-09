@@ -8,9 +8,9 @@ command -v python3 >/dev/null 2>&1 || {
     exit 1
 }
 # Reproducibility: every payload derives from a logged seed, so any crash is
-# re-runnable by construction (CBM_FUZZ_SEED overrides for replay).
-FUZZ_SEED="${CBM_FUZZ_SEED:-$$}"
-echo "fuzz seed: $FUZZ_SEED (replay: CBM_FUZZ_SEED=$FUZZ_SEED)"
+# re-runnable by construction (HYP_FUZZ_SEED overrides for replay).
+FUZZ_SEED="${HYP_FUZZ_SEED:-$$}"
+echo "fuzz seed: $FUZZ_SEED (replay: HYP_FUZZ_SEED=$FUZZ_SEED)"
 
 # Fuzz testing: feeds random/mutated inputs to the MCP server and CLI
 # to find crashes, hangs, and memory errors. Runs for a limited time.

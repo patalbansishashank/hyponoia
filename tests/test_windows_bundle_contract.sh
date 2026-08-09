@@ -3,8 +3,8 @@
 # authenticated runtime assets.
 #
 # History this guards against. The Windows release used to be a PAIR — a small
-# permanent launcher (codebase-memory-mcp.exe) plus the real product binary
-# (codebase-memory-mcp.payload.exe). The launcher existed for exactly one
+# permanent launcher (hyponoia.exe) plus the real product binary
+# (hyponoia.payload.exe). The launcher existed for exactly one
 # reason: a running .exe cannot replace its own image on Windows, so an
 # in-process self-update needs a second resident binary to do the swap.
 #
@@ -71,16 +71,16 @@ def yaml_run_blocks(text: str) -> list[str]:
     return blocks
 
 
-binary = "codebase-memory-mcp.exe"
-payload = "codebase-memory-mcp.payload.exe"
-# cbm-integrations.json: the integration templates the binary verifies by its
+binary = "hyponoia.exe"
+payload = "hyponoia.payload.exe"
+# hyp-integrations.json: the integration templates the binary verifies by its
 # embedded SHA-256 before installing anything. install.ps1 runs `install` from
 # the extract dir, so the file must sit NEXT TO the .exe or every install
 # fails closed with "integration assets missing or modified".
 windows_archive_names = (
-    binary, "cbm-integrations.json", "LICENSE", "install.ps1", "THIRD_PARTY_NOTICES.md",
+    binary, "hyp-integrations.json", "LICENSE", "install.ps1", "THIRD_PARTY_NOTICES.md",
 )
-ui_pack_pattern = r"cbm-ui-[0-9a-f]{64}\.pack"
+ui_pack_pattern = r"hyp-ui-[0-9a-f]{64}\.pack"
 
 # ── 1. Standard is five files; UI adds exactly one root pack ────────────────
 # Every venue (release build, local artifact-flow smoke) produces archives
@@ -97,7 +97,7 @@ require(
 )
 require(
     package_release.count('ARCHIVE_MEMBERS+=("$UI_PACK_NAME")') == 2
-    and "^cbm-ui-[0-9a-f]{64}\\.pack$" in package_release,
+    and "^hyp-ui-[0-9a-f]{64}\\.pack$" in package_release,
     "package-release.sh must append exactly one hash-shaped root pack only to UI archives",
 )
 
@@ -107,7 +107,7 @@ require(
 # of a launcher build/copy) means the flagged two-binary design is back.
 launcher_markers = (
     payload,
-    "codebase-memory-mcp-launcher",
+    "hyponoia-launcher",
     "windows_launcher_state",
     "src/launcher/",
 )
@@ -116,7 +116,7 @@ shipped_surfaces = (
     "install.ps1",
     "pkg/npm/install.js",
     "pkg/npm/bin.js",
-    "pkg/pypi/src/codebase_memory_mcp/_cli.py",
+    "pkg/pypi/src/hyponoia/_cli.py",
     ".github/workflows/_build.yml",
 )
 for relative in shipped_surfaces:
@@ -141,19 +141,19 @@ for relative in (
         not (root / relative).exists(),
         f"{relative} must stay deleted — the Windows launcher stub is gone for good",
     )
-makefile = read("Makefile.cbm")
+makefile = read("Makefile.hyp")
 require(
-    "codebase-memory-mcp-launcher" not in makefile and "WINDOWS_LAUNCHER" not in makefile,
-    "Makefile.cbm must not expose a Windows launcher target or variable",
+    "hyponoia-launcher" not in makefile and "WINDOWS_LAUNCHER" not in makefile,
+    "Makefile.hyp must not expose a Windows launcher target or variable",
 )
 
 # The single shipped Windows runtime is UI-enabled and is produced through the
 # ONE canonical packaging entry, so the six-file layout above governs it.
 build_workflow = read(".github/workflows/_build.yml")
 for archive, call in (
-    ("codebase-memory-mcp-ui-windows-amd64.zip",
+    ("hyponoia-ui-windows-amd64.zip",
      "scripts/package-release.sh windows amd64 --variant ui"),
-    ("codebase-memory-mcp-ui-windows-arm64.zip",
+    ("hyponoia-ui-windows-arm64.zip",
      "scripts/package-release.sh windows arm64 --variant ui"),
 ):
     require(
@@ -199,10 +199,10 @@ require(
     "install.ps1 must not retire, delete, or stop the installed executable before candidate install",
 )
 require(
-    "Publish-CbmSidecarAtomically" not in installer
+    "Publish-HypSidecarAtomically" not in installer
     and "$AssetDest" not in installer
     and "$packDestination" not in installer
-    and 'Get-ChildItem -LiteralPath $InstallDir -Filter "cbm-ui-*.pack"' not in installer,
+    and 'Get-ChildItem -LiteralPath $InstallDir -Filter "hyp-ui-*.pack"' not in installer,
     "install.ps1 must not publish or garbage-collect runtime sidecars outside the native guard",
 )
 
@@ -211,7 +211,7 @@ require(
 # the reservation to this directory specifically; the updater-file publisher
 # below has a separate exclusive-sibling helper.
 temp_dir_factory = re.search(
-    r"function\s+New-CbmExclusiveTempDirectory\s*\{(?P<body>.*?)\n\}\s*\n\s*# Detect variant",
+    r"function\s+New-HypExclusiveTempDirectory\s*\{(?P<body>.*?)\n\}\s*\n\s*# Detect variant",
     installer,
     re.DOTALL,
 )
@@ -229,9 +229,9 @@ require(
     "collision retries, never adopt or pre-clean an existing path",
 )
 require(
-    "$TmpDir = New-CbmExclusiveTempDirectory -ParentDirectory "
+    "$TmpDir = New-HypExclusiveTempDirectory -ParentDirectory "
     "([System.IO.Path]::GetTempPath())" in installer
-    and '"cbm-install-$(Get-Random)"' not in installer
+    and '"hyp-install-$(Get-Random)"' not in installer
     and "New-Item -ItemType Directory -Path $TmpDir -Force" not in installer,
     "install.ps1 must clean up only the temporary directory it successfully reserved",
 )
@@ -249,16 +249,16 @@ require(
 # ── 4. Package-manager shims resolve the single Windows binary ───────────────
 single_binary_contracts = {
     "pkg/npm/install.js": (
-        r"const\s+WINDOWS_BINARY_NAME\s*=\s*['\"]codebase-memory-mcp\.exe['\"]",
+        r"const\s+WINDOWS_BINARY_NAME\s*=\s*['\"]hyponoia\.exe['\"]",
         r"publishRuntimeSetWithRecovery\(",
         r"runtimeSetReady\(",
     ),
     "pkg/npm/bin.js": (
-        r"binName\s*=\s*isWindows\s*\?\s*['\"]codebase-memory-mcp\.exe['\"]",
+        r"binName\s*=\s*isWindows\s*\?\s*['\"]hyponoia\.exe['\"]",
         r"const\s+executionPath\s*=\s*binPath",
     ),
-    "pkg/pypi/src/codebase_memory_mcp/_cli.py": (
-        r"_WINDOWS_BINARY_NAME\s*=\s*['\"]codebase-memory-mcp\.exe['\"]",
+    "pkg/pypi/src/hyponoia/_cli.py": (
+        r"_WINDOWS_BINARY_NAME\s*=\s*['\"]hyponoia\.exe['\"]",
         r"def\s+_runtime_set_ready\(",
         r"def\s+_publish_runtime_set\(",
     ),
@@ -270,7 +270,7 @@ for relative, patterns in single_binary_contracts.items():
         f"{relative} must resolve the single Windows binary",
     )
     require(
-        ".cbm/generations" not in source and "current-v1" not in source,
+        ".hyp/generations" not in source and "current-v1" not in source,
         f"{relative} must remain portable and not own managed launcher state",
     )
 
@@ -294,7 +294,7 @@ exact_archive_guards = {
         "'install.ps1'",
         "THIRD_PARTY_NOTICES.md",
     ),
-    "pkg/pypi/src/codebase_memory_mcp/_cli.py": (
+    "pkg/pypi/src/hyponoia/_cli.py": (
         "name not in required_set",
         "len(seen) != expected_count",
         "_UI_PACK_RE",
@@ -315,13 +315,13 @@ for relative, needles in exact_archive_guards.items():
 # A portable mutation refusal must point to the owning package manager.
 guidance_contracts = {
     "pkg/npm/bin.js": (
-        "npm install codebase-memory-mcp@latest",
-        "npm uninstall codebase-memory-mcp",
-        "codebase-memory-mcp install --yes",
+        "npm install hyponoia@latest",
+        "npm uninstall hyponoia",
+        "hyponoia install --yes",
     ),
-    "pkg/pypi/src/codebase_memory_mcp/_cli.py": (
-        "python -m pip install --upgrade codebase-memory-mcp",
-        "python -m pip uninstall codebase-memory-mcp",
+    "pkg/pypi/src/hyponoia/_cli.py": (
+        "python -m pip install --upgrade hyponoia",
+        "python -m pip uninstall hyponoia",
         "install --yes",
     ),
 }
@@ -365,7 +365,7 @@ require(
         for needle in (
             "[Environment+SpecialFolder]::UserProfile",
             '$guardRoot = Join-Path $userProfile '
-            '("cbm-windows-guards-root-" + [guid]::NewGuid().ToString("N"))',
+            '("hyp-windows-guards-root-" + [guid]::NewGuid().ToString("N"))',
             '$env:TEMP = $guardRoot',
             '$env:TMP = $guardRoot',
             '$env:TMPDIR = $guardRoot',
@@ -424,7 +424,7 @@ require(
             '"install.ps1" in lowered',
             "result.returncode == 0",
             "sha256_file(binary) == before",
-            "codebase-memory-mcp.payload.exe",
+            "hyponoia.payload.exe",
         )
     ),
     "the native update guard must assert exit 0, the printed install.ps1 command, an "
@@ -516,7 +516,7 @@ for relative, source in (
         f"{relative} must not disable SSH server identity verification",
     )
     require(
-        "CBM_VM_HOST_KEY_SHA256" in source,
+        "HYP_VM_HOST_KEY_SHA256" in source,
         f"{relative} must require the pinned VM SSH host-key fingerprint",
     )
 require(
@@ -536,7 +536,7 @@ require(
 )
 require(
     "mac-vm)" not in read("test-infrastructure/run.sh")
-    and "CBM_WIN_VM_SSH" not in read("test-infrastructure/run.sh"),
+    and "HYP_WIN_VM_SSH" not in read("test-infrastructure/run.sh"),
     "run.sh must not retain duplicate mutable VM drivers outside vm/win.sh",
 )
 
@@ -560,7 +560,7 @@ sync_case = re.search(r"^sync\)\n(?P<body>.*?)^\s*;;", vm_driver, re.MULTILINE |
 require(sync_case is not None, "win.sh must expose an exact local-worktree sync command")
 require(
     sync_case is not None
-    and "cbm_vm_write_untracked_manifest" in sync_case.group("body")
+    and "hyp_vm_write_untracked_manifest" in sync_case.group("body")
     and 'git -C "$ROOT" diff --binary' in sync_case.group("body")
     and "git reset --hard" in sync_case.group("body")
     and "git clean -fdx" in sync_case.group("body")
@@ -582,7 +582,7 @@ require(
     sync_case is not None
     # Assert the PROPERTY, not one spelling of it: capture the remote HEAD into
     # a local variable and compare it here. The checkout path became a variable
-    # (per-run isolation), so pinning the literal `/c/cbm` was asserting the
+    # (per-run isolation), so pinning the literal `/c/hyp` was asserting the
     # implementation rather than the contract it exists to protect.
     and re.search(
         r'remote_head="\$\(vm clangarm64 "cd \S+ && git rev-parse --verify HEAD"\)"',
@@ -603,12 +603,12 @@ require(bool(windows_smoke), "_smoke.yml must contain the smoke-windows job")
 vm_smoke = read("test-infrastructure/vm/vm-smoke.sh")
 smoke_local = read("scripts/smoke-local.sh")
 require(
-    'scripts/smoke-test.sh "$SMOKE_DIR/codebase-memory-mcp.exe"' in vm_smoke,
+    'scripts/smoke-test.sh "$SMOKE_DIR/hyponoia.exe"' in vm_smoke,
     f"Windows smoke wrapper must execute the canonical {binary}",
 )
 require(
     "bash test-infrastructure/vm/vm-smoke.sh" in windows_smoke
-    and 'CBM_SMOKE_ARTIFACT_DIR="$(cygpath -u "$RUNNER_TEMP")/cbm-artifact"' in windows_smoke,
+    and 'HYP_SMOKE_ARTIFACT_DIR="$(cygpath -u "$RUNNER_TEMP")/hyp-artifact"' in windows_smoke,
     "Windows release smoke must call the canonical wrapper on the extracted artifact",
 )
 require(
@@ -620,9 +620,9 @@ require(
         needle in vm_smoke
         for needle in (
             'PROFILE_ROOT="$(cygpath -u "$USERPROFILE")"',
-            'SMOKE_DIR="$(mktemp -d "$PROFILE_ROOT/cbm-vm-smoke.XXXXXX")"',
-            'cp "$BINARY_SRC" "$SMOKE_DIR/codebase-memory-mcp.exe"',
-            'CBM_CACHE_DIR="$(cygpath -m "$SMOKE_DIR/cache")"',
+            'SMOKE_DIR="$(mktemp -d "$PROFILE_ROOT/hyp-vm-smoke.XXXXXX")"',
+            'cp "$BINARY_SRC" "$SMOKE_DIR/hyponoia.exe"',
+            'HYP_CACHE_DIR="$(cygpath -m "$SMOKE_DIR/cache")"',
             'SMOKE_TEMP_ROOT="$SMOKE_DIR"',
         )
     ),
@@ -632,7 +632,7 @@ smoke_blocks = yaml_run_blocks(windows_smoke)
 windows_release_version_blocks = [
     re.sub(r"\s+", " ", re.sub(r"\\\s*\n\s*", " ", block)).strip()
     for block in smoke_blocks
-    if 'LAUNCH_DIR="$(mktemp -d "$PROFILE_ROOT/cbm-release-version.XXXXXX")"' in block
+    if 'LAUNCH_DIR="$(mktemp -d "$PROFILE_ROOT/hyp-release-version.XXXXXX")"' in block
 ]
 require(
     len(windows_release_version_blocks) == 1
@@ -640,8 +640,8 @@ require(
         needle in windows_release_version_blocks[0]
         for needle in (
             'PROFILE_ROOT="$(cygpath -u "$USERPROFILE")"',
-            'cp "$ARTIFACT_DIR/codebase-memory-mcp.exe" "$LAUNCH_DIR/"',
-            '"$LAUNCH_DIR/codebase-memory-mcp.exe" --version',
+            'cp "$ARTIFACT_DIR/hyponoia.exe" "$LAUNCH_DIR/"',
+            '"$LAUNCH_DIR/hyponoia.exe" --version',
         )
     ),
     "Windows release version checks must execute the runtime set's one executable beneath the current "
@@ -650,8 +650,8 @@ require(
 # RUNNER_TEMP is legitimate ONLY for artifact provisioning/scanning; every
 # executable fixture and execution must stay beneath the account profile.
 runner_temp_allowed = (
-    re.compile(r'ARTIFACT_DIR="\$\(cygpath -u "\$RUNNER_TEMP"\)/cbm-artifact"'),
-    re.compile(r'Join-Path \$env:RUNNER_TEMP "cbm-artifact"'),
+    re.compile(r'ARTIFACT_DIR="\$\(cygpath -u "\$RUNNER_TEMP"\)/hyp-artifact"'),
+    re.compile(r'Join-Path \$env:RUNNER_TEMP "hyp-artifact"'),
 )
 runner_temp_lines = [line.strip() for line in windows_smoke.splitlines() if "RUNNER_TEMP" in line]
 require(
@@ -667,7 +667,7 @@ require(
 windows_release_security_blocks = [
     re.sub(r"\s+", " ", re.sub(r"\\\s*\n\s*", " ", block)).strip()
     for block in smoke_blocks
-    if 'scripts/security-install.sh "$SECURITY_DIR/codebase-memory-mcp.exe"' in block
+    if 'scripts/security-install.sh "$SECURITY_DIR/hyponoia.exe"' in block
 ]
 require(
     len(windows_release_security_blocks) == 1
@@ -675,10 +675,10 @@ require(
         needle in windows_release_security_blocks[0]
         for needle in (
             'PROFILE_ROOT="$(cygpath -u "$USERPROFILE")"',
-            'SECURITY_DIR="$(mktemp -d "$PROFILE_ROOT/cbm-release-security.XXXXXX")"',
-            'cp "$ARTIFACT_DIR/codebase-memory-mcp.exe" "$SECURITY_DIR/"',
+            'SECURITY_DIR="$(mktemp -d "$PROFILE_ROOT/hyp-release-security.XXXXXX")"',
+            'cp "$ARTIFACT_DIR/hyponoia.exe" "$SECURITY_DIR/"',
             'TMPDIR="$SECURITY_DIR" '
-            'scripts/security-install.sh "$SECURITY_DIR/codebase-memory-mcp.exe"',
+            'scripts/security-install.sh "$SECURITY_DIR/hyponoia.exe"',
         )
     ),
     "Windows release install audit must execute the runtime set's one executable beneath the current "
@@ -688,8 +688,8 @@ require(
 # ── 9. Update transport stays HTTPS-only in production ───────────────────────
 smoke_script = read("scripts/smoke-test.sh")
 require(
-    'copy_smoke_binary "$FAKE_HOME/.local/bin/codebase-memory-mcp.exe"' not in smoke_script
-    and 'copy_smoke_binary "$UPDATE_HOME/.local/bin/codebase-memory-mcp.exe"' in smoke_script
+    'copy_smoke_binary "$FAKE_HOME/.local/bin/hyponoia.exe"' not in smoke_script
+    and 'copy_smoke_binary "$UPDATE_HOME/.local/bin/hyponoia.exe"' in smoke_script
     and 'cp "$SMOKE_UI_PACK" "$(dirname "$destination")/$(basename "$SMOKE_UI_PACK")"'
     in smoke_script,
     "Windows smoke must leave the authenticated-install target absent while staging the complete "
@@ -705,7 +705,7 @@ require(
     "SMOKE_UPDATE_FIXTURE_DIR" in smoke_script
     and 'UPDATE_DOWNLOAD_URL="file://$UPDATE_FIXTURE_DIR"' in smoke_script
     and 'UPDATE_DOWNLOAD_URL="file:///$UPDATE_FIXTURE_DIR"' in smoke_script
-    and 'CBM_DOWNLOAD_URL="$UPDATE_DOWNLOAD_URL"' in smoke_script,
+    and 'HYP_DOWNLOAD_URL="$UPDATE_DOWNLOAD_URL"' in smoke_script,
     "Phase 14 native update must use an explicit file:// fixture override",
 )
 # The handoff contract is no longer Windows-specific: no platform replaces its
@@ -727,7 +727,7 @@ require(
     "Windows install.ps1 smoke must pass native HOME/TEMP/TMP and execute the script directly",
 )
 require(
-    'CBM_DOWNLOAD_URL="$SMOKE_DOWNLOAD_URL"' in smoke_script
+    'HYP_DOWNLOAD_URL="$SMOKE_DOWNLOAD_URL"' in smoke_script
     and '"$SMOKE_DOWNLOAD_URL/$DL_ARCHIVE"' in smoke_script,
     "installer and raw download smoke phases must retain loopback HTTP coverage",
 )
@@ -735,13 +735,13 @@ require(
     'SMOKE_UPDATE_FIXTURE_DIR="$FIXTURE_DIR"' in vm_smoke
     and 'SMOKE_UPDATE_FIXTURE_DIR="$FIXTURE_DIR"' in smoke_local
     and "scripts/smoke-local.sh" in smoke_workflow
-    and smoke_workflow.count("CBM_SMOKE_ARTIFACT_DIR") >= 2,
+    and smoke_workflow.count("HYP_SMOKE_ARTIFACT_DIR") >= 2,
     "Unix and Windows release smoke must identify their local update fixture via the "
     "canonical wrappers",
 )
 
 cli_source = read("src/cli/cli.c")
-probe_start = cli_source.find("cbm_json_mcp_probe_windows_command_path(")
+probe_start = cli_source.find("hyp_json_mcp_probe_windows_command_path(")
 probe_end = cli_source.find("#endif", probe_start)
 safe_command_probe = (
     cli_source[probe_start:probe_end] if probe_start >= 0 and probe_end > probe_start else ""
@@ -764,7 +764,7 @@ protocol_match = re.search(
 file_override = file_override_match.group(0) if file_override_match else ""
 protocol = protocol_match.group(0) if protocol_match else ""
 require(
-    re.search(r'cbm_safe_getenv\s*\(\s*"CBM_DOWNLOAD_URL"', file_override) is not None
+    re.search(r'hyp_safe_getenv\s*\(\s*"HYP_DOWNLOAD_URL"', file_override) is not None
     and 'strncmp(override, "file://", 7)' in file_override
     and "strncmp(url, override, override_length)" in file_override,
     "file:// downloads must remain restricted to the explicit test override",
@@ -778,7 +778,7 @@ require(
     "production native downloads must remain HTTPS-only",
 )
 download_helpers = cli_source[
-    cli_source.find("static int cbm_download_to_file(") : cli_source.find("/* ── macOS ad-hoc signing")
+    cli_source.find("static int hyp_download_to_file(") : cli_source.find("/* ── macOS ad-hoc signing")
 ]
 require(
     download_helpers.count('"--proto"') >= 2 and download_helpers.count('"--proto-redir"') >= 2,
@@ -787,7 +787,7 @@ require(
 
 # The Windows `update` command must hand off to install.ps1 and must NOT carry
 # an in-process self-update path (which is what required the launcher stub).
-update_start = cli_source.find("int cbm_cmd_update(int argc, char **argv) {")
+update_start = cli_source.find("int hyp_cmd_update(int argc, char **argv) {")
 update_end = cli_source.find("\n/* ── ", update_start)
 update_windows_block = (
     cli_source[update_start : update_end if update_end > update_start else len(cli_source)]
@@ -796,7 +796,7 @@ require(
     update_start >= 0
     and "install.ps1" in update_windows_block
     and "powershell -File" in update_windows_block,
-    "cbm_cmd_update must print the install.ps1 command on Windows",
+    "hyp_cmd_update must print the install.ps1 command on Windows",
 )
 # The printed command must NOT carry an execution-policy override. That is a
 # canonical malicious-loader pattern, and emitting it as a string literal put
@@ -806,11 +806,11 @@ require(
 # Unblock-File covers the common case and the README covers the rest.
 require(
     "ExecutionPolicy" not in update_windows_block,
-    "cbm_cmd_update must not print an execution-policy override "
+    "hyp_cmd_update must not print an execution-policy override "
     "(document it instead of shipping the pattern in the binary)",
 )
 require(
-    "cbm_windows_launcher" not in cli_source
+    "hyp_windows_launcher" not in cli_source
     and "windows_launcher_state.h" not in cli_source,
     "src/cli/cli.c must not retain any launcher-state API usage",
 )

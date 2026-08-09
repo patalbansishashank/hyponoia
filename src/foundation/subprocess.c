@@ -5,10 +5,10 @@
  */
 #include "subprocess.h"
 
-#include "compat.h" /* cbm_nanosleep */
+#include "compat.h" /* hyp_nanosleep */
 #include "compat_fs.h"
 #include "log.h"
-#include "platform.h" /* cbm_now_ms */
+#include "platform.h" /* hyp_now_ms */
 
 #include <stdio.h>
 #include <stdatomic.h>
@@ -17,7 +17,7 @@
 
 #ifdef _WIN32
 #include <windows.h>
-#include "win_utf8.h" /* cbm_utf8_to_wide — spawn the worker with a wide command line so a
+#include "win_utf8.h" /* hyp_utf8_to_wide — spawn the worker with a wide command line so a
                        * non-ASCII repo path survives CreateProcess (#423/#20) */
 #include <stdlib.h>   /* free */
 #else
@@ -36,11 +36,11 @@ extern char **environ;
 /* NTSTATUS severity ERROR (top two bits set) covers the Windows crash exception
  * exit codes: 0xC0000005 (access violation), 0xC00000FD (stack overflow),
  * 0xC000001D (illegal instruction), 0xC0000094 (integer divide by zero), … */
-#define CBM_WIN_CRASH_CODE_MIN 0xC0000000u
-#define CBM_WIN_CONTROL_C_EXIT 0xC000013Au
+#define HYP_WIN_CRASH_CODE_MIN 0xC0000000u
+#define HYP_WIN_CONTROL_C_EXIT 0xC000013Au
 
 #ifndef _WIN32
-static bool cbm_is_fault_signal(int sig) {
+static bool hyp_is_fault_signal(int sig) {
     switch (sig) {
     case SIGSEGV:
     case SIGBUS:
@@ -55,73 +55,73 @@ static bool cbm_is_fault_signal(int sig) {
 }
 #endif
 
-cbm_proc_outcome_t cbm_proc_classify(bool exited_normally, int exit_code, int term_signal,
+hyp_proc_outcome_t hyp_proc_classify(bool exited_normally, int exit_code, int term_signal,
                                      bool timed_out) {
     if (timed_out) {
-        return CBM_PROC_HANG;
+        return HYP_PROC_HANG;
     }
     if (!exited_normally) {
         /* POSIX signal death. */
 #ifndef _WIN32
-        if (cbm_is_fault_signal(term_signal)) {
-            return CBM_PROC_CRASH;
+        if (hyp_is_fault_signal(term_signal)) {
+            return HYP_PROC_CRASH;
         }
 #else
         (void)term_signal;
 #endif
-        return CBM_PROC_KILLED;
+        return HYP_PROC_KILLED;
     }
     /* Exited with a code. A Windows NTSTATUS exception code is a crash; on POSIX
      * exit codes are 0..255 so this branch never misfires there. */
-    if ((unsigned)exit_code == CBM_WIN_CONTROL_C_EXIT) {
-        return CBM_PROC_KILLED;
+    if ((unsigned)exit_code == HYP_WIN_CONTROL_C_EXIT) {
+        return HYP_PROC_KILLED;
     }
-    if ((unsigned)exit_code >= CBM_WIN_CRASH_CODE_MIN) {
-        return CBM_PROC_CRASH;
+    if ((unsigned)exit_code >= HYP_WIN_CRASH_CODE_MIN) {
+        return HYP_PROC_CRASH;
     }
-    return (exit_code == 0) ? CBM_PROC_CLEAN : CBM_PROC_EXIT_NONZERO;
+    return (exit_code == 0) ? HYP_PROC_CLEAN : HYP_PROC_EXIT_NONZERO;
 }
 
-const char *cbm_proc_outcome_str(cbm_proc_outcome_t o) {
+const char *hyp_proc_outcome_str(hyp_proc_outcome_t o) {
     switch (o) {
-    case CBM_PROC_CLEAN:
+    case HYP_PROC_CLEAN:
         return "clean";
-    case CBM_PROC_EXIT_NONZERO:
+    case HYP_PROC_EXIT_NONZERO:
         return "exit_nonzero";
-    case CBM_PROC_CRASH:
+    case HYP_PROC_CRASH:
         return "crash";
-    case CBM_PROC_HANG:
+    case HYP_PROC_HANG:
         return "hang";
-    case CBM_PROC_KILLED:
+    case HYP_PROC_KILLED:
         return "killed";
-    case CBM_PROC_SPAWN_FAILED:
+    case HYP_PROC_SPAWN_FAILED:
     default:
         return "spawn_failed";
     }
 }
 
 typedef enum {
-    CBM_TAIL_MORE = 0,
-    CBM_TAIL_CAUGHT_UP,
-    CBM_TAIL_ERROR,
-} cbm_tail_status_t;
+    HYP_TAIL_MORE = 0,
+    HYP_TAIL_CAUGHT_UP,
+    HYP_TAIL_ERROR,
+} hyp_tail_status_t;
 
 typedef struct {
-    cbm_tail_status_t status;
+    hyp_tail_status_t status;
     bool progressed;
-} cbm_tail_result_t;
+} hyp_tail_result_t;
 
 /* Tail one bounded batch from the child log. While the owned tree can still
  * write, a partial final line remains buffered. Once the tree is quiescent,
  * final=true delivers that last fragment exactly once. */
-static cbm_tail_result_t cbm_tail_log(const char *log_file, long *tail_pos, cbm_proc_log_cb cb,
+static hyp_tail_result_t hyp_tail_log(const char *log_file, long *tail_pos, hyp_proc_log_cb cb,
                                       void *ud, bool final) {
-    cbm_tail_result_t result = {.status = CBM_TAIL_ERROR, .progressed = false};
+    hyp_tail_result_t result = {.status = HYP_TAIL_ERROR, .progressed = false};
     if (!log_file || !tail_pos) {
         return result;
     }
 #ifdef _WIN32
-    FILE *lf = cbm_fopen(log_file, "r");
+    FILE *lf = hyp_fopen(log_file, "r");
 #else
     int open_flags = O_RDONLY | O_NONBLOCK;
 #ifdef O_CLOEXEC
@@ -152,14 +152,14 @@ static cbm_tail_result_t cbm_tail_log(const char *log_file, long *tail_pos, cbm_
         size_t delivered_lines = 0;
         size_t delivered_bytes = 0;
         enum {
-            CBM_TAIL_MAX_LINES_PER_POLL = 64,
-            CBM_TAIL_MAX_BYTES_PER_POLL = 64 * 1024,
+            HYP_TAIL_MAX_LINES_PER_POLL = 64,
+            HYP_TAIL_MAX_BYTES_PER_POLL = 64 * 1024,
         };
-        while (delivered_lines < CBM_TAIL_MAX_LINES_PER_POLL &&
-               delivered_bytes < CBM_TAIL_MAX_BYTES_PER_POLL) {
+        while (delivered_lines < HYP_TAIL_MAX_LINES_PER_POLL &&
+               delivered_bytes < HYP_TAIL_MAX_BYTES_PER_POLL) {
             long before = ftell(lf);
             if (!fgets(line, sizeof(line), lf)) {
-                result.status = ferror(lf) ? CBM_TAIL_ERROR : CBM_TAIL_CAUGHT_UP;
+                result.status = ferror(lf) ? HYP_TAIL_ERROR : HYP_TAIL_CAUGHT_UP;
                 break;
             }
             size_t l = strlen(line);
@@ -185,7 +185,7 @@ static cbm_tail_result_t cbm_tail_log(const char *log_file, long *tail_pos, cbm_
             } else if (!final) {
                 /* Genuine partial final line — keep it buffered for next poll. */
                 *tail_pos = before;
-                result.status = CBM_TAIL_MORE;
+                result.status = HYP_TAIL_MORE;
                 break;
             } else {
                 /* No writer remains: deliver the final unterminated fragment. */
@@ -194,18 +194,18 @@ static cbm_tail_result_t cbm_tail_log(const char *log_file, long *tail_pos, cbm_
                 if (line[0] && cb) {
                     cb(line, ud);
                 }
-                result.status = CBM_TAIL_CAUGHT_UP;
+                result.status = HYP_TAIL_CAUGHT_UP;
                 break;
             }
         }
-        if (result.status == CBM_TAIL_ERROR && !ferror(lf)) {
+        if (result.status == HYP_TAIL_ERROR && !ferror(lf)) {
             /* Reaching either work cap is conservatively MORE. An exact batch
              * boundary needs one empty follow-up poll to prove EOF. */
-            result.status = CBM_TAIL_MORE;
+            result.status = HYP_TAIL_MORE;
         }
     }
     if (fclose(lf) != 0) {
-        result.status = CBM_TAIL_ERROR;
+        result.status = HYP_TAIL_ERROR;
     }
     return result;
 }
@@ -215,7 +215,7 @@ static cbm_tail_result_t cbm_tail_log(const char *log_file, long *tail_pos, cbm_
 /* Append char `c` to buf[cap], reserving the final byte for a NUL terminator.
  * On overflow: sets *ovf, stops writing, and returns pos UNCHANGED — callers detect
  * the overflow via the *ovf flag (not via the return value). */
-static size_t cbm_cmdline_put(char *buf, size_t cap, size_t pos, char c, bool *ovf) {
+static size_t hyp_cmdline_put(char *buf, size_t cap, size_t pos, char c, bool *ovf) {
     if (pos + 1 >= cap) {
         *ovf = true;
         return pos;
@@ -233,12 +233,12 @@ static size_t cbm_cmdline_put(char *buf, size_t cap, size_t pos, char c, bool *o
  * {repo_path:C:/r} — the Windows-only index-worker cmdline-quoting bug (the worker exited
  * non-zero at JSON-arg parse, misattributed to the last-marked file). POSIX is
  * unaffected: the POSIX spawn path passes the argv array straight to execv. */
-static size_t cbm_cmdline_append_arg(char *buf, size_t cap, size_t pos, const char *arg, bool first,
+static size_t hyp_cmdline_append_arg(char *buf, size_t cap, size_t pos, const char *arg, bool first,
                                      bool *ovf) {
     if (!first) {
-        pos = cbm_cmdline_put(buf, cap, pos, ' ', ovf);
+        pos = hyp_cmdline_put(buf, cap, pos, ' ', ovf);
     }
-    pos = cbm_cmdline_put(buf, cap, pos, '"', ovf);
+    pos = hyp_cmdline_put(buf, cap, pos, '"', ovf);
     for (const char *p = arg; *p;) {
         size_t nbs = 0;
         while (*p == '\\') {
@@ -249,26 +249,26 @@ static size_t cbm_cmdline_append_arg(char *buf, size_t cap, size_t pos, const ch
             /* Trailing backslashes precede the closing quote: double them so the
              * quote stays a delimiter, not an escaped literal. */
             for (size_t k = 0; k < nbs * 2; k++) {
-                pos = cbm_cmdline_put(buf, cap, pos, '\\', ovf);
+                pos = hyp_cmdline_put(buf, cap, pos, '\\', ovf);
             }
             break;
         }
         if (*p == '"') {
             /* N backslashes then a quote -> 2N+1 backslashes then an escaped quote. */
             for (size_t k = 0; k < nbs * 2 + 1; k++) {
-                pos = cbm_cmdline_put(buf, cap, pos, '\\', ovf);
+                pos = hyp_cmdline_put(buf, cap, pos, '\\', ovf);
             }
-            pos = cbm_cmdline_put(buf, cap, pos, '"', ovf);
+            pos = hyp_cmdline_put(buf, cap, pos, '"', ovf);
             p++;
         } else {
             for (size_t k = 0; k < nbs; k++) {
-                pos = cbm_cmdline_put(buf, cap, pos, '\\', ovf);
+                pos = hyp_cmdline_put(buf, cap, pos, '\\', ovf);
             }
-            pos = cbm_cmdline_put(buf, cap, pos, *p, ovf);
+            pos = hyp_cmdline_put(buf, cap, pos, *p, ovf);
             p++;
         }
     }
-    pos = cbm_cmdline_put(buf, cap, pos, '"', ovf);
+    pos = hyp_cmdline_put(buf, cap, pos, '"', ovf);
     return pos;
 }
 
@@ -278,18 +278,18 @@ static size_t cbm_cmdline_append_arg(char *buf, size_t cap, size_t pos, const ch
  *
  * Defined unconditionally (pure string logic, no Windows headers) so the quoting
  * contract is unit-tested on Linux/macOS CI too — even though the real spawn path
- * only runs on Windows. Shared by cbm_subprocess_spawn_win AND the UI http_server
+ * only runs on Windows. Shared by hyp_subprocess_spawn_win AND the UI http_server
  * index spawn so both escape identically; a naive `"%s"` wrap corrupts any argument
  * containing a quote (e.g. the index JSON {"repo_path":"…"}), corrupting the
  * spawned child's argv. */
-bool cbm_build_win_cmdline(char *buf, size_t cap, const char *const *argv) {
+bool hyp_build_win_cmdline(char *buf, size_t cap, const char *const *argv) {
     if (!buf || cap == 0 || !argv) {
         return false;
     }
     size_t pos = 0;
     bool ovf = false;
     for (int i = 0; argv[i]; i++) {
-        pos = cbm_cmdline_append_arg(buf, cap, pos, argv[i], i == 0, &ovf);
+        pos = hyp_cmdline_append_arg(buf, cap, pos, argv[i], i == 0, &ovf);
         if (ovf) {
             buf[0] = '\0'; /* overflow: leave buf a valid (empty) string, never unterminated */
             return false;
@@ -299,7 +299,7 @@ bool cbm_build_win_cmdline(char *buf, size_t cap, const char *const *argv) {
     return true;
 }
 
-static bool cbm_ascii_case_equal(const char *left, const char *right) {
+static bool hyp_ascii_case_equal(const char *left, const char *right) {
     if (!left || !right) {
         return false;
     }
@@ -319,7 +319,7 @@ static bool cbm_ascii_case_equal(const char *left, const char *right) {
     return *left == '\0' && *right == '\0';
 }
 
-static bool cbm_win_cmd_path_is_absolute(const char *path) {
+static bool hyp_win_cmd_path_is_absolute(const char *path) {
     if (!path) {
         return false;
     }
@@ -344,16 +344,16 @@ static bool cbm_win_cmd_path_is_absolute(const char *path) {
             basename = cursor + 1;
         }
     }
-    return cbm_ascii_case_equal(basename, "cmd.exe");
+    return hyp_ascii_case_equal(basename, "cmd.exe");
 }
 
-bool cbm_build_win_cmd_payload(char *buf, size_t cap, const char *cmd_executable,
+bool hyp_build_win_cmd_payload(char *buf, size_t cap, const char *cmd_executable,
                                const char *payload) {
     if (!buf || cap == 0) {
         return false;
     }
     buf[0] = '\0';
-    if (!cbm_win_cmd_path_is_absolute(cmd_executable) || !payload || !payload[0]) {
+    if (!hyp_win_cmd_path_is_absolute(cmd_executable) || !payload || !payload[0]) {
         return false;
     }
 
@@ -391,22 +391,22 @@ bool cbm_build_win_cmd_payload(char *buf, size_t cap, const char *cmd_executable
 
 /* ── Nonblocking contained-process supervisor ─────────────────────────────── */
 
-enum { CBM_SUBPROCESS_ARGV_LIMIT = 4096 };
+enum { HYP_SUBPROCESS_ARGV_LIMIT = 4096 };
 
 typedef enum {
-    CBM_SUBPROCESS_ACTIVE = 0,
-    CBM_SUBPROCESS_CANCEL_REQUESTED,
-    CBM_SUBPROCESS_DRAINING,
-    CBM_SUBPROCESS_TERMINAL,
-} cbm_subprocess_lifecycle_t;
+    HYP_SUBPROCESS_ACTIVE = 0,
+    HYP_SUBPROCESS_CANCEL_REQUESTED,
+    HYP_SUBPROCESS_DRAINING,
+    HYP_SUBPROCESS_TERMINAL,
+} hyp_subprocess_lifecycle_t;
 
-struct cbm_subprocess {
+struct hyp_subprocess {
     char *bin;
     char **argv;
     size_t argc;
     char *windows_cmd_payload;
     char *log_file;
-    cbm_proc_log_cb on_log_line;
+    hyp_proc_log_cb on_log_line;
     void *log_ud;
     int quiet_timeout_ms;
     int cancel_grace_ms;
@@ -422,7 +422,7 @@ struct cbm_subprocess {
     bool root_reaped;
     uint64_t force_started_ms;
     bool containment_failed;
-    cbm_proc_result_t result;
+    hyp_proc_result_t result;
 
 #ifdef _WIN32
     HANDLE process;
@@ -435,8 +435,8 @@ struct cbm_subprocess {
 #endif
 };
 
-static void cbm_subprocess_result_init(cbm_proc_result_t *result) {
-    result->outcome = CBM_PROC_SPAWN_FAILED;
+static void hyp_subprocess_result_init(hyp_proc_result_t *result) {
+    result->outcome = HYP_PROC_SPAWN_FAILED;
     result->exit_code = -1;
     result->term_signal = 0;
     result->cancellation_requested = false;
@@ -445,7 +445,7 @@ static void cbm_subprocess_result_init(cbm_proc_result_t *result) {
     result->supervision_failed = false;
 }
 
-static void cbm_subprocess_free_config(cbm_subprocess_t *process) {
+static void hyp_subprocess_free_config(hyp_subprocess_t *process) {
     if (!process) {
         return;
     }
@@ -461,13 +461,13 @@ static void cbm_subprocess_free_config(cbm_subprocess_t *process) {
     free(process);
 }
 
-static cbm_subprocess_t *cbm_subprocess_copy_opts(const cbm_proc_opts_t *opts) {
+static hyp_subprocess_t *hyp_subprocess_copy_opts(const hyp_proc_opts_t *opts) {
     if (!opts || !opts->bin || !opts->bin[0]) {
         return NULL;
     }
 #ifdef _WIN32
     if (opts->windows_cmd_payload &&
-        (!opts->windows_cmd_payload[0] || opts->argv || !cbm_win_cmd_path_is_absolute(opts->bin))) {
+        (!opts->windows_cmd_payload[0] || opts->argv || !hyp_win_cmd_path_is_absolute(opts->bin))) {
         return NULL;
     }
 #else
@@ -479,40 +479,40 @@ static cbm_subprocess_t *cbm_subprocess_copy_opts(const cbm_proc_opts_t *opts) {
     size_t argc = 1;
     if (opts->argv) {
         argc = 0;
-        while (argc < CBM_SUBPROCESS_ARGV_LIMIT && opts->argv[argc]) {
+        while (argc < HYP_SUBPROCESS_ARGV_LIMIT && opts->argv[argc]) {
             argc++;
         }
-        if (argc == 0 || argc == CBM_SUBPROCESS_ARGV_LIMIT) {
+        if (argc == 0 || argc == HYP_SUBPROCESS_ARGV_LIMIT) {
             return NULL;
         }
     }
 
-    cbm_subprocess_t *process = (cbm_subprocess_t *)calloc(1, sizeof(*process));
+    hyp_subprocess_t *process = (hyp_subprocess_t *)calloc(1, sizeof(*process));
     if (!process) {
         return NULL;
     }
-    process->bin = cbm_strdup(opts->bin);
+    process->bin = hyp_strdup(opts->bin);
     process->windows_cmd_payload =
-        opts->windows_cmd_payload ? cbm_strdup(opts->windows_cmd_payload) : NULL;
+        opts->windows_cmd_payload ? hyp_strdup(opts->windows_cmd_payload) : NULL;
     process->argv = (char **)calloc(argc + 1, sizeof(*process->argv));
     process->argc = argc;
     if (!process->bin || !process->argv ||
         (opts->windows_cmd_payload && !process->windows_cmd_payload)) {
-        cbm_subprocess_free_config(process);
+        hyp_subprocess_free_config(process);
         return NULL;
     }
     for (size_t i = 0; i < argc; i++) {
         const char *arg = opts->argv ? opts->argv[i] : opts->bin;
-        process->argv[i] = cbm_strdup(arg);
+        process->argv[i] = hyp_strdup(arg);
         if (!process->argv[i]) {
-            cbm_subprocess_free_config(process);
+            hyp_subprocess_free_config(process);
             return NULL;
         }
     }
     if (opts->log_file) {
-        process->log_file = cbm_strdup(opts->log_file);
+        process->log_file = hyp_strdup(opts->log_file);
         if (!process->log_file) {
-            cbm_subprocess_free_config(process);
+            hyp_subprocess_free_config(process);
             return NULL;
         }
     }
@@ -520,36 +520,36 @@ static cbm_subprocess_t *cbm_subprocess_copy_opts(const cbm_proc_opts_t *opts) {
     process->log_ud = opts->log_ud;
     process->quiet_timeout_ms = opts->quiet_timeout_ms;
     process->cancel_grace_ms =
-        opts->cancel_grace_ms > 0 ? opts->cancel_grace_ms : CBM_SUBPROCESS_DEFAULT_CANCEL_GRACE_MS;
-    if (process->cancel_grace_ms > CBM_SUBPROCESS_MAX_CANCEL_GRACE_MS) {
-        process->cancel_grace_ms = CBM_SUBPROCESS_MAX_CANCEL_GRACE_MS;
+        opts->cancel_grace_ms > 0 ? opts->cancel_grace_ms : HYP_SUBPROCESS_DEFAULT_CANCEL_GRACE_MS;
+    if (process->cancel_grace_ms > HYP_SUBPROCESS_MAX_CANCEL_GRACE_MS) {
+        process->cancel_grace_ms = HYP_SUBPROCESS_MAX_CANCEL_GRACE_MS;
     }
     process->delete_log_on_exit = opts->delete_log_on_exit;
-    atomic_init(&process->lifecycle, CBM_SUBPROCESS_ACTIVE);
-    cbm_subprocess_result_init(&process->result);
+    atomic_init(&process->lifecycle, HYP_SUBPROCESS_ACTIVE);
+    hyp_subprocess_result_init(&process->result);
     return process;
 }
 
-static cbm_tail_result_t cbm_subprocess_poll_log(cbm_subprocess_t *process, bool final) {
-    cbm_tail_result_t result = cbm_tail_log(process->log_file, &process->tail_pos,
+static hyp_tail_result_t hyp_subprocess_poll_log(hyp_subprocess_t *process, bool final) {
+    hyp_tail_result_t result = hyp_tail_log(process->log_file, &process->tail_pos,
                                             process->on_log_line, process->log_ud, final);
     if (result.progressed) {
-        process->last_activity_ms = cbm_now_ms();
+        process->last_activity_ms = hyp_now_ms();
     }
     return result;
 }
 
-static bool cbm_subprocess_cancellation_requested(const cbm_subprocess_t *process) {
+static bool hyp_subprocess_cancellation_requested(const hyp_subprocess_t *process) {
     return atomic_load_explicit(&process->lifecycle, memory_order_acquire) ==
-           CBM_SUBPROCESS_CANCEL_REQUESTED;
+           HYP_SUBPROCESS_CANCEL_REQUESTED;
 }
 
-static void cbm_subprocess_delete_log(cbm_subprocess_t *process) {
+static void hyp_subprocess_delete_log(hyp_subprocess_t *process) {
     if (!process->log_file || !process->delete_log_on_exit) {
         return;
     }
 #ifdef _WIN32
-    wchar_t *path = cbm_path_to_wide(process->log_file);
+    wchar_t *path = hyp_path_to_wide(process->log_file);
     if (path) {
         (void)DeleteFileW(path);
         free(path);
@@ -559,68 +559,68 @@ static void cbm_subprocess_delete_log(cbm_subprocess_t *process) {
 #endif
 }
 
-static bool cbm_subprocess_begin_terminal_transition(cbm_subprocess_t *process) {
+static bool hyp_subprocess_begin_terminal_transition(hyp_subprocess_t *process) {
     int lifecycle = atomic_load_explicit(&process->lifecycle, memory_order_acquire);
     for (;;) {
-        if (lifecycle == CBM_SUBPROCESS_DRAINING) {
+        if (lifecycle == HYP_SUBPROCESS_DRAINING) {
             return true;
         }
-        if (lifecycle == CBM_SUBPROCESS_TERMINAL) {
+        if (lifecycle == HYP_SUBPROCESS_TERMINAL) {
             return false;
         }
-        int desired = CBM_SUBPROCESS_DRAINING;
+        int desired = HYP_SUBPROCESS_DRAINING;
         if (atomic_compare_exchange_weak_explicit(&process->lifecycle, &lifecycle, desired,
                                                   memory_order_acq_rel, memory_order_acquire)) {
-            process->result.cancellation_requested = lifecycle == CBM_SUBPROCESS_CANCEL_REQUESTED;
+            process->result.cancellation_requested = lifecycle == HYP_SUBPROCESS_CANCEL_REQUESTED;
             return true;
         }
     }
 }
 
-static cbm_proc_poll_t cbm_subprocess_publish_terminal(cbm_subprocess_t *process,
-                                                       cbm_proc_result_t *out, bool delete_log) {
+static hyp_proc_poll_t hyp_subprocess_publish_terminal(hyp_subprocess_t *process,
+                                                       hyp_proc_result_t *out, bool delete_log) {
     if (delete_log) {
-        cbm_subprocess_delete_log(process);
+        hyp_subprocess_delete_log(process);
     }
-    atomic_store_explicit(&process->lifecycle, CBM_SUBPROCESS_TERMINAL, memory_order_release);
+    atomic_store_explicit(&process->lifecycle, HYP_SUBPROCESS_TERMINAL, memory_order_release);
     if (out) {
         *out = process->result;
     }
-    return CBM_PROC_POLL_TERMINAL;
+    return HYP_PROC_POLL_TERMINAL;
 }
 
-static cbm_proc_poll_t cbm_subprocess_finish(cbm_subprocess_t *process, cbm_proc_result_t *out) {
-    if (!cbm_subprocess_begin_terminal_transition(process)) {
-        return CBM_PROC_POLL_ERROR;
+static hyp_proc_poll_t hyp_subprocess_finish(hyp_subprocess_t *process, hyp_proc_result_t *out) {
+    if (!hyp_subprocess_begin_terminal_transition(process)) {
+        return HYP_PROC_POLL_ERROR;
     }
     process->result.tree_quiesced = true;
     process->result.supervision_failed = false;
     if (process->log_file && process->on_log_line) {
-        return CBM_PROC_POLL_RUNNING;
+        return HYP_PROC_POLL_RUNNING;
     }
-    return cbm_subprocess_publish_terminal(process, out, true);
+    return hyp_subprocess_publish_terminal(process, out, true);
 }
 
-static cbm_proc_poll_t cbm_subprocess_finish_failed(cbm_subprocess_t *process,
-                                                    cbm_proc_result_t *out) {
-    if (!cbm_subprocess_begin_terminal_transition(process)) {
-        return CBM_PROC_POLL_ERROR;
+static hyp_proc_poll_t hyp_subprocess_finish_failed(hyp_subprocess_t *process,
+                                                    hyp_proc_result_t *out) {
+    if (!hyp_subprocess_begin_terminal_transition(process)) {
+        return HYP_PROC_POLL_ERROR;
     }
     process->result.tree_quiesced = false;
     process->result.supervision_failed = true;
     process->result.forced = true;
     if (process->timed_out) {
-        process->result.outcome = CBM_PROC_HANG;
-    } else if (process->result.outcome == CBM_PROC_SPAWN_FAILED) {
-        process->result.outcome = CBM_PROC_KILLED;
+        process->result.outcome = HYP_PROC_HANG;
+    } else if (process->result.outcome == HYP_PROC_SPAWN_FAILED) {
+        process->result.outcome = HYP_PROC_KILLED;
     }
     process->containment_failed = true;
-    return cbm_subprocess_publish_terminal(process, out, false);
+    return hyp_subprocess_publish_terminal(process, out, false);
 }
 
 #ifdef _WIN32
 
-static void cbm_win_close_spawn_handles(HANDLE nul, HANDLE log, LPPROC_THREAD_ATTRIBUTE_LIST attrs,
+static void hyp_win_close_spawn_handles(HANDLE nul, HANDLE log, LPPROC_THREAD_ATTRIBUTE_LIST attrs,
                                         bool attrs_init) {
     if (attrs) {
         if (attrs_init) {
@@ -636,18 +636,18 @@ static void cbm_win_close_spawn_handles(HANDLE nul, HANDLE log, LPPROC_THREAD_AT
     }
 }
 
-static int cbm_subprocess_spawn_win(cbm_subprocess_t *process) {
+static int hyp_subprocess_spawn_win(hyp_subprocess_t *process) {
     char cmdline[8192];
     bool built =
         process->windows_cmd_payload
-            ? cbm_build_win_cmd_payload(cmdline, sizeof(cmdline), process->bin,
+            ? hyp_build_win_cmd_payload(cmdline, sizeof(cmdline), process->bin,
                                         process->windows_cmd_payload)
-            : cbm_build_win_cmdline(cmdline, sizeof(cmdline), (const char *const *)process->argv);
+            : hyp_build_win_cmdline(cmdline, sizeof(cmdline), (const char *const *)process->argv);
     if (!built) {
         return -1;
     }
-    wchar_t *wbin = cbm_utf8_to_wide(process->bin);
-    wchar_t *wcmdline = cbm_utf8_to_wide(cmdline);
+    wchar_t *wbin = hyp_utf8_to_wide(process->bin);
+    wchar_t *wcmdline = hyp_utf8_to_wide(cmdline);
     if (!wbin || !wcmdline) {
         free(wbin);
         free(wcmdline);
@@ -682,7 +682,7 @@ static int cbm_subprocess_spawn_win(cbm_subprocess_t *process) {
         return -1;
     }
     if (process->log_file) {
-        wchar_t *wlog = cbm_path_to_wide(process->log_file);
+        wchar_t *wlog = hyp_path_to_wide(process->log_file);
         if (wlog) {
             /* FILE_SHARE_WRITE keeps POSIX parity: on unix nothing stops a
              * second producer from appending to the redirected log while the
@@ -716,7 +716,7 @@ static int cbm_subprocess_spawn_win(cbm_subprocess_t *process) {
                                          attrs, 0, PROC_THREAD_ATTRIBUTE_HANDLE_LIST, inherit,
                                          inherit_count * sizeof(inherit[0]), NULL, NULL);
     if (!attrs_ready) {
-        cbm_win_close_spawn_handles(nul, log, attrs, attrs_init);
+        hyp_win_close_spawn_handles(nul, log, attrs, attrs_init);
         CloseHandle(job);
         free(wbin);
         free(wcmdline);
@@ -738,7 +738,7 @@ static int cbm_subprocess_spawn_win(cbm_subprocess_t *process) {
                   CREATE_NO_WINDOW;
     BOOL created = CreateProcessW(wbin, wcmdline, NULL, NULL, TRUE, flags, NULL, NULL,
                                   &startup.StartupInfo, &child);
-    cbm_win_close_spawn_handles(nul, log, attrs, attrs_init);
+    hyp_win_close_spawn_handles(nul, log, attrs, attrs_init);
     free(wbin);
     free(wcmdline);
     if (!created) {
@@ -772,7 +772,7 @@ static int cbm_subprocess_spawn_win(cbm_subprocess_t *process) {
     return 0;
 }
 
-static bool cbm_win_job_active(cbm_subprocess_t *process, bool *known) {
+static bool hyp_win_job_active(hyp_subprocess_t *process, bool *known) {
     JOBOBJECT_BASIC_ACCOUNTING_INFORMATION accounting;
     ZeroMemory(&accounting, sizeof(accounting));
     if (!QueryInformationJobObject(process->job, JobObjectBasicAccountingInformation, &accounting,
@@ -784,7 +784,7 @@ static bool cbm_win_job_active(cbm_subprocess_t *process, bool *known) {
     return accounting.ActiveProcesses != 0;
 }
 
-static void cbm_win_begin_termination(cbm_subprocess_t *process, uint64_t now) {
+static void hyp_win_begin_termination(hyp_subprocess_t *process, uint64_t now) {
     if (process->termination_started) {
         return;
     }
@@ -795,7 +795,7 @@ static void cbm_win_begin_termination(cbm_subprocess_t *process, uint64_t now) {
     (void)GenerateConsoleCtrlEvent(CTRL_BREAK_EVENT, process->process_id);
 }
 
-static void cbm_win_force_tree(cbm_subprocess_t *process, uint64_t now) {
+static void hyp_win_force_tree(hyp_subprocess_t *process, uint64_t now) {
     if (process->force_sent) {
         return;
     }
@@ -813,71 +813,71 @@ static void cbm_win_force_tree(cbm_subprocess_t *process, uint64_t now) {
     }
 }
 
-static void cbm_win_capture_root(cbm_subprocess_t *process, DWORD code) {
+static void hyp_win_capture_root(hyp_subprocess_t *process, DWORD code) {
     process->root_reaped = true;
     process->result.exit_code = (int)code;
     process->result.term_signal = 0;
     if (process->timed_out) {
-        process->result.outcome = CBM_PROC_HANG;
+        process->result.outcome = HYP_PROC_HANG;
     } else if (process->root_forced ||
-               (cbm_subprocess_cancellation_requested(process) && code == CBM_WIN_CONTROL_C_EXIT)) {
-        process->result.outcome = CBM_PROC_KILLED;
+               (hyp_subprocess_cancellation_requested(process) && code == HYP_WIN_CONTROL_C_EXIT)) {
+        process->result.outcome = HYP_PROC_KILLED;
     } else {
-        process->result.outcome = cbm_proc_classify(true, (int)code, 0, false);
+        process->result.outcome = hyp_proc_classify(true, (int)code, 0, false);
     }
 }
 
-static cbm_proc_poll_t cbm_subprocess_poll_win(cbm_subprocess_t *process, cbm_proc_result_t *out) {
-    uint64_t now = cbm_now_ms();
+static hyp_proc_poll_t hyp_subprocess_poll_win(hyp_subprocess_t *process, hyp_proc_result_t *out) {
+    uint64_t now = hyp_now_ms();
 
     if (!process->root_reaped) {
         DWORD waited = WaitForSingleObject(process->process, 0);
         if (waited == WAIT_OBJECT_0) {
             DWORD code = 1;
             (void)GetExitCodeProcess(process->process, &code);
-            cbm_win_capture_root(process, code);
+            hyp_win_capture_root(process, code);
         } else if (waited == WAIT_FAILED) {
             DWORD code = STILL_ACTIVE;
             if (GetExitCodeProcess(process->process, &code) && code != STILL_ACTIVE) {
-                cbm_win_capture_root(process, code);
+                hyp_win_capture_root(process, code);
             } else {
-                cbm_win_begin_termination(process, now);
-                cbm_win_force_tree(process, now);
+                hyp_win_begin_termination(process, now);
+                hyp_win_force_tree(process, now);
             }
         }
     }
 
     bool job_known = false;
-    bool job_active = cbm_win_job_active(process, &job_known);
+    bool job_active = hyp_win_job_active(process, &job_known);
     if (!process->termination_started) {
-        if (cbm_subprocess_cancellation_requested(process)) {
-            cbm_win_begin_termination(process, now);
+        if (hyp_subprocess_cancellation_requested(process)) {
+            hyp_win_begin_termination(process, now);
         } else if (!process->root_reaped && process->quiet_timeout_ms > 0 &&
                    now - process->last_activity_ms >= (uint64_t)process->quiet_timeout_ms) {
             process->timed_out = true;
-            cbm_win_begin_termination(process, now);
+            hyp_win_begin_termination(process, now);
         } else if (process->root_reaped && job_active) {
             /* Preserve the root's classification while draining escaped work. */
-            cbm_win_begin_termination(process, now);
+            hyp_win_begin_termination(process, now);
         }
     }
     if (!job_known) {
-        cbm_win_begin_termination(process, now);
-        cbm_win_force_tree(process, now);
+        hyp_win_begin_termination(process, now);
+        hyp_win_force_tree(process, now);
     }
     if (process->termination_started && job_active && !process->force_sent &&
         now - process->termination_started_ms >= (uint64_t)process->cancel_grace_ms) {
-        cbm_win_force_tree(process, now);
+        hyp_win_force_tree(process, now);
     }
     if (process->force_started_ms != 0 &&
-        now - process->force_started_ms >= CBM_SUBPROCESS_FORCE_SETTLE_MS &&
+        now - process->force_started_ms >= HYP_SUBPROCESS_FORCE_SETTLE_MS &&
         (!job_known || job_active || !process->root_reaped)) {
-        return cbm_subprocess_finish_failed(process, out);
+        return hyp_subprocess_finish_failed(process, out);
     }
     if (process->root_reaped && !job_active) {
-        return cbm_subprocess_finish(process, out);
+        return hyp_subprocess_finish(process, out);
     }
-    return CBM_PROC_POLL_RUNNING;
+    return HYP_PROC_POLL_RUNNING;
 }
 
 #else /* POSIX */
@@ -885,7 +885,7 @@ static cbm_proc_poll_t cbm_subprocess_poll_win(cbm_subprocess_t *process, cbm_pr
 /* Used by the fork+exec child. posix_spawn performs the same reset
  * declaratively via SETSIGDEF + SETSIGMASK, but Apple still forks for the
  * exec-failure fallback below, so this stays compiled everywhere. */
-static void cbm_posix_reset_child_signals(void) {
+static void hyp_posix_reset_child_signals(void) {
     struct sigaction action = {0};
     action.sa_handler = SIG_DFL;
     (void)sigemptyset(&action.sa_mask);
@@ -900,13 +900,13 @@ static void cbm_posix_reset_child_signals(void) {
 }
 
 /* fork+exec child setup. On Apple this runs ONLY for the exec-failure
- * fallback (see cbm_posix_spawn_apple), which preserves the documented
+ * fallback (see hyp_posix_spawn_apple), which preserves the documented
  * "bogus binary => child exits 127" contract across platforms. */
-static void cbm_posix_child_exec(cbm_subprocess_t *process, int input, int output, long max_fd) {
+static void hyp_posix_child_exec(hyp_subprocess_t *process, int input, int output, long max_fd) {
     if (setpgid(0, 0) < 0) {
         _exit(127);
     }
-    cbm_posix_reset_child_signals();
+    hyp_posix_reset_child_signals();
 
     /* Never let a worker consume the MCP transport inherited as stdin. Only
      * async-signal-safe calls are used between fork and exec. */
@@ -930,7 +930,7 @@ static void cbm_posix_child_exec(cbm_subprocess_t *process, int input, int outpu
     _exit(127);
 }
 
-static int cbm_posix_fd_at_least_three(int fd) {
+static int hyp_posix_fd_at_least_three(int fd) {
     if (fd < 0 || fd > STDERR_FILENO) {
         return fd;
     }
@@ -968,7 +968,7 @@ static int cbm_posix_fd_at_least_three(int fd) {
  *     the child's close-everything loop, and the three dup2'd fds stay open
  *     because dup2 clears close-on-exec.
  * posix_spawnp keeps execvp's PATH semantics for a bare tool name. */
-static int cbm_posix_spawn_apple(cbm_subprocess_t *process, int input, int output, pid_t *pid_out) {
+static int hyp_posix_spawn_apple(hyp_subprocess_t *process, int input, int output, pid_t *pid_out) {
     posix_spawn_file_actions_t actions;
     posix_spawnattr_t attr;
     if (posix_spawn_file_actions_init(&actions) != 0) {
@@ -1014,12 +1014,12 @@ static int cbm_posix_spawn_apple(cbm_subprocess_t *process, int input, int outpu
 }
 #endif
 
-static int cbm_subprocess_spawn_posix(cbm_subprocess_t *process) {
+static int hyp_subprocess_spawn_posix(hyp_subprocess_t *process) {
     int input_flags = O_RDONLY;
 #ifdef O_CLOEXEC
     input_flags |= O_CLOEXEC;
 #endif
-    int input = cbm_posix_fd_at_least_three(open("/dev/null", input_flags));
+    int input = hyp_posix_fd_at_least_three(open("/dev/null", input_flags));
     const char *target = process->log_file ? process->log_file : "/dev/null";
     int output_flags = O_WRONLY | O_CREAT | O_TRUNC;
 #ifdef O_CLOEXEC
@@ -1028,7 +1028,7 @@ static int cbm_subprocess_spawn_posix(cbm_subprocess_t *process) {
 #ifdef O_NOFOLLOW
     output_flags |= O_NOFOLLOW;
 #endif
-    int output = cbm_posix_fd_at_least_three(open(target, output_flags, 0600));
+    int output = hyp_posix_fd_at_least_three(open(target, output_flags, 0600));
     if (input < 0 || output < 0) {
         if (input >= 0) {
             (void)close(input);
@@ -1058,7 +1058,7 @@ static int cbm_subprocess_spawn_posix(cbm_subprocess_t *process) {
 
     pid_t pid = -1;
 #ifdef __APPLE__
-    int spawn_rc = cbm_posix_spawn_apple(process, input, output, &pid);
+    int spawn_rc = hyp_posix_spawn_apple(process, input, output, &pid);
     if (spawn_rc < 0) {
         (void)close(input);
         (void)close(output);
@@ -1072,7 +1072,7 @@ static int cbm_subprocess_spawn_posix(cbm_subprocess_t *process) {
             return -1;
         }
         if (pid == 0) {
-            cbm_posix_child_exec(process, input, output, max_fd);
+            hyp_posix_child_exec(process, input, output, max_fd);
         }
     }
 #else
@@ -1083,7 +1083,7 @@ static int cbm_subprocess_spawn_posix(cbm_subprocess_t *process) {
         return -1;
     }
     if (pid == 0) {
-        cbm_posix_child_exec(process, input, output, max_fd);
+        hyp_posix_child_exec(process, input, output, max_fd);
     }
 #endif
     (void)close(input);
@@ -1112,14 +1112,14 @@ static int cbm_subprocess_spawn_posix(cbm_subprocess_t *process) {
     return 0;
 }
 
-static bool cbm_posix_group_active(cbm_subprocess_t *process) {
+static bool hyp_posix_group_active(hyp_subprocess_t *process) {
     if (kill(-process->pgid, 0) == 0) {
         return true;
     }
     return errno != ESRCH; /* EPERM/other errors fail closed as still active */
 }
 
-static void cbm_posix_begin_termination(cbm_subprocess_t *process, uint64_t now) {
+static void hyp_posix_begin_termination(hyp_subprocess_t *process, uint64_t now) {
     if (process->termination_started) {
         return;
     }
@@ -1128,7 +1128,7 @@ static void cbm_posix_begin_termination(cbm_subprocess_t *process, uint64_t now)
     (void)kill(-process->pgid, SIGTERM);
 }
 
-static void cbm_posix_force_tree(cbm_subprocess_t *process, uint64_t now) {
+static void hyp_posix_force_tree(hyp_subprocess_t *process, uint64_t now) {
     if (process->force_sent) {
         return;
     }
@@ -1145,145 +1145,145 @@ static void cbm_posix_force_tree(cbm_subprocess_t *process, uint64_t now) {
     }
 }
 
-static void cbm_posix_capture_root(cbm_subprocess_t *process, int status) {
+static void hyp_posix_capture_root(hyp_subprocess_t *process, int status) {
     process->root_reaped = true;
     if (WIFEXITED(status)) {
         process->result.exit_code = WEXITSTATUS(status);
         process->result.term_signal = 0;
         process->result.outcome =
-            cbm_proc_classify(true, process->result.exit_code, 0, process->timed_out);
+            hyp_proc_classify(true, process->result.exit_code, 0, process->timed_out);
     } else if (WIFSIGNALED(status)) {
         process->result.exit_code = -1;
         process->result.term_signal = WTERMSIG(status);
         process->result.outcome =
-            cbm_proc_classify(false, -1, process->result.term_signal, process->timed_out);
+            hyp_proc_classify(false, -1, process->result.term_signal, process->timed_out);
     } else {
         process->result.exit_code = -1;
         process->result.term_signal = 0;
-        process->result.outcome = process->timed_out ? CBM_PROC_HANG : CBM_PROC_KILLED;
+        process->result.outcome = process->timed_out ? HYP_PROC_HANG : HYP_PROC_KILLED;
     }
 }
 
-static cbm_proc_poll_t cbm_subprocess_poll_posix(cbm_subprocess_t *process,
-                                                 cbm_proc_result_t *out) {
-    uint64_t now = cbm_now_ms();
+static hyp_proc_poll_t hyp_subprocess_poll_posix(hyp_subprocess_t *process,
+                                                 hyp_proc_result_t *out) {
+    uint64_t now = hyp_now_ms();
 
     if (!process->root_reaped) {
         int status = 0;
         pid_t waited = waitpid(process->pid, &status, WNOHANG);
         if (waited == process->pid) {
-            cbm_posix_capture_root(process, status);
+            hyp_posix_capture_root(process, status);
         } else if (waited < 0 && errno != EINTR) {
             /* ECHILD means another reaper consumed the status. Other permanent
              * wait failures are treated the same: retain containment, stop the
              * tree, and never spin forever on the failed wait operation. */
             process->root_reaped = true;
-            process->result.outcome = process->timed_out ? CBM_PROC_HANG : CBM_PROC_KILLED;
+            process->result.outcome = process->timed_out ? HYP_PROC_HANG : HYP_PROC_KILLED;
             process->result.exit_code = -1;
             process->result.term_signal = 0;
-            cbm_posix_begin_termination(process, now);
+            hyp_posix_begin_termination(process, now);
         }
     }
 
-    bool group_active = cbm_posix_group_active(process);
+    bool group_active = hyp_posix_group_active(process);
     if (!process->termination_started) {
-        if (cbm_subprocess_cancellation_requested(process)) {
-            cbm_posix_begin_termination(process, now);
+        if (hyp_subprocess_cancellation_requested(process)) {
+            hyp_posix_begin_termination(process, now);
         } else if (!process->root_reaped && process->quiet_timeout_ms > 0 &&
                    now - process->last_activity_ms >= (uint64_t)process->quiet_timeout_ms) {
             process->timed_out = true;
-            cbm_posix_begin_termination(process, now);
+            hyp_posix_begin_termination(process, now);
         } else if (process->root_reaped && group_active) {
             /* A root that daemonizes children is not terminal. Preserve its exit
              * classification, but drain the descendants through the same path. */
-            cbm_posix_begin_termination(process, now);
+            hyp_posix_begin_termination(process, now);
         }
     }
     if (process->termination_started && group_active && !process->force_sent &&
         now - process->termination_started_ms >= (uint64_t)process->cancel_grace_ms) {
-        cbm_posix_force_tree(process, now);
+        hyp_posix_force_tree(process, now);
     }
-    group_active = cbm_posix_group_active(process);
+    group_active = hyp_posix_group_active(process);
     if (process->force_started_ms != 0 && group_active &&
-        now - process->force_started_ms >= CBM_SUBPROCESS_FORCE_SETTLE_MS) {
-        return cbm_subprocess_finish_failed(process, out);
+        now - process->force_started_ms >= HYP_SUBPROCESS_FORCE_SETTLE_MS) {
+        return hyp_subprocess_finish_failed(process, out);
     }
     if (process->root_reaped && !group_active) {
-        return cbm_subprocess_finish(process, out);
+        return hyp_subprocess_finish(process, out);
     }
-    return CBM_PROC_POLL_RUNNING;
+    return HYP_PROC_POLL_RUNNING;
 }
 
 #endif /* _WIN32 */
 
-int cbm_subprocess_spawn(const cbm_proc_opts_t *opts, cbm_subprocess_t **out) {
+int hyp_subprocess_spawn(const hyp_proc_opts_t *opts, hyp_subprocess_t **out) {
     if (!out) {
         return -1;
     }
     *out = NULL;
-    cbm_subprocess_t *process = cbm_subprocess_copy_opts(opts);
+    hyp_subprocess_t *process = hyp_subprocess_copy_opts(opts);
     if (!process) {
         return -1;
     }
 #ifdef _WIN32
-    int spawn_rc = cbm_subprocess_spawn_win(process);
+    int spawn_rc = hyp_subprocess_spawn_win(process);
 #else
-    int spawn_rc = cbm_subprocess_spawn_posix(process);
+    int spawn_rc = hyp_subprocess_spawn_posix(process);
 #endif
     if (spawn_rc != 0) {
-        cbm_subprocess_free_config(process);
+        hyp_subprocess_free_config(process);
         return -1;
     }
-    process->last_activity_ms = cbm_now_ms();
+    process->last_activity_ms = hyp_now_ms();
     *out = process;
     return 0;
 }
 
-cbm_proc_poll_t cbm_subprocess_poll(cbm_subprocess_t *process, cbm_proc_result_t *out) {
+hyp_proc_poll_t hyp_subprocess_poll(hyp_subprocess_t *process, hyp_proc_result_t *out) {
     if (!process) {
-        return CBM_PROC_POLL_ERROR;
+        return HYP_PROC_POLL_ERROR;
     }
     int lifecycle = atomic_load_explicit(&process->lifecycle, memory_order_acquire);
-    if (lifecycle == CBM_SUBPROCESS_TERMINAL) {
+    if (lifecycle == HYP_SUBPROCESS_TERMINAL) {
         if (out) {
             *out = process->result;
         }
-        return CBM_PROC_POLL_TERMINAL;
+        return HYP_PROC_POLL_TERMINAL;
     }
-    if (lifecycle == CBM_SUBPROCESS_DRAINING) {
-        cbm_tail_result_t tail = cbm_subprocess_poll_log(process, true);
-        if (tail.status == CBM_TAIL_MORE) {
-            return CBM_PROC_POLL_RUNNING;
+    if (lifecycle == HYP_SUBPROCESS_DRAINING) {
+        hyp_tail_result_t tail = hyp_subprocess_poll_log(process, true);
+        if (tail.status == HYP_TAIL_MORE) {
+            return HYP_PROC_POLL_RUNNING;
         }
-        if (tail.status == CBM_TAIL_ERROR) {
-            cbm_log_error("subprocess.log_drain_failed", "reason", "io_error");
-            return cbm_subprocess_publish_terminal(process, out, false);
+        if (tail.status == HYP_TAIL_ERROR) {
+            hyp_log_error("subprocess.log_drain_failed", "reason", "io_error");
+            return hyp_subprocess_publish_terminal(process, out, false);
         }
-        return cbm_subprocess_publish_terminal(process, out, true);
+        return hyp_subprocess_publish_terminal(process, out, true);
     }
     /* The one owner-thread tail batch for this public poll. Platform-specific
      * reap paths never tail again, preserving the exact per-poll work cap. */
-    (void)cbm_subprocess_poll_log(process, false);
+    (void)hyp_subprocess_poll_log(process, false);
 #ifdef _WIN32
-    return cbm_subprocess_poll_win(process, out);
+    return hyp_subprocess_poll_win(process, out);
 #else
-    return cbm_subprocess_poll_posix(process, out);
+    return hyp_subprocess_poll_posix(process, out);
 #endif
 }
 
-bool cbm_subprocess_request_cancel(cbm_subprocess_t *process) {
+bool hyp_subprocess_request_cancel(hyp_subprocess_t *process) {
     if (!process) {
         return false;
     }
     int lifecycle = atomic_load_explicit(&process->lifecycle, memory_order_acquire);
     for (;;) {
-        if (lifecycle == CBM_SUBPROCESS_CANCEL_REQUESTED) {
+        if (lifecycle == HYP_SUBPROCESS_CANCEL_REQUESTED) {
             return true;
         }
-        if (lifecycle != CBM_SUBPROCESS_ACTIVE) {
+        if (lifecycle != HYP_SUBPROCESS_ACTIVE) {
             return false;
         }
-        int desired = CBM_SUBPROCESS_CANCEL_REQUESTED;
+        int desired = HYP_SUBPROCESS_CANCEL_REQUESTED;
         if (atomic_compare_exchange_weak_explicit(&process->lifecycle, &lifecycle, desired,
                                                   memory_order_acq_rel, memory_order_acquire)) {
             return true;
@@ -1291,39 +1291,39 @@ bool cbm_subprocess_request_cancel(cbm_subprocess_t *process) {
     }
 }
 
-void cbm_subprocess_destroy(cbm_subprocess_t *process) {
+void hyp_subprocess_destroy(hyp_subprocess_t *process) {
     if (!process || atomic_load_explicit(&process->lifecycle, memory_order_acquire) !=
-                        CBM_SUBPROCESS_TERMINAL) {
+                        HYP_SUBPROCESS_TERMINAL) {
         return;
     }
 #ifdef _WIN32
     CloseHandle(process->process);
     CloseHandle(process->job);
 #endif
-    cbm_subprocess_free_config(process);
+    hyp_subprocess_free_config(process);
 }
 
-int cbm_subprocess_run(const cbm_proc_opts_t *opts, cbm_proc_result_t *out) {
-    cbm_proc_result_t local;
+int hyp_subprocess_run(const hyp_proc_opts_t *opts, hyp_proc_result_t *out) {
+    hyp_proc_result_t local;
     if (!out) {
         out = &local;
     }
-    cbm_subprocess_result_init(out);
+    hyp_subprocess_result_init(out);
 
-    cbm_subprocess_t *process = NULL;
-    if (cbm_subprocess_spawn(opts, &process) != 0) {
+    hyp_subprocess_t *process = NULL;
+    if (hyp_subprocess_spawn(opts, &process) != 0) {
         return -1;
     }
     for (;;) {
-        cbm_proc_poll_t state = cbm_subprocess_poll(process, out);
-        if (state == CBM_PROC_POLL_TERMINAL) {
+        hyp_proc_poll_t state = hyp_subprocess_poll(process, out);
+        if (state == HYP_PROC_POLL_TERMINAL) {
             bool supervised = out->tree_quiesced && !out->supervision_failed;
-            cbm_subprocess_destroy(process);
+            hyp_subprocess_destroy(process);
             return supervised ? 0 : -1;
         }
         /* A valid owned handle has no ERROR state; invalid-argument errors are
          * rejected before this compatibility loop is entered. */
         const struct timespec delay = {0, 10000000L}; /* 10 ms */
-        (void)cbm_nanosleep(&delay, NULL);
+        (void)hyp_nanosleep(&delay, NULL);
     }
 }

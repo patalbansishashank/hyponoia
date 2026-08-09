@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-    Run the native-Windows product-surface test suite for codebase-memory-mcp.
+    Run the native-Windows product-surface test suite for hyponoia.
 
 .DESCRIPTION
     Builds the product binary if it is not already present, stages it under its
@@ -15,7 +15,7 @@
                     They must stay GREEN (exit 0); a RED (exit 1) means the fix
                     regressed and fails this runner.
                       * test_non_ascii_path.py    guards #636/#357 (fixed by #700)
-                      * test_non_ascii_cache_dump.py guards #996 (writer cbm_fopen)
+                      * test_non_ascii_cache_dump.py guards #996 (writer hyp_fopen)
                       * test_hook_augment.py      guards #618      (fixed by #619)
                       * test_ui_drive_listing.py  guards #548      (roots field)
                       * test_cli_non_ascii_arg.py guards #423/#20  (wide-argv main())
@@ -25,7 +25,7 @@
                         hands off to install.ps1 instead of replacing its
                         currently running executable
                       * test_daemon_open_readiness.py guards that
-                        `daemon start --open` waits for the verified CBM UI
+                        `daemon start --open` waits for the verified HYP UI
                         endpoint while ordinary daemon startup remains asynchronous
 
       KNOWN REDS  - genuine, still-open Windows bugs reproduced at the product
@@ -36,7 +36,7 @@
                         guard when the wide-argv fix for #423/#20 landed)
 
     Indexing runs through the real supervisor -> worker spawn on every guard:
-    under the mandatory coordination daemon CBM_INDEX_SUPERVISOR=0 is a
+    under the mandatory coordination daemon HYP_INDEX_SUPERVISOR=0 is a
     fail-closed refusal seam, never an in-process fallback, so the old
     determinism override would turn every indexing guard into a refusal.
 
@@ -49,8 +49,8 @@
     (target selected by -Target) into build/c/.
 
 .PARAMETER Target
-    Makefile.cbm target used when building: 'cbm-with-ui' (default; needed for the
-    drive-picker guard's UI-enabled HTTP service) or 'cbm' (no UI - the drive guard then
+    Makefile.hyp target used when building: 'hyp-with-ui' (default; needed for the
+    drive-picker guard's UI-enabled HTTP service) or 'hyp' (no UI - the drive guard then
     reports a precondition and is skipped).
 
 .PARAMETER GuardsOnly
@@ -63,13 +63,13 @@
 .EXAMPLE
     pwsh -File scripts/test-windows.ps1
 .EXAMPLE
-    pwsh -File scripts/test-windows.ps1 -GuardsOnly -Binary build\c\codebase-memory-mcp.exe
+    pwsh -File scripts/test-windows.ps1 -GuardsOnly -Binary build\c\hyponoia.exe
 #>
 [CmdletBinding()]
 param(
     [string]$Binary,
-    [ValidateSet("cbm-with-ui", "cbm")]
-    [string]$Target = "cbm-with-ui",
+    [ValidateSet("hyp-with-ui", "hyp")]
+    [string]$Target = "hyp-with-ui",
     [switch]$GuardsOnly,
     [string]$Make = "make"
 )
@@ -92,13 +92,13 @@ if (-not $tmp) { $tmp = "$env:USERPROFILE\AppData\Local\Temp" }
 function Resolve-Binary {
     param([string]$Explicit)
     if ($Explicit) { return (Resolve-Path $Explicit).Path }
-    $built = Join-Path $repoRoot "build\c\codebase-memory-mcp.exe"
-    Write-Host "Building $Target via Makefile.cbm ..." -ForegroundColor Cyan
+    $built = Join-Path $repoRoot "build\c\hyponoia.exe"
+    Write-Host "Building $Target via Makefile.hyp ..." -ForegroundColor Cyan
     $makeArgs = @(
-        "-j", "-f", "Makefile.cbm", $Target, "SANITIZE=",
+        "-j", "-f", "Makefile.hyp", $Target, "SANITIZE=",
         "TMP=$tmp", "TEMP=$tmp", "TMPDIR=$tmp"
     )
-    if ($Target -eq "cbm-with-ui") { $makeArgs += "TEST_SEAMS=1" }
+    if ($Target -eq "hyp-with-ui") { $makeArgs += "TEST_SEAMS=1" }
     & $Make @makeArgs | Out-Host
     $buildExit = $LASTEXITCODE
     if ($buildExit -ne 0) { throw "build failed (exit $buildExit)" }
@@ -116,7 +116,7 @@ $guardRoot = $null
 try {
     $userProfile = [Environment]::GetFolderPath([Environment+SpecialFolder]::UserProfile)
     if (-not $userProfile) { throw "could not resolve the current user's profile directory" }
-    $guardRoot = Join-Path $userProfile ("cbm-windows-guards-root-" + [guid]::NewGuid().ToString("N"))
+    $guardRoot = Join-Path $userProfile ("hyp-windows-guards-root-" + [guid]::NewGuid().ToString("N"))
     New-Item -ItemType Directory -Path $guardRoot | Out-Null
 
     # GitHub-hosted runner profile children can inherit mutation-capable ACEs
@@ -138,17 +138,17 @@ try {
     $guardAcl.AddAccessRule($guardRule) | Out-Null
     Set-Acl -LiteralPath $guardRoot -AclObject $guardAcl
 
-    $guardBundle = Join-Path $guardRoot ("cbm-windows-guards-" + [guid]::NewGuid().ToString("N"))
+    $guardBundle = Join-Path $guardRoot ("hyp-windows-guards-" + [guid]::NewGuid().ToString("N"))
     New-Item -ItemType Directory -Path $guardBundle | Out-Null
-    $guardBin = Join-Path $guardBundle "codebase-memory-mcp.exe"
+    $guardBin = Join-Path $guardBundle "hyponoia.exe"
     Copy-Item -LiteralPath $bin -Destination $guardBin
     $sourceRuntimeDir = Split-Path -Parent $bin
-    $sourceIntegration = Join-Path $sourceRuntimeDir "cbm-integrations.json"
+    $sourceIntegration = Join-Path $sourceRuntimeDir "hyp-integrations.json"
     if (-not (Test-Path -LiteralPath $sourceIntegration -PathType Leaf)) {
-        throw "Windows guard source runtime is missing cbm-integrations.json beside $bin"
+        throw "Windows guard source runtime is missing hyp-integrations.json beside $bin"
     }
     Copy-Item -LiteralPath $sourceIntegration -Destination $guardBundle
-    Get-ChildItem -LiteralPath $sourceRuntimeDir -File -Filter "cbm-ui-*.pack" |
+    Get-ChildItem -LiteralPath $sourceRuntimeDir -File -Filter "hyp-ui-*.pack" |
         ForEach-Object { Copy-Item -LiteralPath $_.FullName -Destination $guardBundle }
 
     # Ownership is never inherited on Windows: descendants created under the
@@ -174,7 +174,7 @@ try {
 
 # Green regression guards - must stay GREEN (exit 0). RED (exit 1) = the fix for
 # the referenced issue regressed. The drive-picker guard needs the UI-enabled
-# build and its external asset pack (target cbm-with-ui); against a non-UI
+# build and its external asset pack (target hyp-with-ui); against a non-UI
 # binary it reports a precondition (exit 2) and is skipped rather than failed.
 $guards = @(
     "tests\windows\test_non_ascii_path.py",
@@ -187,7 +187,7 @@ $guards = @(
     "tests\windows\test_windows_update_handoff.py"
 )
 $readinessGuard = "tests\test_daemon_open_readiness.py"
-if (Get-ChildItem -LiteralPath $guardBundle -File -Filter "cbm-ui-*.pack") {
+if (Get-ChildItem -LiteralPath $guardBundle -File -Filter "hyp-ui-*.pack") {
     $guards += $readinessGuard
 }
 
@@ -257,7 +257,7 @@ if (-not $GuardsOnly) {
 Write-Host ""
 if ($guardSkips.Count -gt 0) {
     Write-Host ("Guards skipped (precondition): {0} - e.g. the drive-picker guard " -f $guardSkips.Count) -ForegroundColor Yellow
-    Write-Host "needs a UI build (-Target cbm-with-ui, the default)." -ForegroundColor Yellow
+    Write-Host "needs a UI build (-Target hyp-with-ui, the default)." -ForegroundColor Yellow
 }
 if ($fixedKeepers.Count -gt 0) {
     Write-Host ("Known-red repros that are now GREEN (promote to guards): {0}" -f ($fixedKeepers -join ", ")) -ForegroundColor Green

@@ -17,7 +17,7 @@ import subprocess
 import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-GRAMMARS = os.path.join(ROOT, "internal/cbm/vendored/grammars")
+GRAMMARS = os.path.join(ROOT, "internal/hyp/vendored/grammars")
 
 FIRST_PARTY = {"cobol", "form", "janet", "magma", "protobuf", "wolfram"}
 FORKS = {  # self-maintained forks: vendored LICENSE must match the original upstream
@@ -42,14 +42,14 @@ LIBS = {
     "vendored/tre": ("laurikari/tre", None),
     "vendored/xxhash": ("Cyan4973/xxHash", None),
     "vendored/yyjson": ("ibireme/yyjson", None),
-    "internal/cbm/vendored/lz4": ("lz4/lz4", "lib/LICENSE"),
-    "internal/cbm/vendored/zstd": ("facebook/zstd", None),
-    "internal/cbm/vendored/simplecpp": ("danmar/simplecpp", None),
-    "internal/cbm/vendored/verstable": ("JacksonAllan/Verstable", None),
-    "internal/cbm/vendored/wyhash": ("wangyi-fudan/wyhash", None),
-    "internal/cbm/vendored/ts_runtime": ("tree-sitter/tree-sitter", None),
-    "internal/cbm/vendored/common": ("tree-sitter/tree-sitter-html", None),
-    "internal/cbm/vendored/common/tree_sitter": ("tree-sitter/tree-sitter", None),
+    "internal/hyp/vendored/lz4": ("lz4/lz4", "lib/LICENSE"),
+    "internal/hyp/vendored/zstd": ("facebook/zstd", None),
+    "internal/hyp/vendored/simplecpp": ("danmar/simplecpp", None),
+    "internal/hyp/vendored/verstable": ("JacksonAllan/Verstable", None),
+    "internal/hyp/vendored/wyhash": ("wangyi-fudan/wyhash", None),
+    "internal/hyp/vendored/ts_runtime": ("tree-sitter/tree-sitter", None),
+    "internal/hyp/vendored/common": ("tree-sitter/tree-sitter-html", None),
+    "internal/hyp/vendored/common/tree_sitter": ("tree-sitter/tree-sitter", None),
 }
 CANDIDATE_NAMES = ["LICENSE", "LICENSE.md", "LICENSE.txt", "COPYING",
                    "COPYING.txt", "LICENSE-MIT", "UNLICENSE", "LICENCE",

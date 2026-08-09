@@ -15,8 +15,8 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$TestKeyPath = "Software\CodebaseMemoryMCP\Smoke\$RunId"
-$SentinelName = "CbmSmokeRunId"
+$TestKeyPath = "Software\Hyponoia\Smoke\$RunId"
+$SentinelName = "HypSmokeRunId"
 $RegistryView = [Microsoft.Win32.RegistryView]::Registry64
 
 function Open-CurrentUser {

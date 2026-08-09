@@ -2,17 +2,17 @@
  * userconfig.c — User-defined extension→language mappings.
  *
  * Reads extra_extensions from:
- *   Global:  $XDG_CONFIG_HOME/codebase-memory-mcp/config.json
- *            (falls back to ~/.config/codebase-memory-mcp/config.json)
- *   Project: {repo_root}/.codebase-memory.json
+ *   Global:  $XDG_CONFIG_HOME/hyponoia/config.json
+ *            (falls back to ~/.config/hyponoia/config.json)
+ *   Project: {repo_root}/.hyponoia.json
  *
  * Project config wins over global. Unknown language values warn and are
  * skipped (fail-open). Missing files are silently ignored.
  */
 #include "discover/userconfig.h"
-#include "cbm.h" /* CBMLanguage, CBM_LANG_* */
+#include "hyp.h" /* HYPLanguage, HYP_LANG_* */
 #include "foundation/constants.h"
-#include "foundation/platform.h" /* cbm_safe_getenv */
+#include "foundation/platform.h" /* hyp_safe_getenv */
 #include "foundation/compat_fs.h"
 #include "foundation/sha256.h"
 
@@ -28,137 +28,137 @@ enum { MAX_CONFIG_SIZE = 65536 };
 
 /* ── Process-global user config pointer ──────────────────────────── */
 
-static const cbm_userconfig_t *g_userconfig = NULL;
+static const hyp_userconfig_t *g_userconfig = NULL;
 
 static void userconfig_source_digest(const char *state, const void *bytes, size_t len,
-                                     char out[CBM_SHA256_HEX_LEN + 1]) {
-    static const char domain[] = "cbm-userconfig-source-v1";
-    cbm_sha256_ctx sha;
-    cbm_sha256_init(&sha);
-    cbm_sha256_update(&sha, domain, sizeof(domain));
-    cbm_sha256_update(&sha, state, strlen(state) + 1);
+                                     char out[HYP_SHA256_HEX_LEN + 1]) {
+    static const char domain[] = "hyp-userconfig-source-v1";
+    hyp_sha256_ctx sha;
+    hyp_sha256_init(&sha);
+    hyp_sha256_update(&sha, domain, sizeof(domain));
+    hyp_sha256_update(&sha, state, strlen(state) + 1);
     if (bytes && len > 0) {
-        cbm_sha256_update(&sha, bytes, len);
+        hyp_sha256_update(&sha, bytes, len);
     }
-    uint8_t digest[CBM_SHA256_DIGEST_LEN];
-    cbm_sha256_final(&sha, digest);
+    uint8_t digest[HYP_SHA256_DIGEST_LEN];
+    hyp_sha256_final(&sha, digest);
     static const char hex[] = "0123456789abcdef";
-    for (int i = 0; i < CBM_SHA256_DIGEST_LEN; i++) {
+    for (int i = 0; i < HYP_SHA256_DIGEST_LEN; i++) {
         out[i * 2] = hex[digest[i] >> 4];
         out[i * 2 + 1] = hex[digest[i] & 0x0f];
     }
-    out[CBM_SHA256_HEX_LEN] = '\0';
+    out[HYP_SHA256_HEX_LEN] = '\0';
 }
 
-void cbm_set_user_lang_config(const cbm_userconfig_t *cfg) {
+void hyp_set_user_lang_config(const hyp_userconfig_t *cfg) {
     g_userconfig = cfg;
 }
 
-const cbm_userconfig_t *cbm_get_user_lang_config(void) {
+const hyp_userconfig_t *hyp_get_user_lang_config(void) {
     return g_userconfig;
 }
 
 /* ── Language name → enum table ──────────────────────────────────── */
 
 /*
- * Reverse-mapping from lowercase language name strings to CBMLanguage.
- * Covers all names exposed by cbm_language_name() plus common aliases.
+ * Reverse-mapping from lowercase language name strings to HYPLanguage.
+ * Covers all names exposed by hyp_language_name() plus common aliases.
  */
 typedef struct {
     const char *name; /* lowercase */
-    CBMLanguage lang;
+    HYPLanguage lang;
 } lang_name_entry_t;
 
 static const lang_name_entry_t LANG_NAME_TABLE[] = {
-    {"go", CBM_LANG_GO},
-    {"python", CBM_LANG_PYTHON},
-    {"javascript", CBM_LANG_JAVASCRIPT},
-    {"typescript", CBM_LANG_TYPESCRIPT},
-    {"tsx", CBM_LANG_TSX},
-    {"rust", CBM_LANG_RUST},
-    {"java", CBM_LANG_JAVA},
-    {"c++", CBM_LANG_CPP},
-    {"cpp", CBM_LANG_CPP},
-    {"c#", CBM_LANG_CSHARP},
-    {"csharp", CBM_LANG_CSHARP},
-    {"php", CBM_LANG_PHP},
-    {"lua", CBM_LANG_LUA},
-    {"scala", CBM_LANG_SCALA},
-    {"kotlin", CBM_LANG_KOTLIN},
-    {"ruby", CBM_LANG_RUBY},
-    {"c", CBM_LANG_C},
-    {"bash", CBM_LANG_BASH},
-    {"sh", CBM_LANG_BASH},
-    {"zig", CBM_LANG_ZIG},
-    {"elixir", CBM_LANG_ELIXIR},
-    {"haskell", CBM_LANG_HASKELL},
-    {"ocaml", CBM_LANG_OCAML},
-    {"objective-c", CBM_LANG_OBJC},
-    {"objc", CBM_LANG_OBJC},
-    {"swift", CBM_LANG_SWIFT},
-    {"dart", CBM_LANG_DART},
-    {"perl", CBM_LANG_PERL},
-    {"groovy", CBM_LANG_GROOVY},
-    {"erlang", CBM_LANG_ERLANG},
-    {"r", CBM_LANG_R},
-    {"html", CBM_LANG_HTML},
-    {"css", CBM_LANG_CSS},
-    {"scss", CBM_LANG_SCSS},
-    {"yaml", CBM_LANG_YAML},
-    {"toml", CBM_LANG_TOML},
-    {"hcl", CBM_LANG_HCL},
-    {"terraform", CBM_LANG_HCL},
-    {"sql", CBM_LANG_SQL},
-    {"dockerfile", CBM_LANG_DOCKERFILE},
-    {"clojure", CBM_LANG_CLOJURE},
-    {"f#", CBM_LANG_FSHARP},
-    {"fsharp", CBM_LANG_FSHARP},
-    {"julia", CBM_LANG_JULIA},
-    {"vimscript", CBM_LANG_VIMSCRIPT},
-    {"nix", CBM_LANG_NIX},
-    {"common lisp", CBM_LANG_COMMONLISP},
-    {"commonlisp", CBM_LANG_COMMONLISP},
-    {"lisp", CBM_LANG_COMMONLISP},
-    {"elm", CBM_LANG_ELM},
-    {"fortran", CBM_LANG_FORTRAN},
-    {"cuda", CBM_LANG_CUDA},
-    {"cobol", CBM_LANG_COBOL},
-    {"verilog", CBM_LANG_VERILOG},
-    {"emacs lisp", CBM_LANG_EMACSLISP},
-    {"emacslisp", CBM_LANG_EMACSLISP},
-    {"json", CBM_LANG_JSON},
-    {"xml", CBM_LANG_XML},
-    {"markdown", CBM_LANG_MARKDOWN},
-    {"makefile", CBM_LANG_MAKEFILE},
-    {"cmake", CBM_LANG_CMAKE},
-    {"protobuf", CBM_LANG_PROTOBUF},
-    {"graphql", CBM_LANG_GRAPHQL},
-    {"vue", CBM_LANG_VUE},
-    {"svelte", CBM_LANG_SVELTE},
-    {"meson", CBM_LANG_MESON},
-    {"glsl", CBM_LANG_GLSL},
-    {"ini", CBM_LANG_INI},
-    {"matlab", CBM_LANG_MATLAB},
-    {"mojo", CBM_LANG_MOJO},
-    {"lean", CBM_LANG_LEAN},
-    {"form", CBM_LANG_FORM},
-    {"magma", CBM_LANG_MAGMA},
-    {"wolfram", CBM_LANG_WOLFRAM},
+    {"go", HYP_LANG_GO},
+    {"python", HYP_LANG_PYTHON},
+    {"javascript", HYP_LANG_JAVASCRIPT},
+    {"typescript", HYP_LANG_TYPESCRIPT},
+    {"tsx", HYP_LANG_TSX},
+    {"rust", HYP_LANG_RUST},
+    {"java", HYP_LANG_JAVA},
+    {"c++", HYP_LANG_CPP},
+    {"cpp", HYP_LANG_CPP},
+    {"c#", HYP_LANG_CSHARP},
+    {"csharp", HYP_LANG_CSHARP},
+    {"php", HYP_LANG_PHP},
+    {"lua", HYP_LANG_LUA},
+    {"scala", HYP_LANG_SCALA},
+    {"kotlin", HYP_LANG_KOTLIN},
+    {"ruby", HYP_LANG_RUBY},
+    {"c", HYP_LANG_C},
+    {"bash", HYP_LANG_BASH},
+    {"sh", HYP_LANG_BASH},
+    {"zig", HYP_LANG_ZIG},
+    {"elixir", HYP_LANG_ELIXIR},
+    {"haskell", HYP_LANG_HASKELL},
+    {"ocaml", HYP_LANG_OCAML},
+    {"objective-c", HYP_LANG_OBJC},
+    {"objc", HYP_LANG_OBJC},
+    {"swift", HYP_LANG_SWIFT},
+    {"dart", HYP_LANG_DART},
+    {"perl", HYP_LANG_PERL},
+    {"groovy", HYP_LANG_GROOVY},
+    {"erlang", HYP_LANG_ERLANG},
+    {"r", HYP_LANG_R},
+    {"html", HYP_LANG_HTML},
+    {"css", HYP_LANG_CSS},
+    {"scss", HYP_LANG_SCSS},
+    {"yaml", HYP_LANG_YAML},
+    {"toml", HYP_LANG_TOML},
+    {"hcl", HYP_LANG_HCL},
+    {"terraform", HYP_LANG_HCL},
+    {"sql", HYP_LANG_SQL},
+    {"dockerfile", HYP_LANG_DOCKERFILE},
+    {"clojure", HYP_LANG_CLOJURE},
+    {"f#", HYP_LANG_FSHARP},
+    {"fsharp", HYP_LANG_FSHARP},
+    {"julia", HYP_LANG_JULIA},
+    {"vimscript", HYP_LANG_VIMSCRIPT},
+    {"nix", HYP_LANG_NIX},
+    {"common lisp", HYP_LANG_COMMONLISP},
+    {"commonlisp", HYP_LANG_COMMONLISP},
+    {"lisp", HYP_LANG_COMMONLISP},
+    {"elm", HYP_LANG_ELM},
+    {"fortran", HYP_LANG_FORTRAN},
+    {"cuda", HYP_LANG_CUDA},
+    {"cobol", HYP_LANG_COBOL},
+    {"verilog", HYP_LANG_VERILOG},
+    {"emacs lisp", HYP_LANG_EMACSLISP},
+    {"emacslisp", HYP_LANG_EMACSLISP},
+    {"json", HYP_LANG_JSON},
+    {"xml", HYP_LANG_XML},
+    {"markdown", HYP_LANG_MARKDOWN},
+    {"makefile", HYP_LANG_MAKEFILE},
+    {"cmake", HYP_LANG_CMAKE},
+    {"protobuf", HYP_LANG_PROTOBUF},
+    {"graphql", HYP_LANG_GRAPHQL},
+    {"vue", HYP_LANG_VUE},
+    {"svelte", HYP_LANG_SVELTE},
+    {"meson", HYP_LANG_MESON},
+    {"glsl", HYP_LANG_GLSL},
+    {"ini", HYP_LANG_INI},
+    {"matlab", HYP_LANG_MATLAB},
+    {"mojo", HYP_LANG_MOJO},
+    {"lean", HYP_LANG_LEAN},
+    {"form", HYP_LANG_FORM},
+    {"magma", HYP_LANG_MAGMA},
+    {"wolfram", HYP_LANG_WOLFRAM},
 };
 
 #define LANG_NAME_TABLE_SIZE (sizeof(LANG_NAME_TABLE) / sizeof(LANG_NAME_TABLE[0]))
 
 /*
- * Parse a language string (case-insensitive) to a CBMLanguage enum.
- * Returns CBM_LANG_COUNT if the string is not recognized.
+ * Parse a language string (case-insensitive) to a HYPLanguage enum.
+ * Returns HYP_LANG_COUNT if the string is not recognized.
  */
-static CBMLanguage lang_from_string(const char *s) {
+static HYPLanguage lang_from_string(const char *s) {
     if (!s || !s[0]) {
-        return CBM_LANG_COUNT;
+        return HYP_LANG_COUNT;
     }
 
     /* Build a lowercase copy for comparison */
-    char lower[CBM_SZ_64];
+    char lower[HYP_SZ_64];
     size_t i;
     for (i = 0; i < sizeof(lower) - SKIP_ONE && s[i]; i++) {
         lower[i] = (char)tolower((unsigned char)s[i]);
@@ -170,12 +170,12 @@ static CBMLanguage lang_from_string(const char *s) {
             return LANG_NAME_TABLE[j].lang;
         }
     }
-    return CBM_LANG_COUNT;
+    return HYP_LANG_COUNT;
 }
 
 /* ── Config directory helper ─────────────────────────────────────── */
 
-/* cbm_app_config_dir() is now in platform.c (cross-platform). */
+/* hyp_app_config_dir() is now in platform.c (cross-platform). */
 
 /* ── JSON parsing ────────────────────────────────────────────────── */
 
@@ -187,10 +187,10 @@ static CBMLanguage lang_from_string(const char *s) {
  *
  * Returns 0 on success, -1 on alloc failure.
  */
-static int parse_extra_extensions(yyjson_val *root, cbm_userext_t **entries, int *count,
+static int parse_extra_extensions(yyjson_val *root, hyp_userext_t **entries, int *count,
                                   const char *source_label) {
     if (!yyjson_is_obj(root)) {
-        cbm_log_warn("userconfig.bad_root", "file", source_label);
+        hyp_log_warn("userconfig.bad_root", "file", source_label);
         return 0;
     }
 
@@ -199,7 +199,7 @@ static int parse_extra_extensions(yyjson_val *root, cbm_userext_t **entries, int
         return 0; /* key absent — fine */
     }
     if (!yyjson_is_obj(extra)) {
-        cbm_log_warn("userconfig.bad_extra_extensions", "file", source_label);
+        hyp_log_warn("userconfig.bad_extra_extensions", "file", source_label);
         return 0;
     }
 
@@ -213,32 +213,32 @@ static int parse_extra_extensions(yyjson_val *root, cbm_userext_t **entries, int
         const char *lang_str = yyjson_get_str(val);
 
         if (!ext_str || !lang_str) {
-            cbm_log_warn("userconfig.skip_non_string", "file", source_label);
+            hyp_log_warn("userconfig.skip_non_string", "file", source_label);
             continue;
         }
 
         /* Extension must start with '.' */
         if (ext_str[0] != '.') {
-            cbm_log_warn("userconfig.skip_bad_ext", "file", source_label, "ext", ext_str);
+            hyp_log_warn("userconfig.skip_bad_ext", "file", source_label, "ext", ext_str);
             continue;
         }
 
-        CBMLanguage lang = lang_from_string(lang_str);
-        if (lang == CBM_LANG_COUNT) {
-            cbm_log_warn("userconfig.unknown_lang", "file", source_label, "lang", lang_str);
+        HYPLanguage lang = lang_from_string(lang_str);
+        if (lang == HYP_LANG_COUNT) {
+            hyp_log_warn("userconfig.unknown_lang", "file", source_label, "lang", lang_str);
             continue; /* fail-open: skip unknown languages */
         }
 
         /* Grow the array */
-        cbm_userext_t *tmp = realloc(*entries, (size_t)(*count + SKIP_ONE) * sizeof(cbm_userext_t));
+        hyp_userext_t *tmp = realloc(*entries, (size_t)(*count + SKIP_ONE) * sizeof(hyp_userext_t));
         if (!tmp) {
-            return CBM_NOT_FOUND;
+            return HYP_NOT_FOUND;
         }
         *entries = tmp;
 
         char *ext_copy = strdup(ext_str);
         if (!ext_copy) {
-            return CBM_NOT_FOUND;
+            return HYP_NOT_FOUND;
         }
 
         (*entries)[*count].ext = ext_copy;
@@ -253,10 +253,10 @@ static int parse_extra_extensions(yyjson_val *root, cbm_userext_t **entries, int
  * Silently ignores missing files. Logs warnings for corrupt JSON.
  * Returns 0 on success (or absent file), -1 on alloc failure.
  */
-static int load_config_file(const char *path, cbm_userext_t **entries, int *count,
-                            char source_sha256[CBM_SHA256_HEX_LEN + 1]) {
+static int load_config_file(const char *path, hyp_userext_t **entries, int *count,
+                            char source_sha256[HYP_SHA256_HEX_LEN + 1]) {
     userconfig_source_digest("missing-or-unreadable", NULL, 0, source_sha256);
-    FILE *f = cbm_fopen(path, "rb");
+    FILE *f = hyp_fopen(path, "rb");
     if (!f) {
         return 0; /* file absent — silently ignore */
     }
@@ -276,7 +276,7 @@ static int load_config_file(const char *path, cbm_userext_t **entries, int *coun
     if (len <= 0 || len > MAX_CONFIG_SIZE) {
         (void)fclose(f);
         if (len > MAX_CONFIG_SIZE) {
-            cbm_log_warn("userconfig.file_too_large", "path", path);
+            hyp_log_warn("userconfig.file_too_large", "path", path);
             userconfig_source_digest("oversized", NULL, 0, source_sha256);
         } else {
             userconfig_source_digest("empty", NULL, 0, source_sha256);
@@ -287,7 +287,7 @@ static int load_config_file(const char *path, cbm_userext_t **entries, int *coun
     char *buf = malloc((size_t)len + SKIP_ONE);
     if (!buf) {
         (void)fclose(f);
-        return CBM_NOT_FOUND;
+        return HYP_NOT_FOUND;
     }
 
     size_t nread = fread(buf, SKIP_ONE, (size_t)len, f);
@@ -302,7 +302,7 @@ static int load_config_file(const char *path, cbm_userext_t **entries, int *coun
     free(buf);
 
     if (!doc) {
-        cbm_log_warn("userconfig.corrupt_json", "path", path);
+        hyp_log_warn("userconfig.corrupt_json", "path", path);
         return 0; /* corrupt JSON — silently ignore (fail-open) */
     }
 
@@ -314,21 +314,21 @@ static int load_config_file(const char *path, cbm_userext_t **entries, int *coun
 
 /* ── Public API ──────────────────────────────────────────────────── */
 
-cbm_userconfig_t *cbm_userconfig_load(const char *repo_path) {
-    cbm_userconfig_t *cfg = calloc(CBM_ALLOC_ONE, sizeof(cbm_userconfig_t));
+hyp_userconfig_t *hyp_userconfig_load(const char *repo_path) {
+    hyp_userconfig_t *cfg = calloc(HYP_ALLOC_ONE, sizeof(hyp_userconfig_t));
     if (!cfg) {
         return NULL;
     }
 
-    cbm_userext_t *entries = NULL;
+    hyp_userext_t *entries = NULL;
     int count = 0;
 
     /* ── Step 1: Load global config ── */
     enum { PATH_BUF_SZ = 1280 };
-    const char *cfg_base = cbm_app_config_dir();
+    const char *cfg_base = hyp_app_config_dir();
     const char *cfg_fallback = cfg_base ? cfg_base : "/tmp";
     char global_path[PATH_BUF_SZ];
-    snprintf(global_path, sizeof(global_path), "%s/codebase-memory-mcp/config.json", cfg_fallback);
+    snprintf(global_path, sizeof(global_path), "%s/hyponoia/config.json", cfg_fallback);
 
     if (load_config_file(global_path, &entries, &count, cfg->global_source_sha256) != 0) {
         for (int i = 0; i < count; i++) {
@@ -345,7 +345,7 @@ cbm_userconfig_t *cbm_userconfig_load(const char *repo_path) {
     userconfig_source_digest("not-applicable", NULL, 0, cfg->project_source_sha256);
     if (repo_path && repo_path[0]) {
         char project_path[PATH_BUF_SZ];
-        snprintf(project_path, sizeof(project_path), "%s/.codebase-memory.json", repo_path);
+        snprintf(project_path, sizeof(project_path), "%s/.hyponoia.json", repo_path);
 
         if (load_config_file(project_path, &entries, &count, cfg->project_source_sha256) != 0) {
             /* Free already-allocated entries */
@@ -395,19 +395,19 @@ cbm_userconfig_t *cbm_userconfig_load(const char *repo_path) {
     return cfg;
 }
 
-CBMLanguage cbm_userconfig_lookup(const cbm_userconfig_t *cfg, const char *ext) {
+HYPLanguage hyp_userconfig_lookup(const hyp_userconfig_t *cfg, const char *ext) {
     if (!cfg || !ext || !ext[0]) {
-        return CBM_LANG_COUNT;
+        return HYP_LANG_COUNT;
     }
     for (int i = 0; i < cfg->count; i++) {
         if (cfg->entries[i].ext && strcmp(cfg->entries[i].ext, ext) == 0) {
             return cfg->entries[i].lang;
         }
     }
-    return CBM_LANG_COUNT;
+    return HYP_LANG_COUNT;
 }
 
-void cbm_userconfig_free(cbm_userconfig_t *cfg) {
+void hyp_userconfig_free(hyp_userconfig_t *cfg) {
     if (!cfg) {
         return;
     }

@@ -14,7 +14,7 @@ ARCHIVE_SHA='aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
 MEMBER_SHA='bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
 ASSET_SHA='cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc'
 cat > "$FIX/binaries/associations.tsv" <<EOF
-# cbm-release-scan-associations-v3
+# hyp-release-scan-associations-v3
 # archives=1
 # binaries=1
 # packs=0
@@ -23,11 +23,11 @@ cat > "$FIX/binaries/associations.tsv" <<EOF
 # associations=2
 # scan_objects=2
 association_type	archive	archive_sha256	variant	kind	member	asset_path	mime	scan_path	object_sha256	size
-member	codebase-memory-mcp-linux-amd64.tar.gz	$ARCHIVE_SHA	standard	binary	codebase-memory-mcp			objects/member	$MEMBER_SHA	40
-pack_asset	codebase-memory-mcp-linux-amd64.tar.gz	$ARCHIVE_SHA	ui	ui_asset	cbm-ui-$ASSET_SHA.pack	/assets/app.js	application/javascript	objects/script	$ASSET_SHA	20
+member	hyponoia-linux-amd64.tar.gz	$ARCHIVE_SHA	standard	binary	hyponoia			objects/member	$MEMBER_SHA	40
+pack_asset	hyponoia-linux-amd64.tar.gz	$ARCHIVE_SHA	ui	ui_asset	hyp-ui-$ASSET_SHA.pack	/assets/app.js	application/javascript	objects/script	$ASSET_SHA	20
 EOF
 cat > "$FIX/binaries/vt-results.tsv" <<EOF
-# cbm-virustotal-results-v1
+# hyp-virustotal-results-v1
 # scan_objects=2
 # associations=2
 # min_engines_policy=50
@@ -40,11 +40,11 @@ EOF
 cat > "$FIX/current.md" <<'EOF'
 Intro text.
 
-<!-- cbm-security-verification:start -->
+<!-- hyp-security-verification:start -->
 ## Security Verification
 
 stale data
-<!-- cbm-security-verification:end -->
+<!-- hyp-security-verification:end -->
 
 Outro text.
 EOF
@@ -85,7 +85,7 @@ run_notes() { # current capture
     PATH="$FIX/bin:$PATH" \
       GH_TOKEN=stub \
       VERSION=v1.0.0 \
-      GITHUB_REPOSITORY=DeusData/codebase-memory-mcp \
+      GITHUB_REPOSITORY=patalbansishashank/hyponoia \
       VT_ASSOCIATIONS=binaries/associations.tsv \
       VT_RESULTS_PATH=binaries/vt-results.tsv \
       STUB_RELEASE_BODY="$1" \
@@ -94,8 +94,8 @@ run_notes() { # current capture
 }
 
 run_notes "$FIX/current.md" "$FIX/first.md"
-[ "$(grep -c 'cbm-security-verification:start' "$FIX/first.md")" = 1 ] || fail "start marker duplicated"
-[ "$(grep -c 'cbm-security-verification:end' "$FIX/first.md")" = 1 ] || fail "end marker duplicated"
+[ "$(grep -c 'hyp-security-verification:start' "$FIX/first.md")" = 1 ] || fail "start marker duplicated"
+[ "$(grep -c 'hyp-security-verification:end' "$FIX/first.md")" = 1 ] || fail "end marker duplicated"
 grep -q 'Intro text.' "$FIX/first.md" || fail "content before marked section was lost"
 grep -q 'Outro text.' "$FIX/first.md" || fail "content after marked section was lost"
 ! grep -q 'stale data' "$FIX/first.md" || fail "stale marked section was appended instead of replaced"
@@ -140,9 +140,9 @@ mv "$FIX/binaries/associations.clean.tsv" "$FIX/binaries/associations.tsv"
 cat > "$FIX/reversed.md" <<'EOF'
 Intro text.
 
-<!-- cbm-security-verification:end -->
+<!-- hyp-security-verification:end -->
 stale reversed data
-<!-- cbm-security-verification:start -->
+<!-- hyp-security-verification:start -->
 EOF
 if run_notes "$FIX/reversed.md" "$FIX/reversed-capture.md"; then
   fail "reversed verification markers must fail closed"
@@ -154,7 +154,7 @@ run_publish() {
     PATH="$FIX/bin:$PATH" \
       GH_TOKEN=stub \
       VERSION=v1.0.0 \
-      GITHUB_REPOSITORY=DeusData/codebase-memory-mcp \
+      GITHUB_REPOSITORY=patalbansishashank/hyponoia \
       VT_ASSOCIATIONS=binaries/associations.tsv \
       VT_EXPECTED_SCAN_SET=binaries/scan-set.tsv \
       VT_RESULTS_PATH=binaries/vt-results.tsv \
@@ -162,7 +162,7 @@ run_publish() {
       bash "$PUBLISH")
 }
 cat > "$FIX/binaries/scan-set.tsv" <<EOF
-# cbm-release-scan-set-v2
+# hyp-release-scan-set-v2
 # scan_objects=2
 # associations=2
 scan_path	sha256	size	association_count	association_kinds
@@ -176,7 +176,7 @@ done
 [ "$(wc -l < "$FIX/public/virustotal-evidence-checksums.txt" | tr -d ' ')" = 3 ] || \
   fail "public evidence checksum inventory is incomplete"
 cp "$FIX/binaries/scan-set.tsv" "$FIX/binaries/scan-set.clean.tsv"
-sed '1s/cbm-release-scan-set-v2/wrong-marker/' "$FIX/binaries/scan-set.clean.tsv" > "$FIX/binaries/scan-set.tsv"
+sed '1s/hyp-release-scan-set-v2/wrong-marker/' "$FIX/binaries/scan-set.clean.tsv" > "$FIX/binaries/scan-set.tsv"
 if run_publish; then
   fail "public evidence publication must reject a wrong scan-set marker"
 fi

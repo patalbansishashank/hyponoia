@@ -4,7 +4,7 @@
  * A file that fails during indexing (here: exceeds the env-configurable size
  * cap) must be SKIPPED-AND-REPORTED, never silently dropped, and it must NOT
  * take the rest of the repo down with it. This is the genuine guard for the
- * error-surfacing wiring (has_error / read / oversized → cbm_file_error_t →
+ * error-surfacing wiring (has_error / read / oversized → hyp_file_error_t →
  * MCP `skipped[]` + `skipped_count` + per-run logfile).
  *
  * These indexes run through the full production MCP `index_repository` flow.
@@ -92,8 +92,8 @@ static char *ri_slurp(const char *path) {
  * flow, capturing the raw response. Returns the opened graph store (NULL on
  * failure). Mirrors repro_harness.h's rh_open_indexed but keeps the response so
  * we can assert on skipped_count / skipped[] / logfile. */
-static cbm_store_t *ri_index_capture(RProj *lp, char **out_resp) {
-    lp->project = cbm_project_name_from_path(lp->tmpdir);
+static hyp_store_t *ri_index_capture(RProj *lp, char **out_resp) {
+    lp->project = hyp_project_name_from_path(lp->tmpdir);
     if (!lp->project) {
         return NULL;
     }
@@ -102,23 +102,23 @@ static cbm_store_t *ri_index_capture(RProj *lp, char **out_resp) {
         home = "/tmp";
     }
     char cache_dir[512];
-    snprintf(cache_dir, sizeof(cache_dir), "%s/.cache/codebase-memory-mcp", home);
-    cbm_mkdir(cache_dir);
+    snprintf(cache_dir, sizeof(cache_dir), "%s/.cache/hyponoia", home);
+    hyp_mkdir(cache_dir);
     snprintf(lp->dbpath, sizeof(lp->dbpath), "%s/%s.db", cache_dir, lp->project);
     unlink(lp->dbpath);
-    lp->srv = cbm_mcp_server_new(NULL);
+    lp->srv = hyp_mcp_server_new(NULL);
     if (!lp->srv) {
         return NULL;
     }
     char args[700];
     snprintf(args, sizeof(args), "{\"repo_path\":\"%s\"}", lp->tmpdir);
-    char *resp = cbm_mcp_handle_tool(lp->srv, "index_repository", args);
+    char *resp = hyp_mcp_handle_tool(lp->srv, "index_repository", args);
     if (out_resp) {
         *out_resp = resp;
     } else if (resp) {
         free(resp);
     }
-    return cbm_store_open_path(lp->dbpath);
+    return hyp_store_open_path(lp->dbpath);
 }
 
 /* ── Tests ──────────────────────────────────────────────────────── */
@@ -136,8 +136,8 @@ static cbm_store_t *ri_index_capture(RProj *lp, char **out_resp) {
 TEST(index_oversized_file_reported) {
     RProj lp;
     memset(&lp, 0, sizeof(lp));
-    snprintf(lp.tmpdir, sizeof(lp.tmpdir), "/tmp/cbm_resil_XXXXXX");
-    if (!cbm_mkdtemp(lp.tmpdir)) {
+    snprintf(lp.tmpdir, sizeof(lp.tmpdir), "/tmp/hyp_resil_XXXXXX");
+    if (!hyp_mkdtemp(lp.tmpdir)) {
         FAIL("mkdtemp failed");
     }
     rh_to_fwd_slashes(lp.tmpdir);
@@ -148,17 +148,17 @@ TEST(index_oversized_file_reported) {
 
     char logpath[700];
     snprintf(logpath, sizeof(logpath), "%s/skip.log", lp.tmpdir);
-    cbm_setenv("CBM_MAX_FILE_BYTES", "1048576", 1); /* 1 MiB cap */
-    cbm_setenv("CBM_INDEX_LOG", logpath, 1);        /* deterministic logfile path */
+    hyp_setenv("HYP_MAX_FILE_BYTES", "1048576", 1); /* 1 MiB cap */
+    hyp_setenv("HYP_INDEX_LOG", logpath, 1);        /* deterministic logfile path */
 
     char *resp = NULL;
-    cbm_store_t *store = ri_index_capture(&lp, &resp);
+    hyp_store_t *store = ri_index_capture(&lp, &resp);
 
     /* Unset env IMMEDIATELY (before any assert can bail) so a low cap never
-     * leaks into other tests in this process — cbm_max_file_bytes() reads env
+     * leaks into other tests in this process — hyp_max_file_bytes() reads env
      * on every file. */
-    cbm_unsetenv("CBM_MAX_FILE_BYTES");
-    cbm_unsetenv("CBM_INDEX_LOG");
+    hyp_unsetenv("HYP_MAX_FILE_BYTES");
+    hyp_unsetenv("HYP_INDEX_LOG");
 
     if (!resp) {
         FAIL("no MCP response");
@@ -227,8 +227,8 @@ TEST(index_oversized_file_reported) {
 TEST(index_clean_run_no_logfile) {
     RProj lp;
     memset(&lp, 0, sizeof(lp));
-    snprintf(lp.tmpdir, sizeof(lp.tmpdir), "/tmp/cbm_resil_XXXXXX");
-    if (!cbm_mkdtemp(lp.tmpdir)) {
+    snprintf(lp.tmpdir, sizeof(lp.tmpdir), "/tmp/hyp_resil_XXXXXX");
+    if (!hyp_mkdtemp(lp.tmpdir)) {
         FAIL("mkdtemp failed");
     }
     rh_to_fwd_slashes(lp.tmpdir);
@@ -237,11 +237,11 @@ TEST(index_clean_run_no_logfile) {
     ri_write_text(lp.tmpdir, "good.go", "package main\n\nfunc beta() int { return 2 }\n");
 
     /* Defensive: make sure no stray low cap / log override leaks in. */
-    cbm_unsetenv("CBM_MAX_FILE_BYTES");
-    cbm_unsetenv("CBM_INDEX_LOG");
+    hyp_unsetenv("HYP_MAX_FILE_BYTES");
+    hyp_unsetenv("HYP_INDEX_LOG");
 
     char *resp = NULL;
-    cbm_store_t *store = ri_index_capture(&lp, &resp);
+    hyp_store_t *store = ri_index_capture(&lp, &resp);
     if (!resp) {
         FAIL("no MCP response");
     }
@@ -291,8 +291,8 @@ TEST(index_clean_run_no_logfile) {
 TEST(index_parse_partial_reported) {
     RProj lp;
     memset(&lp, 0, sizeof(lp));
-    snprintf(lp.tmpdir, sizeof(lp.tmpdir), "/tmp/cbm_resil_XXXXXX");
-    if (!cbm_mkdtemp(lp.tmpdir)) {
+    snprintf(lp.tmpdir, sizeof(lp.tmpdir), "/tmp/hyp_resil_XXXXXX");
+    if (!hyp_mkdtemp(lp.tmpdir)) {
         FAIL("mkdtemp failed");
     }
     rh_to_fwd_slashes(lp.tmpdir);
@@ -312,11 +312,11 @@ TEST(index_parse_partial_reported) {
 
     char logpath[700];
     snprintf(logpath, sizeof(logpath), "%s/coverage.log", lp.tmpdir);
-    cbm_setenv("CBM_INDEX_LOG", logpath, 1);
+    hyp_setenv("HYP_INDEX_LOG", logpath, 1);
 
     char *resp = NULL;
-    cbm_store_t *store = ri_index_capture(&lp, &resp);
-    cbm_unsetenv("CBM_INDEX_LOG");
+    hyp_store_t *store = ri_index_capture(&lp, &resp);
+    hyp_unsetenv("HYP_INDEX_LOG");
 
     if (!resp) {
         FAIL("no MCP response");
@@ -375,9 +375,9 @@ TEST(index_parse_partial_reported) {
     /* The signal is persisted in the SEPARATE index_coverage table (never
      * mixed into the graph tables) and reported by index_status,
      * exactly as the index_repository tool description advertises. */
-    cbm_coverage_row_t *rows = NULL;
+    hyp_coverage_row_t *rows = NULL;
     int cov_count = 0;
-    ASSERT_EQ(cbm_store_coverage_get(store, lp.project, &rows, &cov_count), CBM_STORE_OK);
+    ASSERT_EQ(hyp_store_coverage_get(store, lp.project, &rows, &cov_count), HYP_STORE_OK);
     int marked = 0;
     for (int i = 0; i < cov_count; i++) {
         if (rows[i].rel_path && strstr(rows[i].rel_path, "split.c")) {
@@ -388,12 +388,12 @@ TEST(index_parse_partial_reported) {
             marked = 1;
         }
     }
-    cbm_store_free_coverage(rows, cov_count);
+    hyp_store_free_coverage(rows, cov_count);
     ASSERT_TRUE(marked);
 
     char qargs[900];
     snprintf(qargs, sizeof(qargs), "{\"project\":\"%s\"}", lp.project);
-    char *qresp = cbm_mcp_handle_tool(lp.srv, "index_status", qargs);
+    char *qresp = hyp_mcp_handle_tool(lp.srv, "index_status", qargs);
     ASSERT_NOT_NULL(qresp);
     ASSERT_NOT_NULL(strstr(qresp, "split.c"));
     ASSERT_NOT_NULL(strstr(qresp, "parse_partial"));
@@ -404,13 +404,13 @@ TEST(index_parse_partial_reported) {
      * precisely anchored); the note never fires for clean files. */
     snprintf(qargs, sizeof(qargs), "{\"project\":\"%s\",\"qualified_name\":\"ok_before\"}",
              lp.project);
-    char *sresp = cbm_mcp_handle_tool(lp.srv, "get_code_snippet", qargs);
+    char *sresp = hyp_mcp_handle_tool(lp.srv, "get_code_snippet", qargs);
     ASSERT_NOT_NULL(sresp);
     ASSERT_NOT_NULL(strstr(sresp, "coverage_note"));
     ASSERT_NOT_NULL(strstr(sresp, "PARTIALLY indexed"));
     free(sresp);
     snprintf(qargs, sizeof(qargs), "{\"project\":\"%s\",\"qualified_name\":\"alpha\"}", lp.project);
-    char *cresp2 = cbm_mcp_handle_tool(lp.srv, "get_code_snippet", qargs);
+    char *cresp2 = hyp_mcp_handle_tool(lp.srv, "get_code_snippet", qargs);
     ASSERT_NOT_NULL(cresp2);
     ASSERT_NULL(strstr(cresp2, "coverage_note")); /* good.py: no note */
     free(cresp2);
@@ -423,7 +423,7 @@ TEST(index_parse_partial_reported) {
              "{\"project\":\"%s\",\"graph\":\"missed\",\"query\":\"MATCH (f:File) WHERE "
              "f.kind = \\\"parse_partial\\\" RETURN f.file_path, f.detail\"}",
              lp.project);
-    char *gresp = cbm_mcp_handle_tool(lp.srv, "query_graph", qargs);
+    char *gresp = hyp_mcp_handle_tool(lp.srv, "query_graph", qargs);
     ASSERT_NOT_NULL(gresp);
     ASSERT_NOT_NULL(strstr(gresp, "split.c"));
     free(gresp);
@@ -431,7 +431,7 @@ TEST(index_parse_partial_reported) {
              "{\"project\":\"%s\",\"query\":\"MATCH (f:File) WHERE f.kind = "
              "\\\"parse_partial\\\" RETURN f.file_path\"}",
              lp.project);
-    char *cresp = cbm_mcp_handle_tool(lp.srv, "query_graph", qargs);
+    char *cresp = hyp_mcp_handle_tool(lp.srv, "query_graph", qargs);
     ASSERT_NOT_NULL(cresp);
     ASSERT_NULL(strstr(cresp, "split.c")); /* code graph: no coverage rows */
     free(cresp);
@@ -454,8 +454,8 @@ TEST(index_parse_partial_reported) {
 TEST(index_parse_partial_clears_on_fix) {
     RProj lp;
     memset(&lp, 0, sizeof(lp));
-    snprintf(lp.tmpdir, sizeof(lp.tmpdir), "/tmp/cbm_resil_XXXXXX");
-    if (!cbm_mkdtemp(lp.tmpdir)) {
+    snprintf(lp.tmpdir, sizeof(lp.tmpdir), "/tmp/hyp_resil_XXXXXX");
+    if (!hyp_mkdtemp(lp.tmpdir)) {
         FAIL("mkdtemp failed");
     }
     rh_to_fwd_slashes(lp.tmpdir);
@@ -476,7 +476,7 @@ TEST(index_parse_partial_clears_on_fix) {
     ri_write_text(lp.tmpdir, "good.py", "def alpha():\n    return 1\n");
 
     char *resp = NULL;
-    cbm_store_t *store = ri_index_capture(&lp, &resp);
+    hyp_store_t *store = ri_index_capture(&lp, &resp);
     if (!resp) {
         FAIL("no MCP response");
     }
@@ -484,12 +484,12 @@ TEST(index_parse_partial_clears_on_fix) {
     if (!store) {
         FAIL("store did not open");
     }
-    cbm_store_close(store);
+    hyp_store_close(store);
 
     /* Flagged after the first (full) index. */
     char qargs[900];
     snprintf(qargs, sizeof(qargs), "{\"project\":\"%s\"}", lp.project);
-    char *cov1 = cbm_mcp_handle_tool(lp.srv, "index_status", qargs);
+    char *cov1 = hyp_mcp_handle_tool(lp.srv, "index_status", qargs);
     ASSERT_NOT_NULL(cov1);
     ASSERT_NOT_NULL(strstr(cov1, "flaky.c"));
     free(cov1);
@@ -506,16 +506,16 @@ TEST(index_parse_partial_clears_on_fix) {
     /* Re-index WITHOUT deleting the DB → routes through the incremental path. */
     char iargs[700];
     snprintf(iargs, sizeof(iargs), "{\"repo_path\":\"%s\"}", lp.tmpdir);
-    char *resp2 = cbm_mcp_handle_tool(lp.srv, "index_repository", iargs);
+    char *resp2 = hyp_mcp_handle_tool(lp.srv, "index_repository", iargs);
     ASSERT_NOT_NULL(resp2);
     free(resp2);
 
-    char *cov2 = cbm_mcp_handle_tool(lp.srv, "index_status", qargs);
+    char *cov2 = hyp_mcp_handle_tool(lp.srv, "index_status", qargs);
     ASSERT_NOT_NULL(cov2);
     ASSERT_NULL(strstr(cov2, "flaky.c"));
     free(cov2);
 
-    store = cbm_store_open_path(lp.dbpath);
+    store = hyp_store_open_path(lp.dbpath);
     if (!store) {
         FAIL("store did not reopen");
     }
@@ -537,8 +537,8 @@ TEST(index_parse_partial_clears_on_fix) {
 TEST(index_not_indexed_by_design_reported) {
     RProj lp;
     memset(&lp, 0, sizeof(lp));
-    snprintf(lp.tmpdir, sizeof(lp.tmpdir), "/tmp/cbm_resil_XXXXXX");
-    if (!cbm_mkdtemp(lp.tmpdir)) {
+    snprintf(lp.tmpdir, sizeof(lp.tmpdir), "/tmp/hyp_resil_XXXXXX");
+    if (!hyp_mkdtemp(lp.tmpdir)) {
         FAIL("mkdtemp failed");
     }
     rh_to_fwd_slashes(lp.tmpdir);
@@ -548,11 +548,11 @@ TEST(index_not_indexed_by_design_reported) {
     ri_write_text(lp.tmpdir, "secret.py", "def hidden():\n    return 42\n");
     char gen_dir[700];
     snprintf(gen_dir, sizeof(gen_dir), "%s/generated", lp.tmpdir);
-    cbm_mkdir(gen_dir);
+    hyp_mkdir(gen_dir);
     ri_write_text(gen_dir, "gen.py", "def generated():\n    return 3\n");
 
     char *resp = NULL;
-    cbm_store_t *store = ri_index_capture(&lp, &resp);
+    hyp_store_t *store = ri_index_capture(&lp, &resp);
     if (!resp) {
         FAIL("no MCP response");
     }
@@ -608,7 +608,7 @@ TEST(index_not_indexed_by_design_reported) {
     /* index_status carries the persisted by-design section. */
     char qargs[900];
     snprintf(qargs, sizeof(qargs), "{\"project\":\"%s\"}", lp.project);
-    char *sresp = cbm_mcp_handle_tool(lp.srv, "index_status", qargs);
+    char *sresp = hyp_mcp_handle_tool(lp.srv, "index_status", qargs);
     ASSERT_NOT_NULL(sresp);
     ASSERT_NOT_NULL(strstr(sresp, "not_indexed"));
     ASSERT_NOT_NULL(strstr(sresp, "secret.py"));
@@ -622,7 +622,7 @@ TEST(index_not_indexed_by_design_reported) {
              "{\"project\":\"%s\",\"graph\":\"missed\",\"query\":\"MATCH (f) RETURN "
              "f.file_path\"}",
              lp.project);
-    char *gresp = cbm_mcp_handle_tool(lp.srv, "query_graph", qargs);
+    char *gresp = hyp_mcp_handle_tool(lp.srv, "query_graph", qargs);
     ASSERT_NOT_NULL(gresp);
     ASSERT_NULL(strstr(gresp, "secret.py"));
     ASSERT_NULL(strstr(gresp, "generated"));
@@ -632,10 +632,10 @@ TEST(index_not_indexed_by_design_reported) {
      * the rebuild + deleted-file prune and stay fresh. */
     char iargs[700];
     snprintf(iargs, sizeof(iargs), "{\"repo_path\":\"%s\"}", lp.tmpdir);
-    char *resp2 = cbm_mcp_handle_tool(lp.srv, "index_repository", iargs);
+    char *resp2 = hyp_mcp_handle_tool(lp.srv, "index_repository", iargs);
     ASSERT_NOT_NULL(resp2);
     free(resp2);
-    char *sresp2 = cbm_mcp_handle_tool(lp.srv, "index_status", qargs);
+    char *sresp2 = hyp_mcp_handle_tool(lp.srv, "index_status", qargs);
     ASSERT_NOT_NULL(sresp2);
     ASSERT_NOT_NULL(strstr(sresp2, "secret.py"));
     ASSERT_NOT_NULL(strstr(sresp2, "generated"));
@@ -643,18 +643,18 @@ TEST(index_not_indexed_by_design_reported) {
 
     /* The ignored constructs are genuinely absent from the graph (label
      * counts include <python-builtins> stubs, so assert by name). */
-    cbm_node_t *hits = NULL;
+    hyp_node_t *hits = NULL;
     int hit_count = 0;
-    ASSERT_EQ(cbm_store_find_nodes_by_name(store, lp.project, "hidden", &hits, &hit_count),
-              CBM_STORE_OK);
+    ASSERT_EQ(hyp_store_find_nodes_by_name(store, lp.project, "hidden", &hits, &hit_count),
+              HYP_STORE_OK);
     ASSERT_EQ(hit_count, 0);
-    cbm_store_free_nodes(hits, hit_count);
+    hyp_store_free_nodes(hits, hit_count);
     hits = NULL;
     hit_count = 0;
-    ASSERT_EQ(cbm_store_find_nodes_by_name(store, lp.project, "alpha", &hits, &hit_count),
-              CBM_STORE_OK);
+    ASSERT_EQ(hyp_store_find_nodes_by_name(store, lp.project, "alpha", &hits, &hit_count),
+              HYP_STORE_OK);
     ASSERT_GTE(hit_count, 1); /* the non-ignored neighbor IS indexed */
-    cbm_store_free_nodes(hits, hit_count);
+    hyp_store_free_nodes(hits, hit_count);
 
     yyjson_doc_free(d);
     free(resp);
@@ -680,8 +680,8 @@ TEST(index_relative_repo_path_canonicalized) {
 #else
     RProj lp;
     memset(&lp, 0, sizeof(lp));
-    snprintf(lp.tmpdir, sizeof(lp.tmpdir), "/tmp/cbm_resil_XXXXXX");
-    if (!cbm_mkdtemp(lp.tmpdir)) {
+    snprintf(lp.tmpdir, sizeof(lp.tmpdir), "/tmp/hyp_resil_XXXXXX");
+    if (!hyp_mkdtemp(lp.tmpdir)) {
         FAIL("mkdtemp failed");
     }
     rh_to_fwd_slashes(lp.tmpdir);
@@ -693,7 +693,7 @@ TEST(index_relative_repo_path_canonicalized) {
     if (!realpath(lp.tmpdir, canon)) {
         snprintf(canon, sizeof(canon), "%s", lp.tmpdir);
     }
-    lp.project = cbm_project_name_from_path(canon);
+    lp.project = hyp_project_name_from_path(canon);
     if (!lp.project) {
         FAIL("project name derivation failed");
     }
@@ -703,12 +703,12 @@ TEST(index_relative_repo_path_canonicalized) {
         home = "/tmp";
     }
     char cache_dir[512];
-    snprintf(cache_dir, sizeof(cache_dir), "%s/.cache/codebase-memory-mcp", home);
-    cbm_mkdir(cache_dir);
+    snprintf(cache_dir, sizeof(cache_dir), "%s/.cache/hyponoia", home);
+    hyp_mkdir(cache_dir);
     snprintf(lp.dbpath, sizeof(lp.dbpath), "%s/%s.db", cache_dir, lp.project);
     unlink(lp.dbpath);
 
-    lp.srv = cbm_mcp_server_new(NULL);
+    lp.srv = hyp_mcp_server_new(NULL);
     if (!lp.srv) {
         FAIL("server alloc failed");
     }
@@ -721,7 +721,7 @@ TEST(index_relative_repo_path_canonicalized) {
     if (chdir(lp.tmpdir) != 0) {
         FAIL("chdir failed");
     }
-    char *resp = cbm_mcp_handle_tool(lp.srv, "index_repository", "{\"repo_path\":\".\"}");
+    char *resp = hyp_mcp_handle_tool(lp.srv, "index_repository", "{\"repo_path\":\".\"}");
     int rc_back = chdir(oldcwd);
     if (rc_back != 0) {
         free(resp);
@@ -737,14 +737,14 @@ TEST(index_relative_repo_path_canonicalized) {
     free(resp);
 
     /* The DB survived the run (v0.8.1 auto-deleted it here)... */
-    cbm_store_t *store = cbm_store_open_path(lp.dbpath);
+    hyp_store_t *store = hyp_store_open_path(lp.dbpath);
     if (!store) {
         FAIL("db missing after relative-path index (auto-clean regression)");
     }
 
     /* ...with an ABSOLUTE canonical root_path in the projects table... */
-    cbm_project_t info = {0};
-    ASSERT_EQ(cbm_store_get_project(store, lp.project, &info), CBM_STORE_OK);
+    hyp_project_t info = {0};
+    ASSERT_EQ(hyp_store_get_project(store, lp.project, &info), HYP_STORE_OK);
     ASSERT_NOT_NULL(info.root_path);
     ASSERT_TRUE(info.root_path[0] == '/');
     ASSERT_STR_EQ(info.root_path, canon);
@@ -753,12 +753,12 @@ TEST(index_relative_repo_path_canonicalized) {
     free((char *)info.root_path);
 
     /* ...and it stays queryable. */
-    cbm_node_t *hits = NULL;
+    hyp_node_t *hits = NULL;
     int hit_count = 0;
-    ASSERT_EQ(cbm_store_find_nodes_by_name(store, lp.project, "alpha", &hits, &hit_count),
-              CBM_STORE_OK);
+    ASSERT_EQ(hyp_store_find_nodes_by_name(store, lp.project, "alpha", &hits, &hit_count),
+              HYP_STORE_OK);
     ASSERT_GTE(hit_count, 1);
-    cbm_store_free_nodes(hits, hit_count);
+    hyp_store_free_nodes(hits, hit_count);
 
     rh_cleanup(&lp, store);
     PASS();

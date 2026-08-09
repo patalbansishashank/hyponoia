@@ -132,30 +132,30 @@ static bool bootstrap_worker_argv_exact(int argc, char *const argv[]) {
     return next == argc;
 }
 
-cbm_daemon_process_role_t cbm_daemon_process_role(int argc, char *const argv[]) {
+hyp_daemon_process_role_t hyp_daemon_process_role(int argc, char *const argv[]) {
     if (argc <= 0 || !argv || !argv[0] || argv[0][0] == '\0') {
-        return CBM_DAEMON_PROCESS_INVALID;
+        return HYP_DAEMON_PROCESS_INVALID;
     }
 
-    int daemon_arg = bootstrap_find_arg(argc, argv, CBM_DAEMON_INTERNAL_ARG);
+    int daemon_arg = bootstrap_find_arg(argc, argv, HYP_DAEMON_INTERNAL_ARG);
     if (daemon_arg >= 0) {
         /* Byte-exact daemon-role grammar, deliberately unforgiving: the bare
          * internal marker, or the marker followed by exactly the permanent
          * flag. Every other shape — reordered, repeated, or extended — is
          * INVALID, so argv smuggling cannot reach the daemon role. */
         if (argc == 2 && daemon_arg == 1) {
-            return CBM_DAEMON_PROCESS_DAEMON;
+            return HYP_DAEMON_PROCESS_DAEMON;
         }
-        if (argc == 3 && daemon_arg == 1 && bootstrap_arg_is(argv[2], CBM_DAEMON_PERMANENT_ARG)) {
-            return CBM_DAEMON_PROCESS_DAEMON;
+        if (argc == 3 && daemon_arg == 1 && bootstrap_arg_is(argv[2], HYP_DAEMON_PERMANENT_ARG)) {
+            return HYP_DAEMON_PROCESS_DAEMON;
         }
-        return CBM_DAEMON_PROCESS_INVALID;
+        return HYP_DAEMON_PROCESS_INVALID;
     }
 
     int worker_arg = bootstrap_find_arg(argc, argv, "--index-worker");
     if (worker_arg >= 0) {
-        return bootstrap_worker_argv_exact(argc, argv) ? CBM_DAEMON_PROCESS_WORKER
-                                                       : CBM_DAEMON_PROCESS_INVALID;
+        return bootstrap_worker_argv_exact(argc, argv) ? HYP_DAEMON_PROCESS_WORKER
+                                                       : HYP_DAEMON_PROCESS_INVALID;
     }
 
     static const char *const stateless_commands[] = {
@@ -174,58 +174,58 @@ cbm_daemon_process_role_t cbm_daemon_process_role(int argc, char *const argv[]) 
     for (int arg = 1; arg < argc; arg++) {
         if (bootstrap_arg_is(argv[arg], "cli")) {
             if (bootstrap_has_help_after(argc, argv, arg + 1)) {
-                return CBM_DAEMON_PROCESS_STATELESS;
+                return HYP_DAEMON_PROCESS_STATELESS;
             }
-            return CBM_DAEMON_PROCESS_LOCAL_CLI;
+            return HYP_DAEMON_PROCESS_LOCAL_CLI;
         }
         if (bootstrap_arg_is(argv[arg], "hook-augment")) {
-            return CBM_DAEMON_PROCESS_HOOK_CLIENT;
+            return HYP_DAEMON_PROCESS_HOOK_CLIENT;
         }
         if (bootstrap_arg_is(argv[arg], "config")) {
-            return bootstrap_has_help_after(argc, argv, arg + 1) ? CBM_DAEMON_PROCESS_STATELESS
-                                                                 : CBM_DAEMON_PROCESS_LOCAL_CLI;
+            return bootstrap_has_help_after(argc, argv, arg + 1) ? HYP_DAEMON_PROCESS_STATELESS
+                                                                 : HYP_DAEMON_PROCESS_LOCAL_CLI;
         }
-        /* Placed after the `cli` check on purpose: `cbm cli search "daemon
+        /* Placed after the `cli` check on purpose: `hyp cli search "daemon
          * start"` is opaque tool input and must stay LOCAL_CLI. */
         if (bootstrap_arg_is(argv[arg], "daemon")) {
-            return bootstrap_has_help_after(argc, argv, arg + 1) ? CBM_DAEMON_PROCESS_STATELESS
-                                                                 : CBM_DAEMON_PROCESS_DAEMON_CTL;
+            return bootstrap_has_help_after(argc, argv, arg + 1) ? HYP_DAEMON_PROCESS_STATELESS
+                                                                 : HYP_DAEMON_PROCESS_DAEMON_CTL;
         }
         if (bootstrap_arg_is(argv[arg], "--version") || bootstrap_arg_is(argv[arg], "--help") ||
             bootstrap_arg_is(argv[arg], "-h")) {
-            return CBM_DAEMON_PROCESS_STATELESS;
+            return HYP_DAEMON_PROCESS_STATELESS;
         }
         for (size_t command = 0;
              command < sizeof(stateless_commands) / sizeof(stateless_commands[0]); command++) {
             if (bootstrap_arg_is(argv[arg], stateless_commands[command])) {
-                return CBM_DAEMON_PROCESS_STATELESS;
+                return HYP_DAEMON_PROCESS_STATELESS;
             }
         }
     }
-    return CBM_DAEMON_PROCESS_MCP_CLIENT;
+    return HYP_DAEMON_PROCESS_MCP_CLIENT;
 }
 
-bool cbm_daemon_process_role_requires_client(cbm_daemon_process_role_t role) {
-    return role == CBM_DAEMON_PROCESS_MCP_CLIENT || role == CBM_DAEMON_PROCESS_HOOK_CLIENT;
+bool hyp_daemon_process_role_requires_client(hyp_daemon_process_role_t role) {
+    return role == HYP_DAEMON_PROCESS_MCP_CLIENT || role == HYP_DAEMON_PROCESS_HOOK_CLIENT;
 }
 
-cbm_daemon_ipc_endpoint_t *cbm_daemon_bootstrap_endpoint_new(const char *runtime_parent) {
-    char key[CBM_DAEMON_KEY_SIZE];
-    if (!cbm_daemon_rendezvous_key(key)) {
+hyp_daemon_ipc_endpoint_t *hyp_daemon_bootstrap_endpoint_new(const char *runtime_parent) {
+    char key[HYP_DAEMON_KEY_SIZE];
+    if (!hyp_daemon_rendezvous_key(key)) {
         return NULL;
     }
-    return cbm_daemon_ipc_endpoint_new(key, runtime_parent);
+    return hyp_daemon_ipc_endpoint_new(key, runtime_parent);
 }
 
-bool cbm_daemon_bootstrap_launch_spec_init(const char *executable_path,
-                                           cbm_daemon_bootstrap_launch_spec_t *spec_out) {
+bool hyp_daemon_bootstrap_launch_spec_init(const char *executable_path,
+                                           hyp_daemon_bootstrap_launch_spec_t *spec_out) {
     if (!executable_path || executable_path[0] == '\0' || !spec_out) {
         return false;
     }
     memset(spec_out, 0, sizeof(*spec_out));
     spec_out->executable_path = executable_path;
     spec_out->argv[0] = executable_path;
-    spec_out->argv[1] = CBM_DAEMON_INTERNAL_ARG;
+    spec_out->argv[1] = HYP_DAEMON_INTERNAL_ARG;
     spec_out->argc = 2U;
     spec_out->detached = true;
     spec_out->inherit_standard_handles = false;
@@ -233,24 +233,24 @@ bool cbm_daemon_bootstrap_launch_spec_init(const char *executable_path,
     return true;
 }
 
-bool cbm_daemon_bootstrap_launch_spec_init_permanent(const char *executable_path,
-                                                     cbm_daemon_bootstrap_launch_spec_t *spec_out) {
-    if (!cbm_daemon_bootstrap_launch_spec_init(executable_path, spec_out)) {
+bool hyp_daemon_bootstrap_launch_spec_init_permanent(const char *executable_path,
+                                                     hyp_daemon_bootstrap_launch_spec_t *spec_out) {
+    if (!hyp_daemon_bootstrap_launch_spec_init(executable_path, spec_out)) {
         return false;
     }
-    spec_out->argv[2] = CBM_DAEMON_PERMANENT_ARG;
+    spec_out->argv[2] = HYP_DAEMON_PERMANENT_ARG;
     spec_out->argc = 3U;
     return true;
 }
 
 static uint64_t bootstrap_deadline_after(uint32_t timeout_ms) {
-    uint64_t now = cbm_now_ms();
+    uint64_t now = hyp_now_ms();
     return UINT64_MAX - now < timeout_ms ? UINT64_MAX : now + (uint64_t)timeout_ms;
 }
 
 static _Noreturn void bootstrap_cleanup_fail_stop(const char *component) {
     (void)fprintf(stderr,
-                  "codebase-memory-mcp: coordination cleanup failed (%s); "
+                  "hyponoia: coordination cleanup failed (%s); "
                   "terminating so the OS releases retained claims\n",
                   component ? component : "unknown");
     (void)fflush(stderr);
@@ -263,7 +263,7 @@ static _Noreturn void bootstrap_cleanup_fail_stop(const char *component) {
 }
 
 static void bootstrap_pause(uint64_t deadline) {
-    uint64_t now = cbm_now_ms();
+    uint64_t now = hyp_now_ms();
     if (now >= deadline) {
         return;
     }
@@ -272,83 +272,83 @@ static void bootstrap_pause(uint64_t deadline) {
         .tv_sec = 0,
         .tv_nsec = remaining_ms > 1 ? BOOTSTRAP_RETRY_NS : (long)(remaining_ms * 1000000ULL),
     };
-    (void)cbm_nanosleep(&pause, NULL);
+    (void)hyp_nanosleep(&pause, NULL);
 }
 
-static void bootstrap_startup_lock_release_complete(const cbm_daemon_bootstrap_ops_t *ops,
-                                                    cbm_daemon_bootstrap_lock_t *lock_io) {
+static void bootstrap_startup_lock_release_complete(const hyp_daemon_bootstrap_ops_t *ops,
+                                                    hyp_daemon_bootstrap_lock_t *lock_io) {
     uint64_t deadline = bootstrap_deadline_after(BOOTSTRAP_COORDINATION_CLEANUP_MS);
     while (ops && ops->startup_lock_release && lock_io && *lock_io) {
         (void)ops->startup_lock_release(ops->context, lock_io);
         if (!*lock_io) {
             return;
         }
-        if (cbm_now_ms() >= deadline) {
+        if (hyp_now_ms() >= deadline) {
             bootstrap_cleanup_fail_stop("startup_lock_cleanup");
         }
-        cbm_usleep(1000);
+        hyp_usleep(1000);
     }
 }
 
-static void bootstrap_result_reset(cbm_daemon_bootstrap_result_t *result,
-                                   cbm_daemon_process_role_t role) {
+static void bootstrap_result_reset(hyp_daemon_bootstrap_result_t *result,
+                                   hyp_daemon_process_role_t role) {
     memset(result, 0, sizeof(*result));
-    result->status = cbm_daemon_process_role_requires_client(role) ? CBM_DAEMON_BOOTSTRAP_FAILED
-                                                                   : CBM_DAEMON_BOOTSTRAP_BYPASSED;
+    result->status = hyp_daemon_process_role_requires_client(role) ? HYP_DAEMON_BOOTSTRAP_FAILED
+                                                                   : HYP_DAEMON_BOOTSTRAP_BYPASSED;
 }
 
-static cbm_daemon_bootstrap_status_t bootstrap_finish_probe(
-    cbm_daemon_bootstrap_probe_status_t probe, cbm_daemon_runtime_client_t *client,
-    const cbm_daemon_runtime_connect_result_t *connect_result,
-    const cbm_daemon_bootstrap_ops_t *ops, cbm_daemon_bootstrap_result_t *result) {
+static hyp_daemon_bootstrap_status_t bootstrap_finish_probe(
+    hyp_daemon_bootstrap_probe_status_t probe, hyp_daemon_runtime_client_t *client,
+    const hyp_daemon_runtime_connect_result_t *connect_result,
+    const hyp_daemon_bootstrap_ops_t *ops, hyp_daemon_bootstrap_result_t *result) {
     if (connect_result) {
         result->connect_result = *connect_result;
     }
     result->client = client;
-    if (probe == CBM_DAEMON_BOOTSTRAP_PROBE_CONNECTED && client) {
-        result->status = CBM_DAEMON_BOOTSTRAP_CONNECTED;
+    if (probe == HYP_DAEMON_BOOTSTRAP_PROBE_CONNECTED && client) {
+        result->status = HYP_DAEMON_BOOTSTRAP_CONNECTED;
         return result->status;
     }
     result->client = NULL;
-    if (probe == CBM_DAEMON_BOOTSTRAP_PROBE_CONFLICT) {
-        result->status = CBM_DAEMON_BOOTSTRAP_CONFLICT;
+    if (probe == HYP_DAEMON_BOOTSTRAP_PROBE_CONFLICT) {
+        result->status = HYP_DAEMON_BOOTSTRAP_CONFLICT;
         (void)snprintf(result->message, sizeof(result->message), "%s",
                        connect_result && connect_result->message[0]
                            ? connect_result->message
-                           : "CBM could not start because a conflicting CBM process is active; "
-                             "close all CBM sessions and commands, then retry. If a permanent "
-                             "daemon from another build is running, `codebase-memory-mcp daemon "
+                           : "HYP could not start because a conflicting HYP process is active; "
+                             "close all HYP sessions and commands, then retry. If a permanent "
+                             "daemon from another build is running, `hyponoia daemon "
                              "stop` retires it");
         if (ops->visible_diagnostic) {
             ops->visible_diagnostic(ops->context, result->message);
         }
         return result->status;
     }
-    return CBM_DAEMON_BOOTSTRAP_FAILED;
+    return HYP_DAEMON_BOOTSTRAP_FAILED;
 }
 
-static cbm_daemon_bootstrap_probe_status_t bootstrap_probe(
-    const cbm_daemon_bootstrap_config_t *config, const cbm_daemon_bootstrap_ops_t *ops,
-    cbm_daemon_runtime_client_t **client_out, cbm_daemon_runtime_connect_result_t *connect_result) {
+static hyp_daemon_bootstrap_probe_status_t bootstrap_probe(
+    const hyp_daemon_bootstrap_config_t *config, const hyp_daemon_bootstrap_ops_t *ops,
+    hyp_daemon_runtime_client_t **client_out, hyp_daemon_runtime_connect_result_t *connect_result) {
     memset(connect_result, 0, sizeof(*connect_result));
     *client_out = NULL;
     return ops->probe(ops->context, config->endpoint, config->identity, config->connect_timeout_ms,
                       client_out, connect_result);
 }
 
-static bool bootstrap_probe_is_finishable(cbm_daemon_bootstrap_probe_status_t probe) {
-    return probe == CBM_DAEMON_BOOTSTRAP_PROBE_CONNECTED ||
-           probe == CBM_DAEMON_BOOTSTRAP_PROBE_CONFLICT;
+static bool bootstrap_probe_is_finishable(hyp_daemon_bootstrap_probe_status_t probe) {
+    return probe == HYP_DAEMON_BOOTSTRAP_PROBE_CONNECTED ||
+           probe == HYP_DAEMON_BOOTSTRAP_PROBE_CONFLICT;
 }
 
-static bool bootstrap_probe_is_waitable(cbm_daemon_bootstrap_probe_status_t probe) {
-    return probe == CBM_DAEMON_BOOTSTRAP_PROBE_UNAVAILABLE ||
-           probe == CBM_DAEMON_BOOTSTRAP_PROBE_RESERVED ||
-           probe == CBM_DAEMON_BOOTSTRAP_PROBE_TERMINAL;
+static bool bootstrap_probe_is_waitable(hyp_daemon_bootstrap_probe_status_t probe) {
+    return probe == HYP_DAEMON_BOOTSTRAP_PROBE_UNAVAILABLE ||
+           probe == HYP_DAEMON_BOOTSTRAP_PROBE_RESERVED ||
+           probe == HYP_DAEMON_BOOTSTRAP_PROBE_TERMINAL;
 }
 
-static bool bootstrap_config_valid(const cbm_daemon_bootstrap_config_t *config,
-                                   const cbm_daemon_bootstrap_ops_t *ops) {
+static bool bootstrap_config_valid(const hyp_daemon_bootstrap_config_t *config,
+                                   const hyp_daemon_bootstrap_ops_t *ops) {
     return config && ops && config->endpoint && config->identity && config->executable_path &&
            config->executable_path[0] && config->connect_timeout_ms > 0 &&
            config->startup_timeout_ms > 0 && ops->cohort_acquire && ops->cohort_release &&
@@ -356,40 +356,40 @@ static bool bootstrap_config_valid(const cbm_daemon_bootstrap_config_t *config,
            ops->startup_lock_release && ops->spawn_daemon;
 }
 
-cbm_daemon_bootstrap_status_t cbm_daemon_bootstrap_execute_with_ops(
-    const cbm_daemon_bootstrap_config_t *config, const cbm_daemon_bootstrap_ops_t *ops,
-    cbm_daemon_bootstrap_result_t *result_out) {
+hyp_daemon_bootstrap_status_t hyp_daemon_bootstrap_execute_with_ops(
+    const hyp_daemon_bootstrap_config_t *config, const hyp_daemon_bootstrap_ops_t *ops,
+    hyp_daemon_bootstrap_result_t *result_out) {
     if (!result_out) {
-        return CBM_DAEMON_BOOTSTRAP_FAILED;
+        return HYP_DAEMON_BOOTSTRAP_FAILED;
     }
-    cbm_daemon_process_role_t role = config ? config->role : CBM_DAEMON_PROCESS_INVALID;
+    hyp_daemon_process_role_t role = config ? config->role : HYP_DAEMON_PROCESS_INVALID;
     bootstrap_result_reset(result_out, role);
-    if (!cbm_daemon_process_role_requires_client(role)) {
-        return role == CBM_DAEMON_PROCESS_INVALID ? CBM_DAEMON_BOOTSTRAP_FAILED
-                                                  : CBM_DAEMON_BOOTSTRAP_BYPASSED;
+    if (!hyp_daemon_process_role_requires_client(role)) {
+        return role == HYP_DAEMON_PROCESS_INVALID ? HYP_DAEMON_BOOTSTRAP_FAILED
+                                                  : HYP_DAEMON_BOOTSTRAP_BYPASSED;
     }
     if (!bootstrap_config_valid(config, ops)) {
-        return CBM_DAEMON_BOOTSTRAP_FAILED;
+        return HYP_DAEMON_BOOTSTRAP_FAILED;
     }
 
     uint64_t deadline = bootstrap_deadline_after(config->startup_timeout_ms);
-    cbm_daemon_bootstrap_cohort_t cohort = NULL;
-    cbm_daemon_conflict_t cohort_conflict;
-    cbm_version_cohort_status_t cohort_status = ops->cohort_acquire(
+    hyp_daemon_bootstrap_cohort_t cohort = NULL;
+    hyp_daemon_conflict_t cohort_conflict;
+    hyp_version_cohort_status_t cohort_status = ops->cohort_acquire(
         ops->context, config->endpoint, config->identity, deadline, &cohort, &cohort_conflict);
-    if (cohort_status != CBM_VERSION_COHORT_OK) {
-        result_out->status = cohort_status == CBM_VERSION_COHORT_CONFLICT
-                                 ? CBM_DAEMON_BOOTSTRAP_CONFLICT
-                                 : CBM_DAEMON_BOOTSTRAP_FAILED;
-        bool formatted = cohort_status == CBM_VERSION_COHORT_CONFLICT &&
-                         cbm_daemon_conflict_format(&cohort_conflict, result_out->message,
+    if (cohort_status != HYP_VERSION_COHORT_OK) {
+        result_out->status = cohort_status == HYP_VERSION_COHORT_CONFLICT
+                                 ? HYP_DAEMON_BOOTSTRAP_CONFLICT
+                                 : HYP_DAEMON_BOOTSTRAP_FAILED;
+        bool formatted = cohort_status == HYP_VERSION_COHORT_CONFLICT &&
+                         hyp_daemon_conflict_format(&cohort_conflict, result_out->message,
                                                     sizeof(result_out->message));
         if (!formatted) {
-            const char *reason = cohort_status == CBM_VERSION_COHORT_BUSY
-                                     ? "another CBM activation is in progress"
+            const char *reason = cohort_status == HYP_VERSION_COHORT_BUSY
+                                     ? "another HYP activation is in progress"
                                      : "exact-build admission could not be verified";
             (void)snprintf(result_out->message, sizeof(result_out->message),
-                           "CBM daemon could not start: %s", reason);
+                           "HYP daemon could not start: %s", reason);
         }
         if (ops->visible_diagnostic) {
             ops->visible_diagnostic(ops->context, result_out->message);
@@ -400,30 +400,30 @@ cbm_daemon_bootstrap_status_t cbm_daemon_bootstrap_execute_with_ops(
         return result_out->status;
     }
 
-    cbm_daemon_runtime_client_t *client = NULL;
-    cbm_daemon_runtime_connect_result_t connect_result;
-    cbm_daemon_bootstrap_probe_status_t probe =
+    hyp_daemon_runtime_client_t *client = NULL;
+    hyp_daemon_runtime_connect_result_t connect_result;
+    hyp_daemon_bootstrap_probe_status_t probe =
         bootstrap_probe(config, ops, &client, &connect_result);
     if (bootstrap_probe_is_finishable(probe)) {
-        cbm_daemon_bootstrap_status_t status =
+        hyp_daemon_bootstrap_status_t status =
             bootstrap_finish_probe(probe, client, &connect_result, ops, result_out);
         ops->cohort_release(ops->context, cohort);
         return status;
     }
     if (!bootstrap_probe_is_waitable(probe)) {
-        probe = CBM_DAEMON_BOOTSTRAP_PROBE_ERROR;
+        probe = HYP_DAEMON_BOOTSTRAP_PROBE_ERROR;
     }
 
-    cbm_daemon_bootstrap_lock_t startup_lock = NULL;
+    hyp_daemon_bootstrap_lock_t startup_lock = NULL;
     bool lock_acquired = false;
-    bool generation_observed = probe == CBM_DAEMON_BOOTSTRAP_PROBE_RESERVED ||
-                               probe == CBM_DAEMON_BOOTSTRAP_PROBE_TERMINAL;
-    while (cbm_now_ms() < deadline) {
+    bool generation_observed = probe == HYP_DAEMON_BOOTSTRAP_PROBE_RESERVED ||
+                               probe == HYP_DAEMON_BOOTSTRAP_PROBE_TERMINAL;
+    while (hyp_now_ms() < deadline) {
         if (!bootstrap_probe_is_waitable(probe)) {
             break;
         }
-        if (probe == CBM_DAEMON_BOOTSTRAP_PROBE_RESERVED ||
-            probe == CBM_DAEMON_BOOTSTRAP_PROBE_TERMINAL) {
+        if (probe == HYP_DAEMON_BOOTSTRAP_PROBE_RESERVED ||
+            probe == HYP_DAEMON_BOOTSTRAP_PROBE_TERMINAL) {
             /* A live or stopping generation owns the transition for now. Its
              * disappearance is not sticky: after observing true absence, the
              * same bootstrap attempt may serialize and become the next first
@@ -438,7 +438,7 @@ cbm_daemon_bootstrap_status_t cbm_daemon_bootstrap_execute_with_ops(
         int lock_status =
             ops->startup_lock_try_acquire(ops->context, config->endpoint, &startup_lock);
         if (lock_status < 0) {
-            probe = CBM_DAEMON_BOOTSTRAP_PROBE_ERROR;
+            probe = HYP_DAEMON_BOOTSTRAP_PROBE_ERROR;
             break;
         }
         if (lock_status == 0) {
@@ -447,35 +447,35 @@ cbm_daemon_bootstrap_status_t cbm_daemon_bootstrap_execute_with_ops(
             continue;
         }
         if (lock_status != 1 || !startup_lock) {
-            probe = CBM_DAEMON_BOOTSTRAP_PROBE_ERROR;
+            probe = HYP_DAEMON_BOOTSTRAP_PROBE_ERROR;
             break;
         }
 
         lock_acquired = true;
         probe = bootstrap_probe(config, ops, &client, &connect_result);
-        if (probe == CBM_DAEMON_BOOTSTRAP_PROBE_RESERVED ||
-            probe == CBM_DAEMON_BOOTSTRAP_PROBE_TERMINAL) {
+        if (probe == HYP_DAEMON_BOOTSTRAP_PROBE_RESERVED ||
+            probe == HYP_DAEMON_BOOTSTRAP_PROBE_TERMINAL) {
             generation_observed = true;
             bootstrap_startup_lock_release_complete(ops, &startup_lock);
             lock_acquired = false;
             continue;
         }
-        if (bootstrap_probe_is_finishable(probe) || probe == CBM_DAEMON_BOOTSTRAP_PROBE_ERROR) {
+        if (bootstrap_probe_is_finishable(probe) || probe == HYP_DAEMON_BOOTSTRAP_PROBE_ERROR) {
             break;
         }
-        if (probe != CBM_DAEMON_BOOTSTRAP_PROBE_UNAVAILABLE) {
-            probe = CBM_DAEMON_BOOTSTRAP_PROBE_ERROR;
+        if (probe != HYP_DAEMON_BOOTSTRAP_PROBE_UNAVAILABLE) {
+            probe = HYP_DAEMON_BOOTSTRAP_PROBE_ERROR;
             break;
         }
 
-        cbm_daemon_bootstrap_launch_spec_t spec;
+        hyp_daemon_bootstrap_launch_spec_t spec;
         bool spec_ready =
             config->spawn_permanent
-                ? cbm_daemon_bootstrap_launch_spec_init_permanent(config->executable_path, &spec)
-                : cbm_daemon_bootstrap_launch_spec_init(config->executable_path, &spec);
+                ? hyp_daemon_bootstrap_launch_spec_init_permanent(config->executable_path, &spec)
+                : hyp_daemon_bootstrap_launch_spec_init(config->executable_path, &spec);
         if (!spec_ready || !ops->startup_lock_prepare_handoff(ops->context, startup_lock) ||
             !ops->spawn_daemon(ops->context, &spec)) {
-            probe = CBM_DAEMON_BOOTSTRAP_PROBE_ERROR;
+            probe = HYP_DAEMON_BOOTSTRAP_PROBE_ERROR;
             break;
         }
         result_out->daemon_spawned = true;
@@ -487,8 +487,8 @@ cbm_daemon_bootstrap_status_t cbm_daemon_bootstrap_execute_with_ops(
         do {
             bootstrap_pause(deadline);
             probe = bootstrap_probe(config, ops, &client, &connect_result);
-            if (probe == CBM_DAEMON_BOOTSTRAP_PROBE_RESERVED ||
-                probe == CBM_DAEMON_BOOTSTRAP_PROBE_TERMINAL) {
+            if (probe == HYP_DAEMON_BOOTSTRAP_PROBE_RESERVED ||
+                probe == HYP_DAEMON_BOOTSTRAP_PROBE_TERMINAL) {
                 generation_observed = true;
                 bootstrap_startup_lock_release_complete(ops, &startup_lock);
                 lock_acquired = false;
@@ -497,7 +497,7 @@ cbm_daemon_bootstrap_status_t cbm_daemon_bootstrap_execute_with_ops(
             if (!bootstrap_probe_is_waitable(probe)) {
                 break;
             }
-        } while (cbm_now_ms() < deadline);
+        } while (hyp_now_ms() < deadline);
         if (!lock_acquired) {
             continue;
         }
@@ -508,21 +508,21 @@ cbm_daemon_bootstrap_status_t cbm_daemon_bootstrap_execute_with_ops(
         bootstrap_startup_lock_release_complete(ops, &startup_lock);
     }
     if (bootstrap_probe_is_finishable(probe)) {
-        cbm_daemon_bootstrap_status_t status =
+        hyp_daemon_bootstrap_status_t status =
             bootstrap_finish_probe(probe, client, &connect_result, ops, result_out);
         ops->cohort_release(ops->context, cohort);
         return status;
     }
 
-    result_out->status = CBM_DAEMON_BOOTSTRAP_FAILED;
+    result_out->status = HYP_DAEMON_BOOTSTRAP_FAILED;
     if (generation_observed) {
         (void)snprintf(result_out->message, sizeof(result_out->message),
-                       "CBM daemon is active or starting but could not accept this client "
+                       "HYP daemon is active or starting but could not accept this client "
                        "within %u ms",
                        config->startup_timeout_ms);
     } else {
         (void)snprintf(result_out->message, sizeof(result_out->message),
-                       "CBM daemon could not start within %u ms", config->startup_timeout_ms);
+                       "HYP daemon could not start within %u ms", config->startup_timeout_ms);
     }
     if (ops->visible_diagnostic) {
         ops->visible_diagnostic(ops->context, result_out->message);
@@ -531,37 +531,37 @@ cbm_daemon_bootstrap_status_t cbm_daemon_bootstrap_execute_with_ops(
     return result_out->status;
 }
 
-cbm_daemon_bootstrap_probe_status_t cbm_daemon_bootstrap_classify_failed_connect(
-    const cbm_daemon_runtime_connect_result_t *connect_result, int lifetime_status) {
+hyp_daemon_bootstrap_probe_status_t hyp_daemon_bootstrap_classify_failed_connect(
+    const hyp_daemon_runtime_connect_result_t *connect_result, int lifetime_status) {
     if (!connect_result) {
-        return CBM_DAEMON_BOOTSTRAP_PROBE_ERROR;
+        return HYP_DAEMON_BOOTSTRAP_PROBE_ERROR;
     }
-    if (connect_result->status == CBM_DAEMON_RUNTIME_CONNECT_CONFLICT) {
-        return CBM_DAEMON_BOOTSTRAP_PROBE_CONFLICT;
+    if (connect_result->status == HYP_DAEMON_RUNTIME_CONNECT_CONFLICT) {
+        return HYP_DAEMON_BOOTSTRAP_PROBE_CONFLICT;
     }
-    if (connect_result->status == CBM_DAEMON_RUNTIME_CONNECT_REJECTED) {
+    if (connect_result->status == HYP_DAEMON_RUNTIME_CONNECT_REJECTED) {
         if (strstr(connect_result->message, "stopping") ||
             strstr(connect_result->message, "shutting down")) {
-            return CBM_DAEMON_BOOTSTRAP_PROBE_TERMINAL;
+            return HYP_DAEMON_BOOTSTRAP_PROBE_TERMINAL;
         }
         /* Capacity, admission, and other protocol-level rejections prove an
          * existing generation answered. Never reinterpret them as absence. */
-        return CBM_DAEMON_BOOTSTRAP_PROBE_RESERVED;
+        return HYP_DAEMON_BOOTSTRAP_PROBE_RESERVED;
     }
     if (lifetime_status == 1) {
-        return CBM_DAEMON_BOOTSTRAP_PROBE_RESERVED;
+        return HYP_DAEMON_BOOTSTRAP_PROBE_RESERVED;
     }
     if (lifetime_status != 0) {
-        return CBM_DAEMON_BOOTSTRAP_PROBE_ERROR;
+        return HYP_DAEMON_BOOTSTRAP_PROBE_ERROR;
     }
-    return connect_result->status == CBM_DAEMON_RUNTIME_CONNECT_ERROR
-               ? CBM_DAEMON_BOOTSTRAP_PROBE_UNAVAILABLE
-               : CBM_DAEMON_BOOTSTRAP_PROBE_ERROR;
+    return connect_result->status == HYP_DAEMON_RUNTIME_CONNECT_ERROR
+               ? HYP_DAEMON_BOOTSTRAP_PROBE_UNAVAILABLE
+               : HYP_DAEMON_BOOTSTRAP_PROBE_ERROR;
 }
 
 typedef struct bootstrap_production_cohort {
-    cbm_version_cohort_manager_t *manager;
-    cbm_version_cohort_lease_t *lease;
+    hyp_version_cohort_manager_t *manager;
+    hyp_version_cohort_lease_t *lease;
 } bootstrap_production_cohort_t;
 
 typedef struct {
@@ -573,69 +573,69 @@ typedef struct {
 #endif
 } bootstrap_production_context_t;
 
-static cbm_daemon_bootstrap_probe_status_t bootstrap_production_probe(
-    void *context, const cbm_daemon_ipc_endpoint_t *endpoint,
-    const cbm_daemon_build_identity_t *identity, uint32_t timeout_ms,
-    cbm_daemon_runtime_client_t **client_out, cbm_daemon_runtime_connect_result_t *result_out) {
+static hyp_daemon_bootstrap_probe_status_t bootstrap_production_probe(
+    void *context, const hyp_daemon_ipc_endpoint_t *endpoint,
+    const hyp_daemon_build_identity_t *identity, uint32_t timeout_ms,
+    hyp_daemon_runtime_client_t **client_out, hyp_daemon_runtime_connect_result_t *result_out) {
     bootstrap_production_context_t *production = context;
     if (!production || !production->cohort || !production->cohort->manager) {
-        return CBM_DAEMON_BOOTSTRAP_PROBE_ERROR;
+        return HYP_DAEMON_BOOTSTRAP_PROBE_ERROR;
     }
-    cbm_version_cohort_daemon_presence_t claim =
-        cbm_version_cohort_daemon_claim_presence(production->cohort->manager);
-    if (claim == CBM_VERSION_COHORT_DAEMON_ABSENT) {
-        int lifetime = cbm_daemon_ipc_lifetime_reservation_probe(endpoint);
+    hyp_version_cohort_daemon_presence_t claim =
+        hyp_version_cohort_daemon_claim_presence(production->cohort->manager);
+    if (claim == HYP_VERSION_COHORT_DAEMON_ABSENT) {
+        int lifetime = hyp_daemon_ipc_lifetime_reservation_probe(endpoint);
         if (lifetime == 0) {
             /* Do not spend the per-connect timeout polling a generation that
              * both independent ownership signals prove absent. The startup
              * lock and its mandatory re-probe serialize a concurrent launch. */
-            return CBM_DAEMON_BOOTSTRAP_PROBE_UNAVAILABLE;
+            return HYP_DAEMON_BOOTSTRAP_PROBE_UNAVAILABLE;
         }
         if (lifetime != 1) {
-            return CBM_DAEMON_BOOTSTRAP_PROBE_ERROR;
+            return HYP_DAEMON_BOOTSTRAP_PROBE_ERROR;
         }
-    } else if (claim != CBM_VERSION_COHORT_DAEMON_COORDINATED) {
-        return CBM_DAEMON_BOOTSTRAP_PROBE_ERROR;
+    } else if (claim != HYP_VERSION_COHORT_DAEMON_COORDINATED) {
+        return HYP_DAEMON_BOOTSTRAP_PROBE_ERROR;
     }
 
-    *client_out = cbm_daemon_runtime_client_connect(endpoint, identity, timeout_ms, result_out);
+    *client_out = hyp_daemon_runtime_client_connect(endpoint, identity, timeout_ms, result_out);
     if (*client_out) {
-        return CBM_DAEMON_BOOTSTRAP_PROBE_CONNECTED;
+        return HYP_DAEMON_BOOTSTRAP_PROBE_CONNECTED;
     }
 
     /* Ownership may turn over while the connection attempt is in flight.
      * Re-observe both signals so disappearance is not sticky and a live or
      * cleaning-up generation is never mistaken for absence. */
-    claim = cbm_version_cohort_daemon_claim_presence(production->cohort->manager);
-    if (claim == CBM_VERSION_COHORT_DAEMON_COORDINATED) {
-        return cbm_daemon_bootstrap_classify_failed_connect(result_out, 1);
+    claim = hyp_version_cohort_daemon_claim_presence(production->cohort->manager);
+    if (claim == HYP_VERSION_COHORT_DAEMON_COORDINATED) {
+        return hyp_daemon_bootstrap_classify_failed_connect(result_out, 1);
     }
-    if (claim != CBM_VERSION_COHORT_DAEMON_ABSENT) {
-        return CBM_DAEMON_BOOTSTRAP_PROBE_ERROR;
+    if (claim != HYP_VERSION_COHORT_DAEMON_ABSENT) {
+        return HYP_DAEMON_BOOTSTRAP_PROBE_ERROR;
     }
-    int lifetime_status = cbm_daemon_ipc_lifetime_reservation_probe(endpoint);
-    return cbm_daemon_bootstrap_classify_failed_connect(result_out, lifetime_status);
+    int lifetime_status = hyp_daemon_ipc_lifetime_reservation_probe(endpoint);
+    return hyp_daemon_bootstrap_classify_failed_connect(result_out, lifetime_status);
 }
 
-static cbm_version_cohort_status_t bootstrap_production_cohort_acquire(
-    void *context, const cbm_daemon_ipc_endpoint_t *endpoint,
-    const cbm_daemon_build_identity_t *identity, uint64_t deadline_ms,
-    cbm_daemon_bootstrap_cohort_t *cohort_out, cbm_daemon_conflict_t *conflict_out) {
+static hyp_version_cohort_status_t bootstrap_production_cohort_acquire(
+    void *context, const hyp_daemon_ipc_endpoint_t *endpoint,
+    const hyp_daemon_build_identity_t *identity, uint64_t deadline_ms,
+    hyp_daemon_bootstrap_cohort_t *cohort_out, hyp_daemon_conflict_t *conflict_out) {
     *cohort_out = NULL;
     bootstrap_production_cohort_t *cohort = calloc(1, sizeof(*cohort));
     if (cohort) {
-        cohort->manager = cbm_version_cohort_manager_new(endpoint);
+        cohort->manager = hyp_version_cohort_manager_new(endpoint);
     }
     if (!cohort || !cohort->manager) {
         free(cohort);
-        return CBM_VERSION_COHORT_IO;
+        return HYP_VERSION_COHORT_IO;
     }
-    cbm_version_cohort_status_t status = cbm_version_cohort_acquire(
+    hyp_version_cohort_status_t status = hyp_version_cohort_acquire(
         cohort->manager, identity, deadline_ms, &cohort->lease, conflict_out);
-    if (status == CBM_VERSION_COHORT_CONFLICT) {
-        (void)cbm_version_cohort_log_conflict(conflict_out);
+    if (status == HYP_VERSION_COHORT_CONFLICT) {
+        (void)hyp_version_cohort_log_conflict(conflict_out);
     }
-    if (status == CBM_VERSION_COHORT_OK || cohort->lease) {
+    if (status == HYP_VERSION_COHORT_OK || cohort->lease) {
         *cohort_out = cohort;
         if (context) {
             bootstrap_production_context_t *production = context;
@@ -644,23 +644,23 @@ static cbm_version_cohort_status_t bootstrap_production_cohort_acquire(
         return status;
     }
     uint64_t cleanup_deadline = bootstrap_deadline_after(BOOTSTRAP_COORDINATION_CLEANUP_MS);
-    cbm_private_file_lock_status_t cleanup = CBM_PRIVATE_FILE_LOCK_OK;
+    hyp_private_file_lock_status_t cleanup = HYP_PRIVATE_FILE_LOCK_OK;
     while (cohort->manager) {
-        cleanup = cbm_version_cohort_manager_free(&cohort->manager);
+        cleanup = hyp_version_cohort_manager_free(&cohort->manager);
         if (!cohort->manager) {
             break;
         }
-        if (cbm_now_ms() >= cleanup_deadline) {
+        if (hyp_now_ms() >= cleanup_deadline) {
             bootstrap_cleanup_fail_stop("cohort_manager_cleanup");
         }
-        cbm_usleep(1000);
+        hyp_usleep(1000);
     }
     free(cohort);
-    return cleanup == CBM_PRIVATE_FILE_LOCK_OK ? status : CBM_VERSION_COHORT_IO;
+    return cleanup == HYP_PRIVATE_FILE_LOCK_OK ? status : HYP_VERSION_COHORT_IO;
 }
 
 static void bootstrap_production_cohort_release(void *context,
-                                                cbm_daemon_bootstrap_cohort_t opaque) {
+                                                hyp_daemon_bootstrap_cohort_t opaque) {
     bootstrap_production_context_t *production = context;
     bootstrap_production_cohort_t *cohort = opaque;
     if (!cohort) {
@@ -668,25 +668,25 @@ static void bootstrap_production_cohort_release(void *context,
     }
     uint64_t cleanup_deadline = bootstrap_deadline_after(BOOTSTRAP_COORDINATION_CLEANUP_MS);
     while (cohort->lease) {
-        (void)cbm_version_cohort_lease_release(&cohort->lease);
+        (void)hyp_version_cohort_lease_release(&cohort->lease);
         if (!cohort->lease) {
             break;
         }
-        if (cbm_now_ms() >= cleanup_deadline) {
+        if (hyp_now_ms() >= cleanup_deadline) {
             bootstrap_cleanup_fail_stop("cohort_lease_cleanup");
         }
-        cbm_usleep(1000);
+        hyp_usleep(1000);
     }
     cleanup_deadline = bootstrap_deadline_after(BOOTSTRAP_COORDINATION_CLEANUP_MS);
     while (cohort->manager) {
-        (void)cbm_version_cohort_manager_free(&cohort->manager);
+        (void)hyp_version_cohort_manager_free(&cohort->manager);
         if (!cohort->manager) {
             break;
         }
-        if (cbm_now_ms() >= cleanup_deadline) {
+        if (hyp_now_ms() >= cleanup_deadline) {
             bootstrap_cleanup_fail_stop("cohort_manager_cleanup");
         }
-        cbm_usleep(1000);
+        hyp_usleep(1000);
     }
     if (production && production->cohort == cohort) {
         production->cohort = NULL;
@@ -694,34 +694,34 @@ static void bootstrap_production_cohort_release(void *context,
     free(cohort);
 }
 
-static int bootstrap_production_lock(void *context, const cbm_daemon_ipc_endpoint_t *endpoint,
-                                     cbm_daemon_bootstrap_lock_t *lock_out) {
+static int bootstrap_production_lock(void *context, const hyp_daemon_ipc_endpoint_t *endpoint,
+                                     hyp_daemon_bootstrap_lock_t *lock_out) {
     (void)context;
-    cbm_daemon_ipc_startup_lock_t *lock = NULL;
-    int status = cbm_daemon_ipc_startup_lock_try_acquire(endpoint, &lock);
+    hyp_daemon_ipc_startup_lock_t *lock = NULL;
+    int status = hyp_daemon_ipc_startup_lock_try_acquire(endpoint, &lock);
     *lock_out = lock;
     return status;
 }
 
-static bool bootstrap_production_unlock(void *context, cbm_daemon_bootstrap_lock_t *lock_io) {
+static bool bootstrap_production_unlock(void *context, hyp_daemon_bootstrap_lock_t *lock_io) {
     (void)context;
     if (!lock_io) {
         return false;
     }
-    cbm_daemon_ipc_startup_lock_t *lock = *lock_io;
-    bool released = cbm_daemon_ipc_startup_lock_release(&lock);
+    hyp_daemon_ipc_startup_lock_t *lock = *lock_io;
+    bool released = hyp_daemon_ipc_startup_lock_release(&lock);
     *lock_io = lock;
     return released;
 }
 
-static bool bootstrap_production_handoff(void *context, cbm_daemon_bootstrap_lock_t lock) {
+static bool bootstrap_production_handoff(void *context, hyp_daemon_bootstrap_lock_t lock) {
     (void)context;
-    return cbm_daemon_ipc_startup_lock_prepare_handoff((cbm_daemon_ipc_startup_lock_t *)lock);
+    return hyp_daemon_ipc_startup_lock_prepare_handoff((hyp_daemon_ipc_startup_lock_t *)lock);
 }
 
 #ifdef _WIN32
 static bool bootstrap_production_spawn(void *context,
-                                       const cbm_daemon_bootstrap_launch_spec_t *spec) {
+                                       const hyp_daemon_bootstrap_launch_spec_t *spec) {
     bootstrap_production_context_t *production = context;
     if (production) {
         production->spawn_error = ERROR_SUCCESS;
@@ -733,14 +733,14 @@ static bool bootstrap_production_spawn(void *context,
         return false;
     }
     char command_line[BOOTSTRAP_PATH_CAP * 2];
-    if (!cbm_build_win_cmdline(command_line, sizeof(command_line), spec->argv)) {
+    if (!hyp_build_win_cmdline(command_line, sizeof(command_line), spec->argv)) {
         if (production) {
             production->spawn_error = ERROR_INVALID_PARAMETER;
         }
         return false;
     }
-    wchar_t *application = cbm_utf8_to_wide(spec->executable_path);
-    wchar_t *command = cbm_utf8_to_wide(command_line);
+    wchar_t *application = hyp_utf8_to_wide(spec->executable_path);
+    wchar_t *command = hyp_utf8_to_wide(command_line);
     if (!application || !command) {
         if (production) {
             production->spawn_error = ERROR_NOT_ENOUGH_MEMORY;
@@ -854,7 +854,7 @@ static bool bootstrap_darwin_reaper_start(pid_t daemon) {
 }
 
 static bool bootstrap_production_spawn(void *context,
-                                       const cbm_daemon_bootstrap_launch_spec_t *spec) {
+                                       const hyp_daemon_bootstrap_launch_spec_t *spec) {
     bootstrap_production_context_t *production = context;
     if (production) {
         production->spawn_error = 0;
@@ -906,7 +906,7 @@ static void bootstrap_child_close_fds(void) {
     }
 }
 
-static void bootstrap_daemon_grandchild(const cbm_daemon_bootstrap_launch_spec_t *spec) {
+static void bootstrap_daemon_grandchild(const hyp_daemon_bootstrap_launch_spec_t *spec) {
     (void)umask(077);
     sigset_t empty;
     (void)sigemptyset(&empty);
@@ -925,7 +925,7 @@ static void bootstrap_daemon_grandchild(const cbm_daemon_bootstrap_launch_spec_t
 }
 
 static bool bootstrap_production_spawn(void *context,
-                                       const cbm_daemon_bootstrap_launch_spec_t *spec) {
+                                       const hyp_daemon_bootstrap_launch_spec_t *spec) {
     (void)context;
     if (!spec || !spec->detached || spec->inherit_standard_handles || spec->use_shell) {
         return false;
@@ -961,7 +961,7 @@ static void bootstrap_production_diagnostic(void *context, const char *message) 
     bootstrap_production_context_t *production = context;
 #ifdef _WIN32
     if (production && production->spawn_error != ERROR_SUCCESS) {
-        (void)fprintf(stderr, "codebase-memory-mcp: %s (daemon launch error %lu)\n",
+        (void)fprintf(stderr, "hyponoia: %s (daemon launch error %lu)\n",
                       message ? message : "daemon startup failed",
                       (unsigned long)production->spawn_error);
         (void)fflush(stderr);
@@ -969,7 +969,7 @@ static void bootstrap_production_diagnostic(void *context, const char *message) 
     }
 #elif defined(__APPLE__)
     if (production && production->spawn_error != 0) {
-        (void)fprintf(stderr, "codebase-memory-mcp: %s (daemon launch: %s)\n",
+        (void)fprintf(stderr, "hyponoia: %s (daemon launch: %s)\n",
                       message ? message : "daemon startup failed",
                       strerror(production->spawn_error));
         (void)fflush(stderr);
@@ -978,14 +978,14 @@ static void bootstrap_production_diagnostic(void *context, const char *message) 
 #else
     (void)production;
 #endif
-    (void)fprintf(stderr, "codebase-memory-mcp: %s\n", message ? message : "daemon startup failed");
+    (void)fprintf(stderr, "hyponoia: %s\n", message ? message : "daemon startup failed");
     (void)fflush(stderr);
 }
 
-cbm_daemon_bootstrap_status_t cbm_daemon_bootstrap_execute(
-    const cbm_daemon_bootstrap_config_t *config, cbm_daemon_bootstrap_result_t *result_out) {
+hyp_daemon_bootstrap_status_t hyp_daemon_bootstrap_execute(
+    const hyp_daemon_bootstrap_config_t *config, hyp_daemon_bootstrap_result_t *result_out) {
     bootstrap_production_context_t context = {0};
-    const cbm_daemon_bootstrap_ops_t ops = {
+    const hyp_daemon_bootstrap_ops_t ops = {
         .context = &context,
         .cohort_acquire = bootstrap_production_cohort_acquire,
         .cohort_release = bootstrap_production_cohort_release,
@@ -996,5 +996,5 @@ cbm_daemon_bootstrap_status_t cbm_daemon_bootstrap_execute(
         .spawn_daemon = bootstrap_production_spawn,
         .visible_diagnostic = bootstrap_production_diagnostic,
     };
-    return cbm_daemon_bootstrap_execute_with_ops(config, &ops, result_out);
+    return hyp_daemon_bootstrap_execute_with_ops(config, &ops, result_out);
 }

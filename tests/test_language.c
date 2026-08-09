@@ -10,506 +10,506 @@
 /* ── Extension-based detection ─────────────────────────────────── */
 
 TEST(lang_ext_go) {
-    ASSERT_EQ(cbm_language_for_extension(".go"), CBM_LANG_GO);
+    ASSERT_EQ(hyp_language_for_extension(".go"), HYP_LANG_GO);
     PASS();
 }
 TEST(lang_ext_python) {
-    ASSERT_EQ(cbm_language_for_extension(".py"), CBM_LANG_PYTHON);
+    ASSERT_EQ(hyp_language_for_extension(".py"), HYP_LANG_PYTHON);
     PASS();
 }
 TEST(lang_ext_javascript) {
-    ASSERT_EQ(cbm_language_for_extension(".js"), CBM_LANG_JAVASCRIPT);
+    ASSERT_EQ(hyp_language_for_extension(".js"), HYP_LANG_JAVASCRIPT);
     PASS();
 }
 TEST(lang_ext_jsx) {
-    ASSERT_EQ(cbm_language_for_extension(".jsx"), CBM_LANG_JAVASCRIPT);
+    ASSERT_EQ(hyp_language_for_extension(".jsx"), HYP_LANG_JAVASCRIPT);
     PASS();
 }
 /* Issue #197: .mjs (ES modules) / .cjs (CommonJS) were unmapped, so those
  * files were never indexed or searchable. */
 TEST(lang_ext_mjs_cjs) {
-    ASSERT_EQ(cbm_language_for_extension(".mjs"), CBM_LANG_JAVASCRIPT);
-    ASSERT_EQ(cbm_language_for_extension(".cjs"), CBM_LANG_JAVASCRIPT);
+    ASSERT_EQ(hyp_language_for_extension(".mjs"), HYP_LANG_JAVASCRIPT);
+    ASSERT_EQ(hyp_language_for_extension(".cjs"), HYP_LANG_JAVASCRIPT);
     PASS();
 }
 TEST(lang_ext_mts_cts) {
-    ASSERT_EQ(cbm_language_for_extension(".mts"), CBM_LANG_TYPESCRIPT);
-    ASSERT_EQ(cbm_language_for_extension(".cts"), CBM_LANG_TYPESCRIPT);
+    ASSERT_EQ(hyp_language_for_extension(".mts"), HYP_LANG_TYPESCRIPT);
+    ASSERT_EQ(hyp_language_for_extension(".cts"), HYP_LANG_TYPESCRIPT);
     PASS();
 }
 TEST(lang_ext_typescript) {
-    ASSERT_EQ(cbm_language_for_extension(".ts"), CBM_LANG_TYPESCRIPT);
+    ASSERT_EQ(hyp_language_for_extension(".ts"), HYP_LANG_TYPESCRIPT);
     PASS();
 }
 TEST(lang_ext_tsx) {
-    ASSERT_EQ(cbm_language_for_extension(".tsx"), CBM_LANG_TSX);
+    ASSERT_EQ(hyp_language_for_extension(".tsx"), HYP_LANG_TSX);
     PASS();
 }
 TEST(lang_ext_rust) {
-    ASSERT_EQ(cbm_language_for_extension(".rs"), CBM_LANG_RUST);
+    ASSERT_EQ(hyp_language_for_extension(".rs"), HYP_LANG_RUST);
     PASS();
 }
 TEST(lang_ext_java) {
-    ASSERT_EQ(cbm_language_for_extension(".java"), CBM_LANG_JAVA);
+    ASSERT_EQ(hyp_language_for_extension(".java"), HYP_LANG_JAVA);
     PASS();
 }
 TEST(lang_ext_cpp) {
-    ASSERT_EQ(cbm_language_for_extension(".cpp"), CBM_LANG_CPP);
+    ASSERT_EQ(hyp_language_for_extension(".cpp"), HYP_LANG_CPP);
     PASS();
 }
 TEST(lang_ext_hpp) {
-    ASSERT_EQ(cbm_language_for_extension(".hpp"), CBM_LANG_CPP);
+    ASSERT_EQ(hyp_language_for_extension(".hpp"), HYP_LANG_CPP);
     PASS();
 }
 TEST(lang_ext_cc) {
-    ASSERT_EQ(cbm_language_for_extension(".cc"), CBM_LANG_CPP);
+    ASSERT_EQ(hyp_language_for_extension(".cc"), HYP_LANG_CPP);
     PASS();
 }
 TEST(lang_ext_cxx) {
-    ASSERT_EQ(cbm_language_for_extension(".cxx"), CBM_LANG_CPP);
+    ASSERT_EQ(hyp_language_for_extension(".cxx"), HYP_LANG_CPP);
     PASS();
 }
 TEST(lang_ext_hxx) {
-    ASSERT_EQ(cbm_language_for_extension(".hxx"), CBM_LANG_CPP);
+    ASSERT_EQ(hyp_language_for_extension(".hxx"), HYP_LANG_CPP);
     PASS();
 }
 TEST(lang_ext_hh) {
-    ASSERT_EQ(cbm_language_for_extension(".hh"), CBM_LANG_CPP);
+    ASSERT_EQ(hyp_language_for_extension(".hh"), HYP_LANG_CPP);
     PASS();
 }
 TEST(lang_ext_h) {
-    ASSERT_EQ(cbm_language_for_extension(".h"), CBM_LANG_CPP);
+    ASSERT_EQ(hyp_language_for_extension(".h"), HYP_LANG_CPP);
     PASS();
 }
 TEST(lang_ext_ixx) {
-    ASSERT_EQ(cbm_language_for_extension(".ixx"), CBM_LANG_CPP);
+    ASSERT_EQ(hyp_language_for_extension(".ixx"), HYP_LANG_CPP);
     PASS();
 }
 TEST(lang_ext_csharp) {
-    ASSERT_EQ(cbm_language_for_extension(".cs"), CBM_LANG_CSHARP);
+    ASSERT_EQ(hyp_language_for_extension(".cs"), HYP_LANG_CSHARP);
     PASS();
 }
 TEST(lang_ext_php) {
-    ASSERT_EQ(cbm_language_for_extension(".php"), CBM_LANG_PHP);
+    ASSERT_EQ(hyp_language_for_extension(".php"), HYP_LANG_PHP);
     PASS();
 }
 TEST(lang_ext_lua) {
-    ASSERT_EQ(cbm_language_for_extension(".lua"), CBM_LANG_LUA);
+    ASSERT_EQ(hyp_language_for_extension(".lua"), HYP_LANG_LUA);
     PASS();
 }
 TEST(lang_ext_scala) {
-    ASSERT_EQ(cbm_language_for_extension(".scala"), CBM_LANG_SCALA);
+    ASSERT_EQ(hyp_language_for_extension(".scala"), HYP_LANG_SCALA);
     PASS();
 }
 TEST(lang_ext_sc) {
-    ASSERT_EQ(cbm_language_for_extension(".sc"), CBM_LANG_SCALA);
+    ASSERT_EQ(hyp_language_for_extension(".sc"), HYP_LANG_SCALA);
     PASS();
 }
 TEST(lang_ext_kotlin) {
-    ASSERT_EQ(cbm_language_for_extension(".kt"), CBM_LANG_KOTLIN);
+    ASSERT_EQ(hyp_language_for_extension(".kt"), HYP_LANG_KOTLIN);
     PASS();
 }
 TEST(lang_ext_kts) {
-    ASSERT_EQ(cbm_language_for_extension(".kts"), CBM_LANG_KOTLIN);
+    ASSERT_EQ(hyp_language_for_extension(".kts"), HYP_LANG_KOTLIN);
     PASS();
 }
 TEST(lang_ext_ruby) {
-    ASSERT_EQ(cbm_language_for_extension(".rb"), CBM_LANG_RUBY);
+    ASSERT_EQ(hyp_language_for_extension(".rb"), HYP_LANG_RUBY);
     PASS();
 }
 TEST(lang_ext_rake) {
-    ASSERT_EQ(cbm_language_for_extension(".rake"), CBM_LANG_RUBY);
+    ASSERT_EQ(hyp_language_for_extension(".rake"), HYP_LANG_RUBY);
     PASS();
 }
 TEST(lang_ext_gemspec) {
-    ASSERT_EQ(cbm_language_for_extension(".gemspec"), CBM_LANG_RUBY);
+    ASSERT_EQ(hyp_language_for_extension(".gemspec"), HYP_LANG_RUBY);
     PASS();
 }
 TEST(lang_ext_c) {
-    ASSERT_EQ(cbm_language_for_extension(".c"), CBM_LANG_C);
+    ASSERT_EQ(hyp_language_for_extension(".c"), HYP_LANG_C);
     PASS();
 }
 TEST(lang_ext_bash) {
-    ASSERT_EQ(cbm_language_for_extension(".sh"), CBM_LANG_BASH);
+    ASSERT_EQ(hyp_language_for_extension(".sh"), HYP_LANG_BASH);
     PASS();
 }
 TEST(lang_ext_bash2) {
-    ASSERT_EQ(cbm_language_for_extension(".bash"), CBM_LANG_BASH);
+    ASSERT_EQ(hyp_language_for_extension(".bash"), HYP_LANG_BASH);
     PASS();
 }
 TEST(lang_ext_zig) {
-    ASSERT_EQ(cbm_language_for_extension(".zig"), CBM_LANG_ZIG);
+    ASSERT_EQ(hyp_language_for_extension(".zig"), HYP_LANG_ZIG);
     PASS();
 }
 TEST(lang_ext_elixir) {
-    ASSERT_EQ(cbm_language_for_extension(".ex"), CBM_LANG_ELIXIR);
+    ASSERT_EQ(hyp_language_for_extension(".ex"), HYP_LANG_ELIXIR);
     PASS();
 }
 TEST(lang_ext_exs) {
-    ASSERT_EQ(cbm_language_for_extension(".exs"), CBM_LANG_ELIXIR);
+    ASSERT_EQ(hyp_language_for_extension(".exs"), HYP_LANG_ELIXIR);
     PASS();
 }
 TEST(lang_ext_haskell) {
-    ASSERT_EQ(cbm_language_for_extension(".hs"), CBM_LANG_HASKELL);
+    ASSERT_EQ(hyp_language_for_extension(".hs"), HYP_LANG_HASKELL);
     PASS();
 }
 TEST(lang_ext_ocaml) {
-    ASSERT_EQ(cbm_language_for_extension(".ml"), CBM_LANG_OCAML);
+    ASSERT_EQ(hyp_language_for_extension(".ml"), HYP_LANG_OCAML);
     PASS();
 }
 TEST(lang_ext_mli) {
-    ASSERT_EQ(cbm_language_for_extension(".mli"), CBM_LANG_OCAML);
+    ASSERT_EQ(hyp_language_for_extension(".mli"), HYP_LANG_OCAML);
     PASS();
 }
 TEST(lang_ext_swift) {
-    ASSERT_EQ(cbm_language_for_extension(".swift"), CBM_LANG_SWIFT);
+    ASSERT_EQ(hyp_language_for_extension(".swift"), HYP_LANG_SWIFT);
     PASS();
 }
 TEST(lang_ext_dart) {
-    ASSERT_EQ(cbm_language_for_extension(".dart"), CBM_LANG_DART);
+    ASSERT_EQ(hyp_language_for_extension(".dart"), HYP_LANG_DART);
     PASS();
 }
 TEST(lang_ext_perl) {
-    ASSERT_EQ(cbm_language_for_extension(".pl"), CBM_LANG_PERL);
+    ASSERT_EQ(hyp_language_for_extension(".pl"), HYP_LANG_PERL);
     PASS();
 }
 TEST(lang_ext_pm) {
-    ASSERT_EQ(cbm_language_for_extension(".pm"), CBM_LANG_PERL);
+    ASSERT_EQ(hyp_language_for_extension(".pm"), HYP_LANG_PERL);
     PASS();
 }
 TEST(lang_ext_groovy) {
-    ASSERT_EQ(cbm_language_for_extension(".groovy"), CBM_LANG_GROOVY);
+    ASSERT_EQ(hyp_language_for_extension(".groovy"), HYP_LANG_GROOVY);
     PASS();
 }
 TEST(lang_ext_gradle) {
-    ASSERT_EQ(cbm_language_for_extension(".gradle"), CBM_LANG_GROOVY);
+    ASSERT_EQ(hyp_language_for_extension(".gradle"), HYP_LANG_GROOVY);
     PASS();
 }
 TEST(lang_ext_erlang) {
-    ASSERT_EQ(cbm_language_for_extension(".erl"), CBM_LANG_ERLANG);
+    ASSERT_EQ(hyp_language_for_extension(".erl"), HYP_LANG_ERLANG);
     PASS();
 }
 TEST(lang_ext_r) {
-    ASSERT_EQ(cbm_language_for_extension(".r"), CBM_LANG_R);
+    ASSERT_EQ(hyp_language_for_extension(".r"), HYP_LANG_R);
     PASS();
 }
 TEST(lang_ext_R) {
-    ASSERT_EQ(cbm_language_for_extension(".R"), CBM_LANG_R);
+    ASSERT_EQ(hyp_language_for_extension(".R"), HYP_LANG_R);
     PASS();
 }
 
 /* Tier 2 programming */
 TEST(lang_ext_clojure) {
-    ASSERT_EQ(cbm_language_for_extension(".clj"), CBM_LANG_CLOJURE);
+    ASSERT_EQ(hyp_language_for_extension(".clj"), HYP_LANG_CLOJURE);
     PASS();
 }
 TEST(lang_ext_cljs) {
-    ASSERT_EQ(cbm_language_for_extension(".cljs"), CBM_LANG_CLOJURE);
+    ASSERT_EQ(hyp_language_for_extension(".cljs"), HYP_LANG_CLOJURE);
     PASS();
 }
 TEST(lang_ext_cljc) {
-    ASSERT_EQ(cbm_language_for_extension(".cljc"), CBM_LANG_CLOJURE);
+    ASSERT_EQ(hyp_language_for_extension(".cljc"), HYP_LANG_CLOJURE);
     PASS();
 }
 TEST(lang_ext_fsharp) {
-    ASSERT_EQ(cbm_language_for_extension(".fs"), CBM_LANG_FSHARP);
+    ASSERT_EQ(hyp_language_for_extension(".fs"), HYP_LANG_FSHARP);
     PASS();
 }
 TEST(lang_ext_fsi) {
-    ASSERT_EQ(cbm_language_for_extension(".fsi"), CBM_LANG_FSHARP);
+    ASSERT_EQ(hyp_language_for_extension(".fsi"), HYP_LANG_FSHARP);
     PASS();
 }
 TEST(lang_ext_fsx) {
-    ASSERT_EQ(cbm_language_for_extension(".fsx"), CBM_LANG_FSHARP);
+    ASSERT_EQ(hyp_language_for_extension(".fsx"), HYP_LANG_FSHARP);
     PASS();
 }
 TEST(lang_ext_julia) {
-    ASSERT_EQ(cbm_language_for_extension(".jl"), CBM_LANG_JULIA);
+    ASSERT_EQ(hyp_language_for_extension(".jl"), HYP_LANG_JULIA);
     PASS();
 }
 TEST(lang_ext_vim) {
-    ASSERT_EQ(cbm_language_for_extension(".vim"), CBM_LANG_VIMSCRIPT);
+    ASSERT_EQ(hyp_language_for_extension(".vim"), HYP_LANG_VIMSCRIPT);
     PASS();
 }
 TEST(lang_ext_nix) {
-    ASSERT_EQ(cbm_language_for_extension(".nix"), CBM_LANG_NIX);
+    ASSERT_EQ(hyp_language_for_extension(".nix"), HYP_LANG_NIX);
     PASS();
 }
 TEST(lang_ext_commonlisp) {
-    ASSERT_EQ(cbm_language_for_extension(".lisp"), CBM_LANG_COMMONLISP);
+    ASSERT_EQ(hyp_language_for_extension(".lisp"), HYP_LANG_COMMONLISP);
     PASS();
 }
 TEST(lang_ext_lsp) {
-    ASSERT_EQ(cbm_language_for_extension(".lsp"), CBM_LANG_COMMONLISP);
+    ASSERT_EQ(hyp_language_for_extension(".lsp"), HYP_LANG_COMMONLISP);
     PASS();
 }
 TEST(lang_ext_cl) {
-    ASSERT_EQ(cbm_language_for_extension(".cl"), CBM_LANG_COMMONLISP);
+    ASSERT_EQ(hyp_language_for_extension(".cl"), HYP_LANG_COMMONLISP);
     PASS();
 }
 TEST(lang_ext_elm) {
-    ASSERT_EQ(cbm_language_for_extension(".elm"), CBM_LANG_ELM);
+    ASSERT_EQ(hyp_language_for_extension(".elm"), HYP_LANG_ELM);
     PASS();
 }
 TEST(lang_ext_fortran) {
-    ASSERT_EQ(cbm_language_for_extension(".f90"), CBM_LANG_FORTRAN);
+    ASSERT_EQ(hyp_language_for_extension(".f90"), HYP_LANG_FORTRAN);
     PASS();
 }
 TEST(lang_ext_f95) {
-    ASSERT_EQ(cbm_language_for_extension(".f95"), CBM_LANG_FORTRAN);
+    ASSERT_EQ(hyp_language_for_extension(".f95"), HYP_LANG_FORTRAN);
     PASS();
 }
 TEST(lang_ext_f03) {
-    ASSERT_EQ(cbm_language_for_extension(".f03"), CBM_LANG_FORTRAN);
+    ASSERT_EQ(hyp_language_for_extension(".f03"), HYP_LANG_FORTRAN);
     PASS();
 }
 TEST(lang_ext_f08) {
-    ASSERT_EQ(cbm_language_for_extension(".f08"), CBM_LANG_FORTRAN);
+    ASSERT_EQ(hyp_language_for_extension(".f08"), HYP_LANG_FORTRAN);
     PASS();
 }
 TEST(lang_ext_cuda) {
-    ASSERT_EQ(cbm_language_for_extension(".cu"), CBM_LANG_CUDA);
+    ASSERT_EQ(hyp_language_for_extension(".cu"), HYP_LANG_CUDA);
     PASS();
 }
 TEST(lang_ext_cuh) {
-    ASSERT_EQ(cbm_language_for_extension(".cuh"), CBM_LANG_CUDA);
+    ASSERT_EQ(hyp_language_for_extension(".cuh"), HYP_LANG_CUDA);
     PASS();
 }
 TEST(lang_ext_cobol) {
-    ASSERT_EQ(cbm_language_for_extension(".cob"), CBM_LANG_COBOL);
+    ASSERT_EQ(hyp_language_for_extension(".cob"), HYP_LANG_COBOL);
     PASS();
 }
 TEST(lang_ext_cbl) {
-    ASSERT_EQ(cbm_language_for_extension(".cbl"), CBM_LANG_COBOL);
+    ASSERT_EQ(hyp_language_for_extension(".cbl"), HYP_LANG_COBOL);
     PASS();
 }
 TEST(lang_ext_verilog) {
-    ASSERT_EQ(cbm_language_for_extension(".v"), CBM_LANG_VERILOG);
+    ASSERT_EQ(hyp_language_for_extension(".v"), HYP_LANG_VERILOG);
     PASS();
 }
 TEST(lang_ext_sv) {
-    ASSERT_EQ(cbm_language_for_extension(".sv"), CBM_LANG_VERILOG);
+    ASSERT_EQ(hyp_language_for_extension(".sv"), HYP_LANG_VERILOG);
     PASS();
 }
 TEST(lang_ext_emacslisp) {
-    ASSERT_EQ(cbm_language_for_extension(".el"), CBM_LANG_EMACSLISP);
+    ASSERT_EQ(hyp_language_for_extension(".el"), HYP_LANG_EMACSLISP);
     PASS();
 }
 
 /* Scientific/math */
 TEST(lang_ext_matlab) {
-    ASSERT_EQ(cbm_language_for_extension(".matlab"), CBM_LANG_MATLAB);
+    ASSERT_EQ(hyp_language_for_extension(".matlab"), HYP_LANG_MATLAB);
     PASS();
 }
 TEST(lang_ext_mlx) {
-    ASSERT_EQ(cbm_language_for_extension(".mlx"), CBM_LANG_MATLAB);
+    ASSERT_EQ(hyp_language_for_extension(".mlx"), HYP_LANG_MATLAB);
     PASS();
 }
 TEST(lang_ext_lean) {
-    ASSERT_EQ(cbm_language_for_extension(".lean"), CBM_LANG_LEAN);
+    ASSERT_EQ(hyp_language_for_extension(".lean"), HYP_LANG_LEAN);
     PASS();
 }
 TEST(lang_ext_form) {
-    ASSERT_EQ(cbm_language_for_extension(".frm"), CBM_LANG_FORM);
+    ASSERT_EQ(hyp_language_for_extension(".frm"), HYP_LANG_FORM);
     PASS();
 }
 TEST(lang_ext_prc) {
-    ASSERT_EQ(cbm_language_for_extension(".prc"), CBM_LANG_FORM);
+    ASSERT_EQ(hyp_language_for_extension(".prc"), HYP_LANG_FORM);
     PASS();
 }
 TEST(lang_ext_magma) {
-    ASSERT_EQ(cbm_language_for_extension(".mag"), CBM_LANG_MAGMA);
+    ASSERT_EQ(hyp_language_for_extension(".mag"), HYP_LANG_MAGMA);
     PASS();
 }
 TEST(lang_ext_magma2) {
-    ASSERT_EQ(cbm_language_for_extension(".magma"), CBM_LANG_MAGMA);
+    ASSERT_EQ(hyp_language_for_extension(".magma"), HYP_LANG_MAGMA);
     PASS();
 }
 TEST(lang_ext_wolfram) {
-    ASSERT_EQ(cbm_language_for_extension(".wl"), CBM_LANG_WOLFRAM);
+    ASSERT_EQ(hyp_language_for_extension(".wl"), HYP_LANG_WOLFRAM);
     PASS();
 }
 TEST(lang_ext_wls) {
-    ASSERT_EQ(cbm_language_for_extension(".wls"), CBM_LANG_WOLFRAM);
+    ASSERT_EQ(hyp_language_for_extension(".wls"), HYP_LANG_WOLFRAM);
     PASS();
 }
 
 /* Helper languages */
 TEST(lang_ext_html) {
-    ASSERT_EQ(cbm_language_for_extension(".html"), CBM_LANG_HTML);
+    ASSERT_EQ(hyp_language_for_extension(".html"), HYP_LANG_HTML);
     PASS();
 }
 TEST(lang_ext_htm) {
-    ASSERT_EQ(cbm_language_for_extension(".htm"), CBM_LANG_HTML);
+    ASSERT_EQ(hyp_language_for_extension(".htm"), HYP_LANG_HTML);
     PASS();
 }
 TEST(lang_ext_css) {
-    ASSERT_EQ(cbm_language_for_extension(".css"), CBM_LANG_CSS);
+    ASSERT_EQ(hyp_language_for_extension(".css"), HYP_LANG_CSS);
     PASS();
 }
 TEST(lang_ext_scss) {
-    ASSERT_EQ(cbm_language_for_extension(".scss"), CBM_LANG_SCSS);
+    ASSERT_EQ(hyp_language_for_extension(".scss"), HYP_LANG_SCSS);
     PASS();
 }
 TEST(lang_ext_yaml) {
-    ASSERT_EQ(cbm_language_for_extension(".yml"), CBM_LANG_YAML);
+    ASSERT_EQ(hyp_language_for_extension(".yml"), HYP_LANG_YAML);
     PASS();
 }
 TEST(lang_ext_yaml2) {
-    ASSERT_EQ(cbm_language_for_extension(".yaml"), CBM_LANG_YAML);
+    ASSERT_EQ(hyp_language_for_extension(".yaml"), HYP_LANG_YAML);
     PASS();
 }
 TEST(lang_ext_toml) {
-    ASSERT_EQ(cbm_language_for_extension(".toml"), CBM_LANG_TOML);
+    ASSERT_EQ(hyp_language_for_extension(".toml"), HYP_LANG_TOML);
     PASS();
 }
 TEST(lang_ext_hcl) {
-    ASSERT_EQ(cbm_language_for_extension(".tf"), CBM_LANG_HCL);
+    ASSERT_EQ(hyp_language_for_extension(".tf"), HYP_LANG_HCL);
     PASS();
 }
 TEST(lang_ext_hcl2) {
-    ASSERT_EQ(cbm_language_for_extension(".hcl"), CBM_LANG_HCL);
+    ASSERT_EQ(hyp_language_for_extension(".hcl"), HYP_LANG_HCL);
     PASS();
 }
 TEST(lang_ext_sql) {
-    ASSERT_EQ(cbm_language_for_extension(".sql"), CBM_LANG_SQL);
+    ASSERT_EQ(hyp_language_for_extension(".sql"), HYP_LANG_SQL);
     PASS();
 }
 TEST(lang_ext_dockerfile) {
-    ASSERT_EQ(cbm_language_for_extension(".dockerfile"), CBM_LANG_DOCKERFILE);
+    ASSERT_EQ(hyp_language_for_extension(".dockerfile"), HYP_LANG_DOCKERFILE);
     PASS();
 }
 TEST(lang_ext_json) {
-    ASSERT_EQ(cbm_language_for_extension(".json"), CBM_LANG_JSON);
+    ASSERT_EQ(hyp_language_for_extension(".json"), HYP_LANG_JSON);
     PASS();
 }
 TEST(lang_ext_xml) {
-    ASSERT_EQ(cbm_language_for_extension(".xml"), CBM_LANG_XML);
+    ASSERT_EQ(hyp_language_for_extension(".xml"), HYP_LANG_XML);
     PASS();
 }
 TEST(lang_ext_xsl) {
-    ASSERT_EQ(cbm_language_for_extension(".xsl"), CBM_LANG_XML);
+    ASSERT_EQ(hyp_language_for_extension(".xsl"), HYP_LANG_XML);
     PASS();
 }
 TEST(lang_ext_xsd) {
-    ASSERT_EQ(cbm_language_for_extension(".xsd"), CBM_LANG_XML);
+    ASSERT_EQ(hyp_language_for_extension(".xsd"), HYP_LANG_XML);
     PASS();
 }
 TEST(lang_ext_svg) {
-    ASSERT_EQ(cbm_language_for_extension(".svg"), CBM_LANG_XML);
+    ASSERT_EQ(hyp_language_for_extension(".svg"), HYP_LANG_XML);
     PASS();
 }
 TEST(lang_ext_markdown) {
-    ASSERT_EQ(cbm_language_for_extension(".md"), CBM_LANG_MARKDOWN);
+    ASSERT_EQ(hyp_language_for_extension(".md"), HYP_LANG_MARKDOWN);
     PASS();
 }
 TEST(lang_ext_mdx) {
-    ASSERT_EQ(cbm_language_for_extension(".mdx"), CBM_LANG_MARKDOWN);
+    ASSERT_EQ(hyp_language_for_extension(".mdx"), HYP_LANG_MARKDOWN);
     PASS();
 }
 TEST(lang_ext_makefile) {
-    ASSERT_EQ(cbm_language_for_extension(".mk"), CBM_LANG_MAKEFILE);
+    ASSERT_EQ(hyp_language_for_extension(".mk"), HYP_LANG_MAKEFILE);
     PASS();
 }
 TEST(lang_ext_cmake) {
-    ASSERT_EQ(cbm_language_for_extension(".cmake"), CBM_LANG_CMAKE);
+    ASSERT_EQ(hyp_language_for_extension(".cmake"), HYP_LANG_CMAKE);
     PASS();
 }
 TEST(lang_ext_protobuf) {
-    ASSERT_EQ(cbm_language_for_extension(".proto"), CBM_LANG_PROTOBUF);
+    ASSERT_EQ(hyp_language_for_extension(".proto"), HYP_LANG_PROTOBUF);
     PASS();
 }
 TEST(lang_ext_graphql) {
-    ASSERT_EQ(cbm_language_for_extension(".graphql"), CBM_LANG_GRAPHQL);
+    ASSERT_EQ(hyp_language_for_extension(".graphql"), HYP_LANG_GRAPHQL);
     PASS();
 }
 TEST(lang_ext_gql) {
-    ASSERT_EQ(cbm_language_for_extension(".gql"), CBM_LANG_GRAPHQL);
+    ASSERT_EQ(hyp_language_for_extension(".gql"), HYP_LANG_GRAPHQL);
     PASS();
 }
 TEST(lang_ext_vue) {
-    ASSERT_EQ(cbm_language_for_extension(".vue"), CBM_LANG_VUE);
+    ASSERT_EQ(hyp_language_for_extension(".vue"), HYP_LANG_VUE);
     PASS();
 }
 TEST(lang_ext_svelte) {
-    ASSERT_EQ(cbm_language_for_extension(".svelte"), CBM_LANG_SVELTE);
+    ASSERT_EQ(hyp_language_for_extension(".svelte"), HYP_LANG_SVELTE);
     PASS();
 }
 TEST(lang_ext_meson) {
-    ASSERT_EQ(cbm_language_for_extension(".meson"), CBM_LANG_MESON);
+    ASSERT_EQ(hyp_language_for_extension(".meson"), HYP_LANG_MESON);
     PASS();
 }
 TEST(lang_ext_glsl) {
-    ASSERT_EQ(cbm_language_for_extension(".glsl"), CBM_LANG_GLSL);
+    ASSERT_EQ(hyp_language_for_extension(".glsl"), HYP_LANG_GLSL);
     PASS();
 }
 TEST(lang_ext_vert) {
-    ASSERT_EQ(cbm_language_for_extension(".vert"), CBM_LANG_GLSL);
+    ASSERT_EQ(hyp_language_for_extension(".vert"), HYP_LANG_GLSL);
     PASS();
 }
 TEST(lang_ext_frag) {
-    ASSERT_EQ(cbm_language_for_extension(".frag"), CBM_LANG_GLSL);
+    ASSERT_EQ(hyp_language_for_extension(".frag"), HYP_LANG_GLSL);
     PASS();
 }
 TEST(lang_ext_ini) {
-    ASSERT_EQ(cbm_language_for_extension(".ini"), CBM_LANG_INI);
+    ASSERT_EQ(hyp_language_for_extension(".ini"), HYP_LANG_INI);
     PASS();
 }
 TEST(lang_ext_cfg) {
-    ASSERT_EQ(cbm_language_for_extension(".cfg"), CBM_LANG_INI);
+    ASSERT_EQ(hyp_language_for_extension(".cfg"), HYP_LANG_INI);
     PASS();
 }
 TEST(lang_ext_conf) {
-    ASSERT_EQ(cbm_language_for_extension(".conf"), CBM_LANG_INI);
+    ASSERT_EQ(hyp_language_for_extension(".conf"), HYP_LANG_INI);
     PASS();
 }
 
 /* Unknown extension */
 TEST(lang_ext_unknown) {
-    ASSERT_EQ(cbm_language_for_extension(".xyz"), CBM_LANG_COUNT);
+    ASSERT_EQ(hyp_language_for_extension(".xyz"), HYP_LANG_COUNT);
     PASS();
 }
 TEST(lang_ext_null) {
-    ASSERT_EQ(cbm_language_for_extension(""), CBM_LANG_COUNT);
+    ASSERT_EQ(hyp_language_for_extension(""), HYP_LANG_COUNT);
     PASS();
 }
 
 /* ── Filename-based detection ──────────────────────────────────── */
 
 TEST(lang_fn_makefile) {
-    ASSERT_EQ(cbm_language_for_filename("Makefile"), CBM_LANG_MAKEFILE);
+    ASSERT_EQ(hyp_language_for_filename("Makefile"), HYP_LANG_MAKEFILE);
     PASS();
 }
 TEST(lang_fn_gnumakefile) {
-    ASSERT_EQ(cbm_language_for_filename("GNUmakefile"), CBM_LANG_MAKEFILE);
+    ASSERT_EQ(hyp_language_for_filename("GNUmakefile"), HYP_LANG_MAKEFILE);
     PASS();
 }
 TEST(lang_fn_makefile_lower) {
-    ASSERT_EQ(cbm_language_for_filename("makefile"), CBM_LANG_MAKEFILE);
+    ASSERT_EQ(hyp_language_for_filename("makefile"), HYP_LANG_MAKEFILE);
     PASS();
 }
 TEST(lang_fn_cmake) {
-    ASSERT_EQ(cbm_language_for_filename("CMakeLists.txt"), CBM_LANG_CMAKE);
+    ASSERT_EQ(hyp_language_for_filename("CMakeLists.txt"), HYP_LANG_CMAKE);
     PASS();
 }
 TEST(lang_fn_dockerfile) {
-    ASSERT_EQ(cbm_language_for_filename("Dockerfile"), CBM_LANG_DOCKERFILE);
+    ASSERT_EQ(hyp_language_for_filename("Dockerfile"), HYP_LANG_DOCKERFILE);
     PASS();
 }
 TEST(lang_fn_meson_build) {
-    ASSERT_EQ(cbm_language_for_filename("meson.build"), CBM_LANG_MESON);
+    ASSERT_EQ(hyp_language_for_filename("meson.build"), HYP_LANG_MESON);
     PASS();
 }
 TEST(lang_fn_meson_opts) {
-    ASSERT_EQ(cbm_language_for_filename("meson.options"), CBM_LANG_MESON);
+    ASSERT_EQ(hyp_language_for_filename("meson.options"), HYP_LANG_MESON);
     PASS();
 }
 TEST(lang_fn_meson_opts_txt) {
-    ASSERT_EQ(cbm_language_for_filename("meson_options.txt"), CBM_LANG_MESON);
+    ASSERT_EQ(hyp_language_for_filename("meson_options.txt"), HYP_LANG_MESON);
     PASS();
 }
 TEST(lang_fn_vimrc) {
-    ASSERT_EQ(cbm_language_for_filename(".vimrc"), CBM_LANG_VIMSCRIPT);
+    ASSERT_EQ(hyp_language_for_filename(".vimrc"), HYP_LANG_VIMSCRIPT);
     PASS();
 }
 
@@ -517,46 +517,46 @@ TEST(lang_fn_vimrc) {
  * (previously fell through to the single-extension lookup and was mis-typed as
  * PHP). Plain .php still maps to PHP. */
 TEST(lang_fn_blade_php_compound_issue258) {
-    ASSERT_EQ(cbm_language_for_filename("login.blade.php"), CBM_LANG_BLADE);
-    ASSERT_EQ(cbm_language_for_filename("alert.blade.php"), CBM_LANG_BLADE);
-    ASSERT_EQ(cbm_language_for_filename("index.php"), CBM_LANG_PHP);
+    ASSERT_EQ(hyp_language_for_filename("login.blade.php"), HYP_LANG_BLADE);
+    ASSERT_EQ(hyp_language_for_filename("alert.blade.php"), HYP_LANG_BLADE);
+    ASSERT_EQ(hyp_language_for_filename("index.php"), HYP_LANG_PHP);
     PASS();
 }
 
 /* Filename with extension falls through to extension lookup */
 TEST(lang_fn_main_go) {
-    ASSERT_EQ(cbm_language_for_filename("main.go"), CBM_LANG_GO);
+    ASSERT_EQ(hyp_language_for_filename("main.go"), HYP_LANG_GO);
     PASS();
 }
 TEST(lang_fn_test_py) {
-    ASSERT_EQ(cbm_language_for_filename("test.py"), CBM_LANG_PYTHON);
+    ASSERT_EQ(hyp_language_for_filename("test.py"), HYP_LANG_PYTHON);
     PASS();
 }
 TEST(lang_fn_unknown) {
-    ASSERT_EQ(cbm_language_for_filename("README"), CBM_LANG_COUNT);
+    ASSERT_EQ(hyp_language_for_filename("README"), HYP_LANG_COUNT);
     PASS();
 }
 
 /* ── Language name ─────────────────────────────────────────────── */
 
 TEST(lang_name_go) {
-    ASSERT_STR_EQ(cbm_language_name(CBM_LANG_GO), "Go");
+    ASSERT_STR_EQ(hyp_language_name(HYP_LANG_GO), "Go");
     PASS();
 }
 TEST(lang_name_python) {
-    ASSERT_STR_EQ(cbm_language_name(CBM_LANG_PYTHON), "Python");
+    ASSERT_STR_EQ(hyp_language_name(HYP_LANG_PYTHON), "Python");
     PASS();
 }
 TEST(lang_name_cpp) {
-    ASSERT_STR_EQ(cbm_language_name(CBM_LANG_CPP), "C++");
+    ASSERT_STR_EQ(hyp_language_name(HYP_LANG_CPP), "C++");
     PASS();
 }
 TEST(lang_name_csharp) {
-    ASSERT_STR_EQ(cbm_language_name(CBM_LANG_CSHARP), "C#");
+    ASSERT_STR_EQ(hyp_language_name(HYP_LANG_CSHARP), "C#");
     PASS();
 }
 TEST(lang_name_unknown) {
-    ASSERT_STR_EQ(cbm_language_name(CBM_LANG_COUNT), "Unknown");
+    ASSERT_STR_EQ(hyp_language_name(HYP_LANG_COUNT), "Unknown");
     PASS();
 }
 
@@ -566,490 +566,490 @@ TEST(lang_name_unknown) {
 TEST(lang_m_objc) {
     /* Write a temp file with Objective-C markers */
     char path[256];
-    snprintf(path, sizeof(path), "%s/test_lang_objc.m", cbm_tmpdir());
+    snprintf(path, sizeof(path), "%s/test_lang_objc.m", hyp_tmpdir());
     FILE *f = fopen(path, "w");
     ASSERT_NOT_NULL(f);
     fprintf(f, "#import <Foundation/Foundation.h>\n@interface Foo : NSObject\n@end\n");
     fclose(f);
 
-    ASSERT_EQ(cbm_disambiguate_m(path), CBM_LANG_OBJC);
+    ASSERT_EQ(hyp_disambiguate_m(path), HYP_LANG_OBJC);
     remove(path);
     PASS();
 }
 
 TEST(lang_m_magma) {
     char path[256];
-    snprintf(path, sizeof(path), "%s/test_lang_magma.m", cbm_tmpdir());
+    snprintf(path, sizeof(path), "%s/test_lang_magma.m", hyp_tmpdir());
     FILE *f = fopen(path, "w");
     ASSERT_NOT_NULL(f);
     fprintf(f, "function MyFunc(x)\n  return x^2;\nend function;\n");
     fclose(f);
 
-    ASSERT_EQ(cbm_disambiguate_m(path), CBM_LANG_MAGMA);
+    ASSERT_EQ(hyp_disambiguate_m(path), HYP_LANG_MAGMA);
     remove(path);
     PASS();
 }
 
 TEST(lang_m_matlab) {
     char path[256];
-    snprintf(path, sizeof(path), "%s/test_lang_matlab.m", cbm_tmpdir());
+    snprintf(path, sizeof(path), "%s/test_lang_matlab.m", hyp_tmpdir());
     FILE *f = fopen(path, "w");
     ASSERT_NOT_NULL(f);
     fprintf(f, "function y = square(x)\n  y = x.^2;\nend\n");
     fclose(f);
 
-    ASSERT_EQ(cbm_disambiguate_m(path), CBM_LANG_MATLAB);
+    ASSERT_EQ(hyp_disambiguate_m(path), HYP_LANG_MATLAB);
     remove(path);
     PASS();
 }
 
 TEST(lang_m_default_on_read_fail) {
     /* Non-existent file defaults to MATLAB */
-    ASSERT_EQ(cbm_disambiguate_m("/tmp/nonexistent_file_12345.m"), CBM_LANG_MATLAB);
+    ASSERT_EQ(hyp_disambiguate_m("/tmp/nonexistent_file_12345.m"), HYP_LANG_MATLAB);
     PASS();
 }
 
 /* --- New languages (auto-generated) --- */
 TEST(lang_ext_solidity) {
-    ASSERT_EQ(cbm_language_for_extension(".sol"), CBM_LANG_SOLIDITY);
+    ASSERT_EQ(hyp_language_for_extension(".sol"), HYP_LANG_SOLIDITY);
     PASS();
 }
 
 TEST(lang_ext_typst) {
-    ASSERT_EQ(cbm_language_for_extension(".typ"), CBM_LANG_TYPST);
+    ASSERT_EQ(hyp_language_for_extension(".typ"), HYP_LANG_TYPST);
     PASS();
 }
 
 TEST(lang_ext_gdscript) {
-    ASSERT_EQ(cbm_language_for_extension(".gd"), CBM_LANG_GDSCRIPT);
+    ASSERT_EQ(hyp_language_for_extension(".gd"), HYP_LANG_GDSCRIPT);
     PASS();
 }
 
 TEST(lang_ext_gleam) {
-    ASSERT_EQ(cbm_language_for_extension(".gleam"), CBM_LANG_GLEAM);
+    ASSERT_EQ(hyp_language_for_extension(".gleam"), HYP_LANG_GLEAM);
     PASS();
 }
 
 TEST(lang_ext_powershell) {
-    ASSERT_EQ(cbm_language_for_extension(".ps1"), CBM_LANG_POWERSHELL);
-    ASSERT_EQ(cbm_language_for_extension(".psm1"), CBM_LANG_POWERSHELL);
-    ASSERT_EQ(cbm_language_for_extension(".psd1"), CBM_LANG_POWERSHELL);
+    ASSERT_EQ(hyp_language_for_extension(".ps1"), HYP_LANG_POWERSHELL);
+    ASSERT_EQ(hyp_language_for_extension(".psm1"), HYP_LANG_POWERSHELL);
+    ASSERT_EQ(hyp_language_for_extension(".psd1"), HYP_LANG_POWERSHELL);
     PASS();
 }
 
 TEST(lang_ext_pascal) {
-    ASSERT_EQ(cbm_language_for_extension(".pas"), CBM_LANG_PASCAL);
-    ASSERT_EQ(cbm_language_for_extension(".lpr"), CBM_LANG_PASCAL);
-    ASSERT_EQ(cbm_language_for_extension(".dpr"), CBM_LANG_PASCAL);
+    ASSERT_EQ(hyp_language_for_extension(".pas"), HYP_LANG_PASCAL);
+    ASSERT_EQ(hyp_language_for_extension(".lpr"), HYP_LANG_PASCAL);
+    ASSERT_EQ(hyp_language_for_extension(".dpr"), HYP_LANG_PASCAL);
     PASS();
 }
 
 TEST(lang_ext_d) {
-    ASSERT_EQ(cbm_language_for_extension(".d"), CBM_LANG_DLANG);
+    ASSERT_EQ(hyp_language_for_extension(".d"), HYP_LANG_DLANG);
     PASS();
 }
 
 TEST(lang_ext_nim) {
     /* nim grammar removed — .nim/.nims no longer map to a language */
-    ASSERT_EQ(cbm_language_for_extension(".nim"), CBM_LANG_COUNT);
-    ASSERT_EQ(cbm_language_for_extension(".nims"), CBM_LANG_COUNT);
+    ASSERT_EQ(hyp_language_for_extension(".nim"), HYP_LANG_COUNT);
+    ASSERT_EQ(hyp_language_for_extension(".nims"), HYP_LANG_COUNT);
     PASS();
 }
 
 TEST(lang_ext_scheme) {
-    ASSERT_EQ(cbm_language_for_extension(".scm"), CBM_LANG_SCHEME);
-    ASSERT_EQ(cbm_language_for_extension(".ss"), CBM_LANG_SCHEME);
+    ASSERT_EQ(hyp_language_for_extension(".scm"), HYP_LANG_SCHEME);
+    ASSERT_EQ(hyp_language_for_extension(".ss"), HYP_LANG_SCHEME);
     PASS();
 }
 
 TEST(lang_ext_fennel) {
-    ASSERT_EQ(cbm_language_for_extension(".fnl"), CBM_LANG_FENNEL);
+    ASSERT_EQ(hyp_language_for_extension(".fnl"), HYP_LANG_FENNEL);
     PASS();
 }
 
 TEST(lang_ext_fish) {
-    ASSERT_EQ(cbm_language_for_extension(".fish"), CBM_LANG_FISH);
+    ASSERT_EQ(hyp_language_for_extension(".fish"), HYP_LANG_FISH);
     PASS();
 }
 
 TEST(lang_ext_awk) {
-    ASSERT_EQ(cbm_language_for_extension(".awk"), CBM_LANG_AWK);
+    ASSERT_EQ(hyp_language_for_extension(".awk"), HYP_LANG_AWK);
     PASS();
 }
 
 TEST(lang_ext_zsh) {
-    ASSERT_EQ(cbm_language_for_extension(".zsh"), CBM_LANG_ZSH);
+    ASSERT_EQ(hyp_language_for_extension(".zsh"), HYP_LANG_ZSH);
     PASS();
 }
 
 TEST(lang_ext_tcl) {
-    ASSERT_EQ(cbm_language_for_extension(".tcl"), CBM_LANG_TCL);
+    ASSERT_EQ(hyp_language_for_extension(".tcl"), HYP_LANG_TCL);
     PASS();
 }
 
 TEST(lang_ext_ada) {
-    ASSERT_EQ(cbm_language_for_extension(".adb"), CBM_LANG_ADA);
-    ASSERT_EQ(cbm_language_for_extension(".ads"), CBM_LANG_ADA);
+    ASSERT_EQ(hyp_language_for_extension(".adb"), HYP_LANG_ADA);
+    ASSERT_EQ(hyp_language_for_extension(".ads"), HYP_LANG_ADA);
     PASS();
 }
 
 TEST(lang_ext_agda) {
-    ASSERT_EQ(cbm_language_for_extension(".agda"), CBM_LANG_AGDA);
+    ASSERT_EQ(hyp_language_for_extension(".agda"), HYP_LANG_AGDA);
     PASS();
 }
 
 TEST(lang_ext_racket) {
-    ASSERT_EQ(cbm_language_for_extension(".rkt"), CBM_LANG_RACKET);
+    ASSERT_EQ(hyp_language_for_extension(".rkt"), HYP_LANG_RACKET);
     PASS();
 }
 
 TEST(lang_ext_odin) {
-    ASSERT_EQ(cbm_language_for_extension(".odin"), CBM_LANG_ODIN);
+    ASSERT_EQ(hyp_language_for_extension(".odin"), HYP_LANG_ODIN);
     PASS();
 }
 
 TEST(lang_ext_rescript) {
-    ASSERT_EQ(cbm_language_for_extension(".res"), CBM_LANG_RESCRIPT);
-    ASSERT_EQ(cbm_language_for_extension(".resi"), CBM_LANG_RESCRIPT);
+    ASSERT_EQ(hyp_language_for_extension(".res"), HYP_LANG_RESCRIPT);
+    ASSERT_EQ(hyp_language_for_extension(".resi"), HYP_LANG_RESCRIPT);
     PASS();
 }
 
 TEST(lang_ext_purescript) {
-    ASSERT_EQ(cbm_language_for_extension(".purs"), CBM_LANG_PURESCRIPT);
+    ASSERT_EQ(hyp_language_for_extension(".purs"), HYP_LANG_PURESCRIPT);
     PASS();
 }
 
 TEST(lang_ext_nickel) {
-    ASSERT_EQ(cbm_language_for_extension(".ncl"), CBM_LANG_NICKEL);
+    ASSERT_EQ(hyp_language_for_extension(".ncl"), HYP_LANG_NICKEL);
     PASS();
 }
 
 TEST(lang_ext_crystal) {
-    ASSERT_EQ(cbm_language_for_extension(".cr"), CBM_LANG_CRYSTAL);
+    ASSERT_EQ(hyp_language_for_extension(".cr"), HYP_LANG_CRYSTAL);
     PASS();
 }
 
 TEST(lang_ext_teal) {
-    ASSERT_EQ(cbm_language_for_extension(".tl"), CBM_LANG_TEAL);
+    ASSERT_EQ(hyp_language_for_extension(".tl"), HYP_LANG_TEAL);
     PASS();
 }
 
 TEST(lang_ext_hare) {
-    ASSERT_EQ(cbm_language_for_extension(".ha"), CBM_LANG_HARE);
+    ASSERT_EQ(hyp_language_for_extension(".ha"), HYP_LANG_HARE);
     PASS();
 }
 
 TEST(lang_ext_pony) {
-    ASSERT_EQ(cbm_language_for_extension(".pony"), CBM_LANG_PONY);
+    ASSERT_EQ(hyp_language_for_extension(".pony"), HYP_LANG_PONY);
     PASS();
 }
 
 TEST(lang_ext_luau) {
-    ASSERT_EQ(cbm_language_for_extension(".luau"), CBM_LANG_LUAU);
+    ASSERT_EQ(hyp_language_for_extension(".luau"), HYP_LANG_LUAU);
     PASS();
 }
 
 TEST(lang_ext_qml) {
-    ASSERT_EQ(cbm_language_for_extension(".qml"), CBM_LANG_QML);
+    ASSERT_EQ(hyp_language_for_extension(".qml"), HYP_LANG_QML);
     PASS();
 }
 
 TEST(lang_ext_cfml) {
-    ASSERT_EQ(cbm_language_for_extension(".cfc"), CBM_LANG_CFSCRIPT);
-    ASSERT_EQ(cbm_language_for_extension(".cfm"), CBM_LANG_CFML);
+    ASSERT_EQ(hyp_language_for_extension(".cfc"), HYP_LANG_CFSCRIPT);
+    ASSERT_EQ(hyp_language_for_extension(".cfm"), HYP_LANG_CFML);
     PASS();
 }
 
 TEST(lang_ext_helm_tpl) {
-    ASSERT_EQ(cbm_language_for_extension(".tpl"), CBM_LANG_GOTEMPLATE);
+    ASSERT_EQ(hyp_language_for_extension(".tpl"), HYP_LANG_GOTEMPLATE);
     PASS();
 }
 
 TEST(lang_ext_janet) {
-    ASSERT_EQ(cbm_language_for_extension(".janet"), CBM_LANG_JANET);
+    ASSERT_EQ(hyp_language_for_extension(".janet"), HYP_LANG_JANET);
     PASS();
 }
 
 TEST(lang_ext_sway) {
-    ASSERT_EQ(cbm_language_for_extension(".sw"), CBM_LANG_SWAY);
+    ASSERT_EQ(hyp_language_for_extension(".sw"), HYP_LANG_SWAY);
     PASS();
 }
 
 TEST(lang_ext_nasm) {
-    ASSERT_EQ(cbm_language_for_extension(".nasm"), CBM_LANG_NASM);
+    ASSERT_EQ(hyp_language_for_extension(".nasm"), HYP_LANG_NASM);
     PASS();
 }
 
 TEST(lang_ext_assembly) {
-    ASSERT_EQ(cbm_language_for_extension(".s"), CBM_LANG_ASSEMBLY);
-    ASSERT_EQ(cbm_language_for_extension(".S"), CBM_LANG_ASSEMBLY);
+    ASSERT_EQ(hyp_language_for_extension(".s"), HYP_LANG_ASSEMBLY);
+    ASSERT_EQ(hyp_language_for_extension(".S"), HYP_LANG_ASSEMBLY);
     PASS();
 }
 
 TEST(lang_ext_astro) {
-    ASSERT_EQ(cbm_language_for_extension(".astro"), CBM_LANG_ASTRO);
+    ASSERT_EQ(hyp_language_for_extension(".astro"), HYP_LANG_ASTRO);
     PASS();
 }
 
 TEST(lang_ext_gotemplate) {
-    ASSERT_EQ(cbm_language_for_extension(".tmpl"), CBM_LANG_GOTEMPLATE);
-    ASSERT_EQ(cbm_language_for_extension(".gotmpl"), CBM_LANG_GOTEMPLATE);
+    ASSERT_EQ(hyp_language_for_extension(".tmpl"), HYP_LANG_GOTEMPLATE);
+    ASSERT_EQ(hyp_language_for_extension(".gotmpl"), HYP_LANG_GOTEMPLATE);
     PASS();
 }
 
 TEST(lang_ext_templ) {
-    ASSERT_EQ(cbm_language_for_extension(".templ"), CBM_LANG_TEMPL);
+    ASSERT_EQ(hyp_language_for_extension(".templ"), HYP_LANG_TEMPL);
     PASS();
 }
 
 TEST(lang_ext_liquid) {
-    ASSERT_EQ(cbm_language_for_extension(".liquid"), CBM_LANG_LIQUID);
+    ASSERT_EQ(hyp_language_for_extension(".liquid"), HYP_LANG_LIQUID);
     PASS();
 }
 
 TEST(lang_ext_jinja2) {
-    ASSERT_EQ(cbm_language_for_extension(".j2"), CBM_LANG_JINJA2);
-    ASSERT_EQ(cbm_language_for_extension(".jinja2"), CBM_LANG_JINJA2);
-    ASSERT_EQ(cbm_language_for_extension(".jinja"), CBM_LANG_JINJA2);
+    ASSERT_EQ(hyp_language_for_extension(".j2"), HYP_LANG_JINJA2);
+    ASSERT_EQ(hyp_language_for_extension(".jinja2"), HYP_LANG_JINJA2);
+    ASSERT_EQ(hyp_language_for_extension(".jinja"), HYP_LANG_JINJA2);
     PASS();
 }
 
 TEST(lang_ext_prisma) {
-    ASSERT_EQ(cbm_language_for_extension(".prisma"), CBM_LANG_PRISMA);
+    ASSERT_EQ(hyp_language_for_extension(".prisma"), HYP_LANG_PRISMA);
     PASS();
 }
 
 TEST(lang_ext_hyprlang) {
-    ASSERT_EQ(cbm_language_for_extension(".hl"), CBM_LANG_HYPRLANG);
+    ASSERT_EQ(hyp_language_for_extension(".hl"), HYP_LANG_HYPRLANG);
     PASS();
 }
 
 TEST(lang_ext_diff) {
-    ASSERT_EQ(cbm_language_for_extension(".diff"), CBM_LANG_DIFF);
-    ASSERT_EQ(cbm_language_for_extension(".patch"), CBM_LANG_DIFF);
+    ASSERT_EQ(hyp_language_for_extension(".diff"), HYP_LANG_DIFF);
+    ASSERT_EQ(hyp_language_for_extension(".patch"), HYP_LANG_DIFF);
     PASS();
 }
 
 TEST(lang_ext_wgsl) {
-    ASSERT_EQ(cbm_language_for_extension(".wgsl"), CBM_LANG_WGSL);
+    ASSERT_EQ(hyp_language_for_extension(".wgsl"), HYP_LANG_WGSL);
     PASS();
 }
 
 TEST(lang_ext_kdl) {
-    ASSERT_EQ(cbm_language_for_extension(".kdl"), CBM_LANG_KDL);
+    ASSERT_EQ(hyp_language_for_extension(".kdl"), HYP_LANG_KDL);
     PASS();
 }
 
 TEST(lang_ext_json5) {
-    ASSERT_EQ(cbm_language_for_extension(".json5"), CBM_LANG_JSON5);
+    ASSERT_EQ(hyp_language_for_extension(".json5"), HYP_LANG_JSON5);
     PASS();
 }
 
 TEST(lang_ext_jsonnet) {
-    ASSERT_EQ(cbm_language_for_extension(".jsonnet"), CBM_LANG_JSONNET);
-    ASSERT_EQ(cbm_language_for_extension(".libsonnet"), CBM_LANG_JSONNET);
+    ASSERT_EQ(hyp_language_for_extension(".jsonnet"), HYP_LANG_JSONNET);
+    ASSERT_EQ(hyp_language_for_extension(".libsonnet"), HYP_LANG_JSONNET);
     PASS();
 }
 
 TEST(lang_ext_ron) {
-    ASSERT_EQ(cbm_language_for_extension(".ron"), CBM_LANG_RON);
+    ASSERT_EQ(hyp_language_for_extension(".ron"), HYP_LANG_RON);
     PASS();
 }
 
 TEST(lang_ext_thrift) {
-    ASSERT_EQ(cbm_language_for_extension(".thrift"), CBM_LANG_THRIFT);
+    ASSERT_EQ(hyp_language_for_extension(".thrift"), HYP_LANG_THRIFT);
     PASS();
 }
 
 TEST(lang_ext_capnp) {
-    ASSERT_EQ(cbm_language_for_extension(".capnp"), CBM_LANG_CAPNP);
+    ASSERT_EQ(hyp_language_for_extension(".capnp"), HYP_LANG_CAPNP);
     PASS();
 }
 
 TEST(lang_ext_properties) {
-    ASSERT_EQ(cbm_language_for_extension(".properties"), CBM_LANG_PROPERTIES);
+    ASSERT_EQ(hyp_language_for_extension(".properties"), HYP_LANG_PROPERTIES);
     PASS();
 }
 
 TEST(lang_ext_bibtex) {
-    ASSERT_EQ(cbm_language_for_extension(".bib"), CBM_LANG_BIBTEX);
+    ASSERT_EQ(hyp_language_for_extension(".bib"), HYP_LANG_BIBTEX);
     PASS();
 }
 
 TEST(lang_ext_starlark) {
-    ASSERT_EQ(cbm_language_for_extension(".star"), CBM_LANG_STARLARK);
-    ASSERT_EQ(cbm_language_for_extension(".bzl"), CBM_LANG_STARLARK);
+    ASSERT_EQ(hyp_language_for_extension(".star"), HYP_LANG_STARLARK);
+    ASSERT_EQ(hyp_language_for_extension(".bzl"), HYP_LANG_STARLARK);
     PASS();
 }
 
 TEST(lang_ext_bicep) {
-    ASSERT_EQ(cbm_language_for_extension(".bicep"), CBM_LANG_BICEP);
+    ASSERT_EQ(hyp_language_for_extension(".bicep"), HYP_LANG_BICEP);
     PASS();
 }
 
 TEST(lang_ext_csv) {
-    ASSERT_EQ(cbm_language_for_extension(".csv"), CBM_LANG_CSV);
+    ASSERT_EQ(hyp_language_for_extension(".csv"), HYP_LANG_CSV);
     PASS();
 }
 
 TEST(lang_ext_hlsl) {
-    ASSERT_EQ(cbm_language_for_extension(".hlsl"), CBM_LANG_HLSL);
-    ASSERT_EQ(cbm_language_for_extension(".hlsli"), CBM_LANG_HLSL);
-    ASSERT_EQ(cbm_language_for_extension(".fx"), CBM_LANG_HLSL);
+    ASSERT_EQ(hyp_language_for_extension(".hlsl"), HYP_LANG_HLSL);
+    ASSERT_EQ(hyp_language_for_extension(".hlsli"), HYP_LANG_HLSL);
+    ASSERT_EQ(hyp_language_for_extension(".fx"), HYP_LANG_HLSL);
     PASS();
 }
 
 TEST(lang_ext_vhdl) {
-    ASSERT_EQ(cbm_language_for_extension(".vhd"), CBM_LANG_VHDL);
-    ASSERT_EQ(cbm_language_for_extension(".vhdl"), CBM_LANG_VHDL);
+    ASSERT_EQ(hyp_language_for_extension(".vhd"), HYP_LANG_VHDL);
+    ASSERT_EQ(hyp_language_for_extension(".vhdl"), HYP_LANG_VHDL);
     PASS();
 }
 
 TEST(lang_ext_devicetree) {
-    ASSERT_EQ(cbm_language_for_extension(".dts"), CBM_LANG_DEVICETREE);
-    ASSERT_EQ(cbm_language_for_extension(".dtsi"), CBM_LANG_DEVICETREE);
-    ASSERT_EQ(cbm_language_for_extension(".overlay"), CBM_LANG_DEVICETREE);
+    ASSERT_EQ(hyp_language_for_extension(".dts"), HYP_LANG_DEVICETREE);
+    ASSERT_EQ(hyp_language_for_extension(".dtsi"), HYP_LANG_DEVICETREE);
+    ASSERT_EQ(hyp_language_for_extension(".overlay"), HYP_LANG_DEVICETREE);
     PASS();
 }
 
 TEST(lang_ext_linkerscript) {
-    ASSERT_EQ(cbm_language_for_extension(".ld"), CBM_LANG_LINKERSCRIPT);
-    ASSERT_EQ(cbm_language_for_extension(".lds"), CBM_LANG_LINKERSCRIPT);
+    ASSERT_EQ(hyp_language_for_extension(".ld"), HYP_LANG_LINKERSCRIPT);
+    ASSERT_EQ(hyp_language_for_extension(".lds"), HYP_LANG_LINKERSCRIPT);
     PASS();
 }
 
 TEST(lang_ext_gn) {
-    ASSERT_EQ(cbm_language_for_extension(".gn"), CBM_LANG_GN);
-    ASSERT_EQ(cbm_language_for_extension(".gni"), CBM_LANG_GN);
+    ASSERT_EQ(hyp_language_for_extension(".gn"), HYP_LANG_GN);
+    ASSERT_EQ(hyp_language_for_extension(".gni"), HYP_LANG_GN);
     PASS();
 }
 
 TEST(lang_ext_bitbake) {
-    ASSERT_EQ(cbm_language_for_extension(".bb"), CBM_LANG_BITBAKE);
-    ASSERT_EQ(cbm_language_for_extension(".bbclass"), CBM_LANG_BITBAKE);
-    ASSERT_EQ(cbm_language_for_extension(".bbappend"), CBM_LANG_BITBAKE);
+    ASSERT_EQ(hyp_language_for_extension(".bb"), HYP_LANG_BITBAKE);
+    ASSERT_EQ(hyp_language_for_extension(".bbclass"), HYP_LANG_BITBAKE);
+    ASSERT_EQ(hyp_language_for_extension(".bbappend"), HYP_LANG_BITBAKE);
     PASS();
 }
 
 TEST(lang_ext_smali) {
-    ASSERT_EQ(cbm_language_for_extension(".smali"), CBM_LANG_SMALI);
+    ASSERT_EQ(hyp_language_for_extension(".smali"), HYP_LANG_SMALI);
     PASS();
 }
 
 TEST(lang_ext_tablegen) {
-    ASSERT_EQ(cbm_language_for_extension(".td"), CBM_LANG_TABLEGEN);
+    ASSERT_EQ(hyp_language_for_extension(".td"), HYP_LANG_TABLEGEN);
     PASS();
 }
 
 TEST(lang_ext_ispc) {
-    ASSERT_EQ(cbm_language_for_extension(".ispc"), CBM_LANG_ISPC);
+    ASSERT_EQ(hyp_language_for_extension(".ispc"), HYP_LANG_ISPC);
     PASS();
 }
 
 TEST(lang_ext_cairo) {
-    ASSERT_EQ(cbm_language_for_extension(".cairo"), CBM_LANG_CAIRO);
+    ASSERT_EQ(hyp_language_for_extension(".cairo"), HYP_LANG_CAIRO);
     PASS();
 }
 
 TEST(lang_ext_move) {
-    ASSERT_EQ(cbm_language_for_extension(".move"), CBM_LANG_MOVE);
+    ASSERT_EQ(hyp_language_for_extension(".move"), HYP_LANG_MOVE);
     PASS();
 }
 
 TEST(lang_ext_mojo) {
-    ASSERT_EQ(cbm_language_for_extension(".mojo"), CBM_LANG_MOJO);
+    ASSERT_EQ(hyp_language_for_extension(".mojo"), HYP_LANG_MOJO);
     PASS();
 }
 
 TEST(lang_ext_squirrel) {
-    ASSERT_EQ(cbm_language_for_extension(".nut"), CBM_LANG_SQUIRREL);
+    ASSERT_EQ(hyp_language_for_extension(".nut"), HYP_LANG_SQUIRREL);
     PASS();
 }
 
 TEST(lang_ext_func) {
-    ASSERT_EQ(cbm_language_for_extension(".fc"), CBM_LANG_FUNC);
+    ASSERT_EQ(hyp_language_for_extension(".fc"), HYP_LANG_FUNC);
     PASS();
 }
 
 TEST(lang_ext_rst) {
-    ASSERT_EQ(cbm_language_for_extension(".rst"), CBM_LANG_RST);
+    ASSERT_EQ(hyp_language_for_extension(".rst"), HYP_LANG_RST);
     PASS();
 }
 
 TEST(lang_ext_beancount) {
-    ASSERT_EQ(cbm_language_for_extension(".beancount"), CBM_LANG_BEANCOUNT);
+    ASSERT_EQ(hyp_language_for_extension(".beancount"), HYP_LANG_BEANCOUNT);
     PASS();
 }
 
 TEST(lang_ext_mermaid) {
-    ASSERT_EQ(cbm_language_for_extension(".mmd"), CBM_LANG_MERMAID);
-    ASSERT_EQ(cbm_language_for_extension(".mermaid"), CBM_LANG_MERMAID);
+    ASSERT_EQ(hyp_language_for_extension(".mmd"), HYP_LANG_MERMAID);
+    ASSERT_EQ(hyp_language_for_extension(".mermaid"), HYP_LANG_MERMAID);
     PASS();
 }
 
 TEST(lang_ext_puppet) {
-    ASSERT_EQ(cbm_language_for_extension(".pp"), CBM_LANG_PUPPET);
+    ASSERT_EQ(hyp_language_for_extension(".pp"), HYP_LANG_PUPPET);
     PASS();
 }
 
 TEST(lang_ext_po) {
-    ASSERT_EQ(cbm_language_for_extension(".po"), CBM_LANG_PO);
-    ASSERT_EQ(cbm_language_for_extension(".pot"), CBM_LANG_PO);
+    ASSERT_EQ(hyp_language_for_extension(".po"), HYP_LANG_PO);
+    ASSERT_EQ(hyp_language_for_extension(".pot"), HYP_LANG_PO);
     PASS();
 }
 
 TEST(lang_ext_slang) {
-    ASSERT_EQ(cbm_language_for_extension(".slang"), CBM_LANG_SLANG);
+    ASSERT_EQ(hyp_language_for_extension(".slang"), HYP_LANG_SLANG);
     PASS();
 }
 
 TEST(lang_ext_llvm) {
-    ASSERT_EQ(cbm_language_for_extension(".ll"), CBM_LANG_LLVM_IR);
+    ASSERT_EQ(hyp_language_for_extension(".ll"), HYP_LANG_LLVM_IR);
     PASS();
 }
 
 TEST(lang_ext_smithy) {
-    ASSERT_EQ(cbm_language_for_extension(".smithy"), CBM_LANG_SMITHY);
+    ASSERT_EQ(hyp_language_for_extension(".smithy"), HYP_LANG_SMITHY);
     PASS();
 }
 
 TEST(lang_ext_wit) {
-    ASSERT_EQ(cbm_language_for_extension(".wit"), CBM_LANG_WIT);
+    ASSERT_EQ(hyp_language_for_extension(".wit"), HYP_LANG_WIT);
     PASS();
 }
 
 TEST(lang_ext_tlaplus) {
-    ASSERT_EQ(cbm_language_for_extension(".tla"), CBM_LANG_TLAPLUS);
+    ASSERT_EQ(hyp_language_for_extension(".tla"), HYP_LANG_TLAPLUS);
     PASS();
 }
 
 TEST(lang_ext_pkl) {
-    ASSERT_EQ(cbm_language_for_extension(".pkl"), CBM_LANG_PKL);
+    ASSERT_EQ(hyp_language_for_extension(".pkl"), HYP_LANG_PKL);
     PASS();
 }
 
 TEST(lang_ext_apex) {
-    ASSERT_EQ(cbm_language_for_extension(".cls"), CBM_LANG_APEX);
-    ASSERT_EQ(cbm_language_for_extension(".trigger"), CBM_LANG_APEX);
+    ASSERT_EQ(hyp_language_for_extension(".cls"), HYP_LANG_APEX);
+    ASSERT_EQ(hyp_language_for_extension(".trigger"), HYP_LANG_APEX);
     PASS();
 }
 
 TEST(lang_ext_soql) {
-    ASSERT_EQ(cbm_language_for_extension(".soql"), CBM_LANG_SOQL);
+    ASSERT_EQ(hyp_language_for_extension(".soql"), HYP_LANG_SOQL);
     PASS();
 }
 
 TEST(lang_ext_sosl) {
-    ASSERT_EQ(cbm_language_for_extension(".sosl"), CBM_LANG_SOSL);
+    ASSERT_EQ(hyp_language_for_extension(".sosl"), HYP_LANG_SOSL);
     PASS();
 }
 
 /* --- Ported from lang_test.go: TestForLanguage --- */
 TEST(lang_all_have_names) {
-    /* Every language enum value from 0 to CBM_LANG_COUNT-1
+    /* Every language enum value from 0 to HYP_LANG_COUNT-1
      * should have a non-"Unknown" name. */
-    for (int i = 0; i < CBM_LANG_COUNT; i++) {
-        const char *name = cbm_language_name((CBMLanguage)i);
+    for (int i = 0; i < HYP_LANG_COUNT; i++) {
+        const char *name = hyp_language_name((HYPLanguage)i);
         ASSERT_NOT_NULL(name);
         ASSERT_TRUE(strcmp(name, "Unknown") != 0);
     }

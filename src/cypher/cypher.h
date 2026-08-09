@@ -2,15 +2,15 @@
  * cypher.h — Public API for the Cypher query engine.
  *
  * Provides lexing, parsing, planning, and execution of a subset of
- * Cypher queries against the cbm_store graph database.
+ * Cypher queries against the hyp_store graph database.
  *
  * Supported syntax:
  *   MATCH (n:Label)-[:TYPE*1..3]->(m:Label {prop: "val"})
  *   WHERE n.name =~ ".*pattern.*" AND m.label = "Function"
  *   RETURN n.name, COUNT(m) AS cnt ORDER BY cnt DESC LIMIT 10
  */
-#ifndef CBM_CYPHER_H
-#define CBM_CYPHER_H
+#ifndef HYP_CYPHER_H
+#define HYP_CYPHER_H
 
 #include <stdint.h>
 #include <stdbool.h>
@@ -125,26 +125,26 @@ typedef enum {
     TOK_EOF,
 
     TOK_COUNT_TYPES /* sentinel for array sizing */
-} cbm_token_type_t;
+} hyp_token_type_t;
 
 typedef struct {
-    cbm_token_type_t type;
+    hyp_token_type_t type;
     const char *text; /* owned pointer to token text */
     int pos;          /* byte offset in source */
-} cbm_token_t;
+} hyp_token_t;
 
 /* ── Lexer ──────────────────────────────────────────────────────── */
 
 typedef struct {
-    cbm_token_t *tokens;
+    hyp_token_t *tokens;
     int count;
     int capacity;
     char *error; /* NULL if no error */
-} cbm_lex_result_t;
+} hyp_lex_result_t;
 
-/* Tokenize a Cypher query string. Caller must call cbm_lex_free(). */
-int cbm_lex(const char *input, cbm_lex_result_t *out);
-void cbm_lex_free(cbm_lex_result_t *r);
+/* Tokenize a Cypher query string. Caller must call hyp_lex_free(). */
+int hyp_lex(const char *input, hyp_lex_result_t *out);
+void hyp_lex_free(hyp_lex_result_t *r);
 
 /* ── AST ────────────────────────────────────────────────────────── */
 
@@ -152,15 +152,15 @@ void cbm_lex_free(cbm_lex_result_t *r);
 typedef struct {
     const char *key;
     const char *value;
-} cbm_prop_filter_t;
+} hyp_prop_filter_t;
 
 /* Node pattern: (variable:Label {props}) */
 typedef struct {
     const char *variable; /* NULL if anonymous */
     const char *label;    /* NULL if unlabeled */
-    cbm_prop_filter_t *props;
+    hyp_prop_filter_t *props;
     int prop_count;
-} cbm_node_pattern_t;
+} hyp_node_pattern_t;
 
 /* Relationship pattern: -[:TYPE|TYPE2*min..max]-> */
 typedef struct {
@@ -170,23 +170,23 @@ typedef struct {
     const char *direction; /* "outbound", "inbound", "any" */
     int min_hops;          /* default 1 */
     int max_hops;          /* 0 = unbounded */
-} cbm_rel_pattern_t;
+} hyp_rel_pattern_t;
 
 /* A pattern is alternating nodes and relationships:
  * node0 rel0 node1 rel1 node2 ... */
 typedef struct {
-    cbm_node_pattern_t *nodes;
+    hyp_node_pattern_t *nodes;
     int node_count;
-    cbm_rel_pattern_t *rels;
+    hyp_rel_pattern_t *rels;
     int rel_count;
-} cbm_pattern_t;
+} hyp_pattern_t;
 
 /* One argument to a multi-argument scalar function (coalesce, substring, ...). */
 typedef struct {
     const char *variable; /* variable reference (NULL if a literal) */
     const char *property; /* property of the variable (NULL if whole var / literal) */
     const char *literal;  /* literal string/number text (NULL if a variable ref) */
-} cbm_func_arg_t;
+} hyp_func_arg_t;
 
 /* WHERE condition */
 typedef struct {
@@ -208,9 +208,9 @@ typedef struct {
     /* Multi-arg scalar function on the LHS, e.g. coalesce(f.depth, 0) >= 2
      * (#874). NULL func = plain variable/property LHS. */
     const char *func;
-    cbm_func_arg_t *args;
+    hyp_func_arg_t *args;
     int arg_count;
-} cbm_condition_t;
+} hyp_condition_t;
 
 /* Expression tree for WHERE clause */
 typedef enum {
@@ -219,35 +219,35 @@ typedef enum {
     EXPR_OR,
     EXPR_NOT,
     EXPR_XOR
-} cbm_expr_type_t;
+} hyp_expr_type_t;
 
-typedef struct cbm_expr cbm_expr_t;
-struct cbm_expr {
-    cbm_expr_type_t type;
-    cbm_condition_t cond; /* leaf (EXPR_CONDITION only) */
-    cbm_expr_t *left;     /* AND/OR/XOR left; NOT child */
-    cbm_expr_t *right;    /* AND/OR/XOR right; NULL for NOT */
+typedef struct hyp_expr hyp_expr_t;
+struct hyp_expr {
+    hyp_expr_type_t type;
+    hyp_condition_t cond; /* leaf (EXPR_CONDITION only) */
+    hyp_expr_t *left;     /* AND/OR/XOR left; NOT child */
+    hyp_expr_t *right;    /* AND/OR/XOR right; NULL for NOT */
 };
 
 typedef struct {
-    cbm_expr_t *root; /* expression tree (NULL = use legacy conditions) */
+    hyp_expr_t *root; /* expression tree (NULL = use legacy conditions) */
     /* Legacy flat model — kept during migration, removed after Phase 2 */
-    cbm_condition_t *conditions;
+    hyp_condition_t *conditions;
     int count;
     const char *op; /* "AND" or "OR" */
-} cbm_where_clause_t;
+} hyp_where_clause_t;
 
 /* CASE expression: CASE WHEN expr THEN val [ELSE val] END */
 typedef struct {
-    cbm_expr_t *when_expr; /* condition */
+    hyp_expr_t *when_expr; /* condition */
     const char *then_val;  /* result if true */
-} cbm_case_branch_t;
+} hyp_case_branch_t;
 
 typedef struct {
-    cbm_case_branch_t *branches;
+    hyp_case_branch_t *branches;
     int branch_count;
     const char *else_val; /* NULL if no ELSE */
-} cbm_case_expr_t;
+} hyp_case_expr_t;
 
 /* RETURN item */
 typedef struct {
@@ -257,41 +257,41 @@ typedef struct {
     const char *func;      /* "COUNT", "SUM", "AVG", "MIN", "MAX", "COLLECT",
                               "toLower", "toUpper", "toString" or NULL */
     bool distinct;         /* COUNT(DISTINCT x) — count unique values (#239) */
-    cbm_case_expr_t *kase; /* CASE expression (NULL if not CASE) */
-    cbm_func_arg_t *args;  /* args for a multi-argument function (NULL if none) */
+    hyp_case_expr_t *kase; /* CASE expression (NULL if not CASE) */
+    hyp_func_arg_t *args;  /* args for a multi-argument function (NULL if none) */
     int arg_count;
-} cbm_return_item_t;
+} hyp_return_item_t;
 
 /* Upper bound on ORDER BY sort keys. Queries with more keys are rejected at
  * parse time: an unmodeled key must be a loud error, never a silently dropped
  * remainder (#1334 - the unconsumed tail swallowed the LIMIT clause). */
-#define CBM_CYPHER_ORDER_KEYS_MAX 8
+#define HYP_CYPHER_ORDER_KEYS_MAX 8
 
 typedef struct {
-    cbm_return_item_t *items;
+    hyp_return_item_t *items;
     int count;
     bool distinct;
     bool star; /* RETURN * */
     /* ORDER BY key list, in priority order. Each key is "variable.property",
      * "COUNT(var)" or an alias; direction is per key (Cypher semantics). */
-    const char *order_keys[CBM_CYPHER_ORDER_KEYS_MAX];
-    bool order_descs[CBM_CYPHER_ORDER_KEYS_MAX]; /* false = ASC (default) */
+    const char *order_keys[HYP_CYPHER_ORDER_KEYS_MAX];
+    bool order_descs[HYP_CYPHER_ORDER_KEYS_MAX]; /* false = ASC (default) */
     int order_key_count;                         /* 0 = no ORDER BY */
     int skip;                                    /* SKIP N, 0 = none */
     int limit;                                   /* 0 = default */
-} cbm_return_clause_t;
+} hyp_return_clause_t;
 
 /* Full query AST */
-typedef struct cbm_query cbm_query_t;
-struct cbm_query {
-    cbm_pattern_t *patterns; /* array of patterns (first = main MATCH) */
+typedef struct hyp_query hyp_query_t;
+struct hyp_query {
+    hyp_pattern_t *patterns; /* array of patterns (first = main MATCH) */
     int pattern_count;
     bool *pattern_optional;              /* pattern_optional[i] = true → OPTIONAL MATCH */
-    cbm_where_clause_t *where;           /* NULL if no WHERE */
-    cbm_return_clause_t *with_clause;    /* WITH clause (NULL if none) */
-    cbm_where_clause_t *post_with_where; /* WHERE after WITH */
-    cbm_return_clause_t *ret;            /* NULL if no RETURN */
-    cbm_query_t *union_next;             /* next query in UNION chain (NULL if none) */
+    hyp_where_clause_t *where;           /* NULL if no WHERE */
+    hyp_return_clause_t *with_clause;    /* WITH clause (NULL if none) */
+    hyp_where_clause_t *post_with_where; /* WHERE after WITH */
+    hyp_return_clause_t *ret;            /* NULL if no RETURN */
+    hyp_query_t *union_next;             /* next query in UNION chain (NULL if none) */
     bool union_all;                      /* true = UNION ALL, false = UNION */
     /* UNWIND expr AS var */
     const char *unwind_expr;  /* expression (literal list or var ref) */
@@ -299,18 +299,18 @@ struct cbm_query {
 };
 
 /* Convenience: access first pattern (backwards compat) */
-#define cbm_query_pattern(q) ((q)->patterns[0])
+#define hyp_query_pattern(q) ((q)->patterns[0])
 
 /* ── Parser ─────────────────────────────────────────────────────── */
 
 typedef struct {
-    cbm_query_t *query;
+    hyp_query_t *query;
     char *error; /* NULL if no error */
-} cbm_parse_result_t;
+} hyp_parse_result_t;
 
-/* Parse tokens into AST. Caller must call cbm_parse_free(). */
-int cbm_parse(const cbm_token_t *tokens, int token_count, cbm_parse_result_t *out);
-void cbm_parse_free(cbm_parse_result_t *r);
+/* Parse tokens into AST. Caller must call hyp_parse_free(). */
+int hyp_parse(const hyp_token_t *tokens, int token_count, hyp_parse_result_t *out);
+void hyp_parse_free(hyp_parse_result_t *r);
 
 /* ── Executor ───────────────────────────────────────────────────── */
 
@@ -327,33 +327,33 @@ typedef struct {
      * length hop range was clamped to the engine ceiling (#797) — without
      * this, a clamped expansion is indistinguishable from "no such path". */
     char *warning;
-} cbm_cypher_result_t;
+} hyp_cypher_result_t;
 
 /* Execute a Cypher query against a store.
  * max_rows: limit on output rows (0 = use virtual ceiling of 100k).
  * project: project name filter (NULL = all projects).
  * Returns -1 on error (check out->error for message). */
-int cbm_cypher_execute(cbm_store_t *store, const char *query, const char *project, int max_rows,
-                       cbm_cypher_result_t *out);
+int hyp_cypher_execute(hyp_store_t *store, const char *query, const char *project, int max_rows,
+                       hyp_cypher_result_t *out);
 
 /* Free a query result. */
-void cbm_cypher_result_free(cbm_cypher_result_t *r);
+void hyp_cypher_result_free(hyp_cypher_result_t *r);
 
 /* Convenience: lex + parse in one step. */
-int cbm_cypher_parse(const char *query, cbm_query_t **out, char **error);
+int hyp_cypher_parse(const char *query, hyp_query_t **out, char **error);
 
 /* Free a query AST. */
-void cbm_query_free(cbm_query_t *q);
+void hyp_query_free(hyp_query_t *q);
 
 /* Test-only (#601): force the wall-clock execution budget in milliseconds for
  * subsequent queries on the calling thread. 0 = trip on the first hot-loop
  * check; a negative value restores the default budget. */
-void cbm_cypher_test_set_deadline_ms(int64_t budget_ms);
+void hyp_cypher_test_set_deadline_ms(int64_t budget_ms);
 
 /* Worst-case binding slot count for a node cross-join. Computes the count in
  * size_t and rejects any that would not fit the int binding counter or would
  * overflow the size_t byte size; returns 0 and writes *out_n on success,
- * CBM_NOT_FOUND on overflow. Exposed for arithmetic-boundary unit tests. */
-int cbm_cypher_cross_join_alloc(int bind_count, int extra_count, bool opt, size_t *out_n);
+ * HYP_NOT_FOUND on overflow. Exposed for arithmetic-boundary unit tests. */
+int hyp_cypher_cross_join_alloc(int bind_count, int extra_count, bool opt, size_t *out_n);
 
-#endif /* CBM_CYPHER_H */
+#endif /* HYP_CYPHER_H */
