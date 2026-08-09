@@ -12129,18 +12129,156 @@ static const char *cli_schema_type(yyjson_val *props, const char *key) {
     return (t && yyjson_is_str(t)) ? yyjson_get_str(t) : NULL;
 }
 
-/* Append a typed value to the output object under `key`. For array-typed
- * properties, repeated flags accumulate into a single JSON array. */
-static void cli_add_typed(yyjson_mut_doc *out, yyjson_mut_val *obj, const char *key,
-                          const char *type, const char *value, bool have_value) {
+/* Look up an array property's declared items.type ("string" for every keyword
+ * array, "object" for ingest_traces.traces). NULL when undeclared — then any
+ * element type is accepted. */
+static const char *cli_schema_items_type(yyjson_val *props, const char *key) {
+    if (!props || !yyjson_is_obj(props)) {
+        return NULL;
+    }
+    yyjson_val *p = yyjson_obj_get(props, key);
+    if (!p || !yyjson_is_obj(p)) {
+        return NULL;
+    }
+    yyjson_val *items = yyjson_obj_get(p, "items");
+    if (!items || !yyjson_is_obj(items)) {
+        return NULL;
+    }
+    yyjson_val *t = yyjson_obj_get(items, "type");
+    return (t && yyjson_is_str(t)) ? yyjson_get_str(t) : NULL;
+}
+
+/* True when a JSON value matches a schema "type" name. An unknown/NULL type
+ * name accepts anything — the server still validates. */
+static bool cli_json_matches_type(yyjson_val *v, const char *type) {
+    if (!type) {
+        return true;
+    }
+    if (strcmp(type, "string") == 0) {
+        return yyjson_is_str(v);
+    }
+    if (strcmp(type, "integer") == 0) {
+        return yyjson_is_int(v);
+    }
+    if (strcmp(type, "number") == 0) {
+        return yyjson_is_num(v);
+    }
+    if (strcmp(type, "boolean") == 0) {
+        return yyjson_is_bool(v);
+    }
+    if (strcmp(type, "object") == 0) {
+        return yyjson_is_obj(v);
+    }
+    if (strcmp(type, "array") == 0) {
+        return yyjson_is_arr(v);
+    }
+    return true;
+}
+
+/* True when `value`'s first non-blank byte is '[' — i.e. the caller is using
+ * the inline JSON-array form documented in the tool schemas. Such a value is
+ * REQUIRED to parse; see cli_arr_add_json. */
+static bool cli_looks_like_json_arr(const char *value) {
+    if (!value) {
+        return false;
+    }
+    const char *p = value;
+    while (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r') {
+        p++;
+    }
+    return *p == '[';
+}
+
+/* Heap-format the error for a `[`-leading array value that is not a usable
+ * JSON array. `detail` says what was wrong. Caller frees. */
+static char *cli_arr_json_err(const char *key, const char *detail) {
+    char kebab[CLI_BUF_256];
+    snprintf(kebab, sizeof(kebab), "%s", key);
+    cli_snake_to_kebab(kebab);
+    char buf[CLI_BUF_512];
+    snprintf(buf, sizeof(buf),
+             "flag --%s: value starts with '[' so it is read as a JSON array, but %s — pass a "
+             "valid JSON array (--%s '[\"a\",\"b\"]'), repeat --%s once per element, or use "
+             "--args-file for anything more complex",
+             kebab, detail, kebab, kebab);
+    return hyp_strdup(buf);
+}
+
+/* Splice an inline JSON array's elements into `arr` as separate elements,
+ * preserving each element's JSON type.
+ *
+ * A value whose first non-blank byte is '[' MUST parse as a JSON array whose
+ * elements match the schema's declared items.type. Anything else is a hard
+ * error: passing it through as a one-element literal is exactly the bug this
+ * replaces — `--semantic-query '["shuffle"]'` used to ship the 11-character
+ * string `["shuffle"]` as a single keyword, which missed the vocabulary and
+ * was silently scored against a hash of its own punctuation. Returns false
+ * and sets *err_out on failure. */
+static bool cli_arr_add_json(yyjson_mut_doc *out, yyjson_mut_val *arr, const char *key,
+                             const char *items_type, const char *value, char **err_out) {
+    yyjson_doc *doc = yyjson_read(value, strlen(value), 0);
+    yyjson_val *root = doc ? yyjson_doc_get_root(doc) : NULL;
+    if (!root || !yyjson_is_arr(root)) {
+        if (err_out) {
+            const char *why = doc ? "that is not a JSON array" : "it is not valid JSON";
+            *err_out = cli_arr_json_err(key, why);
+        }
+        if (doc) {
+            yyjson_doc_free(doc);
+        }
+        return false;
+    }
+
+    bool ok = true;
+    size_t idx;
+    size_t max;
+    yyjson_val *el;
+    yyjson_arr_foreach(root, idx, max, el) {
+        if (!cli_json_matches_type(el, items_type)) {
+            if (err_out) {
+                char detail[CLI_BUF_128];
+                snprintf(detail, sizeof(detail), "element %zu is not of type %s", idx, items_type);
+                *err_out = cli_arr_json_err(key, detail);
+            }
+            ok = false;
+            break;
+        }
+        yyjson_mut_val *copy = yyjson_val_mut_copy(out, el);
+        if (!copy || !yyjson_mut_arr_append(arr, copy)) {
+            if (err_out) {
+                *err_out = cli_arr_json_err(key, "the array could not be allocated");
+            }
+            ok = false;
+            break;
+        }
+    }
+    yyjson_doc_free(doc);
+    return ok;
+}
+
+/* Append a typed value to the output object under `key`.
+ *
+ * Array-typed properties accept BOTH documented forms and any mix of them:
+ *   --fields '["complexity","signature"]'   one inline JSON array (spliced)
+ *   --fields complexity --fields signature  repeated flag (one element each)
+ * A repeated flag always appends, so the two forms concatenate in argv order.
+ * A value that merely looks like JSON (leading '[') must BE valid JSON — see
+ * cli_arr_add_json. Returns false and sets *err_out on a rejected value. */
+static bool cli_add_typed(yyjson_mut_doc *out, yyjson_mut_val *obj, const char *key,
+                          const char *type, const char *items_type, const char *value,
+                          bool have_value, char **err_out) {
     if (type && strcmp(type, "array") == 0) {
         yyjson_mut_val *arr = yyjson_mut_obj_get(obj, key);
         if (!arr || !yyjson_mut_is_arr(arr)) {
             arr = yyjson_mut_arr(out);
             yyjson_mut_obj_add(obj, yyjson_mut_strcpy(out, key), arr);
         }
-        yyjson_mut_arr_add_strcpy(out, arr, have_value ? value : "");
-        return;
+        const char *v = have_value ? value : "";
+        if (cli_looks_like_json_arr(v)) {
+            return cli_arr_add_json(out, arr, key, items_type, v, err_out);
+        }
+        yyjson_mut_arr_add_strcpy(out, arr, v);
+        return true;
     }
 
     yyjson_mut_val *vv;
@@ -12165,6 +12303,7 @@ static void cli_add_typed(yyjson_mut_doc *out, yyjson_mut_val *obj, const char *
         vv = yyjson_mut_strcpy(out, have_value ? value : "");
     }
     yyjson_mut_obj_add(obj, yyjson_mut_strcpy(out, key), vv);
+    return true;
 }
 
 char *hyp_cli_build_args_json(const char *tool_name, int argc, char **argv, char **err_out) {
@@ -12275,7 +12414,11 @@ char *hyp_cli_build_args_json(const char *tool_name, int argc, char **argv, char
             break;
         }
 
-        cli_add_typed(out, obj, key, type, value, have_value);
+        const char *items_type = cli_schema_items_type(props, key);
+        if (!cli_add_typed(out, obj, key, type, items_type, value, have_value, err_out)) {
+            ok = false;
+            break;
+        }
     }
 
     char *result = NULL;
@@ -12309,6 +12452,7 @@ int hyp_cli_print_tool_help(const char *tool_name) {
     printf("  hyponoia cli %s '<raw-json-args>'\n", tool_name);
 
     printf("\nFlags:\n");
+    bool has_array_flag = false;
     if (props && yyjson_is_obj(props)) {
         yyjson_obj_iter iter;
         yyjson_obj_iter_init(props, &iter);
@@ -12335,12 +12479,31 @@ int hyp_cli_print_tool_help(const char *tool_name) {
             snprintf(flag, sizeof(flag), "%s", name);
             cli_snake_to_kebab(flag);
             bool req = cli_schema_required_has(required, name);
-            printf("  --%s <%s>%s", flag, type, req ? " [required]" : "");
+            bool is_arr = strcmp(type, "array") == 0;
+            has_array_flag = has_array_flag || is_arr;
+            printf("  --%s <%s>%s%s", flag, type, is_arr ? " [repeatable]" : "",
+                   req ? " [required]" : "");
             if (desc[0]) {
                 printf("  %s", desc);
             }
             printf("\n");
         }
+    }
+
+    /* Array flags used to accept ONLY the repeated form: an inline JSON array
+     * was stored verbatim as a single element, so the `["a","b"]` spelling the
+     * schema descriptions above ask for produced one nonsense element and no
+     * error. Both forms work now, and the help has to say so — the silent
+     * mismatch between the documented syntax and the accepted syntax is what
+     * made the old behaviour so expensive to find. */
+    if (has_array_flag) {
+        printf("\nArray flags (<array> [repeatable]) accept either form, and both may be mixed:\n");
+        printf("  --flag '[\"a\",\"b\"]'      one inline JSON array (quote it — the shell eats "
+               "[] and \")\n");
+        printf("  --flag a --flag b       repeat the flag once per element\n");
+        printf("  A value starting with '[' MUST be valid JSON of the declared item type; it is\n");
+        printf("  never stored as a literal string. For a literal value that begins with '[',\n");
+        printf("  use the JSON form ('[\"[lit]\"]') or --args-file.\n");
     }
 
     if (doc) {

@@ -12821,6 +12821,258 @@ TEST(cli_build_args_json_bad_positional_errors_issue680) {
     PASS();
 }
 
+/* ── Array-typed flags: the documented inline-JSON form ──────────────
+ *
+ * `search_graph --help` prints, verbatim from the tool schema:
+ *   --semantic-query <array>  MUST be an ARRAY of keyword strings
+ *                             (e.g. ["send","pubsub","publish"])
+ * The parser used to store that whole argv token as ONE array element, so the
+ * documented spelling shipped the 11-character literal `["shuffle"]` as a
+ * single keyword. It missed the vocabulary, the store fell back to a hash
+ * vector, and every result was scored against a hash of the query's own JSON
+ * punctuation — no error anywhere. These tests pin both accepted forms, their
+ * mixture, and the loud rejection of anything in between. */
+
+/* The documented inline JSON array splices into separate elements. */
+TEST(cli_build_args_json_inline_json_array) {
+    char *err = NULL;
+    char *argv[] = {"--semantic-query", "[\"send\",\"pubsub\",\"publish\"]"};
+    char *json = hyp_cli_build_args_json("search_graph", 2, argv, &err);
+    ASSERT_NOT_NULL(json);
+    ASSERT_NULL(err);
+    ASSERT(strstr(json, "\"semantic_query\":[\"send\",\"pubsub\",\"publish\"]") != NULL);
+    /* The raw argv token must NOT survive as a literal element. */
+    ASSERT(strstr(json, "\\\"send\\\"") == NULL);
+    free(json);
+    PASS();
+}
+
+/* The single-element form that started this: one keyword, not one 11-char
+ * literal. `["shuffle"]` must become ["shuffle"], never ["[\"shuffle\"]"]. */
+TEST(cli_build_args_json_inline_json_array_single) {
+    char *err = NULL;
+    char *argv[] = {"--semantic-query", "[\"shuffle\"]"};
+    char *json = hyp_cli_build_args_json("search_graph", 2, argv, &err);
+    ASSERT_NOT_NULL(json);
+    ASSERT_NULL(err);
+    ASSERT(strstr(json, "\"semantic_query\":[\"shuffle\"]") != NULL);
+    free(json);
+    PASS();
+}
+
+/* A bare (non-JSON) string stays one element — the common CLI case. */
+TEST(cli_build_args_json_array_bare_string) {
+    char *err = NULL;
+    char *argv[] = {"--semantic-query", "shuffle"};
+    char *json = hyp_cli_build_args_json("search_graph", 2, argv, &err);
+    ASSERT_NOT_NULL(json);
+    ASSERT_NULL(err);
+    ASSERT(strstr(json, "\"semantic_query\":[\"shuffle\"]") != NULL);
+    free(json);
+    PASS();
+}
+
+/* Leading whitespace before '[' still selects the JSON form. */
+TEST(cli_build_args_json_array_leading_space) {
+    char *err = NULL;
+    char *argv[] = {"--fields", "  [\"complexity\",\"signature\"]"};
+    char *json = hyp_cli_build_args_json("search_graph", 2, argv, &err);
+    ASSERT_NOT_NULL(json);
+    ASSERT_NULL(err);
+    ASSERT(strstr(json, "\"fields\":[\"complexity\",\"signature\"]") != NULL);
+    free(json);
+    PASS();
+}
+
+/* Inline JSON and repeated flags mix, concatenating in argv order. */
+TEST(cli_build_args_json_array_mixed_forms) {
+    char *err = NULL;
+    char *argv[] = {"--semantic-query", "[\"send\",\"pubsub\"]", "--semantic-query",
+                    "publish",          "--semantic-query",      "[\"emit\"]"};
+    char *json = hyp_cli_build_args_json("search_graph", 6, argv, &err);
+    ASSERT_NOT_NULL(json);
+    ASSERT_NULL(err);
+    ASSERT(strstr(json, "\"semantic_query\":[\"send\",\"pubsub\",\"publish\",\"emit\"]") != NULL);
+    free(json);
+    PASS();
+}
+
+/* The `--key=value` spelling takes the JSON form too. */
+TEST(cli_build_args_json_array_equals_form) {
+    char *err = NULL;
+    char *argv[] = {"--semantic-query=[\"send\",\"publish\"]"};
+    char *json = hyp_cli_build_args_json("search_graph", 1, argv, &err);
+    ASSERT_NOT_NULL(json);
+    ASSERT_NULL(err);
+    ASSERT(strstr(json, "\"semantic_query\":[\"send\",\"publish\"]") != NULL);
+    free(json);
+    PASS();
+}
+
+/* An empty JSON array yields an empty array — the key is present, no
+ * phantom "" element. */
+TEST(cli_build_args_json_array_empty) {
+    char *err = NULL;
+    char *argv[] = {"--fields", "[]"};
+    char *json = hyp_cli_build_args_json("search_graph", 2, argv, &err);
+    ASSERT_NOT_NULL(json);
+    ASSERT_NULL(err);
+    ASSERT(strstr(json, "\"fields\":[]") != NULL);
+    free(json);
+    PASS();
+}
+
+/* Malformed JSON after a leading '[' is a HARD error, never a literal.
+ * Silent fallthrough is what made the original bug invisible. */
+TEST(cli_build_args_json_array_malformed_rejected) {
+    char *err = NULL;
+    char *argv[] = {"--semantic-query", "[\"shuffle\""};
+    char *json = hyp_cli_build_args_json("search_graph", 2, argv, &err);
+    ASSERT_NULL(json);
+    ASSERT_NOT_NULL(err);
+    ASSERT(strstr(err, "semantic-query") != NULL);
+    ASSERT(strstr(err, "not valid JSON") != NULL);
+    free(err);
+    PASS();
+}
+
+/* Valid JSON that is not an array is rejected just as loudly. */
+TEST(cli_build_args_json_array_not_an_array_rejected) {
+    char *err = NULL;
+    char *argv[] = {"--fields", "[1,2] trailing"};
+    char *json = hyp_cli_build_args_json("search_graph", 2, argv, &err);
+    ASSERT_NULL(json);
+    ASSERT_NOT_NULL(err);
+    free(err);
+    PASS();
+}
+
+/* Elements must match the schema's declared items.type. `fields` is an array
+ * of strings, so [1,2] is a type error the CLI catches before the server. */
+TEST(cli_build_args_json_array_wrong_item_type_rejected) {
+    char *err = NULL;
+    char *argv[] = {"--fields", "[1,2]"};
+    char *json = hyp_cli_build_args_json("search_graph", 2, argv, &err);
+    ASSERT_NULL(json);
+    ASSERT_NOT_NULL(err);
+    ASSERT(strstr(err, "not of type string") != NULL);
+    free(err);
+    PASS();
+}
+
+/* ingest_traces.traces is an array of OBJECTS — the splice must preserve
+ * element types, not stringify them. This form was unusable before. */
+TEST(cli_build_args_json_array_of_objects) {
+    char *err = NULL;
+    char *argv[] = {"--traces", "[{\"caller\":\"a\",\"callee\":\"b\",\"count\":2}]", "--project",
+                    "p"};
+    char *json = hyp_cli_build_args_json("ingest_traces", 4, argv, &err);
+    ASSERT_NOT_NULL(json);
+    ASSERT_NULL(err);
+    ASSERT(strstr(json, "\"caller\":\"a\"") != NULL);
+    ASSERT(strstr(json, "\"count\":2") != NULL);
+    ASSERT(strstr(json, "\\\"caller\\\"") == NULL); /* not stringified */
+    free(json);
+    PASS();
+}
+
+/* Every other array-typed flag in the tool set takes the same path: one
+ * shared helper, so a regression here would be graph-wide. */
+TEST(cli_build_args_json_array_all_tools) {
+    struct {
+        const char *tool;
+        const char *flag;
+        const char *key;
+    } cases[] = {
+        {"index_repository", "--target-projects", "target_projects"},
+        {"search_graph", "--semantic-query", "semantic_query"},
+        {"search_graph", "--fields", "fields"},
+        {"trace_path", "--edge-types", "edge_types"},
+        {"get_architecture", "--aspects", "aspects"},
+        {"check_index_coverage", "--paths", "paths"},
+        {"check_index_coverage", "--scopes", "scopes"},
+    };
+    for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
+        char expect[128];
+        snprintf(expect, sizeof(expect), "\"%s\":[\"x\",\"y\"]", cases[i].key);
+
+        char *err = NULL;
+        char *argv_json[] = {(char *)cases[i].flag, "[\"x\",\"y\"]"};
+        char *json = hyp_cli_build_args_json(cases[i].tool, 2, argv_json, &err);
+        ASSERT_NOT_NULL(json);
+        ASSERT_NULL(err);
+        ASSERT(strstr(json, expect) != NULL);
+        free(json);
+
+        char *argv_rep[] = {(char *)cases[i].flag, "x", (char *)cases[i].flag, "y"};
+        json = hyp_cli_build_args_json(cases[i].tool, 4, argv_rep, &err);
+        ASSERT_NOT_NULL(json);
+        ASSERT_NULL(err);
+        ASSERT(strstr(json, expect) != NULL);
+        free(json);
+    }
+    PASS();
+}
+
+/* Non-array flags are untouched by the '[' rule: a regex or Cypher query may
+ * legitimately start with '[' and must still pass through verbatim. */
+TEST(cli_build_args_json_bracket_in_string_flag_unaffected) {
+    char *err = NULL;
+    char *argv[] = {"--name-pattern", "[Ff]oo.*"};
+    char *json = hyp_cli_build_args_json("search_graph", 2, argv, &err);
+    ASSERT_NOT_NULL(json);
+    ASSERT_NULL(err);
+    ASSERT(strstr(json, "\"name_pattern\":\"[Ff]oo.*\"") != NULL);
+    free(json);
+    PASS();
+}
+
+/* The per-tool --help must describe the syntax that actually works. Before the
+ * fix it printed only the schema's "MUST be an ARRAY of keyword strings
+ * (e.g. [...])" — the one spelling the parser silently corrupted — and never
+ * mentioned that array flags repeat. Both forms are documented now. */
+#ifndef _WIN32
+TEST(cli_print_tool_help_documents_array_forms) {
+    FILE *capture = tmpfile();
+    int saved_stdout = capture ? dup(STDOUT_FILENO) : -1;
+    bool redirected = false;
+    if (capture && saved_stdout >= 0) {
+        fflush(stdout);
+        redirected = dup2(fileno(capture), STDOUT_FILENO) >= 0;
+    }
+    int rc = redirected ? hyp_cli_print_tool_help("search_graph") : -1;
+    if (redirected) {
+        fflush(stdout);
+        (void)dup2(saved_stdout, STDOUT_FILENO);
+    }
+    if (saved_stdout >= 0) {
+        close(saved_stdout);
+    }
+
+    char output[16384] = {0};
+    if (capture) {
+        rewind(capture);
+        size_t count = fread(output, 1, sizeof(output) - 1U, capture);
+        output[count] = '\0';
+        fclose(capture);
+    }
+
+    if (!redirected || rc != 0)
+        FAIL("could not capture search_graph --help");
+    if (!strstr(output, "--semantic-query <array> [repeatable]"))
+        FAIL("array flags must be marked repeatable in --help");
+    if (!strstr(output, "one inline JSON array"))
+        FAIL("--help must document the inline JSON-array form");
+    if (!strstr(output, "repeat the flag once per element"))
+        FAIL("--help must document the repeated-flag form");
+    PASS();
+}
+#else
+TEST(cli_print_tool_help_documents_array_forms) {
+    SKIP("stdout capture (dup2) not exercised on Windows");
+}
+#endif
+
 /* Per-tool --help returns 0 for a known tool, -1 for an unknown one. */
 TEST(cli_print_tool_help_issue680) {
     ASSERT_EQ(hyp_cli_print_tool_help("index_repository"), 0);
@@ -13420,4 +13672,20 @@ SUITE(cli) {
     RUN_TEST(cli_build_args_json_key_equals_value_issue680);
     RUN_TEST(cli_build_args_json_bad_positional_errors_issue680);
     RUN_TEST(cli_print_tool_help_issue680);
+
+    /* Array-typed flags: documented inline-JSON form + repeated form */
+    RUN_TEST(cli_build_args_json_inline_json_array);
+    RUN_TEST(cli_build_args_json_inline_json_array_single);
+    RUN_TEST(cli_build_args_json_array_bare_string);
+    RUN_TEST(cli_build_args_json_array_leading_space);
+    RUN_TEST(cli_build_args_json_array_mixed_forms);
+    RUN_TEST(cli_build_args_json_array_equals_form);
+    RUN_TEST(cli_build_args_json_array_empty);
+    RUN_TEST(cli_build_args_json_array_malformed_rejected);
+    RUN_TEST(cli_build_args_json_array_not_an_array_rejected);
+    RUN_TEST(cli_build_args_json_array_wrong_item_type_rejected);
+    RUN_TEST(cli_build_args_json_array_of_objects);
+    RUN_TEST(cli_build_args_json_array_all_tools);
+    RUN_TEST(cli_build_args_json_bracket_in_string_flag_unaffected);
+    RUN_TEST(cli_print_tool_help_documents_array_forms);
 }
