@@ -166,7 +166,8 @@ def main():
     apache = subprocess.run(
         ["curl", "-fsSL", "https://www.apache.org/licenses/LICENSE-2.0.txt"],
         capture_output=True, text=True).stdout
-    for model_dir in ("vendored/nomic", "vendored/qwen3"):
+    for model_dir in ("vendored/nomic", "vendored/qwen3",
+                      "vendored/qwen3-oldvocab"):
         if not os.path.isdir(os.path.join(ROOT, model_dir)):
             continue
         fname, ours = local_license(os.path.join(ROOT, model_dir))

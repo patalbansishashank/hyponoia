@@ -1,0 +1,67 @@
+Qwen3-Embedding-0.6B token embeddings — OLD VOCABULARY (deconfounding table)
+============================================================================
+
+READ THIS FIRST: this directory is a MEASUREMENT ARTIFACT, not a shipping one.
+It exists to separate two variables and is expected to be deleted once that
+measurement is recorded. Nothing here is wired into the build, and
+`vendored/qwen3/` — not this — is the table the swap ships.
+
+What it is
+----------
+The same Qwen3-Embedding-0.6B extraction that produced `vendored/qwen3/`, run
+over the OLD token list instead of the new one. `code_tokens.txt` here is
+byte-identical to `vendored/nomic/code_tokens.txt` (sha256
+c928f5e2f9dd85f2294a50a05dd9f2f8bc95192727579aa16b062ff8ef301d25), including
+its 11 empty-string entries and their exact positions, so index i names the
+same string in both tables.
+
+Why it exists
+-------------
+The swap moved two levers at once — Track D's revised vocabulary and the model
+— and NEXT-STEPS.md section 2 requires the two deltas to be reported
+separately. With this table as the middle term:
+
+  nomic + old vocab  ->  THIS (qwen3 + old vocab)   = model-only delta
+  THIS               ->  qwen3 + new vocab          = vocabulary-only delta
+
+Provenance
+----------
+  Model:     Qwen/Qwen3-Embedding-0.6B
+  Source:    https://huggingface.co/Qwen/Qwen3-Embedding-0.6B
+  Revision:  97b0c614be4d77ee51c0cef4e5f07c00f9eb65b3
+  Publisher: Qwen team, Alibaba Group — https://huggingface.co/Qwen
+  License:   Apache License 2.0 (see LICENSE in this directory)
+
+  Tokens:     40856 (taken verbatim from vendored/nomic/code_tokens.txt)
+  Dimensions: 768 (Matryoshka truncation of the model's 1024)
+  Pooling:    last-token, left padding, no instruction prefix (document side),
+              float32 inference — identical to the vendored/qwen3/ run
+
+The LICENSE text is the canonical Apache License 2.0 from
+https://www.apache.org/licenses/LICENSE-2.0.txt and is byte-identical to
+vendored/qwen3/LICENSE and vendored/nomic/LICENSE. The upstream model
+repository ships no LICENSE file; apache-2.0 is declared in the model card's
+YAML front matter and in the Hugging Face model metadata. The same attribution
+obligation applies to these vectors as to any other Qwen3-derived table, which
+is why this directory carries a licence at all despite being temporary.
+
+How the empty strings were handled
+----------------------------------
+They were embedded, not skipped. The Qwen3 tokenizer maps "" to the single
+piece <|endoftext|> with attention mask [1], so it is an ordinary length-1
+sequence and last-token pooling reads that EOS hidden state. All 11 rows are
+therefore byte-identical to each other, and no index is shifted. They are
+unreachable at query time in this table and in nomic's alike: hyp_sem_tokenize
+emits only ^[a-z0-9]+$, so no lookup key can be the empty string.
+
+Attribution requested by the model card
+---------------------------------------
+  @article{qwen3embedding,
+    title={Qwen3 Embedding: Advancing Text Embedding and Reranking Through
+           Foundation Models},
+    author={Zhang, Yanzhao and Li, Mingxin and Long, Dingkun and Zhang, Xin
+            and Lin, Huan and Yang, Baosong and Xie, Pengjun and Yang, An and
+            Liu, Dayiheng and Lin, Junyang and Huang, Fei and Zhou, Jingren},
+    journal={arXiv preprint arXiv:2506.05176},
+    year={2025}
+  }

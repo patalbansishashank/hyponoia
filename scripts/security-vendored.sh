@@ -273,7 +273,13 @@ fi
 # token table that replaces nomic's. Reviewed: data and text only, no code, so
 # the dangerous-call scans below have nothing to find. nomic stays listed until
 # its vectors are actually deleted — see docs/EMBEDDING-SWAP.md.
-KNOWN_VENDORED="mimalloc nomic qwen3 sqlite3 tre xxhash yyjson"
+# qwen3-oldvocab: the SAME Qwen3 extraction over the OLD token list, built only
+# to separate the model delta from the vocabulary delta in the swap measurement
+# (NEXT-STEPS.md section 2). Same review as qwen3 — data and text only, no code.
+# It is not wired into any build and is expected to be DELETED once the
+# measurement is recorded; see vendored/qwen3-oldvocab/NOTICE and
+# runs/EMBED-SWAP/K-oldvocab-extraction.json.
+KNOWN_VENDORED="mimalloc nomic qwen3 qwen3-oldvocab sqlite3 tre xxhash yyjson"
 while IFS= read -r -d '' libdir; do
     libname="$(basename "$libdir")"
     found=false

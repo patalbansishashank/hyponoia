@@ -441,6 +441,57 @@ def select_vocabulary(vocab: dict) -> list:
     return selected
 
 
+# ── Vocabulary BYPASS (deconfounding runs only) ───────────────────────
+#
+# Everything above decides WHICH strings get a row. load_token_list() decides
+# nothing: it takes a token list that already exists and embeds it verbatim.
+# It is a separate function, reached only by --token-list, precisely so that a
+# later reader can see that a run using it BYPASSED vocabulary selection rather
+# than changed it. Nothing in the section above is touched by this path.
+#
+# Why it exists. The Qwen3 swap moved two levers at once — Track D's revised
+# vocabulary AND the model — and NEXT-STEPS.md section 2 requires the vocab-only
+# and model-only deltas to be reported separately: "Change both levers and
+# report one number and we won't know which did the work." Embedding the OLD
+# token list with the NEW model produces the missing third table, so:
+#
+#   before (nomic + old vocab) -> this (qwen3 + old vocab)  = model-only
+#   this   (qwen3 + old vocab) -> after (qwen3 + new vocab) = vocab-only
+#
+# The list is used EXACTLY as given: same strings, same order, same count, no
+# filtering, no denylist, no CODE_SUPPLEMENT, no dedup, no sort. Any of those
+# would reintroduce the confound this run exists to remove.
+
+def load_token_list(path: str) -> list:
+    """Read a token list verbatim. NOT vocabulary selection — see above.
+
+    Parsed the same way scripts/verify-vector-artifacts.py parses it: split on
+    newline and drop the single trailing empty produced by the final "\\n" that
+    write_tokens_txt emits. Empty strings ELSEWHERE in the file are real
+    entries and are preserved — vendored/nomic/code_tokens.txt carries 11 of
+    them at indices where real tokens sort, the residue of the hand-edit in
+    commit 8967d7cd that blanked the 11 originally-denylisted words but left
+    their vectors in the blob. Dropping or skipping them would shift every
+    later index and silently misalign the table against the one it is meant to
+    be compared with, so they are kept and embedded like any other string.
+
+    The empty string is not special-cased in the inference path either. The
+    Qwen3 tokenizer maps "" to the single piece <|endoftext|> (id 151643) with
+    attention mask [1], so it is an ordinary length-1 sequence and last-token
+    pooling reads that EOS hidden state — deterministic, and the same vector
+    every time. Those rows are unreachable at query time in any case:
+    hyp_sem_tokenize's output alphabet is ^[a-z0-9]+$, so no lookup key can
+    ever be the empty string.
+    """
+    text = Path(path).read_text(encoding="utf-8")
+    tokens = text.split("\n")
+    if tokens and tokens[-1] == "":
+        tokens.pop()
+    if not tokens:
+        raise SystemExit(f"--token-list {path} is empty")
+    return tokens
+
+
 # ── Simulated attention ──────────────────────────────────────────────
 
 def simulated_attention(vectors: np.ndarray, k: int, iterations: int,
@@ -966,6 +1017,12 @@ def main():
     parser.add_argument("--header-guard-prefix", default=HEADER_GUARD_PREFIX,
                         help=f"Include-guard prefix (default: {HEADER_GUARD_PREFIX}; "
                              "use HYP for a new output directory)")
+    parser.add_argument("--token-list", default=None,
+                        help="Embed the token list in this file VERBATIM and "
+                             "bypass vocabulary selection entirely (no filter, "
+                             "no denylist, no supplement, no sort). For "
+                             "deconfounding runs that need to vary the model "
+                             "while holding the vocabulary fixed.")
     parser.add_argument("--checkpoint-every", type=int, default=CHECKPOINT_EVERY,
                         help=f"Checkpoint at least every N tokens "
                              f"(default: {CHECKPOINT_EVERY}); lower it for slow "
@@ -1002,6 +1059,7 @@ def main():
           f"dtype={profile['dtype']}  prefix={profile['prefix']!r}")
     print(f"output_dim={OUTPUT_DIM}")
     print(f"batch_size={batch_size}  checkpoint_every={args.checkpoint_every}")
+    print(f"vocabulary={'GIVEN: ' + args.token_list if args.token_list else 'selected from the tokenizer'}")
     print()
 
     # Create output dir
@@ -1039,15 +1097,26 @@ def main():
                  f"would silently emit short vectors.")
     print()
 
-    # ── Step 2: Filter vocabulary ──
-    print("step 2: filtering vocabulary to code-relevant tokens...")
-    vocab = tokenizer.get_vocab()
-    print(f"  raw vocabulary: {len(vocab)} tokens")
+    # ── Step 2: Filter vocabulary (or take a list as given) ──
+    if args.token_list:
+        # BYPASS. Not a different filter — no filter. See load_token_list().
+        print("step 2: VOCABULARY SELECTION BYPASSED (--token-list)")
+        print(f"  reading token list verbatim from: {args.token_list}")
+        filtered_tokens = load_token_list(args.token_list)
+        empties = sum(1 for t in filtered_tokens if t == "")
+        print(f"  tokens taken as given: {len(filtered_tokens)} "
+              f"(unchanged order, {empties} empty-string entries preserved)")
+        print("  NOT applied: is_code_relevant, VOCAB_DENYLIST, "
+              "CODE_SUPPLEMENT, dedup, sort")
+    else:
+        print("step 2: filtering vocabulary to code-relevant tokens...")
+        vocab = tokenizer.get_vocab()
+        print(f"  raw vocabulary: {len(vocab)} tokens")
 
-    # Filter, deduplicate, supplement and sanity-check — see the vocabulary
-    # selection section at the top of this file.
-    filtered_tokens = select_vocabulary(vocab)
-    print(f"  code-relevant (deduplicated): {len(filtered_tokens)} tokens")
+        # Filter, deduplicate, supplement and sanity-check — see the vocabulary
+        # selection section at the top of this file.
+        filtered_tokens = select_vocabulary(vocab)
+        print(f"  code-relevant (deduplicated): {len(filtered_tokens)} tokens")
 
     # Show sample
     sample = filtered_tokens[:20]

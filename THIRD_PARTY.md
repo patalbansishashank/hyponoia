@@ -119,6 +119,13 @@ table that is still linked into the binary. See `docs/EMBEDDING-SWAP.md` — the
 nomic entry above is deleted in the same commit that deletes its vectors, and
 not before.
 
+A third directory, `vendored/qwen3-oldvocab/`, holds the same
+Qwen3-Embedding-0.6B data derived over the *old* token list. It is covered by
+the same Qwen3 licence and attribution above, is not linked into any build, and
+exists only to separate the model delta from the vocabulary delta in the swap
+measurement. It is expected to be deleted once that measurement is recorded —
+see `vendored/qwen3-oldvocab/NOTICE`.
+
 ## Hybrid LSP — Reference Language Servers
 
 The Hybrid LSP layer (`internal/hyp/lsp/`) is an original C implementation
