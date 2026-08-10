@@ -281,21 +281,22 @@ bool hyp_ask_kv_plan(int n_seq_max, int seq_len, double ceiling_mib, hyp_ask_kv_
     return out->admissible;
 }
 
-int hyp_ask_ubatch_for(int n_batch, int seq_len) {
+double hyp_ask_compute_mib_for_ubatch(int n_ubatch) {
+    return (double)n_ubatch * HYP_ASK_COMPUTE_MIB_PER_UBATCH;
+}
+
+int hyp_ask_ubatch_for(int n_batch, double compute_budget_mib) {
     if (n_batch < 1) {
         return 1;
     }
-    if (seq_len < 1) {
-        seq_len = 1;
-    }
-    /* Largest power of two <= n_batch whose rectangle against seq_len fits.
-     * Walking down from n_batch rather than solving and rounding keeps the
-     * "powers of two only" property exact for a non-power-of-two n_batch. */
     int ub = 1;
-    while (ub * 2 <= n_batch) {
+    while (ub * 2 <= n_batch && ub * 2 <= HYP_ASK_UBATCH_MAX) {
         ub *= 2;
     }
-    while (ub > 1 && (int64_t)ub * (int64_t)seq_len > (int64_t)HYP_ASK_UBATCH_SLOT_LIMIT) {
+    /* Walk down until the compute buffer fits. Stop at 1 rather than at 0:
+     * refusing to encode is the caller's decision, made against the KV
+     * pre-flight, not something the micro-batch sizer gets to take. */
+    while (ub > 1 && hyp_ask_compute_mib_for_ubatch(ub) > compute_budget_mib) {
         ub /= 2;
     }
     if (ub > n_batch) {

@@ -190,39 +190,64 @@ typedef struct {
 
 /* ── n_ubatch: the SECOND allocation knob ───────────────────────────
  *
- * `n_ctx` bounds the KV cache. It does NOT bound the compute buffer, which
- * scales with the micro-batch — and the micro-batch is a separate parameter
- * that track 2's record never names, because every configuration it measured
- * happened to be safe.
+ * `n_ctx` bounds the KV cache. It does NOT bound the COMPUTE buffer, and the
+ * compute buffer is the larger of the two at every batch shape this lane
+ * actually uses. Track 2's record names n_ctx and stops.
  *
- * Track 8 found the other case. At n_ctx 32,768 with n_ubatch 2,048 a run
- * reached 5,374 MB attributable and the VRAM guard killed it. KV alone is
- * 3,584 MB there, so the compute buffer was ~1,790 MB. The SAME arithmetic at
- * n_ubatch 512 completed clean at 4,540 MB — a ~830 MB swing from a parameter
- * nothing in the KV pre-flight looks at. Bound n_ctx only and the pre-flight
- * says ADMISSIBLE right up until the driver disagrees.
+ * Track 8 found the edge: at n_ctx 32,768 with n_ubatch 2,048 a run reached
+ * 5,374 MB attributable and the VRAM guard killed it; the SAME KV arithmetic
+ * at n_ubatch 512 completed clean at 4,540 MB.
  *
- * The rule below bounds the RECTANGLE n_ubatch x seq_len, because that is what
- * the attention compute buffer is shaped like: for each of the ubatch's tokens
- * the backend materialises scores against the sequence's whole context. The
- * limit is the largest such rectangle track 8 ran clean — 512 x 32,768. It
- * reproduces every outcome that run recorded:
+ * Track 9 measured the law inside the binary, from llama.cpp's own reported
+ * buffer sizes on the Vulkan backend (Qwen3-Embedding-0.6B, Q8_0):
  *
- *   seq_len  2,304  n_batch 8,192  -> 4,096  (T8 ran 8,192, clean; we are
- *                                             one step more conservative)
- *   seq_len  8,192  n_batch 8,192  -> 2,048  (T8 ran 2,048, clean)
- *   seq_len 32,768  n_batch 32,768 ->   512  (T8's 2,048 was KILLED here;
- *                                             512 completed)
+ *     n_ubatch    Vulkan0 compute buffer     MiB per ubatch token
+ *          512              330.24 MiB               0.645
+ *        2,048            1,321.03 MiB               0.645
+ *        4,096            2,581.92 MiB               0.630
+ *        8,192            4,005.72 MiB               0.489
  *
- * Powers of two only: llama.cpp splits a batch into ubatch-sized chunks and a
- * ragged final chunk buys nothing.
+ * It scales with n_ubatch and is essentially INDEPENDENT of n_ctx and of
+ * n_seq_max — 2,048 costs 1,321 MiB whether the context is 24,576 tokens or
+ * 32,768. That is why bounding the rectangle n_ubatch x seq_len (the first
+ * shape this track tried) is wrong: it admits n_ubatch 8,192 at seq_len 2,048
+ * and buys a 4 GB allocation nothing in the KV pre-flight can see.
+ *
+ * The law also reproduces track 8's kill/clean boundary from first principles.
+ * At n_ctx 32,768 (KV 3,584 MiB) with ~700 MiB of weights, against its 5,500 MB
+ * guard: n_ubatch 2,048 predicts 5,605 MB — over, and it was killed; n_ubatch
+ * 512 predicts 4,614 MB — under, and it ran.
  */
-#define HYP_ASK_UBATCH_SLOT_LIMIT (512 * 32768)
+#define HYP_ASK_COMPUTE_MIB_PER_UBATCH 0.645
 
-/* The largest admissible n_ubatch for a context of `seq_len` per sequence and
- * `n_batch` tokens per decode. Never returns more than n_batch, never less
- * than 1 (a single token must always be encodable, whatever the shape). */
-int hyp_ask_ubatch_for(int n_batch, int seq_len);
+/* What the weights and llama.cpp's fixed structures occupy before any KV or
+ * compute buffer: 603.87 MiB of Q8_0 tensors on the device plus 157.37 MiB
+ * mapped on the host, measured from load_tensors' own report. Rounded up.
+ *
+ * DELIBERATELY SEPARATE from HYP_ASK_LLAMA_FIXED_MIB below, which track 4
+ * fitted by subtracting KV from track 2's peaks and therefore has the compute
+ * buffer folded into it. That conflation is exactly what this pair separates:
+ * one term that does not move, and one that moves with a knob. */
+#define HYP_ASK_WEIGHTS_RESIDENT_MIB 780.0
+
+/* Hard ceiling on n_ubatch regardless of how much memory is free. Above 2,048
+ * the compute buffer passes 1.3 GiB for no measured throughput gain on
+ * declaration-length text, and a batch of whole declarations already fills a
+ * launch — the same reason n_seq saturates at 8 rather than at hundreds. */
+enum { HYP_ASK_UBATCH_MAX = 2048 };
+
+/* The largest admissible n_ubatch.
+ *
+ * `n_batch` is the tokens one decode may carry; `compute_budget_mib` is what is
+ * left of the ceiling after the KV cache and the resident weights. Powers of
+ * two only — llama.cpp splits a batch into ubatch-sized chunks and a ragged
+ * final chunk buys nothing. Never returns more than n_batch and never less
+ * than 1: a single token must always be encodable, whatever shape it arrives
+ * in, because the one thing this lane must not do is drop a row. */
+int hyp_ask_ubatch_for(int n_batch, double compute_budget_mib);
+
+/* MiB the compute buffer will occupy at `n_ubatch`. */
+double hyp_ask_compute_mib_for_ubatch(int n_ubatch);
 
 /* Price a (n_seq_max, seq_len) pair against a VRAM ceiling.
  *

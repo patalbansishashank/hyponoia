@@ -50,8 +50,15 @@
  * this changes no recorded number; it is recorded here because it is a latent
  * divergence, not a deliberate one.)
  */
-#ifndef HYP_ASK_EMBED_H
-#define HYP_ASK_EMBED_H
+/* Guard is HYP_ASK_EMBED_PASS_H, not HYP_ASK_EMBED_H: src/semantic/ask_embed.h
+ * — a DIFFERENT header, the tool's inference boundary — used the latter, and
+ * two files with the same basename had the same guard. Including both left the
+ * second one silently empty, which is how a translation unit that asked for
+ * HYP_ASK_MODEL_ID_MAX got a compile error naming a constant that is plainly
+ * defined in a header it plainly includes. Found by src/ask/ask_cmd.c, the
+ * first file to need both. */
+#ifndef HYP_ASK_EMBED_PASS_H
+#define HYP_ASK_EMBED_PASS_H
 
 #include "ask/ask_encoder.h"
 
@@ -179,4 +186,4 @@ char *hyp_ask_read_span(const char *abs_path, int start, int end);
  * hold HYP_ASK_VEC_HASH_LEN + 1 bytes. */
 void hyp_ask_content_hash(const char *text, char *out);
 
-#endif /* HYP_ASK_EMBED_H */
+#endif /* HYP_ASK_EMBED_PASS_H */

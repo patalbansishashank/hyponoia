@@ -12,6 +12,7 @@
 #include "ask/ask_embed.h"
 #include "ask/ask_encoder.h"
 #include "ask/ask_llama.h"
+#include "semantic/ask_embed.h" /* HYP_ASK_MODEL_ID_MAX */
 #include "cli/model_fetch.h"
 #include "ask/ask_vectors.h"
 
@@ -302,6 +303,14 @@ int hyp_cmd_embed(int argc, char **argv) {
         }
     }
 
+    /* Captured before the encoder is destroyed: everything printed below is
+     * about the encoder that ran, and after destroy there is nothing to ask. */
+    char model_id[HYP_ASK_MODEL_ID_MAX];
+    (void)snprintf(model_id, sizeof(model_id), "%s",
+                   hyp_ask_encoder_model_id(enc) ? hyp_ask_encoder_model_id(enc) : "unreported");
+    int dim = hyp_ask_encoder_dim(enc);
+    int window = hyp_ask_encoder_window(enc);
+
     hyp_ask_embed_report_t rep;
     int rc = hyp_ask_embed_run(enc, &opts, &rep);
     hyp_ask_encoder_destroy(enc);
@@ -323,8 +332,12 @@ int hyp_cmd_embed(int argc, char **argv) {
         return 4;
     }
 
-    printf("embed: project=%s model=%s dim=%d window=%d\n", opts.project,
-           HYP_ASK_STUB_MODEL_ID, HYP_ASK_DIM_DEFAULT, HYP_ASK_MODEL_WINDOW);
+    /* The model id is READ FROM THE ENCODER THAT RAN. It was a compiled-in
+     * constant while the stub was the only encoder there was, and the first
+     * real GPU run printed `stub/deterministic-hash-v1` over a real index —
+     * a report that names the wrong model is worse than one that names none,
+     * because provenance is the gate `ask` refuses a mixed index on. */
+    printf("embed: project=%s model=%s dim=%d window=%d\n", opts.project, model_id, dim, window);
     /* First line of the result, not a footnote. Which device ran is the single
      * biggest determinant of what this cost. */
     printf("  DEVICE USED        %s\n", rep.device_note ? rep.device_note : "unreported");

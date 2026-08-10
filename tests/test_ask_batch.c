@@ -398,20 +398,41 @@ TEST(ask_batch_gpu_ceiling_is_taken_from_free_not_total) {
  * was killed by the VRAM guard at 5,374 MB with n_ubatch 2,048. A pre-flight
  * that bounds only n_ctx says ADMISSIBLE right up until the driver disagrees.
  */
-TEST(ask_batch_ubatch_reproduces_every_measured_outcome) {
-    /* Track 8's three passes, in its own order. */
-    ASSERT_EQ(hyp_ask_ubatch_for(8192, 2304), 4096);  /* P1: T8 ran 8192, clean */
-    ASSERT_EQ(hyp_ask_ubatch_for(8192, 8192), 2048);  /* P2: T8 ran 2048, clean */
-    ASSERT_EQ(hyp_ask_ubatch_for(32768, 32768), 512); /* P3: 2048 was KILLED */
+TEST(ask_batch_compute_buffer_law_matches_what_llama_reported) {
+    /* Measured inside the binary from llama.cpp's own buffer report, Vulkan,
+     * Qwen3-Embedding-0.6B Q8_0. Within 3% at every point that matters. */
+    ASSERT(fabs(hyp_ask_compute_mib_for_ubatch(512) - 330.24) < 12.0);
+    ASSERT(fabs(hyp_ask_compute_mib_for_ubatch(2048) - 1321.03) < 45.0);
+    ASSERT(fabs(hyp_ask_compute_mib_for_ubatch(4096) - 2581.92) < 90.0);
+    PASS();
+}
 
-    /* The rectangle, not the micro-batch alone, is what is bounded. */
-    ASSERT(hyp_ask_ubatch_for(32768, 32768) * 32768 <= HYP_ASK_UBATCH_SLOT_LIMIT);
-    ASSERT(hyp_ask_ubatch_for(8192, 8192) * 8192 <= HYP_ASK_UBATCH_SLOT_LIMIT);
+TEST(ask_batch_ubatch_reproduces_track_8s_kill_and_clean) {
+    /* Track 8's third pass: n_ctx 32,768 (KV 3,584 MiB) under a 5,500 MB
+     * attributable guard. n_ubatch 2,048 was KILLED, 512 completed. The rule
+     * has to land below 2,048 from the arithmetic alone. */
+    double budget = 5500.0 - 3584.0 - HYP_ASK_WEIGHTS_RESIDENT_MIB;
+    int ub = hyp_ask_ubatch_for(32768, budget);
+    ASSERT(ub < 2048);
+    ASSERT(ub >= 512);
+    ASSERT(hyp_ask_compute_mib_for_ubatch(ub) + 3584.0 + HYP_ASK_WEIGHTS_RESIDENT_MIB <= 5500.0);
+    /* And the configuration that was killed is the one the rule excludes. */
+    ASSERT(hyp_ask_compute_mib_for_ubatch(2048) + 3584.0 + HYP_ASK_WEIGHTS_RESIDENT_MIB > 5500.0);
+    PASS();
+}
+
+TEST(ask_batch_ubatch_is_bounded_by_memory_not_by_the_rectangle) {
+    /* The shape this track tried first bounded n_ubatch x seq_len, which
+     * admits n_ubatch 8,192 at seq_len 2,048 — and llama.cpp then allocated
+     * 4,005 MiB of compute buffer that no KV pre-flight could see. The cap
+     * exists so that cannot happen however much memory is free. */
+    ASSERT(hyp_ask_ubatch_for(8192, 1e9) <= HYP_ASK_UBATCH_MAX);
+    ASSERT(hyp_ask_ubatch_for(32768, 1e9) <= HYP_ASK_UBATCH_MAX);
 
     /* Powers of two only: llama.cpp chunks the batch and a ragged tail buys
      * nothing. */
-    for (int seq = 128; seq <= 32768; seq *= 2) {
-        int ub = hyp_ask_ubatch_for(8192, seq);
+    for (double budget = 32.0; budget < 4000.0; budget *= 2.0) {
+        int ub = hyp_ask_ubatch_for(8192, budget);
         ASSERT((ub & (ub - 1)) == 0);
         ASSERT(ub >= 1);
     }
@@ -421,11 +442,12 @@ TEST(ask_batch_ubatch_reproduces_every_measured_outcome) {
 TEST(ask_batch_ubatch_never_exceeds_the_batch_and_never_reaches_zero) {
     /* A single token must always be encodable, whatever shape it arrives in —
      * the alternative is a document that cannot be indexed at all, and the one
-     * thing this lane must never do is drop a row. */
-    ASSERT_EQ(hyp_ask_ubatch_for(1, HYP_ASK_MODEL_WINDOW), 1);
-    ASSERT_EQ(hyp_ask_ubatch_for(0, 512), 1);
-    ASSERT_EQ(hyp_ask_ubatch_for(300, 512), 256);
-    ASSERT(hyp_ask_ubatch_for(64, 32768) <= 64);
+     * thing this lane must never do is drop a row. Refusing is the KV
+     * pre-flight's decision, not the micro-batch sizer's. */
+    ASSERT_EQ(hyp_ask_ubatch_for(1, 1e9), 1);
+    ASSERT_EQ(hyp_ask_ubatch_for(0, 1e9), 1);
+    ASSERT_EQ(hyp_ask_ubatch_for(8192, 0.0), 1);
+    ASSERT_EQ(hyp_ask_ubatch_for(300, 1e9), 256);
     PASS();
 }
 
@@ -457,7 +479,9 @@ SUITE(ask_batch) {
     RUN_TEST(ask_batch_kv_arithmetic_matches_every_measured_configuration);
     RUN_TEST(ask_batch_kv_preflight_refuses_before_allocating);
     RUN_TEST(ask_batch_gpu_ceiling_is_taken_from_free_not_total);
-    RUN_TEST(ask_batch_ubatch_reproduces_every_measured_outcome);
+    RUN_TEST(ask_batch_compute_buffer_law_matches_what_llama_reported);
+    RUN_TEST(ask_batch_ubatch_reproduces_track_8s_kill_and_clean);
+    RUN_TEST(ask_batch_ubatch_is_bounded_by_memory_not_by_the_rectangle);
     RUN_TEST(ask_batch_ubatch_never_exceeds_the_batch_and_never_reaches_zero);
     RUN_TEST(ask_batch_norm_tolerance_agrees_across_both_seams);
 }

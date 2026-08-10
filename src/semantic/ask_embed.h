@@ -38,8 +38,10 @@
  * Depends on: hyp.h (HYPLanguage). Deliberately NOT on store.h — an encoder
  * has no opinion about where vectors are kept.
  */
-#ifndef HYP_ASK_EMBED_H
-#define HYP_ASK_EMBED_H
+/* See the note on the guard in src/ask/ask_embed.h — same basename, and the
+ * guards collided until this lane needed both headers in one file. */
+#ifndef HYP_SEMANTIC_ASK_EMBED_H
+#define HYP_SEMANTIC_ASK_EMBED_H
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -148,4 +150,4 @@ int hyp_ask_backend_install(const hyp_ask_backend_t *b);
  * NO_BACKEND unavailable state — there is no other way for it to arise. */
 const hyp_ask_backend_t *hyp_ask_backend(void);
 
-#endif /* HYP_ASK_EMBED_H */
+#endif /* HYP_SEMANTIC_ASK_EMBED_H */

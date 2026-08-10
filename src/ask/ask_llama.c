@@ -24,6 +24,7 @@
 
 #include <math.h>
 #include <stdlib.h>
+#include <time.h>
 
 /* ── Configuration, all of it measured ──────────────────────────── */
 
@@ -73,8 +74,26 @@ typedef struct {
 
 static void ask_llama_log(enum ggml_log_level level, const char *text, void *user) {
     (void)user;
-    if (level >= GGML_LOG_LEVEL_ERROR && text) {
+    if (!text || !text[0] || (text[0] == '\n' && !text[1])) {
+        return;
+    }
+    /* GGML_LOG_LEVEL_CONT is 5 — HIGHER than ERROR (4) — because it means
+     * "continuation of the previous line", not "more severe". A `level >=
+     * ERROR` filter therefore promotes every progress dot of a 639 MB model
+     * load to an error, which is what the first run of this backend did. */
+    switch (level) {
+    case GGML_LOG_LEVEL_ERROR:
         hyp_log_error("ask.llama.backend", "msg", text);
+        break;
+    case GGML_LOG_LEVEL_WARN:
+        hyp_log_warn("ask.llama.backend", "msg", text);
+        break;
+    default:
+        /* Buffer sizes, device names and the pooling type land here. Visible
+         * at HYP_LOG_LEVEL=debug, which is where the VRAM accounting in the
+         * run record came from. */
+        hyp_log_debug("ask.llama.backend", "msg", text);
+        break;
     }
 }
 
@@ -166,10 +185,41 @@ static bool ask_llama_make_ctx(ask_llama_t *s, int n_seq, int seq_len, char *err
      * ~57 GB. This is the other one. */
     cp.n_ctx = (uint32_t)plan.n_ctx;
     cp.n_seq_max = (uint32_t)n_seq;
-    cp.n_batch = (uint32_t)plan.n_ctx;
-    cp.n_ubatch = (uint32_t)hyp_ask_ubatch_for((int)plan.n_ctx, seq_len);
+
+    /* n_batch is the tokens ONE decode may carry, and the grouping rule already
+     * bounds that: a group never exceeds HYP_ASK_TOKEN_BUDGET padded slots
+     * except for the single over-budget document that lands alone, which needs
+     * seq_len. Sizing it at n_ctx instead — the obvious upper bound — makes
+     * llama.cpp reserve host-pinned staging buffers for tokens no batch will
+     * ever carry, and the Vulkan driver answers with
+     * `Failed to allocate pinned memory` and silently falls back to unpinned
+     * transfers. */
+    int n_batch = seq_len > HYP_ASK_TOKEN_BUDGET ? seq_len : HYP_ASK_TOKEN_BUDGET;
+    if ((int64_t)n_batch > plan.n_ctx) {
+        n_batch = (int)plan.n_ctx;
+    }
+    cp.n_batch = (uint32_t)n_batch;
+
+    /* The compute buffer is the OTHER allocation, it scales with n_ubatch, and
+     * nothing in the KV plan can see it. Give it what is left of the ceiling
+     * after the KV cache and the resident weights. */
+    double compute_budget = s->on_gpu
+                                ? s->ceiling_mib - plan.kv_mib - HYP_ASK_WEIGHTS_RESIDENT_MIB
+                                : 1e9;
+    cp.n_ubatch = (uint32_t)hyp_ask_ubatch_for(n_batch, compute_budget);
     cp.n_threads = ASK_CPU_THREADS;
     cp.n_threads_batch = ASK_CPU_THREADS;
+
+    /* THE OUTGOING CONTEXT IS FREED FIRST. Allocating the new one while the
+     * old one still holds its KV cache and compute buffer doubles the peak for
+     * the duration of the switch — the first GPU run of this backend peaked at
+     * 8,888 MiB attributable doing exactly that, against a working set that
+     * needs about half of it. Two contexts are never alive at once here.
+     *
+     * The cost of getting it this way round is that a failed init leaves no
+     * context at all, which is why the caller treats that as fatal for the
+     * batch rather than retrying with the previous shape. */
+    ask_llama_drop_ctx(s);
 
     struct llama_context *ctx = llama_init_from_model(s->model, cp);
     if (!ctx) {
@@ -191,15 +241,20 @@ static bool ask_llama_make_ctx(ask_llama_t *s, int n_seq, int seq_len, char *err
         return false;
     }
 
-    ask_llama_drop_ctx(s);
     s->ctx = ctx;
     s->seq_len = seq_len;
     s->n_seq_max = n_seq;
-    char shape[160];
+    char shape[224];
     (void)snprintf(shape, sizeof(shape),
-                   "n_ctx=%lld n_seq_max=%d seq_len=%d n_ubatch=%u kv_mib=%.0f",
-                   (long long)plan.n_ctx, n_seq, seq_len, cp.n_ubatch, plan.kv_mib);
-    hyp_log_debug("ask.llama.ctx", "plan", shape);
+                   "n_ctx=%lld n_seq_max=%d seq_len=%d n_batch=%u n_ubatch=%u kv_mib=%.0f "
+                   "compute_mib=%.0f weights_mib=%.0f total_mib=%.0f ceiling_mib=%.0f",
+                   (long long)plan.n_ctx, n_seq, seq_len, cp.n_batch, cp.n_ubatch, plan.kv_mib,
+                   hyp_ask_compute_mib_for_ubatch((int)cp.n_ubatch),
+                   HYP_ASK_WEIGHTS_RESIDENT_MIB,
+                   plan.kv_mib + hyp_ask_compute_mib_for_ubatch((int)cp.n_ubatch) +
+                       HYP_ASK_WEIGHTS_RESIDENT_MIB,
+                   s->on_gpu ? s->ceiling_mib : 0.0);
+    hyp_log_info("ask.llama.ctx", "plan", shape);
     return true;
 }
 
@@ -427,11 +482,21 @@ static int ask_llama_encode(ask_llama_t *s, const char *const *texts, const char
             }
             batch.n_tokens = total;
             llama_memory_clear(llama_get_memory(s->ctx), true);
+            struct timespec t0;
+            (void)clock_gettime(CLOCK_MONOTONIC, &t0);
             if (llama_decode(s->ctx, batch) != 0) {
                 (void)snprintf(err, errlen, "llama_decode failed (%d sequence(s), %d token(s))",
                                count, total);
                 rc = -1;
             } else {
+                struct timespec t1;
+                (void)clock_gettime(CLOCK_MONOTONIC, &t1);
+                double ms = (double)(t1.tv_sec - t0.tv_sec) * 1e3 +
+                            (double)(t1.tv_nsec - t0.tv_nsec) / 1e6;
+                char pass[128];
+                (void)snprintf(pass, sizeof(pass), "docs=%d tokens=%d seq_len=%d ms=%.1f", count,
+                               total, seq_len, ms);
+                hyp_log_debug("ask.llama.decode", "pass", pass);
                 for (int i = 0; i < count; i++) {
                     const float *emb = llama_get_embeddings_seq(s->ctx, i);
                     if (!emb) {
