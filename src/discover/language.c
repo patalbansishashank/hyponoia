@@ -934,8 +934,13 @@ static const char *LANG_PROMPT_NAMES[HYP_LANG_COUNT] = {
  * When you bump it: add the LANG_NAMES entry, then decide whether the
  * display name is also the name a developer writes in prose. If it is not,
  * add an override above. */
+/* Spelled as a subtraction rather than `==` on purpose: comparing two
+ * different enum types trips GCC's -Wenum-compare, and casting either side
+ * to int to silence it trips clang-tidy's readability-redundant-casting
+ * (enum constants are already int in C). Subtraction offends neither and
+ * says the same thing. */
 enum { HYP_LANG_NAMED_COUNT = 163 };
-_Static_assert((int)HYP_LANG_COUNT == (int)HYP_LANG_NAMED_COUNT,
+_Static_assert(HYP_LANG_COUNT - HYP_LANG_NAMED_COUNT == 0,
                "a language was added: give it a LANG_NAMES entry, check whether it needs a "
                "LANG_PROMPT_NAMES override, then bump HYP_LANG_NAMED_COUNT");
 

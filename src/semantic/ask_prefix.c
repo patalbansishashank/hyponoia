@@ -7,6 +7,7 @@
 
 #include "discover/discover.h"
 #include "foundation/constants.h"
+#include "hyp.h" /* HYPLanguage */
 
 #include <stdio.h>
 
