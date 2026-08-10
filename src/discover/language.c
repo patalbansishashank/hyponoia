@@ -853,6 +853,97 @@ static const char *LANG_NAMES[HYP_LANG_COUNT] = {
 
 };
 
+/* ── Prompt names (the `ask` instruct prefix, NEXT-STEPS.md §2.1) ── */
+
+/*
+ * The `ask` lane encodes a query behind a per-language instruct prefix:
+ *
+ *   Instruct: Given a natural-language description of {language} code,
+ *   retrieve the declaration it describes.
+ *
+ * {language} MUST be the display name a developer writes in prose — the
+ * spelling the embedding model saw in training — never the grammar id.
+ * The C++ rendering has to be byte-identical to the prefix ctxengine
+ * measured R@1 0.7833 / R@10 0.9400 with (QWEN_INSTRUCT in
+ * ctxengine/src/ctxengine/encoders.py); render "cpp" instead and the
+ * prefix still looks fine, still returns ranked results, and the measured
+ * number quietly stops applying to it. Silence is the whole failure mode,
+ * which is why the unknown path below refuses rather than substitutes.
+ *
+ * LANG_NAMES above is ALREADY that name for 155 of the 163 languages
+ * (it has said "C++", "C#", "Objective-C", "Common Lisp" since the Go
+ * port), so it stays the single source of truth and this is a SPARSE
+ * OVERRIDE holding only the entries where the file label and the prose
+ * name genuinely differ. A NULL slot is not a gap — it is the claim that
+ * LANG_NAMES already reads correctly in the sentence above, and
+ * hyp_language_prompt_name() falls through to it.
+ *
+ * Keeping the override separate is also what makes it safe: nothing but
+ * the prompt path reads this table, so a prompt-only spelling cannot
+ * change `hyp architecture` output, the store's language rollup, or the
+ * userconfig aliases in userconfig.c.
+ */
+static const char *LANG_PROMPT_NAMES[HYP_LANG_COUNT] = {
+    /* .tsx is TypeScript with JSX syntax enabled, not a separate language;
+     * §2.1 names this one explicitly. "TSX" stays in LANG_NAMES because it
+     * is a useful FILE label (it distinguishes .ts from .tsx in tool
+     * output) and a useless LANGUAGE name in a sentence about code. */
+    [HYP_LANG_TSX] = "TypeScript",
+
+    /* UDL, routine and Studio Export XML are three storage formats for one
+     * language, InterSystems ObjectScript — the suffix names the file
+     * format, not the language, and nobody writes "ObjectScript UDL code".
+     * Note HYP_LANG_OBJECTSCRIPT_EXPORT has no grammar row at all
+     * (lang_specs.c:2625): the pipeline transcodes Export XML to UDL and
+     * re-extracts it as HYP_LANG_OBJECTSCRIPT_UDL, so its declarations
+     * already reach the prefix tagged UDL. All three collapse to the one
+     * name a person would say. */
+    [HYP_LANG_OBJECTSCRIPT_UDL] = "ObjectScript",
+    [HYP_LANG_OBJECTSCRIPT_ROUTINE] = "ObjectScript",
+    [HYP_LANG_OBJECTSCRIPT_EXPORT] = "ObjectScript",
+
+    /* "Go Mod" is a label nobody writes; the file is a Go module manifest
+     * and the prose name is "Go module" (or "go.mod"). */
+    [HYP_LANG_GOMOD] = "Go module",
+
+    /* TradingView spells its language "Pine Script", two words. */
+    [HYP_LANG_PINE] = "Pine Script",
+
+    /* The convention is spelled "dotenv" (or ".env") everywhere it appears
+     * — in the library name, the filename and the docs. "DotEnv" is a
+     * camel-cased invention of this table. */
+    [HYP_LANG_DOTENV] = "dotenv",
+
+    /* "Requirements" alone names nothing; the artefact is a pip
+     * requirements file. */
+    [HYP_LANG_REQUIREMENTS] = "pip requirements",
+};
+
+/* Adding a language means adding a row to lang_specs.c (already gated by a
+ * _Static_assert there) AND a name to LANG_NAMES above. A missing name is
+ * the silent failure §2.1 warns about: hyp_language_name() would answer
+ * "Unknown" and hyp_language_prompt_name() would answer NULL, so `ask`
+ * would refuse to run on that language with nothing in the build saying
+ * why. C cannot check a designated-initialiser array for NULL holes at
+ * compile time (an array subscript is not a constant expression), so the
+ * exhaustiveness gate is the runtime test lang_all_have_prompt_names in
+ * tests/test_language.c — `make -f Makefile.hyp test`. This pin exists so
+ * that adding language 164 cannot reach that test by accident: it stops
+ * the build HERE, in the file that owns the names.
+ *
+ * When you bump it: add the LANG_NAMES entry, then decide whether the
+ * display name is also the name a developer writes in prose. If it is not,
+ * add an override above. */
+/* Spelled as a subtraction rather than `==` on purpose: comparing two
+ * different enum types trips GCC's -Wenum-compare, and casting either side
+ * to int to silence it trips clang-tidy's readability-redundant-casting
+ * (enum constants are already int in C). Subtraction offends neither and
+ * says the same thing. */
+enum { HYP_LANG_NAMED_COUNT = 163 };
+_Static_assert(HYP_LANG_COUNT - HYP_LANG_NAMED_COUNT == 0,
+               "a language was added: give it a LANG_NAMES entry, check whether it needs a "
+               "LANG_PROMPT_NAMES override, then bump HYP_LANG_NAMED_COUNT");
+
 /* ── Public API ──────────────────────────────────────────────────── */
 
 HYPLanguage hyp_language_for_extension(const char *ext) {
@@ -943,6 +1034,22 @@ const char *hyp_language_name(HYPLanguage lang) {
         return "Unknown";
     }
     return LANG_NAMES[lang] ? LANG_NAMES[lang] : "Unknown";
+}
+
+const char *hyp_language_prompt_name(HYPLanguage lang) {
+    if (lang < 0 || lang >= HYP_LANG_COUNT) {
+        return NULL;
+    }
+    const char *name = LANG_PROMPT_NAMES[lang] ? LANG_PROMPT_NAMES[lang] : LANG_NAMES[lang];
+    /* NULL and "" both mean "no name for this language". Returning
+     * "Unknown" here — what hyp_language_name() does, correctly, for a
+     * human reading tool output — would render a well-formed instruct
+     * prefix that is not the one anything was measured with, and nothing
+     * would fail. Refuse instead, and let the caller decide out loud. */
+    if (!name || !name[0]) {
+        return NULL;
+    }
+    return name;
 }
 
 /* ── .m file disambiguation ──────────────────────────────────────── */

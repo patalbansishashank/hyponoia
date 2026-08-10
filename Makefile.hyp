@@ -75,7 +75,15 @@ endif
 # HYP_BIND_TS_ALLOCATOR=1: bind the tree-sitter runtime to mimalloc (#424). Only
 # the prod build uses mimalloc (MI_OVERRIDE=1); the test build is CRT+ASan, where
 # binding would create an alloc/free mismatch, so the guard is prod-only.
+# HYP_ASK_LLAMA=1 is what makes src/ask/ask_llama.c an encoder rather than a
+# stub that reports why there isn't one. It is PROD-ONLY on purpose: the test
+# suites drive the seam through hyp_ask_encoder_stub_create (25 of the `ask`
+# tests must run with no model on disk), so the test-runner compiles the same
+# file's #else branch and never links 171 translation units of C++.
+ASK_LLAMA_DEFINE = -DHYP_ASK_LLAMA=1 -DHYP_ASK_GPU_VULKAN=$(HYP_ASK_GPU_VULKAN) \
+                   -I$(LLAMA_DIR)/include -I$(LLAMA_DIR)/ggml/include
 CFLAGS_PROD = $(CFLAGS_COMMON) -O2 -DHYP_BIND_TS_ALLOCATOR=1 $(TEST_SEAM_DEFINE) \
+              $(ASK_LLAMA_DEFINE) \
               $(GLOBAL_OVERRIDE_DEFINE) $(CFLAGS_EXTRA)
 CXXFLAGS_PROD = $(CXXFLAGS_COMMON) -O2
 
@@ -151,9 +159,41 @@ ifeq ($(IS_MINGW),yes)
 WIN32_LIBS := -lws2_32 -lpsapi -lshell32 -ladvapi32 -lbcrypt -Wl,--allow-multiple-definition -Wl,--stack,8388608 -Wl,--no-insert-timestamp -static
 endif
 
+# Which device the `ask` lane's in-process encoder can use. Declared here
+# because STATIC=1 below has to be able to refuse it; the full argument, the
+# measured costs and the source lists are in the llama.cpp section further
+# down. `vulkan` (default) or `none`.
+HYP_ASK_GPU ?= vulkan
+HYP_ASK_GPU_VULKAN := $(if $(filter vulkan,$(HYP_ASK_GPU)),1,0)
+ifeq (,$(filter vulkan none,$(HYP_ASK_GPU)))
+$(error HYP_ASK_GPU must be `vulkan` or `none`, not `$(HYP_ASK_GPU)`. There is \
+no auto-detect on purpose: a build that quietly dropped to CPU because glslc \
+was missing would ship a binary that indexes 15x slower with nothing on the \
+box to say why)
+endif
+
 # STATIC=1 produces a fully static binary (for Alpine/musl portable builds)
 ifeq ($(STATIC),1)
 STATIC_FLAGS := -static
+# STATIC=1 and the Vulkan lane are MUTUALLY EXCLUSIVE, and the build says so
+# rather than producing something that is neither.
+#
+# The Vulkan backend resolves libvulkan.so.1 through the system's Vulkan loader
+# and an installed ICD at RUNTIME. A fully static binary cannot have one. This
+# is the trade NEXT-STEPS.md §2.1's "single binary" sentence rests on, and
+# runs/ASK/T2-inference-runtime.json measured both sides of it: +51 MB of
+# embedded SPIR-V and a loader dependency, against 24.09 docs/s versus 1.581.
+#
+# It is refused here, loudly, because the alternative is a link that "succeeds"
+# and hands back a binary that is dynamically linked after all — the property
+# STATIC=1 exists to guarantee, silently absent.
+ifeq ($(HYP_ASK_GPU),vulkan)
+$(error STATIC=1 and HYP_ASK_GPU=vulkan are mutually exclusive: the Vulkan \
+backend needs libvulkan.so.1 resolved at runtime, so the binary cannot be \
+fully static. Choose one — `STATIC=1 HYP_ASK_GPU=none` for the one-file \
+install story with a CPU-only `ask` lane (~15x slower to index, same \
+vectors), or drop STATIC=1 for the GPU lane. See vendored/llama.cpp/NOTICE)
+endif
 endif
 
 # W^X: demand a non-executable stack on ELF. This is belt to the braces of the
@@ -178,7 +218,7 @@ endif
 # instead of the system libstdc++ (scripts/msan.sh overrides both vars).
 CXX_STDLIB ?= -lstdc++
 CXX_STDLIB_FLAGS ?=
-LDFLAGS = -lm $(CXX_STDLIB) -lpthread -lz $(WIN32_LIBS) $(STATIC_FLAGS) $(MIMALLOC_WRAP_FLAGS) $(ELF_HARDENING_FLAGS)
+LDFLAGS = -lm $(CXX_STDLIB) -lpthread -lz $(LLAMA_LINK_LIBS) $(WIN32_LIBS) $(STATIC_FLAGS) $(MIMALLOC_WRAP_FLAGS) $(ELF_HARDENING_FLAGS)
 LDFLAGS_TEST = -lm $(CXX_STDLIB) -lpthread -lz $(SANITIZE) $(WIN32_LIBS) $(MIMALLOC_WRAP_FLAGS) $(ELF_HARDENING_FLAGS)
 LDFLAGS_TSAN = -lm $(CXX_STDLIB) -lpthread -lz $(TSAN_SANITIZE) $(WIN32_LIBS) $(MIMALLOC_WRAP_FLAGS) $(ELF_HARDENING_FLAGS)
 
@@ -273,7 +313,9 @@ PREPROCESSOR_SRC = $(HYP_DIR)/preprocessor.cpp
 SQLITE_WRITER_SRC = $(HYP_DIR)/sqlite_writer.c
 
 # Store module (new)
-STORE_SRCS = src/store/store.c
+# ask_index.c is the READ half of the `ask` lane's opt-in vector store
+# (NEXT-STEPS.md §2.1). It shares no code with the static token vectors.
+STORE_SRCS = src/store/store.c src/store/ask_index.c
 
 # Cypher module (new)
 CYPHER_SRCS = src/cypher/cypher.c
@@ -342,7 +384,18 @@ PIPELINE_SRCS = \
 SIMHASH_SRCS = src/simhash/minhash.c
 
 # Semantic embedding module
-SEMANTIC_SRCS = src/semantic/semantic.c src/semantic/ast_profile.c src/semantic/rotsq.c
+# ask_embed.c is the inference boundary for the `ask` lane; ask_lang.c decides
+# which language's instruct prefix is rendered and ask_prefix.c renders it.
+# None of the three is read by the static token-vector path.
+SEMANTIC_SRCS = src/semantic/semantic.c src/semantic/ast_profile.c src/semantic/rotsq.c \
+    src/semantic/ask_embed.c src/semantic/ask_lang.c src/semantic/ask_prefix.c
+
+# `ask` lane (NEXT-STEPS §2.1): per-declaration transformer vectors, their own
+# SQLite file, and the opt-in second pass that fills it. Deliberately its own
+# module and its own subcommand — nothing here runs during index_repository, so
+# the structural index keeps exactly the speed it has.
+ASK_SRCS = src/ask/ask_batch.c src/ask/ask_encoder.c src/ask/ask_vectors.c \
+           src/ask/ask_embed.c src/ask/ask_cmd.c src/ask/ask_llama.c
 
 # nomic-embed-code pretrained vectors (assembler blob)
 UNIXCODER_BLOB_SRC = vendored/nomic/code_vectors_blob.S
@@ -360,7 +413,7 @@ GIT_SRCS = src/git/git_context.c
 CLI_SRCS = src/cli/cli.c src/cli/progress_sink.c src/cli/hook_augment.c src/cli/client_adapter.c \
 	src/cli/agent_clients.c src/cli/agent_profiles.c src/cli/integration_assets.c \
 	src/cli/config_json_like.c src/cli/config_toml_edit.c src/cli/config_yaml_edit.c \
-	src/cli/config_text_edit.c src/cli/activation_transaction.c
+	src/cli/config_text_edit.c src/cli/activation_transaction.c src/cli/model_fetch.c
 
 # UI module (graph visualization). Production-standard builds deliberately link
 # only the no-I/O pack stub. Test binaries substitute the real parser plus the
@@ -456,8 +509,153 @@ TRE_CFLAGS = -std=c11 -g -O1 -w -Ivendored/tre
 # yyjson (vendored)
 YYJSON_SRC = vendored/yyjson/yyjson.c
 
+# ── llama.cpp: the `ask` lane's in-process encoder ────────────────
+#
+# NEXT-STEPS.md §2.1 runs a whole declaration through Qwen3-Embedding-0.6B
+# instead of adding up per-token vectors. runs/ASK/T2-inference-runtime.json
+# settled the runtime with a working prototype. See vendored/llama.cpp/NOTICE
+# for what was taken and HYPONOIA-PATCHES.md for the twelve lines that differ
+# from upstream.
+#
+# HYP_ASK_GPU decides the DEVICE the lane can use, and it is a deliberate,
+# stated build configuration rather than a detection:
+#
+#   vulkan  (default)  the Vulkan backend is compiled in. 15.2x on the one
+#                      operation that takes minutes (24.09 vs 1.581 docs/s,
+#                      ~3 min vs ~43 min for lld/ELF). COSTS: ~+51 MB of
+#                      embedded SPIR-V, a RUNTIME dependency on libvulkan.so.1,
+#                      and therefore STATIC=1 — see the refusal below. Needs
+#                      glslc and Vulkan-Headers at build time.
+#   none               CPU only. Keeps STATIC=1 and the one-file install story.
+#                      The `ask` lane still works; it is 15x slower to index.
+#
+# There is no third value and no auto-detect. A build that quietly dropped to
+# CPU because glslc was missing would ship a binary that takes 43 minutes where
+# the operator expected 3, and nothing on the box would say why. Track 4's
+# device plumbing separates the REQUEST from the OUTCOME for the same reason at
+# runtime; this is the build-time half of it. (HYP_ASK_GPU itself is declared
+# near STATIC_FLAGS above, which has to be able to refuse it.)
+
+LLAMA_DIR = vendored/llama.cpp
+
+# The `ask` lane's llama.cpp objects are PRODUCTION-ONLY. The test suites drive
+# the encoder seam through hyp_ask_encoder_stub_create (deliberate: 25 of the
+# ask tests must run with no model on disk), so linking 171 translation units
+# of C++ into the ASan test-runner would buy nothing and cost minutes per run.
+LLAMA_GGML_BASE_SRCS = \
+    $(LLAMA_DIR)/ggml/src/ggml.c \
+    $(LLAMA_DIR)/ggml/src/ggml.cpp \
+    $(LLAMA_DIR)/ggml/src/ggml-alloc.c \
+    $(LLAMA_DIR)/ggml/src/ggml-backend.cpp \
+    $(LLAMA_DIR)/ggml/src/ggml-backend-meta.cpp \
+    $(LLAMA_DIR)/ggml/src/ggml-opt.cpp \
+    $(LLAMA_DIR)/ggml/src/ggml-threading.cpp \
+    $(LLAMA_DIR)/ggml/src/ggml-quants.c \
+    $(LLAMA_DIR)/ggml/src/gguf.cpp \
+    $(LLAMA_DIR)/ggml/src/ggml-backend-dl.cpp \
+    $(LLAMA_DIR)/ggml/src/ggml-backend-reg.cpp
+
+# The CPU backend's SIMD kernels are selected per host architecture, the way
+# ggml's own build does. Everything else in ggml-cpu is architecture-neutral.
+LLAMA_UNAME_M := $(shell uname -m 2>/dev/null)
+ifneq (,$(filter x86_64 amd64 i386 i686,$(LLAMA_UNAME_M)))
+LLAMA_CPU_ARCH_DIR = arch/x86
+else ifneq (,$(filter aarch64 arm64 armv7l,$(LLAMA_UNAME_M)))
+LLAMA_CPU_ARCH_DIR = arch/arm
+else ifneq (,$(filter ppc64le ppc64,$(LLAMA_UNAME_M)))
+LLAMA_CPU_ARCH_DIR = arch/powerpc
+else ifneq (,$(filter riscv64,$(LLAMA_UNAME_M)))
+LLAMA_CPU_ARCH_DIR = arch/riscv
+else ifneq (,$(filter s390x,$(LLAMA_UNAME_M)))
+LLAMA_CPU_ARCH_DIR = arch/s390
+else ifneq (,$(filter loongarch64,$(LLAMA_UNAME_M)))
+LLAMA_CPU_ARCH_DIR = arch/loongarch
+else
+LLAMA_CPU_ARCH_DIR = arch/x86
+endif
+
+LLAMA_GGML_CPU_SRCS = \
+    $(LLAMA_DIR)/ggml/src/ggml-cpu/ggml-cpu.c \
+    $(LLAMA_DIR)/ggml/src/ggml-cpu/ggml-cpu.cpp \
+    $(LLAMA_DIR)/ggml/src/ggml-cpu/repack.cpp \
+    $(LLAMA_DIR)/ggml/src/ggml-cpu/hbm.cpp \
+    $(LLAMA_DIR)/ggml/src/ggml-cpu/quants.c \
+    $(LLAMA_DIR)/ggml/src/ggml-cpu/traits.cpp \
+    $(LLAMA_DIR)/ggml/src/ggml-cpu/amx/amx.cpp \
+    $(LLAMA_DIR)/ggml/src/ggml-cpu/amx/mmq.cpp \
+    $(LLAMA_DIR)/ggml/src/ggml-cpu/binary-ops.cpp \
+    $(LLAMA_DIR)/ggml/src/ggml-cpu/unary-ops.cpp \
+    $(LLAMA_DIR)/ggml/src/ggml-cpu/vec.cpp \
+    $(LLAMA_DIR)/ggml/src/ggml-cpu/ops.cpp \
+    $(LLAMA_DIR)/ggml/src/ggml-cpu/llamafile/sgemm.cpp \
+    $(LLAMA_DIR)/ggml/src/ggml-cpu/$(LLAMA_CPU_ARCH_DIR)/quants.c \
+    $(LLAMA_DIR)/ggml/src/ggml-cpu/$(LLAMA_CPU_ARCH_DIR)/repack.cpp
+
+LLAMA_LIB_SRCS = $(sort $(wildcard $(LLAMA_DIR)/src/*.cpp) \
+                        $(wildcard $(LLAMA_DIR)/src/models/*.cpp))
+
+# ggml's own CMake compiles the CPU backend with -march=native. We do NOT:
+# a shipped binary that faults with SIGILL on a machine one generation older
+# than the build host is not a portable binary, and this project ships one
+# artifact per platform. Set HYP_LLAMA_ARCHFLAGS=-march=native to get ggml's
+# posture back on a machine that is only ever going to run its own build.
+HYP_LLAMA_ARCHFLAGS ?=
+
+# GGML_VERSION/GGML_COMMIT are pinned STRINGS, not a git call: __DATE__-style
+# build-time entropy is exactly what the mimalloc patch exists to remove, and a
+# `git describe` in a compile line is the same class of thing.
+LLAMA_VERSION_DEFINES = -DGGML_VERSION=\"0.19.0-hyp\" \
+                        -DGGML_COMMIT=\"74ce157\"
+
+LLAMA_INCLUDES = -I$(LLAMA_DIR)/ggml/include -I$(LLAMA_DIR)/ggml/src \
+                 -I$(LLAMA_DIR)/ggml/src/ggml-cpu -I$(LLAMA_DIR)/include \
+                 -I$(LLAMA_DIR)/src
+LLAMA_DEFINES = -DNDEBUG -D_GNU_SOURCE -D_XOPEN_SOURCE=600 \
+                -DGGML_SCHED_MAX_COPIES=4 -DGGML_USE_CPU \
+                -DGGML_USE_CPU_REPACK -DGGML_USE_LLAMAFILE \
+                $(LLAMA_VERSION_DEFINES)
+
+# THE SECOND FLAGS BUCKET. llama.cpp requires C++17 and says so emphatically
+# (`target_compile_features(llama PRIVATE cxx_std_17) # don't bump`).
+# CXXFLAGS_COMMON is -std=c++14 for the tree-sitter preprocessor and cannot be
+# reused. Warnings are relaxed with -w the way vendored/sqlite3 and the
+# grammars already are — llama.cpp's C++ does not survive -Wall -Wextra
+# -Werror, and editing third-party code to satisfy our flags would make every
+# upstream sync a merge conflict. -Werror still covers all of src/.
+LLAMA_CFLAGS   = -std=c11   -O2 -w -fPIC $(HYP_LLAMA_ARCHFLAGS) $(LLAMA_INCLUDES) $(LLAMA_DEFINES)
+LLAMA_CXXFLAGS = -std=c++17 -O2 -w -fPIC $(HYP_LLAMA_ARCHFLAGS) $(LLAMA_INCLUDES) $(LLAMA_DEFINES)
+
+LLAMA_LINK_LIBS =
+LLAMA_SHADER_DIR =
+
+ifeq ($(HYP_ASK_GPU),vulkan)
+# Vulkan-Headers are not on this machine's include path (/usr/include/vulkan
+# does not exist) and are not vendored: they are a BUILD-time dependency like a
+# compiler, not code we ship. Point VULKAN_INCLUDE at a Vulkan-Headers/include.
+VULKAN_INCLUDE ?= $(HOME)/.cache/hyp-t2/Vulkan-Headers/include
+# SPIRV-Headers, likewise build-time only: ggml-vulkan.cpp includes
+# <spirv/unified1/spirv.hpp> to name SPIR-V capabilities.
+SPIRV_INCLUDE ?= $(HOME)/.cache/hyp-t2/spirv-install/include
+GLSLC ?= glslc
+LLAMA_GGML_VK_SRC = $(LLAMA_DIR)/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+LLAMA_VK_SHADER_SRC = $(LLAMA_DIR)/ggml/src/ggml-vulkan/vulkan-shaders
+LLAMA_SHADER_DIR = $(BUILD_DIR)/vulkan-shaders
+LLAMA_VK_FEATURES := $(shell scripts/gen-vulkan-shaders.sh --features \
+    $(LLAMA_DIR)/ggml/src/ggml-vulkan/vulkan-shaders "$(GLSLC)" \
+    build/c/glslc-features 2>/dev/null)
+LLAMA_DEFINES += -DGGML_USE_VULKAN
+LLAMA_LINK_LIBS += -lvulkan
+LLAMA_VK_CXXFLAGS = $(LLAMA_CXXFLAGS) $(LLAMA_VK_FEATURES) \
+                    -I$(VULKAN_INCLUDE) -I$(SPIRV_INCLUDE) -I$(LLAMA_SHADER_DIR)
+endif
+
+LLAMA_ALL_SRCS = $(LLAMA_GGML_BASE_SRCS) $(LLAMA_GGML_CPU_SRCS) $(LLAMA_LIB_SRCS)
+LLAMA_OBJ_DIR = $(BUILD_DIR)/llama
+LLAMA_OBJS = $(patsubst $(LLAMA_DIR)/%,$(LLAMA_OBJ_DIR)/%.o,$(LLAMA_ALL_SRCS))
+
+
 # All production sources
-PROD_SRCS = $(FOUNDATION_SRCS) $(STORE_SRCS) $(CYPHER_SRCS) $(MCP_SRCS) $(DAEMON_SRCS) $(DISCOVER_SRCS) $(GRAPH_BUFFER_SRCS) $(PIPELINE_SRCS) $(SIMHASH_SRCS) $(SEMANTIC_SRCS) $(TRACES_SRCS) $(WATCHER_SRCS) $(GIT_SRCS) $(CLI_SRCS) $(UI_SRCS) $(YYJSON_SRC)
+PROD_SRCS = $(FOUNDATION_SRCS) $(STORE_SRCS) $(CYPHER_SRCS) $(MCP_SRCS) $(DAEMON_SRCS) $(DISCOVER_SRCS) $(GRAPH_BUFFER_SRCS) $(PIPELINE_SRCS) $(SIMHASH_SRCS) $(SEMANTIC_SRCS) $(ASK_SRCS) $(TRACES_SRCS) $(WATCHER_SRCS) $(GIT_SRCS) $(CLI_SRCS) $(UI_SRCS) $(YYJSON_SRC)
 TEST_PROD_SRCS = $(subst src/ui/asset_pack_stub.c,src/ui/asset_pack.c src/ui/asset_manifest_stub.c,$(PROD_SRCS))
 EXISTING_C_SRCS = $(EXTRACTION_SRCS) $(LSP_SRCS) $(TS_RUNTIME_SRC) \
                   $(GRAMMAR_SRCS) $(AC_LZ4_SRCS) $(ZSTD_SRCS) $(SQLITE_WRITER_SRC)
@@ -607,7 +805,7 @@ TEST_TRACES_SRCS = tests/test_traces.c
 TEST_CLI_SRCS = tests/test_cli.c tests/test_agent_clients.c tests/test_agent_profiles.c \
 	tests/test_config_json_like.c \
 	tests/test_config_toml_edit.c tests/test_config_yaml_edit.c tests/test_config_text_edit.c \
-	tests/test_activation_transaction.c
+	tests/test_activation_transaction.c tests/test_model_fetch.c
 
 TEST_MEM_SRCS = tests/test_mem.c
 
@@ -619,6 +817,13 @@ TEST_SECURITY_SRCS = tests/test_security.c
 TEST_YAML_SRCS = tests/test_yaml.c
 
 TEST_SEMANTIC_SRCS = tests/test_semantic.c
+
+# `ask` lane: the tool (schema, availability, language, ranking, result shape)
+# plus the embed pass (batching, vector storage, the encoder seam).
+# Kept OUT of TEST_FOUNDATION_SUITE_SRCS on purpose: the foundation target is
+# the seconds-long loop for src/foundation and links no store.
+TEST_ASK_SRCS = tests/test_ask.c tests/test_ask_batch.c \
+                tests/test_ask_vectors.c tests/test_ask_embed.c
 TEST_AST_PROFILE_SRCS = tests/test_ast_profile.c
 TEST_SLAB_ALLOC_SRCS = tests/test_slab_alloc.c
 
@@ -703,7 +908,7 @@ TEST_REPRO_SRCS = \
     tests/repro/repro_lsp_java_cs.c \
     tests/repro/repro_lsp_kt_php_rust.c
 
-ALL_TEST_SRCS =$(TEST_FOUNDATION_SRCS) $(TEST_EXTRACTION_SRCS) $(TEST_STORE_SRCS) $(TEST_CYPHER_SRCS) $(TEST_MCP_SRCS) $(TEST_DAEMON_SRCS) $(TEST_DISCOVER_SRCS) $(TEST_GRAPH_BUFFER_SRCS) $(TEST_PIPELINE_SRCS) $(TEST_WATCHER_SRCS) $(TEST_LZ4_SRCS) $(TEST_ZSTD_SRCS) $(TEST_ARTIFACT_SRCS) $(TEST_SQLITE_WRITER_SRCS) $(TEST_GO_LSP_SRCS) $(TEST_C_LSP_SRCS) $(TEST_PHP_LSP_SRCS) $(TEST_CS_LSP_SRCS) $(TEST_CS_LSP_BENCH_SRCS) $(TEST_PERL_LSP_SRCS) $(TEST_SCOPE_SRCS) $(TEST_TYPE_REP_SRCS) $(TEST_PY_LSP_SRCS) $(TEST_PY_LSP_BENCH_SRCS) $(TEST_PY_LSP_STRESS_SRCS) $(TEST_PY_LSP_SCALE_SRCS) $(TEST_TS_LSP_SRCS) $(TEST_JAVA_LSP_SRCS) $(TEST_KOTLIN_LSP_SRCS) $(TEST_RUST_LSP_SRCS) $(TEST_TRACES_SRCS) $(TEST_CLI_SRCS) $(TEST_MEM_SRCS) $(TEST_UI_SRCS) $(TEST_HTTPD_SRCS) $(TEST_SECURITY_SRCS) $(TEST_YAML_SRCS) $(TEST_SEMANTIC_SRCS) $(TEST_AST_PROFILE_SRCS) $(TEST_SLAB_ALLOC_SRCS) $(TEST_SIMHASH_SRCS) $(TEST_STACK_OVERFLOW_SRCS) $(TEST_INTEGRATION_SRCS)
+ALL_TEST_SRCS =$(TEST_FOUNDATION_SRCS) $(TEST_EXTRACTION_SRCS) $(TEST_STORE_SRCS) $(TEST_CYPHER_SRCS) $(TEST_MCP_SRCS) $(TEST_DAEMON_SRCS) $(TEST_DISCOVER_SRCS) $(TEST_GRAPH_BUFFER_SRCS) $(TEST_PIPELINE_SRCS) $(TEST_WATCHER_SRCS) $(TEST_LZ4_SRCS) $(TEST_ZSTD_SRCS) $(TEST_ARTIFACT_SRCS) $(TEST_SQLITE_WRITER_SRCS) $(TEST_GO_LSP_SRCS) $(TEST_C_LSP_SRCS) $(TEST_PHP_LSP_SRCS) $(TEST_CS_LSP_SRCS) $(TEST_CS_LSP_BENCH_SRCS) $(TEST_PERL_LSP_SRCS) $(TEST_SCOPE_SRCS) $(TEST_TYPE_REP_SRCS) $(TEST_PY_LSP_SRCS) $(TEST_PY_LSP_BENCH_SRCS) $(TEST_PY_LSP_STRESS_SRCS) $(TEST_PY_LSP_SCALE_SRCS) $(TEST_TS_LSP_SRCS) $(TEST_JAVA_LSP_SRCS) $(TEST_KOTLIN_LSP_SRCS) $(TEST_RUST_LSP_SRCS) $(TEST_TRACES_SRCS) $(TEST_CLI_SRCS) $(TEST_MEM_SRCS) $(TEST_UI_SRCS) $(TEST_HTTPD_SRCS) $(TEST_SECURITY_SRCS) $(TEST_YAML_SRCS) $(TEST_SEMANTIC_SRCS) $(TEST_ASK_SRCS) $(TEST_AST_PROFILE_SRCS) $(TEST_SLAB_ALLOC_SRCS) $(TEST_SIMHASH_SRCS) $(TEST_STACK_OVERFLOW_SRCS) $(TEST_INTEGRATION_SRCS)
 
 
 # ── Build directories ────────────────────────────────────────────
@@ -1035,7 +1240,58 @@ ZSTD_OBJ_PROD = $(BUILD_DIR)/prod_zstd.o
 $(BUILD_DIR)/prod_zstd.o: $(HYP_DIR)/vendored/zstd/zstd.c | $(BUILD_DIR)
 	$(CC) -std=c11 -D_DEFAULT_SOURCE -O2 -w -I$(HYP_DIR)/vendored/zstd -c -o $@ $<
 
-OBJS_VENDORED_PROD = $(MIMALLOC_OBJ_PROD) $(SQLITE3_OBJ_PROD) $(TRE_OBJ_PROD) $(GRAMMAR_OBJS_PROD) $(TS_RUNTIME_OBJ_PROD) $(LSP_OBJ_PROD) $(PP_OBJ_PROD) $(LZ4_OBJ_PROD) $(ZSTD_OBJ_PROD) $(UNIXCODER_OBJ)
+# ── llama.cpp objects (production only) ──────────────────────────
+#
+# One archive rather than 171 objects on the link line, so `nm`, `size` and the
+# composition gate have one thing to point at, and so the link line stays
+# readable. --whole-archive is NOT used: only what ask_llama.cpp reaches is
+# pulled in, which is the point of an archive.
+$(LLAMA_OBJ_DIR)/%.c.o: $(LLAMA_DIR)/%.c | $(BUILD_DIR)
+	@mkdir -p $(@D)
+	$(CC) $(LLAMA_CFLAGS) -c -o $@ $<
+
+$(LLAMA_OBJ_DIR)/%.cpp.o: $(LLAMA_DIR)/%.cpp | $(BUILD_DIR)
+	@mkdir -p $(@D)
+	$(CXX) $(LLAMA_CXXFLAGS) -c -o $@ $<
+
+LLAMA_LIB = $(BUILD_DIR)/libhyp-llama.a
+$(LLAMA_LIB): $(LLAMA_OBJS)
+	@rm -f $@
+	$(AR) rcs $@ $(LLAMA_OBJS)
+
+LLAMA_OBJS_ALL = $(LLAMA_LIB)
+
+ifeq ($(HYP_ASK_GPU),vulkan)
+# The Vulkan backend and its shaders. The generated translation units are not
+# knowable at parse time (make would have to glob a directory that does not
+# exist yet on a clean tree), so the stamp drives generation and the archive
+# recipe compiles whatever came out — the one place in this file where a
+# recipe, not a prerequisite list, enumerates its inputs.
+LLAMA_VK_STAMP = $(LLAMA_SHADER_DIR)/.generated
+$(LLAMA_VK_STAMP): $(wildcard $(LLAMA_VK_SHADER_SRC)/*.comp) \
+                   $(wildcard $(LLAMA_VK_SHADER_SRC)/*.cpp) | $(BUILD_DIR)
+	@mkdir -p $(LLAMA_SHADER_DIR)
+	scripts/gen-vulkan-shaders.sh --generate $(LLAMA_VK_SHADER_SRC) \
+	    "$(GLSLC)" build/c/glslc-features $(LLAMA_SHADER_DIR) "$(strip $(CXX))"
+	@touch $@
+
+LLAMA_VK_SHADER_LIB = $(BUILD_DIR)/libhyp-vkshaders.a
+$(LLAMA_VK_SHADER_LIB): $(LLAMA_VK_STAMP)
+	@echo "  CXX     $$(ls $(LLAMA_SHADER_DIR)/*.comp.cpp | wc -l) vulkan shader units"
+	@ls $(LLAMA_SHADER_DIR)/*.comp.cpp | xargs -P $$(nproc) -I{} \
+	    $(CXX) $(LLAMA_VK_CXXFLAGS) -c -o {}.o {}
+	@rm -f $@
+	$(AR) rcs $@ $(LLAMA_SHADER_DIR)/*.comp.cpp.o
+
+LLAMA_VK_OBJ = $(LLAMA_OBJ_DIR)/ggml-vulkan.o
+$(LLAMA_VK_OBJ): $(LLAMA_GGML_VK_SRC) $(LLAMA_VK_STAMP) | $(BUILD_DIR)
+	@mkdir -p $(@D)
+	$(CXX) $(LLAMA_VK_CXXFLAGS) -c -o $@ $(LLAMA_GGML_VK_SRC)
+
+LLAMA_OBJS_ALL += $(LLAMA_VK_OBJ) $(LLAMA_VK_SHADER_LIB)
+endif
+
+OBJS_VENDORED_PROD = $(MIMALLOC_OBJ_PROD) $(SQLITE3_OBJ_PROD) $(TRE_OBJ_PROD) $(GRAMMAR_OBJS_PROD) $(TS_RUNTIME_OBJ_PROD) $(LSP_OBJ_PROD) $(PP_OBJ_PROD) $(LZ4_OBJ_PROD) $(ZSTD_OBJ_PROD) $(UNIXCODER_OBJ) $(LLAMA_OBJS_ALL)
 
 MAIN_SRC = src/main.c
 

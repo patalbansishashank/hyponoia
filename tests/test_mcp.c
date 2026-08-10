@@ -781,6 +781,7 @@ TEST(mcp_tools_list) {
     ASSERT_NOT_NULL(strstr(json, "detect_changes"));
     ASSERT_NOT_NULL(strstr(json, "manage_adr"));
     ASSERT_NOT_NULL(strstr(json, "ingest_traces"));
+    ASSERT_NOT_NULL(strstr(json, "\"ask\""));
     free(json);
     PASS();
 }
@@ -851,6 +852,7 @@ TEST(mcp_tools_have_behavior_annotations) {
          * recovery quarantines/removes database files. Keep the annotations
          * conservative until query resolution is strictly non-mutating. */
         {"search_graph", false, true, true, false},
+        {"ask", false, true, true, false},
         {"query_graph", false, true, true, false},
         {"trace_path", false, true, true, false},
         {"get_code_snippet", false, true, true, false},
@@ -1295,9 +1297,9 @@ TEST(server_handle_analysis_profile_filters_and_rejects_mutators) {
     resp = hyp_mcp_server_handle(srv, "{\"jsonrpc\":\"2.0\",\"id\":220,\"method\":\"tools/list\"}");
     ASSERT_NOT_NULL(resp);
     static const char *const analysis_tools[] = {
-        "search_graph",     "query_graph",          "trace_path",     "get_code_snippet",
-        "get_graph_schema", "get_architecture",     "search_code",    "list_projects",
-        "index_status",     "check_index_coverage", "detect_changes",
+        "search_graph",     "ask",                  "query_graph",          "trace_path",
+        "get_code_snippet", "get_graph_schema",     "get_architecture",     "search_code",
+        "list_projects",    "index_status",         "check_index_coverage", "detect_changes",
     };
     ASSERT_EQ(mcp_response_tool_count(resp), sizeof(analysis_tools) / sizeof(analysis_tools[0]));
     for (size_t i = 0U; i < sizeof(analysis_tools) / sizeof(analysis_tools[0]); i++) {

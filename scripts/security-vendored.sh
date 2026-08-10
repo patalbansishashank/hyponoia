@@ -279,7 +279,16 @@ fi
 # It is not wired into any build and is expected to be DELETED once the
 # measurement is recorded; see vendored/qwen3-oldvocab/NOTICE and
 # runs/EMBED-SWAP/K-oldvocab-extraction.json.
-KNOWN_VENDORED="mimalloc nomic qwen3 qwen3-oldvocab sqlite3 tre xxhash yyjson"
+# llama.cpp: the in-process inference runtime for the `ask` lane (NEXT-STEPS.md
+# §2.1, runs/ASK/T2-inference-runtime.json). MIT; LICENSE + NOTICE in the
+# directory. Reviewed: the two calls this gate would otherwise block are
+# PATCHED OUT rather than exempted — ggml-backend-dl.cpp's dlopen/dlsym (dead
+# code in a static build) and ggml.c's fork+execlp("gdb") on abort. Both
+# patches are in vendored/llama.cpp/HYPONOIA-PATCHES.md and are re-applied by
+# scripts/vendor-llama-cpp.sh, which REFUSES if upstream moves under them. The
+# binary property is asserted separately and is the one that matters:
+# `nm -D --undefined-only build/c/hyponoia` shows no dlopen/dlsym.
+KNOWN_VENDORED="llama.cpp mimalloc nomic qwen3 qwen3-oldvocab sqlite3 tre xxhash yyjson"
 while IFS= read -r -d '' libdir; do
     libname="$(basename "$libdir")"
     found=false

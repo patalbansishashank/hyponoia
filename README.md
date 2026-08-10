@@ -202,6 +202,7 @@ The install script placed beside the binary is **reported, not deleted** — uni
 - **Semantic search** (`semantic_query`): vector search across the entire graph, powered by bundled Nomic `nomic-embed-code` embeddings (40K tokens, 768d int8) compiled into the binary — no API key, no Ollama, no Docker. 11-signal combined scoring (TF-IDF, RRI, API/Type/Decorator signatures, AST profiles, data flow, Halstead-lite, MinHash, module proximity, graph diffusion).
 - **BM25 full-text search** via SQLite FTS5 with `hyp_camel_split` tokenizer (camelCase / snake_case aware)
 - **Structural search** (`search_graph`): regex name patterns, label filters, min/max degree, file scoping
+- **Natural-language ask** (`ask`): one question, ranked spans. Separate from `semantic_query` in every way that matters — one string instead of an array of keywords, whole declarations run through the model instead of a static per-token table, and an explicit `available: false` when the opt-in index has not been built rather than an empty result set.
 - **Code search** (`search_code`): graph-augmented grep over indexed files only
 
 ### Cross-service linking
@@ -417,7 +418,7 @@ Add to `~/.claude.json` (user scope) or project `.mcp.json`:
 }
 ```
 
-Restart your agent. Verify with `/mcp` — you should see `hyponoia` with 15 tools.
+Restart your agent. Verify with `/mcp` — you should see `hyponoia` with 16 tools.
 
 </details>
 
@@ -614,6 +615,7 @@ JSON arguments can also be piped on stdin. Inline JSON remains accepted for back
 | Tool | Description |
 |------|-------------|
 | `search_graph` | Structured search by label, name pattern, file pattern, degree filters. Pagination via limit/offset. |
+| `ask` | Ask ONE natural-language question; ranked declarations with line ranges. The semantic lane — documents encoded whole and bare, the question behind an instruct prefix, so an answer can match code sharing none of the question's words. Reports `available: false` with a remedy (never zero results) until the opt-in semantic index is built. |
 | `trace_path` | BFS traversal — who calls a function and what it calls (alias: `trace_call_path`). Depth 1-5. |
 | `detect_changes` | Map git diff to affected symbols + blast radius with risk classification. |
 | `query_graph` | Execute Cypher-like graph queries (read-only). |
@@ -775,7 +777,7 @@ Also supported (not yet benchmarked): Ada, Agda, Apex, Assembly (NASM), Astro, A
 src/
   main.c              Entry point (MCP stdio server + CLI + install/update/config)
   daemon/             Per-account session coordination, IPC, lifecycle, shared jobs/watchers
-  mcp/                MCP server (15 tools, JSON-RPC 2.0, session detection, auto-index)
+  mcp/                MCP server (16 tools, JSON-RPC 2.0, session detection, auto-index)
   cli/                Install/uninstall/update/config (43 client surfaces, hooks, instructions)
   store/              SQLite graph storage (nodes, edges, traversal, search, Louvain)
   pipeline/           Multi-pass indexing (structure → definitions → calls → HTTP links → config → tests)

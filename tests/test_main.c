@@ -684,6 +684,7 @@ extern void suite_config_toml_edit(void);
 extern void suite_config_yaml_edit(void);
 extern void suite_config_text_edit(void);
 extern void suite_activation_transaction(void);
+extern void suite_model_fetch(void);
 extern void suite_system_info(void);
 extern void suite_worker_pool(void);
 extern void suite_parallel(void);
@@ -727,6 +728,10 @@ extern void suite_grammar_probe_f(void);
 extern void suite_grammar_probe_g(void);
 extern void suite_incremental(void);
 extern void suite_semantic(void);
+extern void suite_ask(void);
+extern void suite_ask_batch(void);
+extern void suite_ask_vectors(void);
+extern void suite_ask_embed(void);
 extern void suite_ast_profile(void);
 extern void suite_slab_alloc(void);
 extern void suite_simhash(void);
@@ -983,6 +988,7 @@ int main(int argc, char **argv) {
     RUN_SELECTED_SUITE(config_yaml_edit);
     RUN_SELECTED_SUITE(config_text_edit);
     RUN_SELECTED_SUITE(activation_transaction);
+    RUN_SELECTED_SUITE(model_fetch);
 
     /* System info + worker pool (parallelism) */
     RUN_SELECTED_SUITE(system_info);
@@ -1012,7 +1018,13 @@ int main(int argc, char **argv) {
 
     /* SimHash / SIMILAR_TO */
     RUN_SELECTED_SUITE(semantic);
+    RUN_SELECTED_SUITE(ask);
     RUN_SELECTED_SUITE(ast_profile);
+
+    /* `ask` lane: the batch rule, the vector store, the opt-in embed pass */
+    RUN_SELECTED_SUITE(ask_batch);
+    RUN_SELECTED_SUITE(ask_vectors);
+    RUN_SELECTED_SUITE(ask_embed);
     RUN_SELECTED_SUITE(simhash);
 
     /* Stack overflow regression (GitHub #199) — split a/b/c so no single

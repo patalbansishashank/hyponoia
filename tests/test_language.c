@@ -6,6 +6,9 @@
 #include "../src/foundation/compat.h"
 #include "test_framework.h"
 #include "discover/discover.h"
+#include "foundation/constants.h"
+#include "foundation/sha256.h"
+#include "semantic/ask_prefix.h"
 
 /* ── Extension-based detection ─────────────────────────────────── */
 
@@ -1056,6 +1059,150 @@ TEST(lang_all_have_names) {
     PASS();
 }
 
+/* ── `ask` instruct prefix (NEXT-STEPS.md §2.1) ────────────────── */
+
+/*
+ * §2.1's "one trap": {language} in the instruct prefix must be the display
+ * name, not the grammar id. Rendered with the grammar id the prefix still
+ * looks like a prefix, still encodes, still ranks — and the R@10 0.9400
+ * measured on the C++ prefix quietly stops applying to it. Nothing else in
+ * the system can notice, so these tests are the only place it can fail.
+ */
+
+/* Copied INDEPENDENTLY of HYP_ASK_INSTRUCT_TEMPLATE — that is the point.
+ * If this were built from the macro, rewording the macro would keep the
+ * test green while invalidating every number measured with the old
+ * wording. Byte-for-byte from QWEN_INSTRUCT in
+ * ctxengine/src/ctxengine/encoders.py, C++ substituted. Note the single
+ * '\n' and the TRAILING SPACE after "Query:".
+ *
+ * Three ways this string gets mistyped, all of which the digest below
+ * catches: the Python literal breaks after "retrieve " and that trailing
+ * space is easy to drop; the fenced copy in NEXT-STEPS.md §2.1 carries a
+ * trailing LF that is NOT part of the prefix; and the model's own
+ * config_sentence_transformers.json ships a DIFFERENT query prompt
+ * (web-search wording, no trailing space) that sentence-transformers
+ * would apply if anyone passed prompt_name="query" — ctxengine never
+ * does, and neither may we. */
+static const char *const CPP_INSTRUCT_PREFIX_OF_RECORD =
+    "Instruct: Given a natural-language description of C++ code, retrieve the declaration it "
+    "describes.\nQuery: ";
+
+/* The measurement's fingerprint. A reworded prefix fails on a hex digest
+ * rather than on a diff a reader might wave through as cosmetic. */
+static const char *const CPP_INSTRUCT_PREFIX_SHA256 =
+    "1b2d49e978aa45fc06def4d9a7ed4734a6eb1f3fd1f2fca41a36b07b05f379ac";
+
+enum { CPP_INSTRUCT_PREFIX_LEN = 106 };
+
+TEST(ask_prefix_cpp_is_byte_exact) {
+    ASSERT_STR_EQ(hyp_language_prompt_name(HYP_LANG_CPP), "C++");
+
+    char buf[HYP_ASK_PREFIX_MAX];
+    int n = hyp_ask_render_instruct_prefix(HYP_LANG_CPP, buf, sizeof(buf));
+    ASSERT_EQ(n, CPP_INSTRUCT_PREFIX_LEN);
+    ASSERT_EQ(n, (int)strlen(CPP_INSTRUCT_PREFIX_OF_RECORD));
+    ASSERT_STR_EQ(buf, CPP_INSTRUCT_PREFIX_OF_RECORD);
+
+    /* No trailing newline; exactly one LF, immediately before "Query: ". */
+    ASSERT_EQ(buf[n - 1], ' ');
+    ASSERT_NOT_NULL(strstr(buf, "describes.\nQuery: "));
+    ASSERT_NULL(strchr(strchr(buf, '\n') + 1, '\n'));
+
+    char hex[HYP_SHA256_HEX_LEN + 1];
+    hyp_sha256_hex(buf, (size_t)n, hex);
+    ASSERT_STR_EQ(hex, CPP_INSTRUCT_PREFIX_SHA256);
+    PASS();
+}
+
+/* ctxengine's suffix map lumps .c into its cpp bucket, because it has one
+ * hardcoded C++ prefix and a file filter rather than a language map — "C"
+ * was never an option it could express. Hyponoia does NOT follow it: the
+ * tree-sitter pass really does parse .c with the C grammar and tag it
+ * HYP_LANG_C, and this map's job is to name what the parser did, not to
+ * relabel it. Note .h maps to C++ here (language.c EXT_TABLE), so the
+ * pinned lld/ELF corpus — .cpp and .h — renders "C++" throughout and the
+ * divergence costs nothing there. */
+TEST(ask_prefix_c_is_not_cpp) {
+    ASSERT_EQ(hyp_language_for_extension(".c"), HYP_LANG_C);
+    ASSERT_STR_EQ(hyp_language_prompt_name(HYP_LANG_C), "C");
+    ASSERT_EQ(hyp_language_for_extension(".h"), HYP_LANG_CPP);
+    ASSERT_EQ(hyp_language_for_extension(".cpp"), HYP_LANG_CPP);
+    ASSERT_STR_EQ(hyp_language_prompt_name(HYP_LANG_CPP), "C++");
+    PASS();
+}
+
+/* The three §2.1 names verbatim, plus the ones whose grammar id is most
+ * likely to leak through a hand-written map. Each also asserts the id
+ * spelling is NOT what comes out, so a future change to LANG_NAMES that
+ * "simplifies" a name to its id fails here. */
+TEST(ask_prefix_names_are_not_grammar_ids) {
+    ASSERT_STR_EQ(hyp_language_prompt_name(HYP_LANG_CPP), "C++");
+    ASSERT_STR_NEQ(hyp_language_prompt_name(HYP_LANG_CPP), "cpp");
+    ASSERT_STR_EQ(hyp_language_prompt_name(HYP_LANG_CSHARP), "C#");
+    ASSERT_STR_NEQ(hyp_language_prompt_name(HYP_LANG_CSHARP), "csharp");
+    /* .tsx is TypeScript with JSX syntax; §2.1 names this mapping. */
+    ASSERT_STR_EQ(hyp_language_prompt_name(HYP_LANG_TSX), "TypeScript");
+    ASSERT_STR_NEQ(hyp_language_prompt_name(HYP_LANG_TSX), "tsx");
+    ASSERT_STR_EQ(hyp_language_prompt_name(HYP_LANG_OBJC), "Objective-C");
+    ASSERT_STR_EQ(hyp_language_prompt_name(HYP_LANG_COMMONLISP), "Common Lisp");
+    ASSERT_STR_EQ(hyp_language_prompt_name(HYP_LANG_FSHARP), "F#");
+    ASSERT_STR_EQ(hyp_language_prompt_name(HYP_LANG_BASH), "Bash");
+    ASSERT_STR_EQ(hyp_language_prompt_name(HYP_LANG_TYPESCRIPT), "TypeScript");
+    /* Collapsed dialects/formats: the suffix names the file, not the
+     * language a developer would name in a sentence. */
+    ASSERT_STR_EQ(hyp_language_prompt_name(HYP_LANG_OBJECTSCRIPT_UDL), "ObjectScript");
+    ASSERT_STR_EQ(hyp_language_prompt_name(HYP_LANG_OBJECTSCRIPT_ROUTINE), "ObjectScript");
+    ASSERT_STR_EQ(hyp_language_prompt_name(HYP_LANG_OBJECTSCRIPT_EXPORT), "ObjectScript");
+    PASS();
+}
+
+/* The exhaustiveness gate. Language 164 added without a name breaks HERE
+ * (and, before that, at the HYP_LANG_NAMED_COUNT pin in language.c) rather
+ * than shipping an `ask` lane that silently refuses on that language. */
+TEST(lang_all_have_prompt_names) {
+    for (int i = 0; i < HYP_LANG_COUNT; i++) {
+        const char *name = hyp_language_prompt_name((HYPLanguage)i);
+        ASSERT_NOT_NULL(name);
+        ASSERT_TRUE(name[0] != '\0');
+        ASSERT_STR_NEQ(name, "Unknown");
+
+        /* Every registered language must render a complete prefix. */
+        char buf[HYP_ASK_PREFIX_MAX];
+        int n = hyp_ask_render_instruct_prefix((HYPLanguage)i, buf, sizeof(buf));
+        ASSERT_GT(n, 0);
+        ASSERT_EQ(n, (int)strlen(buf));
+        ASSERT_NOT_NULL(strstr(buf, name));
+        /* Never emit a half-substituted or empty slot. */
+        ASSERT_NULL(strstr(buf, "%s"));
+        ASSERT_NULL(strstr(buf, "of  code"));
+    }
+    PASS();
+}
+
+/* An unnameable language must not produce a prefix at all. "Unknown" or a
+ * raw grammar id would be a well-formed prompt that no measurement covers. */
+TEST(ask_prefix_refuses_unknown_language) {
+    ASSERT_NULL(hyp_language_prompt_name(HYP_LANG_COUNT));
+    ASSERT_NULL(hyp_language_prompt_name((HYPLanguage)(HYP_LANG_COUNT + 1)));
+
+    char buf[HYP_ASK_PREFIX_MAX];
+    memset(buf, 'x', sizeof(buf));
+    ASSERT_EQ(hyp_ask_render_instruct_prefix(HYP_LANG_COUNT, buf, sizeof(buf)), HYP_NOT_FOUND);
+    ASSERT_STR_EQ(buf, "");
+    ASSERT_EQ(hyp_ask_render_instruct_prefix(HYP_LANG_CPP, NULL, sizeof(buf)), HYP_NOT_FOUND);
+    PASS();
+}
+
+/* Truncation is the same failure wearing a different hat: a prefix cut
+ * mid-sentence still reads as a prompt. Refuse, and leave nothing usable. */
+TEST(ask_prefix_refuses_truncation) {
+    char small[HYP_SZ_16];
+    ASSERT_EQ(hyp_ask_render_instruct_prefix(HYP_LANG_CPP, small, sizeof(small)), HYP_NOT_FOUND);
+    ASSERT_STR_EQ(small, "");
+    PASS();
+}
+
 /* ── Suite ─────────────────────────────────────────────────────── */
 
 SUITE(language) {
@@ -1295,4 +1442,12 @@ SUITE(language) {
     RUN_TEST(lang_ext_sosl);
 
     RUN_TEST(lang_all_have_names);
+
+    /* `ask` instruct prefix (§2.1) */
+    RUN_TEST(ask_prefix_cpp_is_byte_exact);
+    RUN_TEST(ask_prefix_c_is_not_cpp);
+    RUN_TEST(ask_prefix_names_are_not_grammar_ids);
+    RUN_TEST(lang_all_have_prompt_names);
+    RUN_TEST(ask_prefix_refuses_unknown_language);
+    RUN_TEST(ask_prefix_refuses_truncation);
 }
