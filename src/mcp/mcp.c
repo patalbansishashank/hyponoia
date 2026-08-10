@@ -57,6 +57,7 @@ enum {
 #include "pipeline/pass_cross_repo.h"
 #include "git/git_context.h"
 #include "cli/cli.h"
+#include "cli/model_fetch.h"
 #include "watcher/watcher.h"
 #include "foundation/mem.h"
 #include "foundation/diagnostics.h"
@@ -3868,6 +3869,8 @@ static const char *ask_reason_token(hyp_ask_avail_t a) {
         return "no_semantic_index";
     case HYP_ASK_MODEL_MISMATCH:
         return "model_mismatch";
+    case HYP_ASK_NO_WEIGHTS:
+        return "model_not_fetched";
     case HYP_ASK_AVAILABLE:
     default:
         return "available";
@@ -3880,6 +3883,12 @@ static const char *ask_reason_token(hyp_ask_avail_t a) {
 static void ask_unavailable_text(const hyp_ask_status_t *st, const char *project, char *detail,
                                  size_t detail_len, char *remedy, size_t remedy_len) {
     switch (st->avail) {
+    case HYP_ASK_NO_WEIGHTS:
+        /* Rendered by the fetcher, with the RESOLVED path, so a user with
+         * HYP_CACHE_DIR set is told the truth about their own machine — and
+         * so the exact `rm` command that undoes it appears in the remedy. */
+        hyp_model_unavailable_text(project, detail, detail_len, remedy, remedy_len);
+        break;
     case HYP_ASK_NO_BACKEND:
         snprintf(detail, detail_len,
                  "this build has no embedding backend linked, so a question cannot be turned "
@@ -4115,6 +4124,17 @@ static char *handle_ask(hyp_mcp_server_t *srv, const char *args) {
 
     hyp_ask_status_t st;
     hyp_ask_index_status(store, project, &st);
+    /* THE WEIGHTS, BEFORE THE INDEX. hyp_ask_index_status answers about the
+     * store and the linked encoder; whether that encoder's 639 MB of weights
+     * are on disk is the fetcher's question and is asked here, where the CLI
+     * layer is already reachable. Order matters: someone with neither weights
+     * nor index must be told to fetch the model, because the embed pass that
+     * builds the index is the thing that needs it. */
+    if (st.avail == HYP_ASK_NO_INDEX || st.avail == HYP_ASK_AVAILABLE) {
+        if (!hyp_model_ask_present()) {
+            st.avail = HYP_ASK_NO_WEIGHTS;
+        }
+    }
     if (st.avail != HYP_ASK_AVAILABLE) {
         char *result = ask_emit_unavailable(&st, project, json);
         free(project);

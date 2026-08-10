@@ -32,6 +32,7 @@
 #include "mcp/mcp.h"
 #include "mcp/index_supervisor.h"
 #include "ask/ask_cmd.h"
+#include "ask/ask_llama.h"
 #include "cli/cli.h"
 #include "cli/model_fetch.h"
 #include "cli/progress_sink.h"
@@ -2389,6 +2390,17 @@ int main(int argc, char **argv) {
     hyp_cli_set_version(HYP_VERSION);
     hyp_profile_init();
     hyp_log_init_from_env();
+
+    /* Register the `ask` lane's query encoder. This is a VTABLE INSTALL, not a
+     * model load: the 639 MB of weights are opened on the first encode_query
+     * and never by a process that does not ask one. Installing unconditionally
+     * is what makes hyp_ask_backend() non-NULL, which is what moves the lane's
+     * unavailable cause off `no_encoder` — a claim about the BUILD — and onto
+     * the causes that are about this machine and this project.
+     *
+     * In a build without the runtime this is a no-op and hyp_ask_backend()
+     * stays NULL, which is the correct answer for that binary. */
+    (void)hyp_ask_llama_backend_install();
 
     hyp_mcp_tool_profile_t tool_profile = HYP_MCP_TOOL_PROFILE_ALL;
     if (role == HYP_DAEMON_PROCESS_MCP_CLIENT &&

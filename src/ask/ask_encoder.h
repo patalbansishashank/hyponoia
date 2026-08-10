@@ -45,7 +45,16 @@
  * Assert it; never silently re-normalise on load. A row that fails this was
  * produced by a caller with a different convention, and quietly fixing it would
  * turn wrong scores into plausible ones. */
+/* Also spelled in src/semantic/ask_embed.h, which is the `ask` TOOL's copy of
+ * the same seam-level constant. The two headers were written on separate
+ * branches and no translation unit included both until the llama.cpp backend
+ * did, at which point -Werror found that they disagree in TYPE (1e-2F here,
+ * 0.01 there) while agreeing in value. Guarded rather than duplicated, and
+ * tests/test_ask_batch.c asserts they still agree — a constant that can drift
+ * between two headers is a constant that will. */
+#ifndef HYP_ASK_NORM_TOLERANCE
 #define HYP_ASK_NORM_TOLERANCE 1e-2F
+#endif
 
 /* The dimension §2.1's model emits. Recorded per index rather than compiled in
  * as a hard assumption — a store whose dim does not match the live encoder is

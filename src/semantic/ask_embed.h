@@ -62,7 +62,16 @@ enum {
  * (an unnormalised vector deviates by ~0.5 or ~1.0). Two orders of magnitude
  * separate the accepted band from the failure band, which is what makes this
  * a check rather than a coin flip. */
+/* Also spelled in src/ask/ask_encoder.h — the same seam-level constant, on
+ * the other side of the same lane. The two were written on separate branches
+ * and no translation unit included both until src/ask/ask_llama.c did, which
+ * is when -Werror found they differ in TYPE (0.01 here, 1e-2F there) while
+ * agreeing in value. Both are guarded and tests/test_ask_batch.c asserts they
+ * still agree: a constant living in two headers is a constant that will drift.
+ */
+#ifndef HYP_ASK_NORM_TOLERANCE
 #define HYP_ASK_NORM_TOLERANCE 0.01
+#endif
 
 /* ── The backend vtable ──────────────────────────────────────────────
  *

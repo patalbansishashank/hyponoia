@@ -281,6 +281,29 @@ bool hyp_ask_kv_plan(int n_seq_max, int seq_len, double ceiling_mib, hyp_ask_kv_
     return out->admissible;
 }
 
+int hyp_ask_ubatch_for(int n_batch, int seq_len) {
+    if (n_batch < 1) {
+        return 1;
+    }
+    if (seq_len < 1) {
+        seq_len = 1;
+    }
+    /* Largest power of two <= n_batch whose rectangle against seq_len fits.
+     * Walking down from n_batch rather than solving and rounding keeps the
+     * "powers of two only" property exact for a non-power-of-two n_batch. */
+    int ub = 1;
+    while (ub * 2 <= n_batch) {
+        ub *= 2;
+    }
+    while (ub > 1 && (int64_t)ub * (int64_t)seq_len > (int64_t)HYP_ASK_UBATCH_SLOT_LIMIT) {
+        ub /= 2;
+    }
+    if (ub > n_batch) {
+        ub = n_batch;
+    }
+    return ub;
+}
+
 int hyp_ask_seq_len_for_kv(int n_seq_max, double ceiling_mib) {
     if (n_seq_max < 1 || ceiling_mib <= HYP_ASK_LLAMA_FIXED_MIB) {
         return 0;

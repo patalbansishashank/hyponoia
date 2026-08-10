@@ -11,6 +11,18 @@
 
 #include "ask/ask_batch.h"
 
+/* BOTH sides of the lane define the norm tolerance, in two headers written on
+ * two branches, and they agreed only by luck until src/ask/ask_llama.c became
+ * the first translation unit to include both. Capture each header's value and
+ * compare them, rather than trusting that two literals stay equal. The #undef
+ * is what makes the second header's guarded definition take effect here — it
+ * is the mechanism under test, exercised. */
+#include "ask/ask_encoder.h"
+static const double ASK_ENCODER_SIDE_TOLERANCE = HYP_ASK_NORM_TOLERANCE;
+#undef HYP_ASK_NORM_TOLERANCE
+#include "semantic/ask_embed.h"
+static const double ASK_TOOL_SIDE_TOLERANCE = HYP_ASK_NORM_TOLERANCE;
+
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
@@ -379,6 +391,56 @@ TEST(ask_batch_gpu_ceiling_is_taken_from_free_not_total) {
     PASS();
 }
 
+/* ── n_ubatch, the second allocation knob ───────────────────────────
+ *
+ * Track 2's record names n_ctx and stops. Track 8 found the other edge: at
+ * n_ctx 32,768 the SAME KV arithmetic ran at 4,540 MB with n_ubatch 512 and
+ * was killed by the VRAM guard at 5,374 MB with n_ubatch 2,048. A pre-flight
+ * that bounds only n_ctx says ADMISSIBLE right up until the driver disagrees.
+ */
+TEST(ask_batch_ubatch_reproduces_every_measured_outcome) {
+    /* Track 8's three passes, in its own order. */
+    ASSERT_EQ(hyp_ask_ubatch_for(8192, 2304), 4096);  /* P1: T8 ran 8192, clean */
+    ASSERT_EQ(hyp_ask_ubatch_for(8192, 8192), 2048);  /* P2: T8 ran 2048, clean */
+    ASSERT_EQ(hyp_ask_ubatch_for(32768, 32768), 512); /* P3: 2048 was KILLED */
+
+    /* The rectangle, not the micro-batch alone, is what is bounded. */
+    ASSERT(hyp_ask_ubatch_for(32768, 32768) * 32768 <= HYP_ASK_UBATCH_SLOT_LIMIT);
+    ASSERT(hyp_ask_ubatch_for(8192, 8192) * 8192 <= HYP_ASK_UBATCH_SLOT_LIMIT);
+
+    /* Powers of two only: llama.cpp chunks the batch and a ragged tail buys
+     * nothing. */
+    for (int seq = 128; seq <= 32768; seq *= 2) {
+        int ub = hyp_ask_ubatch_for(8192, seq);
+        ASSERT((ub & (ub - 1)) == 0);
+        ASSERT(ub >= 1);
+    }
+    PASS();
+}
+
+TEST(ask_batch_ubatch_never_exceeds_the_batch_and_never_reaches_zero) {
+    /* A single token must always be encodable, whatever shape it arrives in —
+     * the alternative is a document that cannot be indexed at all, and the one
+     * thing this lane must never do is drop a row. */
+    ASSERT_EQ(hyp_ask_ubatch_for(1, HYP_ASK_MODEL_WINDOW), 1);
+    ASSERT_EQ(hyp_ask_ubatch_for(0, 512), 1);
+    ASSERT_EQ(hyp_ask_ubatch_for(300, 512), 256);
+    ASSERT(hyp_ask_ubatch_for(64, 32768) <= 64);
+    PASS();
+}
+
+/* Both sides of the lane carry the norm tolerance, in two headers written on
+ * two branches. They agreed by luck until src/ask/ask_llama.c included both
+ * and -Werror reported a redefinition. This asserts the agreement instead. */
+TEST(ask_batch_norm_tolerance_agrees_across_both_seams) {
+    ASSERT(fabs(ASK_ENCODER_SIDE_TOLERANCE - ASK_TOOL_SIDE_TOLERANCE) < 1e-12);
+    /* And that the value is the MEASURED one: 1e-3 was set from intuition and
+     * rejects about half of real model output (worst deviation over 220
+     * encodings was 0.003819). */
+    ASSERT(fabs(ASK_TOOL_SIDE_TOLERANCE - 0.01) < 1e-12);
+    PASS();
+}
+
 SUITE(ask_batch) {
     RUN_TEST(ask_batch_empty_is_zero_groups);
     RUN_TEST(ask_batch_returns_a_permutation_of_original_indices);
@@ -395,4 +457,7 @@ SUITE(ask_batch) {
     RUN_TEST(ask_batch_kv_arithmetic_matches_every_measured_configuration);
     RUN_TEST(ask_batch_kv_preflight_refuses_before_allocating);
     RUN_TEST(ask_batch_gpu_ceiling_is_taken_from_free_not_total);
+    RUN_TEST(ask_batch_ubatch_reproduces_every_measured_outcome);
+    RUN_TEST(ask_batch_ubatch_never_exceeds_the_batch_and_never_reaches_zero);
+    RUN_TEST(ask_batch_norm_tolerance_agrees_across_both_seams);
 }

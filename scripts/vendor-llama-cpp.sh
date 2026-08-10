@@ -66,7 +66,7 @@ mkdir -p "$DST"
 
 # Paths to take, resolved against the pinned tree.
 git -C "$SRC" ls-tree -r --name-only "$PIN" \
-  | grep -E '^(ggml/include/.*\.(h|hpp)|ggml/src/[^/]+\.(c|cpp|h|hpp)|ggml/src/ggml-cpu/.*\.(c|cpp|h|hpp)|src/.*\.(c|cpp|h|hpp)|include/llama(-cpp)?\.h|ggml/src/ggml-vulkan/ggml-vulkan\.cpp|ggml/src/ggml-vulkan/vulkan-shaders/.*\.(comp|cpp|h)|LICENSE)$' \
+  | grep -E '^(ggml/include/.*\.(h|hpp)|ggml/src/[^/]+\.(c|cpp|h|hpp)|ggml/src/ggml-cpu/.*\.(c|cpp|h|hpp)|src/.*\.(c|cpp|h|hpp)|include/llama(-cpp)?\.h|ggml/src/ggml-vulkan/ggml-vulkan\.cpp|ggml/src/ggml-vulkan/vulkan-shaders/.*\.(comp|glsl|cpp|h)|LICENSE)$' \
   | grep -v '^ggml/src/ggml-cpu/spacemit/' \
   | while IFS= read -r f; do
         mkdir -p "$DST/$(dirname "$f")"

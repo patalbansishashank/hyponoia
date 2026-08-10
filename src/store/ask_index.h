@@ -65,6 +65,16 @@ typedef enum {
     HYP_ASK_NO_BACKEND,     /* no encoder linked into this binary */
     HYP_ASK_NO_INDEX,       /* this project has never been embedded */
     HYP_ASK_MODEL_MISMATCH, /* vectors exist, made by a different model/dim */
+    /* The encoder IS linked but its weights are not on this machine. Fetched
+     * on first use of this lane, 639 MB at Q8_0, SHA-256 verified against a
+     * constant compiled into the binary (src/cli/model_fetch.h).
+     *
+     * Genuinely distinct from NO_BACKEND, which is about the BUILD and whose
+     * remedy is a different binary; this one is one command away. And it is
+     * checked BEFORE NO_INDEX on purpose: building the semantic index is what
+     * needs the model, so telling someone with neither to build an index
+     * first sends them round a loop they cannot leave. */
+    HYP_ASK_NO_WEIGHTS,
 } hyp_ask_avail_t;
 
 /* Truncation has THREE states and collapsing the first two is how a graph

@@ -188,6 +188,42 @@ typedef struct {
     bool admissible;    /* false = REFUSE, do not attempt */
 } hyp_ask_kv_plan_t;
 
+/* ── n_ubatch: the SECOND allocation knob ───────────────────────────
+ *
+ * `n_ctx` bounds the KV cache. It does NOT bound the compute buffer, which
+ * scales with the micro-batch — and the micro-batch is a separate parameter
+ * that track 2's record never names, because every configuration it measured
+ * happened to be safe.
+ *
+ * Track 8 found the other case. At n_ctx 32,768 with n_ubatch 2,048 a run
+ * reached 5,374 MB attributable and the VRAM guard killed it. KV alone is
+ * 3,584 MB there, so the compute buffer was ~1,790 MB. The SAME arithmetic at
+ * n_ubatch 512 completed clean at 4,540 MB — a ~830 MB swing from a parameter
+ * nothing in the KV pre-flight looks at. Bound n_ctx only and the pre-flight
+ * says ADMISSIBLE right up until the driver disagrees.
+ *
+ * The rule below bounds the RECTANGLE n_ubatch x seq_len, because that is what
+ * the attention compute buffer is shaped like: for each of the ubatch's tokens
+ * the backend materialises scores against the sequence's whole context. The
+ * limit is the largest such rectangle track 8 ran clean — 512 x 32,768. It
+ * reproduces every outcome that run recorded:
+ *
+ *   seq_len  2,304  n_batch 8,192  -> 4,096  (T8 ran 8,192, clean; we are
+ *                                             one step more conservative)
+ *   seq_len  8,192  n_batch 8,192  -> 2,048  (T8 ran 2,048, clean)
+ *   seq_len 32,768  n_batch 32,768 ->   512  (T8's 2,048 was KILLED here;
+ *                                             512 completed)
+ *
+ * Powers of two only: llama.cpp splits a batch into ubatch-sized chunks and a
+ * ragged final chunk buys nothing.
+ */
+#define HYP_ASK_UBATCH_SLOT_LIMIT (512 * 32768)
+
+/* The largest admissible n_ubatch for a context of `seq_len` per sequence and
+ * `n_batch` tokens per decode. Never returns more than n_batch, never less
+ * than 1 (a single token must always be encodable, whatever the shape). */
+int hyp_ask_ubatch_for(int n_batch, int seq_len);
+
 /* Price a (n_seq_max, seq_len) pair against a VRAM ceiling.
  *
  * REFUSES rather than attempts. On a machine where the compute GPU is also the

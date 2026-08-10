@@ -11,6 +11,8 @@
 #include "ask/ask_batch.h"
 #include "ask/ask_embed.h"
 #include "ask/ask_encoder.h"
+#include "ask/ask_llama.h"
+#include "cli/model_fetch.h"
 #include "ask/ask_vectors.h"
 
 #include <stdbool.h>
@@ -255,33 +257,49 @@ int hyp_cmd_embed(int argc, char **argv) {
     if (status_only) {
         return ask_cmd_status(opts.project);
     }
-    if (!use_stub) {
-        /* Refusing is the right answer here. The inference runtime is a
-         * separate piece of work; guessing one, or silently falling back to the
-         * stub, would produce an index that looks real and retrieves nothing.
-         *
-         * When the backend lands this message splits in two, because the lane
-         * has two distinct unavailable states: the model has not been fetched
-         * (it is downloaded on first use of this lane, ~639 MB at Q8_0, SHA-256
-         * verified) versus the index has not been built. They have different
-         * remedies and must not share a sentence. */
+    /* THE TWO UNAVAILABLE STATES, SAID SEPARATELY. "No encoder in this build"
+     * is fixed by a different binary; "the weights are not on this machine" is
+     * fixed by one command. They have different remedies and must not share a
+     * sentence. */
+    if (!use_stub && !hyp_ask_llama_compiled_in()) {
         (void)fprintf(stderr,
-                      "embed: no inference backend is compiled in.\n"
-                      "  The document/query encoder is a separate track. Until it lands, the\n"
-                      "  only encoder available is the deterministic stub — pass --stub to use\n"
-                      "  it. A stub index exercises the storage, the batching and the\n"
-                      "  truncation counter end to end and has NO retrieval quality.\n");
+                      "embed: no inference backend is compiled in (%s).\n"
+                      "  The only encoder this binary has is the deterministic stub — pass\n"
+                      "  --stub to use it. A stub index exercises the storage, the batching\n"
+                      "  and the truncation counter end to end and has NO retrieval quality.\n",
+                      hyp_ask_llama_build_note());
+        return 3;
+    }
+    if (!use_stub && !hyp_model_ask_present()) {
+        char detail[HYP_MODEL_MSG_MAX];
+        char remedy[HYP_MODEL_MSG_MAX];
+        hyp_model_unavailable_text(opts.project, detail, sizeof(detail), remedy, sizeof(remedy));
+        (void)fprintf(stderr, "embed: %s\n\n  %s\n", detail, remedy);
         return 3;
     }
 
     ask_report_device_plan(opts.device_pref);
 
-    hyp_ask_encoder_t *enc =
-        hyp_ask_encoder_stub_create(HYP_ASK_DIM_DEFAULT, HYP_ASK_MODEL_WINDOW,
-                                    stub_reports_truncation);
-    if (!enc) {
-        (void)fprintf(stderr, "embed: could not create the stub encoder\n");
-        return 1;
+    hyp_ask_encoder_t *enc = NULL;
+    if (use_stub) {
+        enc = hyp_ask_encoder_stub_create(HYP_ASK_DIM_DEFAULT, HYP_ASK_MODEL_WINDOW,
+                                          stub_reports_truncation);
+        if (!enc) {
+            (void)fprintf(stderr, "embed: could not create the stub encoder\n");
+            return 1;
+        }
+    } else {
+        char err[512];
+        err[0] = '\0';
+        enc = hyp_ask_llama_encoder_create(opts.device_pref, err, sizeof(err));
+        if (!enc) {
+            /* A refusal is an outcome, not a crash: --device gpu that cannot
+             * be honoured says so here rather than running fifteen times
+             * slower and looking like a success. */
+            (void)fprintf(stderr, "embed: %s\n",
+                          err[0] ? err : "the embedding backend could not be started");
+            return 1;
+        }
     }
 
     hyp_ask_embed_report_t rep;
