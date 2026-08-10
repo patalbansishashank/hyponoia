@@ -7,6 +7,7 @@
 
 #include "ask/ask_embed.h"
 #include "ask/ask_batch.h"
+#include "ask/ask_doctext.h"
 #include "ask/ask_vectors.h"
 #include "discover/discover.h"
 #include "foundation/compat.h"
@@ -93,10 +94,8 @@ void hyp_ask_content_hash(const char *text, char *out) {
 
 /* ── Reading the span ──────────────────────────────────────────── */
 
-char *hyp_ask_read_span(const char *abs_path, int start, int end) {
-    if (!abs_path || start < 1 || end < start) {
-        return NULL;
-    }
+/* The whole file, NUL-terminated. `*out_len` is the byte count. */
+static char *ae_slurp(const char *abs_path, size_t *out_len) {
     FILE *fp = hyp_fopen(abs_path, "rb");
     if (!fp) {
         return NULL;
@@ -118,7 +117,11 @@ char *hyp_ask_read_span(const char *abs_path, int start, int end) {
     size_t got = fread(buf, 1, (size_t)size, fp);
     (void)fclose(fp);
     buf[got] = '\0';
+    *out_len = got;
+    return buf;
+}
 
+static char *ae_slice(const char *buf, size_t got, int start, int end) {
     /* Walk to the first byte of `start`. Lines are separated by '\n' — which is
      * how tree-sitter counted them when it produced start_line/end_line, so it
      * is the only split that keeps the slice and the line numbers in step. */
@@ -131,7 +134,6 @@ char *hyp_ask_read_span(const char *abs_path, int start, int end) {
         i++;
     }
     if (line < start) {
-        free(buf);
         return NULL; /* the span starts past the end of the file */
     }
     size_t from = i;
@@ -149,7 +151,6 @@ char *hyp_ask_read_span(const char *abs_path, int start, int end) {
     size_t span = to - from;
     char *out = malloc(span + 1);
     if (!out) {
-        free(buf);
         return NULL;
     }
     /* Copy, dropping a '\r' that immediately precedes a '\n'. Joining with
@@ -167,7 +168,75 @@ char *hyp_ask_read_span(const char *abs_path, int start, int end) {
         w--;
     }
     out[w] = '\0';
+    return out;
+}
+
+char *hyp_ask_read_span(const char *abs_path, int start, int end) {
+    if (!abs_path || start < 1 || end < start) {
+        return NULL;
+    }
+    size_t got = 0;
+    char *buf = ae_slurp(abs_path, &got);
+    if (!buf) {
+        return NULL;
+    }
+    char *out = ae_slice(buf, got, start, end);
     free(buf);
+    return out;
+}
+
+char *hyp_ask_document_text(const char *abs_path, HYPLanguage lang, hyp_ask_compose_t compose,
+                            const char *label, const char *qualified_name, const char *project,
+                            const char *rel_path, int start, int end, int *comment_lines_out) {
+    if (comment_lines_out) {
+        *comment_lines_out = 0;
+    }
+    if (!abs_path || start < 1 || end < start) {
+        return NULL;
+    }
+    size_t got = 0;
+    char *buf = ae_slurp(abs_path, &got);
+    if (!buf) {
+        return NULL;
+    }
+    /* The comment is taken by EXTENDING THE SPAN UPWARD, not by splicing a
+     * second string in. Everything below the header line is therefore still
+     * one contiguous slice of the file, which is what makes this a bigger
+     * span rather than a synthesised document. */
+    int first = start;
+    if (compose & HYP_ASK_COMPOSE_COMMENT) {
+        first = hyp_ask_leading_comment_start(buf, lang, start);
+        if (first < 1 || first > start) {
+            first = start; /* defensive: the scan may only ever go up */
+        }
+    }
+    char *src = ae_slice(buf, got, first, end);
+    free(buf);
+    if (!src) {
+        return NULL;
+    }
+    if (comment_lines_out) {
+        *comment_lines_out = start - first;
+    }
+    if (!(compose & HYP_ASK_COMPOSE_HEADER)) {
+        return src;
+    }
+    char head[HYP_ASK_DOC_HEADER_MAX];
+    size_t hn = hyp_ask_header_line(head, sizeof(head), lang, label, qualified_name, project,
+                                    rel_path);
+    if (hn == 0) {
+        return src;
+    }
+    size_t sn = strlen(src);
+    char *out = malloc(hn + 1 + sn + 1);
+    if (!out) {
+        free(src);
+        return NULL;
+    }
+    memcpy(out, head, hn);
+    out[hn] = '\n';
+    memcpy(out + hn + 1, src, sn + 1);
+    free(src);
     return out;
 }
 
@@ -498,6 +567,8 @@ int hyp_ask_embed_run(const hyp_ask_encoder_t *enc, const hyp_ask_embed_opts_t *
 
     int budget = opts->token_budget > 0 ? opts->token_budget : HYP_ASK_TOKEN_BUDGET;
     int max_docs = opts->max_docs > 0 ? opts->max_docs : HYP_ASK_MAX_DOCS;
+    hyp_ask_compose_t compose = opts->compose;
+    rep.compose = compose;
 
     ae_window_t win;
     memset(&win, 0, sizeof(win));
@@ -546,10 +617,23 @@ int hyp_ask_embed_run(const hyp_ask_encoder_t *enc, const hyp_ask_embed_opts_t *
             rep.skipped_unreadable++;
             continue;
         }
-        char *text = hyp_ask_read_span(abs_path, start_line, end_line);
+        /* The grammar id, derived from the path. Needed BEFORE the text is
+         * built now, because the comment scan is language-specific — a
+         * language whose comment syntax is not in the table contributes no
+         * leading comment, which is exactly the pre-§2.2 behaviour. */
+        const char *base = strrchr(rel, '/');
+        HYPLanguage lang = hyp_language_for_filename(base ? base + 1 : rel);
+
+        int comment_lines = 0;
+        char *text = hyp_ask_document_text(abs_path, lang, compose, label, qn, opts->project, rel,
+                                           start_line, end_line, &comment_lines);
         if (!text) {
             rep.skipped_unreadable++;
             continue;
+        }
+        if (comment_lines > 0) {
+            rep.with_leading_comment++;
+            rep.comment_lines += comment_lines;
         }
 
         if (keep_count >= keep_cap) {
@@ -626,8 +710,7 @@ int hyp_ask_embed_run(const hyp_ask_encoder_t *enc, const hyp_ask_embed_opts_t *
          * map the query prefix needs is track 5's and is deliberately not
          * duplicated here; the document side is encoded BARE and has no use for
          * it. */
-        const char *base = strrchr(rel, '/');
-        doc.lang = ae_strdup(hyp_language_name(hyp_language_for_filename(base ? base + 1 : rel)));
+        doc.lang = ae_strdup(hyp_language_name(lang));
         doc.node_id = node_id;
         doc.start_line = start_line;
         doc.end_line = end_line;

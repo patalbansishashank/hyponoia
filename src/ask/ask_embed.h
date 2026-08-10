@@ -41,14 +41,28 @@
  * or the two effects — a bigger haystack and newly-available gold — will be
  * summed into one number that says nothing.
  *
- * The text is the verbatim source lines start_line..end_line joined with '\n'.
- * Lines are split on '\n' with a trailing '\r' removed, which is what
- * tree-sitter counts lines by. (The reference implementation uses Python's
- * str.splitlines(), which ALSO splits on \v, \f and \x1c-\x1e — so a source
- * file containing a form-feed page break would make its slice disagree with the
- * line numbers tree-sitter produced. There are none in the pinned corpus, so
- * this changes no recorded number; it is recorded here because it is a latent
- * divergence, not a deliberate one.)
+ * The text is the source lines first_line..end_line joined with '\n', with a
+ * one-line header prepended. Lines are split on '\n' with a trailing '\r'
+ * removed, which is what tree-sitter counts lines by. (The reference
+ * implementation uses Python's str.splitlines(), which ALSO splits on \v, \f
+ * and \x1c-\x1e — so a source file containing a form-feed page break would make
+ * its slice disagree with the line numbers tree-sitter produced. There are none
+ * in the pinned corpus, so this changes no recorded number; it is recorded here
+ * because it is a latent divergence, not a deliberate one.)
+ *
+ * `first_line` is start_line, EXTENDED UPWARD over the declaration's leading
+ * comment block. What that means and why the text unit moved away from the
+ * reference implementation's verbatim span is ask_doctext.h's subject; the
+ * short version is that §2.2's lever 1 found the best natural-language signal
+ * in a commented corpus sitting one line outside every node's range. The unit
+ * is selectable — `hyp_ask_compose_t`, --compose — so the pre-§2.2 unit is
+ * still reachable and the lever's delta is reproducible rather than a patch
+ * somebody has to re-apply.
+ *
+ * A COMPOSITION CHANGE NEEDS NO SCHEMA CHANGE AND CANNOT MIX. Reuse is keyed
+ * on the sha256 of the embedded text, so changing what the text is changes
+ * every hash and re-encodes every row; a store can never end up half one unit
+ * and half the other.
  */
 /* Guard is HYP_ASK_EMBED_PASS_H, not HYP_ASK_EMBED_H: src/semantic/ask_embed.h
  * — a DIFFERENT header, the tool's inference boundary — used the latter, and
@@ -60,6 +74,7 @@
 #ifndef HYP_ASK_EMBED_PASS_H
 #define HYP_ASK_EMBED_PASS_H
 
+#include "ask/ask_doctext.h"
 #include "ask/ask_encoder.h"
 
 #include <stdbool.h>
@@ -121,6 +136,11 @@ typedef struct {
     /* Stop after this many declarations. 0 = the whole corpus. For smoke runs;
      * an index built with a limit is a PARTIAL index and the report says so. */
     int limit;
+    /* What the embedded text is made of. HYP_ASK_COMPOSE_SOURCE (0) is the
+     * pre-§2.2 unit, which is also what a caller that zeroes this struct gets —
+     * deliberately, so that every existing caller and every existing test keeps
+     * the unit it was written against and has to ASK for the new one. */
+    hyp_ask_compose_t compose;
 } hyp_ask_embed_opts_t;
 
 typedef struct {
@@ -134,6 +154,16 @@ typedef struct {
      * this engine spends its effort preserving. */
     int64_t skipped_unreadable;
     int64_t pruned;
+    /* How much natural language the composition actually recovered. Reported
+     * because "we added the doc comments" is a claim about a corpus, not about
+     * the code: on a corpus with no comments these are zero and the lever is
+     * inert, and that is worth seeing before the recall number is puzzled over.
+     * Counted over declarations ENCODED this run — a reused row contributed
+     * its comment to an earlier run, not to this one. */
+    int64_t with_leading_comment;
+    int64_t comment_lines;
+    /* Echoed back so a report can never be read against the wrong unit. */
+    hyp_ask_compose_t compose;
     /* Batching cost, so a throughput change is visible without a stopwatch. */
     int64_t forward_passes;
     int64_t padded_slots;
@@ -181,6 +211,19 @@ int hyp_ask_embed_run(const hyp_ask_encoder_t *enc, const hyp_ask_embed_opts_t *
  * exactly gets embedded" is the one thing a port cannot afford to get subtly
  * wrong. */
 char *hyp_ask_read_span(const char *abs_path, int start, int end);
+
+/* The composed text of one declaration: the header line (when the composition
+ * asks for it), the leading comment block (likewise), and the span, in file
+ * order. Caller frees. NULL when the file cannot be read or `start` is past its
+ * end. `*comment_lines_out` receives how many lines the span was extended
+ * upward by, which is 0 whenever there was no comment to take.
+ *
+ * With HYP_ASK_COMPOSE_SOURCE this is hyp_ask_read_span and nothing else, byte
+ * for byte — the reference implementation's unit stays reachable, because
+ * every number recorded before §2.2 was measured on it. */
+char *hyp_ask_document_text(const char *abs_path, HYPLanguage lang, hyp_ask_compose_t compose,
+                            const char *label, const char *qualified_name, const char *project,
+                            const char *rel_path, int start, int end, int *comment_lines_out);
 
 /* sha256 of `text`, truncated to HYP_ASK_VEC_HASH_LEN hex chars. `out` must
  * hold HYP_ASK_VEC_HASH_LEN + 1 bytes. */

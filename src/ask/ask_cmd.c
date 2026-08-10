@@ -46,6 +46,14 @@ static void ask_embed_usage(void) {
            "  --limit <n>            Stop after n declarations (partial index).\n"
            "  --budget <slots>       Padded-slot ceiling per forward pass (default %d).\n"
            "  --max-docs <n>         Documents per forward pass (default %d).\n"
+           "  --compose <unit>       What text gets embedded. Default `full`.\n"
+           "                           full    header line + leading doc comment + source\n"
+           "                           comment leading doc comment + source\n"
+           "                           header  header line + source\n"
+           "                           source  source lines only — the pre-2.2 unit every\n"
+           "                                   number before this change was measured on\n"
+           "                         Changing it re-encodes every declaration, because the\n"
+           "                         reuse key is a hash of the text that changed.\n"
            "  --device auto|gpu|cpu  Which device to encode on. Default auto: GPU when\n"
            "                         one can be used safely, else CPU. `gpu` refuses\n"
            "                         rather than falling back silently.\n"
@@ -196,6 +204,11 @@ static void ask_report_device_plan(hyp_ask_device_pref_t pref) {
 int hyp_cmd_embed(int argc, char **argv) {
     hyp_ask_embed_opts_t opts;
     memset(&opts, 0, sizeof(opts));
+    /* THE PRODUCT'S DEFAULT, set here and nowhere else. The library's default
+     * is the reference implementation's unit (a zeroed opts struct), so that
+     * no caller silently changes what it embeds; the command that a user runs
+     * asks for the composition §2.2 measured. */
+    opts.compose = HYP_ASK_COMPOSE_FULL;
     bool status_only = false;
     bool use_stub = false;
     bool stub_reports_truncation = true;
@@ -236,6 +249,15 @@ int hyp_cmd_embed(int argc, char **argv) {
                 opts.device_pref = HYP_ASK_DEVICE_AUTO;
             } else {
                 (void)fprintf(stderr, "embed: --device must be auto, gpu or cpu (got '%s')\n", d);
+                return 2;
+            }
+        } else if (strcmp(a, "--compose") == 0 && has_next) {
+            const char *c = argv[++i];
+            if (!hyp_ask_compose_parse(c, &opts.compose)) {
+                (void)fprintf(stderr,
+                              "embed: --compose must be source, header, comment or full "
+                              "(got '%s')\n",
+                              c);
                 return 2;
             }
         } else if (strcmp(a, "--stub") == 0) {
@@ -337,7 +359,8 @@ int hyp_cmd_embed(int argc, char **argv) {
      * real GPU run printed `stub/deterministic-hash-v1` over a real index —
      * a report that names the wrong model is worse than one that names none,
      * because provenance is the gate `ask` refuses a mixed index on. */
-    printf("embed: project=%s model=%s dim=%d window=%d\n", opts.project, model_id, dim, window);
+    printf("embed: project=%s model=%s dim=%d window=%d compose=%s\n", opts.project, model_id, dim,
+           window, hyp_ask_compose_name(rep.compose));
     /* First line of the result, not a footnote. Which device ran is the single
      * biggest determinant of what this cost. */
     printf("  DEVICE USED        %s\n", rep.device_note ? rep.device_note : "unreported");
@@ -351,6 +374,14 @@ int hyp_cmd_embed(int argc, char **argv) {
     printf("  reused (unchanged) %lld\n", (long long)rep.reused);
     printf("  unreadable spans   %lld\n", (long long)rep.skipped_unreadable);
     printf("  pruned (gone)      %lld\n", (long long)rep.pruned);
+    if (rep.compose & HYP_ASK_COMPOSE_COMMENT) {
+        printf("  with doc comment   %lld of %lld encoded  (%lld comment lines, %.1f avg)\n",
+               (long long)rep.with_leading_comment, (long long)rep.embedded,
+               (long long)rep.comment_lines,
+               rep.with_leading_comment
+                   ? (double)rep.comment_lines / (double)rep.with_leading_comment
+                   : 0.0);
+    }
     printf("  forward passes     %lld  (%.1f docs/pass)\n", (long long)rep.forward_passes,
            rep.forward_passes ? (double)rep.embedded / (double)rep.forward_passes : 0.0);
     printf("  padded slots       %lld  (largest single rectangle %lld)\n",
