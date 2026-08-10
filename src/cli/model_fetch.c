@@ -661,24 +661,20 @@ hyp_model_fetch_result_t hyp_model_fetch(const hyp_model_fetch_opts_t *opts) {
         return HYP_MODEL_FETCH_MKDIR_FAILED;
     }
 
-    /* A file at the final name that is not the artifact is in the way of the
-     * rename and cannot be resumed into. Say so, then clear it. */
-    if (probe.state == HYP_MODEL_WRONG_SIZE) {
-        (void)fprintf(stderr, "removing %s: %" PRId64 " bytes, not the pinned %" PRId64 "\n",
-                      probe.path, probe.bytes, (int64_t)HYP_MODEL_ASK_BYTES);
-        (void)hyp_unlink(probe.path);
-    }
-    /* An oversized .part cannot be resumed either — a byte range past the end
-     * of the object is a 416, not a download. Start it again. */
-    if (probe.part_bytes > HYP_MODEL_ASK_BYTES) {
-        (void)fprintf(stderr, "discarding an oversized partial download (%" PRId64 " bytes)\n",
-                      probe.part_bytes);
-        (void)hyp_unlink(probe.part_path);
-        probe.part_bytes = 0;
-    }
+    /* Two things may be in the way, and NEITHER is removed before consent:
+     * "declined" has to mean nothing happened, including nothing deleted.
+     * Decide here, act after the user says yes.
+     *
+     *   - a file at the final name that is not the artifact blocks the rename
+     *     and cannot be resumed into;
+     *   - a .part longer than the artifact cannot be resumed into either, since
+     *     a byte range past the end of the object is a 416, not a download. */
+    const bool clear_wrong_size = probe.state == HYP_MODEL_WRONG_SIZE;
+    const bool clear_oversized_part = probe.part_bytes > HYP_MODEL_ASK_BYTES;
+    int64_t resume_from = clear_oversized_part ? 0 : probe.part_bytes;
 
     int64_t free_mb = -1;
-    int64_t need = HYP_MODEL_ASK_BYTES - probe.part_bytes;
+    int64_t need = HYP_MODEL_ASK_BYTES - resume_from;
     if (!model_space_ok(dir, need, &free_mb)) {
         (void)fprintf(stderr, "%s\n  need ~%" PRId64 " MB free in %s, have %" PRId64 " MB\n",
                       hyp_model_fetch_result_text(HYP_MODEL_FETCH_NO_SPACE),
@@ -686,8 +682,29 @@ hyp_model_fetch_result_t hyp_model_fetch(const hyp_model_fetch_opts_t *opts) {
         return HYP_MODEL_FETCH_NO_SPACE;
     }
 
-    if (!model_confirm(o, probe.path, probe.part_bytes / MODEL_MB)) {
+    if (clear_wrong_size) {
+        (void)fprintf(stderr,
+                      "%s is %" PRId64 " bytes, not the pinned %" PRId64 " — it is not "
+                      "the pinned artifact and will be replaced.\n",
+                      probe.path, probe.bytes, (int64_t)HYP_MODEL_ASK_BYTES);
+    }
+    if (clear_oversized_part) {
+        (void)fprintf(stderr,
+                      "a partial download of %" PRId64 " bytes is LONGER than the artifact and "
+                      "cannot be resumed — it will be discarded and the download restarted.\n",
+                      probe.part_bytes);
+    }
+
+    if (!model_confirm(o, probe.path, resume_from / MODEL_MB)) {
         return HYP_MODEL_FETCH_DECLINED;
+    }
+
+    if (clear_wrong_size) {
+        (void)hyp_unlink(probe.path);
+    }
+    if (clear_oversized_part) {
+        (void)hyp_unlink(probe.part_path);
+        probe.part_bytes = 0;
     }
 
     int rc = model_transfer(HYP_MODEL_ASK_URL, probe.part_path, probe.part_bytes, o->quiet);

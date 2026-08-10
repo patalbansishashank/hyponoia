@@ -662,6 +662,40 @@ TEST(model_fetch_is_a_noop_when_present_unless_forced) {
 }
 #endif
 
+/* "Declined" must mean NOTHING happened — including nothing deleted. A wrong
+ * file in the way is named before the prompt and removed only after it. */
+TEST(model_fetch_deletes_nothing_when_consent_is_withheld) {
+#ifndef _WIN32
+    mf_begin();
+    hyp_model_probe_t probe;
+    hyp_model_ask_probe(&probe);
+    ASSERT(mf_write_file(probe.path, MF_MB, 'x'));
+    ASSERT(mf_set_size(probe.part_path, HYP_MODEL_ASK_BYTES + MF_MB));
+
+    mf_arm(0, -1, 0);
+    int saved = dup(0);
+    int devnull = open("/dev/null", O_RDONLY);
+    ASSERT_GTE(devnull, 0);
+    (void)dup2(devnull, 0);
+
+    hyp_model_fetch_opts_t opts = {0};
+    opts.quiet = true;
+    hyp_model_fetch_result_t result = hyp_model_fetch(&opts);
+
+    (void)dup2(saved, 0);
+    (void)close(saved);
+    (void)close(devnull);
+
+    ASSERT_EQ(result, HYP_MODEL_FETCH_DECLINED);
+    ASSERT_EQ(g_transfer.calls, 0);
+    ASSERT_TRUE(hyp_file_exists(probe.path));
+    ASSERT_TRUE(hyp_file_exists(probe.part_path));
+    mf_disarm();
+    mf_end();
+#endif
+    PASS();
+}
+
 /* A file of the wrong length at the good name is in the way of the rename and
  * cannot be resumed into. It is named and removed, not silently trusted. */
 TEST(model_fetch_clears_a_wrong_size_file_out_of_the_way) {
@@ -769,6 +803,7 @@ SUITE(model_fetch) {
     RUN_TEST(model_fetch_discards_an_oversized_partial);
     RUN_TEST(model_fetch_is_a_noop_when_present_unless_forced);
 #endif
+    RUN_TEST(model_fetch_deletes_nothing_when_consent_is_withheld);
     RUN_TEST(model_fetch_clears_a_wrong_size_file_out_of_the_way);
 
     RUN_TEST(model_cmd_rejects_unknown_flags_instead_of_ignoring_them);
