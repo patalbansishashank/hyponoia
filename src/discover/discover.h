@@ -34,6 +34,20 @@ HYPLanguage hyp_language_for_extension(const char *ext);
  * Returns "Unknown" for HYP_LANG_COUNT or out-of-range values. */
 const char *hyp_language_name(HYPLanguage lang);
 
+/* Get the name to interpolate into the `ask` instruct prefix (§2.1) — the
+ * spelling a developer writes in prose, which is what the embedding model
+ * saw in training: "C++", not "cpp"; "TypeScript", not "tsx".
+ *
+ * Same table as hyp_language_name() for 155 of 163 languages, with a small
+ * documented override set (see LANG_PROMPT_NAMES in language.c) where the
+ * file label and the prose name differ.
+ *
+ * Returns NULL — never "Unknown", never the grammar id — for out-of-range
+ * values and for any language with no name. Callers MUST NOT substitute a
+ * fallback: a prefix built around the wrong token still returns ranked
+ * results, so the only way this failure is visible is if it refuses. */
+const char *hyp_language_prompt_name(HYPLanguage lang);
+
 /* Disambiguate .m files by reading first 4KB of content.
  * Returns HYP_LANG_OBJC, HYP_LANG_MAGMA, or HYP_LANG_MATLAB.
  * On read failure, defaults to HYP_LANG_MATLAB. */
