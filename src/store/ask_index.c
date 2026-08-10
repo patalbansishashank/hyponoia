@@ -454,6 +454,146 @@ int hyp_ask_index_search(hyp_store_t *s, const char *project, const float *qvec,
     return HYP_STORE_OK;
 }
 
+/* ── Point fetch, for the fusion lane ───────────────────────────── */
+
+/* Convert one vector-store hit into this header's shape — the same conversion
+ * ask_search_vector_file does inline, including the leaf-name rule (the vector
+ * store keeps no separate `name` column; the leaf is the last dotted segment).
+ * Deliberately a COPY rather than a refactor of that loop: the dense path is
+ * the thing this change must be able to prove it did not touch. */
+static void ask_hit_from_vec(hyp_ask_hit_t *dst, const hyp_ask_vec_hit_t *src) {
+    dst->node_id = src->node_id;
+    dst->qualified_name = src->qualified_name ? hyp_strdup(src->qualified_name) : NULL;
+    dst->name = NULL;
+    if (dst->qualified_name) {
+        const char *dot = strrchr(dst->qualified_name, '.');
+        dst->name = hyp_strdup(dot ? dot + 1 : dst->qualified_name);
+    }
+    dst->label = src->label ? hyp_strdup(src->label) : NULL;
+    dst->file_path = src->file_path ? hyp_strdup(src->file_path) : NULL;
+    dst->start_line = src->start_line;
+    dst->end_line = src->end_line;
+    dst->score = (double)src->score;
+    dst->truncated = src->truncated;
+}
+
+/* The real store. Returns false when there is no vector file, so the caller
+ * falls through to the in-graph fixture table — same order as the search. */
+static bool ask_fetch_vector_file(const char *project, const float *qvec,
+                                  const hyp_ask_ref_t *refs, int n, hyp_ask_hit_t **out,
+                                  int *out_count) {
+    char path[HYP_SZ_4K];
+    if (!hyp_ask_vectors_path(project, path, sizeof(path)) || !hyp_file_exists(path)) {
+        return false;
+    }
+    hyp_ask_vectors_t *v = hyp_ask_vectors_open(project);
+    if (!v) {
+        return false;
+    }
+    const char **qns = (const char **)calloc((size_t)n, sizeof(*qns));
+    if (!qns) {
+        hyp_ask_vectors_close(v);
+        return false;
+    }
+    for (int i = 0; i < n; i++) {
+        qns[i] = refs[i].qualified_name;
+    }
+    hyp_ask_vec_hit_t *hits = NULL;
+    int got = 0;
+    int rc = hyp_ask_vectors_fetch(v, qns, n, qvec, HYP_ASK_DIM, &hits, &got);
+    free(qns);
+    if (rc != HYP_ASK_VEC_OK) {
+        hyp_ask_vectors_close(v);
+        return false;
+    }
+    hyp_ask_hit_t *conv = got > 0 ? (hyp_ask_hit_t *)calloc((size_t)got, sizeof(*conv)) : NULL;
+    if (got > 0 && !conv) {
+        hyp_ask_vec_hits_free(hits, got);
+        hyp_ask_vectors_close(v);
+        return false;
+    }
+    for (int i = 0; i < got; i++) {
+        ask_hit_from_vec(&conv[i], &hits[i]);
+    }
+    hyp_ask_vec_hits_free(hits, got);
+    hyp_ask_vectors_close(v);
+    *out = conv;
+    *out_count = got;
+    return true;
+}
+
+int hyp_ask_index_fetch(hyp_store_t *s, const char *project, const float *qvec,
+                        const hyp_ask_ref_t *refs, int n, hyp_ask_hit_t **out, int *out_count) {
+    if (!out || !out_count) {
+        return HYP_STORE_ERR;
+    }
+    *out = NULL;
+    *out_count = 0;
+    if (!project || !project[0] || !qvec || !refs || n <= 0) {
+        return HYP_STORE_OK; /* nothing asked for is not an error */
+    }
+    if (ask_fetch_vector_file(project, qvec, refs, n, out, out_count)) {
+        return HYP_STORE_OK;
+    }
+
+    /* The in-graph fixture table, keyed (project, node_id). */
+    sqlite3 *db = s ? hyp_store_get_db(s) : NULL;
+    if (!db || !ask_table_exists(db, HYP_ASK_VECTORS_TABLE)) {
+        return HYP_STORE_OK; /* no index to fetch from — zero rows, not an error */
+    }
+    sqlite3_stmt *st = NULL;
+    if (sqlite3_prepare_v2(db,
+                           "SELECT v.vec, v.truncated, n.qualified_name, n.name, n.label,"
+                           "       n.file_path, n.start_line, n.end_line "
+                           "FROM " HYP_ASK_VECTORS_TABLE " v JOIN nodes n"
+                           "  ON n.id = v.node_id AND n.project = v.project "
+                           "WHERE v.project = ?1 AND v.node_id = ?2",
+                           ASK_SQL_AUTO_LEN, &st, NULL) != SQLITE_OK) {
+        return HYP_STORE_ERR;
+    }
+    hyp_ask_hit_t *hits = (hyp_ask_hit_t *)calloc((size_t)n, sizeof(*hits));
+    if (!hits) {
+        sqlite3_finalize(st);
+        return HYP_STORE_ERR;
+    }
+    const size_t vec_bytes = (size_t)HYP_ASK_DIM * sizeof(float);
+    int emitted = 0;
+    for (int i = 0; i < n; i++) {
+        sqlite3_reset(st);
+        sqlite3_bind_text(st, ASK_COL_1, project, ASK_SQL_AUTO_LEN, ask_sqlite_transient());
+        sqlite3_bind_int64(st, ASK_COL_2, refs[i].node_id);
+        if (sqlite3_step(st) != SQLITE_ROW) {
+            continue;
+        }
+        const void *blob = sqlite3_column_blob(st, 0);
+        int blob_len = sqlite3_column_bytes(st, 0);
+        if (!blob || (size_t)blob_len != vec_bytes) {
+            continue; /* wrong width: skipped, never coerced into a score */
+        }
+        float row[HYP_ASK_DIM];
+        memcpy(row, blob, vec_bytes);
+        double dot = 0.0;
+        for (int d = 0; d < HYP_ASK_DIM; d++) {
+            dot += (double)row[d] * (double)qvec[d];
+        }
+        hyp_ask_hit_t *h = &hits[emitted];
+        h->node_id = refs[i].node_id;
+        h->truncated = sqlite3_column_int(st, 1) != 0;
+        h->qualified_name = ask_dup(sqlite3_column_text(st, 2));
+        h->name = ask_dup(sqlite3_column_text(st, 3));
+        h->label = ask_dup(sqlite3_column_text(st, 4));
+        h->file_path = ask_dup(sqlite3_column_text(st, 5));
+        h->start_line = sqlite3_column_int(st, 6);
+        h->end_line = sqlite3_column_int(st, 7);
+        h->score = dot;
+        emitted++;
+    }
+    sqlite3_finalize(st);
+    *out = hits;
+    *out_count = emitted;
+    return HYP_STORE_OK;
+}
+
 void hyp_ask_free_hits(hyp_ask_hit_t *hits, int count) {
     if (!hits) {
         return;

@@ -3858,7 +3858,43 @@ enum {
     ASK_QUESTION_MAX = 4096,
     ASK_MSG = HYP_SZ_1K,
     ASK_LANG_SAMPLE_MAX = 20000, /* distinct files sampled to derive the language */
+
+    /* ── Reciprocal rank fusion (NEXT-STEPS §2.2, lever 4) ────────
+     *
+     * The two lanes fail on DIFFERENT questions. Dense is far better on
+     * average — recall@10 0.550 against BM25's 0.150 on the frozen 60 — and
+     * still collapses where a literal identifier match was the right signal
+     * all along. RRF is the parameter-light way to combine two rankings
+     * without their scores having to be commensurable: a document scores
+     * sum over lanes of 1/(k + rank_in_that_lane), absent lanes contributing
+     * nothing.
+     *
+     * k = 60 is Cormack's constant and, more to the point, the one the frozen
+     * benchmark's own contract already pins for the composite it computes.
+     * Matching it means the number here and the number there mean the same
+     * thing. It is NOT tuned on the 60 queries it is reported against. */
+    ASK_RRF_K = 60,
+    /* How deep the LEXICAL lane is taken. A lexical hit at rank 100 scores
+     * 1/160, exactly what a dense hit at rank 100 scores, so beyond this
+     * depth BM25 can only reorder the tail of an answer nobody reads. It also
+     * bounds the point-fetch: at most this many index probes per question. */
+    ASK_RRF_LEX_DEPTH = 100,
+    /* How deep the DENSE lane is taken before fusing, when the caller asks
+     * for fewer. Taking dense DEEPER than this never changes the top of the
+     * answer — a dense-only row at rank r scores 1/(60+r), strictly
+     * decreasing, and no lexical row sits below rank ASK_RRF_LEX_DEPTH — so
+     * `ask ... limit=10` and the first ten rows of `ask ... limit=500` agree.
+     * A test pins that. */
+    ASK_RRF_DENSE_DEPTH = 100,
 };
+
+/* Disclosed on every answer, beside model/language/truncation/population, for
+ * the same reason those are: `score` stopped being a cosine the moment two
+ * rankings were combined, and a number whose meaning changed silently is worse
+ * than one that is missing. It is the FUSED score — read it as an ordering,
+ * not as a similarity. */
+#define ASK_FUSION_LABEL "rrf(dense,bm25) k=60; score is the fused score, not a cosine"
+
 
 /* Machine-readable reason tokens. Stable strings: a caller branches on these,
  * so they are part of the contract and the human sentence beside them is not. */
@@ -4067,6 +4103,220 @@ static char *ask_error(const char *msg, char *project, char *question) {
     return hyp_mcp_text_result(msg, true);
 }
 
+/* ── The lexical lane ───────────────────────────────────────────── */
+
+/* `search_graph(query=...)`'s own BM25 ranking, fetched as node references
+ * instead of formatted rows: the same FTS5 match string, the same inner
+ * candidate cap, the same label exclusions and the same label boost, in the
+ * same order. `ask` does not get a second, privately-tuned definition of what
+ * lexical search means — it gets the one the product already ships, which is
+ * also the one the frozen benchmark's negative control measured.
+ *
+ * THE ORDER IS NOT STABLE ACROSS INDEX BUILDS and nothing here may assume it
+ * is: ties break on `ORDER BY rank, n.id` and `nodes.id` is AUTOINCREMENT,
+ * assigned at index time, so the same question can legitimately put the same
+ * declaration at 11, 12 or 13. Fusion reads whatever order it is handed.
+ *
+ * search_graph is NOT called and NOT modified. It reads this file's
+ * bm25_build_match too; that helper is unchanged. */
+typedef struct {
+    hyp_ask_ref_t *refs; /* rank order: refs[0] is lexical rank 1 */
+    char **qns;          /* owned; refs[i].qualified_name borrows qns[i] */
+    int count;
+} ask_lex_t;
+
+static void ask_lex_free(ask_lex_t *l) {
+    if (!l) {
+        return;
+    }
+    for (int i = 0; i < l->count; i++) {
+        free(l->qns[i]);
+    }
+    free(l->qns);
+    free(l->refs);
+    l->refs = NULL;
+    l->qns = NULL;
+    l->count = 0;
+}
+
+static void ask_lex_fetch(hyp_store_t *store, const char *project, const char *question, int depth,
+                          ask_lex_t *out) {
+    memset(out, 0, sizeof(*out));
+    sqlite3 *db = hyp_store_get_db(store);
+    if (!db || depth <= 0) {
+        return;
+    }
+    char fts_query[BM25_QUERY_BUF];
+    if (bm25_build_match(question, fts_query, sizeof(fts_query)) == 0) {
+        return; /* no usable tokens: fusion degenerates to the dense lane */
+    }
+    const char *sql =
+        "SELECT n.id, n.qualified_name, "
+        "       (fts.base_rank "
+        "        - CASE WHEN n.label IN ('Function','Method') THEN 10.0 "
+        "               WHEN n.label = 'Route' THEN 8.0 "
+        "               WHEN n.label IN (" HYP_SQL_TYPE_LIKE_LABELS ") THEN 5.0 "
+        "               ELSE 0.0 END) AS rank "
+        "FROM ("
+        "    SELECT rowid, bm25(nodes_fts) AS base_rank"
+        "    FROM nodes_fts WHERE nodes_fts MATCH ?1"
+        "    ORDER BY base_rank LIMIT ?3"
+        ") fts "
+        "JOIN nodes n ON n.id = fts.rowid "
+        "WHERE n.project = ?2 "
+        "  AND n.label NOT IN ('File','Folder','Module','Section','Variable','Project') "
+        "ORDER BY rank, n.id "
+        "LIMIT ?4";
+    sqlite3_stmt *st = NULL;
+    if (sqlite3_prepare_v2(db, sql, BM25_SQL_AUTO_LEN, &st, NULL) != SQLITE_OK) {
+        return; /* no FTS5 in this build: dense-only, which is what it was before */
+    }
+    sqlite3_bind_text(st, BM25_BIND_QUERY, fts_query, BM25_SQL_AUTO_LEN, MCP_SQLITE_TRANSIENT);
+    sqlite3_bind_text(st, BM25_BIND_PROJECT, project, BM25_SQL_AUTO_LEN, MCP_SQLITE_TRANSIENT);
+    sqlite3_bind_int(st, MCP_COL_3, BM25_INNER_LIMIT);
+    sqlite3_bind_int(st, MCP_COL_4, depth);
+
+    hyp_ask_ref_t *refs = (hyp_ask_ref_t *)calloc((size_t)depth, sizeof(*refs));
+    char **qns = (char **)calloc((size_t)depth, sizeof(*qns));
+    if (!refs || !qns) {
+        free(refs);
+        free(qns);
+        sqlite3_finalize(st);
+        return;
+    }
+    int n = 0;
+    while (n < depth && sqlite3_step(st) == SQLITE_ROW) {
+        const char *qn = (const char *)sqlite3_column_text(st, 1);
+        if (!qn || !qn[0]) {
+            continue;
+        }
+        qns[n] = heap_strdup(qn);
+        if (!qns[n]) {
+            break;
+        }
+        refs[n].node_id = sqlite3_column_int64(st, 0);
+        refs[n].qualified_name = qns[n];
+        n++;
+    }
+    sqlite3_finalize(st);
+    out->refs = refs;
+    out->qns = qns;
+    out->count = n;
+}
+
+/* ── Fusion ─────────────────────────────────────────────────────── */
+
+typedef struct {
+    hyp_ask_hit_t hit; /* owns its strings */
+    double rrf;
+} ask_fused_t;
+
+static int ask_cmp_fused(const void *pa, const void *pb) {
+    const ask_fused_t *a = (const ask_fused_t *)pa;
+    const ask_fused_t *b = (const ask_fused_t *)pb;
+    if (a->rrf != b->rrf) {
+        return a->rrf < b->rrf ? 1 : -1; /* descending */
+    }
+    /* An RRF tie is ordinary, not exotic: a dense-only row at rank r and a
+     * lexical-only row at rank r score identically by construction. Broken by
+     * the cosine, then by node id, so two identical questions cannot disagree
+     * about which of two equally-fused declarations is "the" answer. */
+    if (a->hit.score != b->hit.score) {
+        return a->hit.score < b->hit.score ? 1 : -1;
+    }
+    if (a->hit.node_id != b->hit.node_id) {
+        return a->hit.node_id < b->hit.node_id ? -1 : 1;
+    }
+    return 0;
+}
+
+static double ask_rrf_term(int rank_1based) {
+    return 1.0 / ((double)ASK_RRF_K + (double)rank_1based);
+}
+
+/* Merge the two ranked lists into one. Takes ownership of both arrays' rows:
+ * a lexical row that duplicates a dense row is folded into it and freed, one
+ * that does not is appended. Returns the fused array, sorted, and the caller
+ * frees it with ask_fused_free. */
+static ask_fused_t *ask_fuse(hyp_ask_hit_t *dense, int dense_n, hyp_ask_hit_t *lex, int lex_n,
+                             const ask_lex_t *lex_order, int *out_count) {
+    *out_count = 0;
+    ask_fused_t *fused = (ask_fused_t *)calloc((size_t)(dense_n + lex_n) + 1, sizeof(*fused));
+    if (!fused) {
+        return NULL;
+    }
+    int n = 0;
+    for (int i = 0; i < dense_n; i++) {
+        fused[n].hit = dense[i];
+        fused[n].rrf = ask_rrf_term(i + 1);
+        n++;
+    }
+    /* hyp_ask_index_fetch preserves the order it was given and only drops, so
+     * the fetched rows walk the lexical ranking in step with it — one pass,
+     * matched on the qualified name, which is the vector store's own key. */
+    int cursor = 0;
+    for (int i = 0; i < lex_n; i++) {
+        const char *qn = lex[i].qualified_name;
+        int rank = 0;
+        while (cursor < lex_order->count) {
+            const char *want = lex_order->refs[cursor].qualified_name;
+            cursor++;
+            if (qn && want && strcmp(qn, want) == 0) {
+                rank = cursor; /* 1-based */
+                break;
+            }
+        }
+        if (rank == 0) {
+            /* Unmatchable: no rank to fuse with, so the row is dropped rather
+             * than given an invented one. Cannot happen while fetch preserves
+             * order; if it ever does, the answer is short, not wrong. */
+            free(lex[i].qualified_name);
+            free(lex[i].name);
+            free(lex[i].label);
+            free(lex[i].file_path);
+            memset(&lex[i], 0, sizeof(lex[i]));
+            continue;
+        }
+        int found = -1;
+        for (int d = 0; d < dense_n; d++) {
+            if (fused[d].hit.qualified_name && qn &&
+                strcmp(fused[d].hit.qualified_name, qn) == 0) {
+                found = d;
+                break;
+            }
+        }
+        if (found >= 0) {
+            fused[found].rrf += ask_rrf_term(rank);
+            free(lex[i].qualified_name);
+            free(lex[i].name);
+            free(lex[i].label);
+            free(lex[i].file_path);
+            memset(&lex[i], 0, sizeof(lex[i]));
+            continue;
+        }
+        fused[n].hit = lex[i];
+        fused[n].rrf = ask_rrf_term(rank);
+        memset(&lex[i], 0, sizeof(lex[i]));
+        n++;
+    }
+    qsort(fused, (size_t)n, sizeof(*fused), ask_cmp_fused);
+    *out_count = n;
+    return fused;
+}
+
+static void ask_fused_free(ask_fused_t *fused, int count) {
+    if (!fused) {
+        return;
+    }
+    for (int i = 0; i < count; i++) {
+        free(fused[i].hit.qualified_name);
+        free(fused[i].hit.name);
+        free(fused[i].hit.label);
+        free(fused[i].hit.file_path);
+    }
+    free(fused);
+}
+
 static char *handle_ask(hyp_mcp_server_t *srv, const char *args) {
     char *project = get_project_arg(args);
     hyp_store_t *store = resolve_store(srv, project);
@@ -4185,15 +4435,52 @@ static char *handle_ask(hyp_mcp_server_t *srv, const char *args) {
         return ask_error(msg, project, question);
     }
 
-    hyp_ask_hit_t *hits = NULL;
-    int hit_count = 0;
-    int rc = hyp_ask_index_search(store, project, qvec, limit, &hits, &hit_count);
-    free(qvec);
+    /* ── Retrieve twice, fuse once (§2.2 lever 4) ────────────────
+     *
+     * The dense lane is taken to ASK_RRF_DENSE_DEPTH even when the caller
+     * asked for ten rows, so a lexically-supported declaration sitting at
+     * dense rank 46 can still reach the top of the answer. Deeper than the
+     * caller's limit costs one extra top-k selection over a scan that already
+     * reads every vector. */
+    int dense_depth = limit > ASK_RRF_DENSE_DEPTH ? limit : ASK_RRF_DENSE_DEPTH;
+    if (dense_depth > ASK_MAX_LIMIT) {
+        dense_depth = ASK_MAX_LIMIT;
+    }
+    hyp_ask_hit_t *dense = NULL;
+    int dense_n = 0;
+    int rc = hyp_ask_index_search(store, project, qvec, dense_depth, &dense, &dense_n);
     if (rc != HYP_STORE_OK) {
+        free(qvec);
         return ask_error("the semantic index could not be read. Re-run index_status; if the "
                          "project is healthy the vector store needs rebuilding.",
                          project, question);
     }
+
+    ask_lex_t lex_order;
+    ask_lex_fetch(store, project, question, ASK_RRF_LEX_DEPTH, &lex_order);
+    hyp_ask_hit_t *lex = NULL;
+    int lex_n = 0;
+    if (lex_order.count > 0) {
+        /* Scored from the VECTOR index, not the graph: a lexical hit on a
+         * declaration that was never embedded is outside the population this
+         * answer discloses, and is dropped rather than served. */
+        (void)hyp_ask_index_fetch(store, project, qvec, lex_order.refs, lex_order.count, &lex,
+                                  &lex_n);
+    }
+    free(qvec);
+
+    /* How many lexical candidates survived the population check — the honest
+     * count to disclose, because it is what was actually fused. */
+    int lex_fused = lex_n;
+    int fused_n = 0;
+    ask_fused_t *fused = ask_fuse(dense, dense_n, lex, lex_n, &lex_order, &fused_n);
+    free(dense);
+    free(lex);
+    ask_lex_free(&lex_order);
+    if (!fused) {
+        return ask_error("out of memory fusing the two rankings", project, question);
+    }
+    int hit_count = fused_n < limit ? fused_n : limit;
 
     char trunc_text[ASK_MSG];
     ask_truncation_text(&st, trunc_text, sizeof(trunc_text));
@@ -4214,6 +4501,8 @@ static char *handle_ask(hyp_mcp_server_t *srv, const char *args) {
                                lang_explicit ? "explicit" : "derived");
         yyjson_mut_obj_add_strcpy(doc, root, "truncation", trunc_text);
         yyjson_mut_obj_add_int(doc, root, "population", st.n_vectors);
+        yyjson_mut_obj_add_str(doc, root, "fusion", ASK_FUSION_LABEL);
+        yyjson_mut_obj_add_int(doc, root, "lexical_candidates", lex_fused);
         yyjson_mut_val *jcols = yyjson_mut_arr(doc);
         for (int c = 0; c < ncols; c++) {
             yyjson_mut_arr_add_str(doc, jcols, cols[c]);
@@ -4222,15 +4511,16 @@ static char *handle_ask(hyp_mcp_server_t *srv, const char *args) {
         yyjson_mut_val *rows = yyjson_mut_arr(doc);
         for (int i = 0; i < hit_count; i++) {
             char lines[HYP_SZ_32];
-            sg_lines_str(lines, sizeof(lines), hits[i].start_line, hits[i].end_line);
+            const hyp_ask_hit_t *h = &fused[i].hit;
+            sg_lines_str(lines, sizeof(lines), h->start_line, h->end_line);
             yyjson_mut_val *row = yyjson_mut_arr(doc);
-            yyjson_mut_arr_add_strcpy(doc, row, hits[i].qualified_name);
-            yyjson_mut_arr_add_strcpy(doc, row, hits[i].label);
-            yyjson_mut_arr_add_strcpy(doc, row, hits[i].file_path);
+            yyjson_mut_arr_add_strcpy(doc, row, h->qualified_name);
+            yyjson_mut_arr_add_strcpy(doc, row, h->label);
+            yyjson_mut_arr_add_strcpy(doc, row, h->file_path);
             yyjson_mut_arr_add_strcpy(doc, row, lines);
-            yyjson_mut_arr_add_real(doc, row, hits[i].score);
+            yyjson_mut_arr_add_real(doc, row, fused[i].rrf);
             if (with_cut) {
-                yyjson_mut_arr_add_bool(doc, row, hits[i].truncated);
+                yyjson_mut_arr_add_bool(doc, row, h->truncated);
             }
             yyjson_mut_arr_add_val(rows, row);
         }
@@ -4248,18 +4538,21 @@ static char *handle_ask(hyp_mcp_server_t *srv, const char *args) {
         hyp_tree_scalar_str(&sb, "language_source", lang_explicit ? "explicit" : "derived");
         hyp_tree_scalar_str(&sb, "truncation", trunc_text);
         hyp_tree_scalar_int(&sb, "population", st.n_vectors);
+        hyp_tree_scalar_str(&sb, "fusion", ASK_FUSION_LABEL);
+        hyp_tree_scalar_int(&sb, "lexical_candidates", lex_fused);
         hyp_tree_table_header(&sb, "results", hit_count, cols, ncols);
         for (int i = 0; i < hit_count; i++) {
             char lines[HYP_SZ_32];
-            sg_lines_str(lines, sizeof(lines), hits[i].start_line, hits[i].end_line);
+            const hyp_ask_hit_t *h = &fused[i].hit;
+            sg_lines_str(lines, sizeof(lines), h->start_line, h->end_line);
             hyp_tree_row_begin(&sb);
-            hyp_tree_cell_str(&sb, hits[i].qualified_name, true);
-            hyp_tree_cell_str(&sb, hits[i].label, false);
-            hyp_tree_cell_str(&sb, hits[i].file_path, false);
+            hyp_tree_cell_str(&sb, h->qualified_name, true);
+            hyp_tree_cell_str(&sb, h->label, false);
+            hyp_tree_cell_str(&sb, h->file_path, false);
             hyp_tree_cell_str(&sb, lines, false);
-            hyp_tree_cell_real(&sb, hits[i].score, false);
+            hyp_tree_cell_real(&sb, fused[i].rrf, false);
             if (with_cut) {
-                hyp_tree_cell_bool(&sb, hits[i].truncated, false);
+                hyp_tree_cell_bool(&sb, h->truncated, false);
             }
             hyp_tree_row_end(&sb);
         }
@@ -4276,7 +4569,7 @@ static char *handle_ask(hyp_mcp_server_t *srv, const char *args) {
         free(text);
     }
 
-    hyp_ask_free_hits(hits, hit_count);
+    ask_fused_free(fused, fused_n);
     free(project);
     free(question);
     return result;

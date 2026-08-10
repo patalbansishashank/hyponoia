@@ -310,6 +310,24 @@ int64_t hyp_ask_vectors_count(hyp_ask_vectors_t *v);
 int hyp_ask_vectors_search(hyp_ask_vectors_t *v, const float *query, int dim, int k,
                            hyp_ask_vec_hit_t **out, int *out_count);
 
+/* Score NAMED declarations, in the order given, dropping the ones this index
+ * does not hold. The point-lookup twin of the scan above.
+ *
+ * It exists for reciprocal rank fusion (NEXT-STEPS §2.2 lever 4): the lexical
+ * lane arrives as a ranked list of qualified names, and a name that the dense
+ * top-k never reached still has to become a citable row with a real cosine, a
+ * real span and a real truncation flag. Fetching it here rather than
+ * assembling it from the graph is what keeps ONE population — every row `ask`
+ * can return is a row this index holds, so the `population:` disclosure and
+ * the `cut` column stay true of every line of the answer.
+ *
+ * A name with no vector is DROPPED rather than returned unscored: it is
+ * outside the population the answer claims to have ranked. `*out_count` is
+ * therefore <= `n`. Lookups are by PRIMARY KEY, so this is n index probes, not
+ * n scans. */
+int hyp_ask_vectors_fetch(hyp_ask_vectors_t *v, const char *const *qualified_names, int n,
+                          const float *query, int dim, hyp_ask_vec_hit_t **out, int *out_count);
+
 void hyp_ask_vec_hits_free(hyp_ask_vec_hit_t *hits, int count);
 
 /* ── The truncation counter ────────────────────────────────────── */
