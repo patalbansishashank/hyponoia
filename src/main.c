@@ -31,6 +31,7 @@
 #include "daemon/version_cohort.h"
 #include "mcp/mcp.h"
 #include "mcp/index_supervisor.h"
+#include "ask/ask_cmd.h"
 #include "cli/cli.h"
 #include "cli/progress_sink.h"
 #include "foundation/constants.h"
@@ -897,6 +898,9 @@ static void print_help(void) {
     printf("  hyponoia uninstall [-y|-n] [--dry-run]\n");
     printf("  hyponoia update [-y|-n]\n");
     printf("  hyponoia config <list|get|set|reset>\n");
+    printf("  hyponoia embed --project <name> [--status]\n"
+           "                                      Opt-in second pass: per-declaration\n"
+           "                                      vectors for the `ask` lane\n");
     printf("  hyponoia --version    Print version\n");
     printf("  hyponoia --help       Print this help\n");
     printf("\nUI options:\n");
@@ -1080,6 +1084,14 @@ static int handle_subcommand(int argc, char **argv, hyp_project_lock_manager_t *
         }
         if (strcmp(argv[i], "config") == 0) {
             return hyp_cmd_config(argc - i - SKIP_ONE, argv + i + SKIP_ONE);
+        }
+        /* The `ask` lane's opt-in second pass. Deliberately NOT a flag on
+         * index_repository: keeping it a separate invocation is what makes
+         * "the structural index is untouched" a property of the build rather
+         * than a claim about a branch nobody took. */
+        if (strcmp(argv[i], "embed") == 0) {
+            hyp_mem_init(hyp_mem_ram_fraction_for_total(hyp_system_info().total_ram));
+            return hyp_cmd_embed(argc - i - SKIP_ONE, argv + i + SKIP_ONE);
         }
     }
     return HYP_NOT_FOUND;

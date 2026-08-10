@@ -185,6 +185,17 @@ hyp_daemon_process_role_t hyp_daemon_process_role(int argc, char *const argv[]) 
             return bootstrap_has_help_after(argc, argv, arg + 1) ? HYP_DAEMON_PROCESS_STATELESS
                                                                  : HYP_DAEMON_PROCESS_LOCAL_CLI;
         }
+        /* `embed` builds the `ask` lane's vectors. It reads the graph database
+         * READ-ONLY through its own connection and writes only to
+         * <cache>/vectors/<project>.db, so it needs neither a daemon nor a
+         * project mutation lease — it cannot mutate the graph at all. Stateless
+         * for the same reason `allow-root` is: routing it through the daemon
+         * would make an opt-in second pass depend on daemon state it never
+         * touches. Placed after the `cli` check so an opaque tool argument
+         * spelled "embed" cannot bypass the mandatory daemon. */
+        if (bootstrap_arg_is(argv[arg], "embed")) {
+            return HYP_DAEMON_PROCESS_STATELESS;
+        }
         /* Placed after the `cli` check on purpose: `hyp cli search "daemon
          * start"` is opaque tool input and must stay LOCAL_CLI. */
         if (bootstrap_arg_is(argv[arg], "daemon")) {
