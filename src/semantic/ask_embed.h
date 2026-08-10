@@ -75,6 +75,27 @@ enum {
 #define HYP_ASK_NORM_TOLERANCE 0.01
 #endif
 
+/* ── The truncation counter's three states ──────────────────────
+ *
+ * ONE definition, here, because both halves of the lane need it and both had
+ * their own: src/store/ask_index.h declared `hyp_ask_trunc_t` as this enum and
+ * src/ask/ask_vectors.h declared a STRUCT of the same name plus an enum with
+ * the same three enumerator names. Same values, same meaning, incompatible
+ * types — and no translation unit included both until the read half was
+ * pointed at the store the write half actually creates.
+ *
+ * UNKNOWN is not NONE and collapsing them is how a recall ceiling nobody was
+ * told about gets minted: a store that reported an unattested truncation set
+ * as empty would be indistinguishable from one that had measured and found
+ * none. That distinction is what makes deferring chunking safe rather than a
+ * gamble — a counter that cannot tell "zero" from "unmeasured" is not a
+ * tripwire. */
+typedef enum {
+    HYP_ASK_TRUNC_UNKNOWN = 0, /* the encoder does not report token counts */
+    HYP_ASK_TRUNC_NONE = 1,    /* attested: every declaration fitted the window */
+    HYP_ASK_TRUNC_SOME = 2,    /* attested: `count` declarations were cut */
+} hyp_ask_trunc_state_t;
+
 /* ── The backend vtable ──────────────────────────────────────────────
  *
  * One struct, installed once at startup, read-only afterwards. Three

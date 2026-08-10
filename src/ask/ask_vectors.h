@@ -106,6 +106,8 @@
 #ifndef HYP_ASK_VECTORS_H
 #define HYP_ASK_VECTORS_H
 
+#include "semantic/ask_embed.h" /* hyp_ask_trunc_state_t, HYP_ASK_DIM */
+
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -324,11 +326,8 @@ void hyp_ask_vec_hits_free(hyp_ask_vec_hit_t *hits, int count);
  * reference corpus; so chunking is not built. The counter is the tripwire that
  * says when that stops being true — and a counter that cannot tell "zero" from
  * "unmeasured" is not a tripwire. */
-typedef enum {
-    HYP_ASK_TRUNC_UNKNOWN = 0, /* the encoder does not report token counts */
-    HYP_ASK_TRUNC_NONE = 1,    /* attested: every declaration fitted the window */
-    HYP_ASK_TRUNC_SOME = 2,    /* attested: `count` declarations were cut */
-} hyp_ask_trunc_state_t;
+/* The three states live in semantic/ask_embed.h — one definition, both
+ * halves of the lane. */
 
 typedef struct {
     hyp_ask_trunc_state_t state;

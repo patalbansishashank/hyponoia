@@ -858,6 +858,10 @@ int hyp_ask_llama_backend_install(void) {
     return hyp_ask_backend_install(&ASK_LLAMA_BACKEND);
 }
 
+bool hyp_ask_llama_backend_installed(void) {
+    return hyp_ask_backend() == &ASK_LLAMA_BACKEND;
+}
+
 void hyp_ask_llama_backend_shutdown(void) {
     if (g_query_engine) {
         ask_llama_close(g_query_engine);
@@ -908,6 +912,10 @@ hyp_ask_encoder_t *hyp_ask_llama_encoder_create(hyp_ask_device_pref_t pref, char
 
 int hyp_ask_llama_backend_install(void) {
     return 0; /* nothing to install; hyp_ask_backend() stays NULL */
+}
+
+bool hyp_ask_llama_backend_installed(void) {
+    return false;
 }
 
 void hyp_ask_llama_backend_shutdown(void) {

@@ -87,4 +87,14 @@ int hyp_ask_llama_backend_install(void);
 /* Release the lazily-loaded query model, if one was loaded. Idempotent. */
 void hyp_ask_llama_backend_shutdown(void);
 
+/* True when the backend hyp_ask_backend() hands out is THIS one.
+ *
+ * The `model_not_fetched` unavailable cause is a claim about llama.cpp's 639 MB
+ * of weights, and it is nonsense about any other encoder: the tests install a
+ * deterministic double that needs no weights at all, and a build with no
+ * runtime has no weights to want. Asking "is the installed backend mine"
+ * rather than "is a file on disk" keeps that cause attached to the thing it
+ * is about. */
+bool hyp_ask_llama_backend_installed(void);
+
 #endif /* HYP_ASK_LLAMA_H */

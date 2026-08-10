@@ -8,6 +8,11 @@
  */
 #include "store/ask_index.h"
 
+#include "ask/ask_vectors.h"
+
+#include "foundation/compat.h"
+#include "foundation/platform.h"
+
 #include <sqlite3.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -49,6 +54,122 @@ static void ask_copy(char *dst, size_t dstlen, const char *src) {
     snprintf(dst, dstlen, "%s", src ? src : "");
 }
 
+/* ── The per-project vector file, which is where the vectors really are ── */
+
+/* Fill `out` from <cache>/vectors/<project>.db. Returns false when that file
+ * does not exist or holds no rows for this project, which is the caller's cue
+ * to try the in-graph tables the tests build by hand. */
+static bool ask_status_from_vector_file(const char *project, const hyp_ask_backend_t *backend,
+                                        hyp_ask_status_t *out) {
+    if (!project || !project[0]) {
+        return false;
+    }
+    char path[HYP_SZ_4K];
+    if (!hyp_ask_vectors_path(project, path, sizeof(path))) {
+        return false;
+    }
+    if (!hyp_file_exists(path)) {
+        return false;
+    }
+    hyp_ask_vectors_t *v = hyp_ask_vectors_open(project);
+    if (!v) {
+        return false;
+    }
+    hyp_ask_vec_meta_t meta;
+    memset(&meta, 0, sizeof(meta));
+    if (hyp_ask_vectors_get_meta(v, &meta) != HYP_ASK_VEC_OK || meta.row_count <= 0) {
+        hyp_ask_vec_meta_free(&meta);
+        hyp_ask_vectors_close(v);
+        return false;
+    }
+
+    ask_copy(out->model_id, sizeof(out->model_id), meta.model_id);
+    out->dim = meta.dim;
+    out->n_vectors = (int)meta.row_count;
+
+    /* PROVENANCE IS A HARD GATE. Two models' vectors are not comparable and
+     * nothing downstream can detect the mix, so a disagreement is REFUSED
+     * rather than served with ordinary-looking scores. */
+    if (!backend->model_id || strcmp(meta.model_id ? meta.model_id : "", backend->model_id) != 0 ||
+        meta.dim != backend->dim) {
+        out->avail = HYP_ASK_MODEL_MISMATCH;
+        hyp_ask_vec_meta_free(&meta);
+        hyp_ask_vectors_close(v);
+        return true;
+    }
+
+    hyp_ask_trunc_t tr;
+    memset(&tr, 0, sizeof(tr));
+    if (hyp_ask_vectors_truncation(v, &tr) == HYP_ASK_VEC_OK) {
+        switch (tr.state) {
+        case HYP_ASK_TRUNC_SOME:
+            out->trunc = HYP_ASK_TRUNC_SOME;
+            out->trunc_count = (int)tr.count;
+            break;
+        case HYP_ASK_TRUNC_NONE:
+            out->trunc = HYP_ASK_TRUNC_NONE;
+            break;
+        default:
+            out->trunc = HYP_ASK_TRUNC_UNKNOWN;
+            break;
+        }
+    }
+    hyp_ask_trunc_free(&tr);
+    out->avail = HYP_ASK_AVAILABLE;
+    hyp_ask_vec_meta_free(&meta);
+    hyp_ask_vectors_close(v);
+    return true;
+}
+
+/* Top-k out of the vector file, converted to this header's hit shape. Returns
+ * false when there is no such file, so the caller can fall through. */
+static bool ask_search_vector_file(const char *project, const float *qvec, int limit,
+                                   hyp_ask_hit_t **out, int *out_count) {
+    char path[HYP_SZ_4K];
+    if (!hyp_ask_vectors_path(project, path, sizeof(path)) || !hyp_file_exists(path)) {
+        return false;
+    }
+    hyp_ask_vectors_t *v = hyp_ask_vectors_open(project);
+    if (!v) {
+        return false;
+    }
+    hyp_ask_vec_hit_t *hits = NULL;
+    int n = 0;
+    if (hyp_ask_vectors_search(v, qvec, HYP_ASK_DIM, limit, &hits, &n) != HYP_ASK_VEC_OK) {
+        hyp_ask_vectors_close(v);
+        return false;
+    }
+    hyp_ask_hit_t *conv = n > 0 ? (hyp_ask_hit_t *)calloc((size_t)n, sizeof(*conv)) : NULL;
+    if (n > 0 && !conv) {
+        hyp_ask_vec_hits_free(hits, n);
+        hyp_ask_vectors_close(v);
+        return false;
+    }
+    for (int i = 0; i < n; i++) {
+        conv[i].node_id = hits[i].node_id;
+        conv[i].qualified_name = hits[i].qualified_name ? hyp_strdup(hits[i].qualified_name) : NULL;
+        /* The lane cites spans, and the leaf name is the last dotted segment of
+         * the qualified name — the vector store keeps no separate `name`
+         * column because everything it needs to cite is in the row already. */
+        conv[i].name = NULL;
+        if (conv[i].qualified_name) {
+            const char *dot = strrchr(conv[i].qualified_name, '.');
+            conv[i].name = hyp_strdup(dot ? dot + 1 : conv[i].qualified_name);
+        }
+        conv[i].label = hits[i].label ? hyp_strdup(hits[i].label) : NULL;
+        conv[i].file_path = hits[i].file_path ? hyp_strdup(hits[i].file_path) : NULL;
+        conv[i].start_line = hits[i].start_line;
+        conv[i].end_line = hits[i].end_line;
+        conv[i].score = (double)hits[i].score;
+        conv[i].truncated = hits[i].truncated;
+    }
+    hyp_ask_vec_hits_free(hits, n);
+    hyp_ask_vectors_close(v);
+    *out = conv;
+    *out_count = n;
+    return true;
+}
+
 void hyp_ask_index_status(hyp_store_t *s, const char *project, hyp_ask_status_t *out) {
     if (!out) {
         return;
@@ -67,6 +188,28 @@ void hyp_ask_index_status(hyp_store_t *s, const char *project, hyp_ask_status_t 
      * them somewhere that cannot help. */
     if (!backend) {
         out->avail = HYP_ASK_NO_BACKEND;
+        return;
+    }
+
+    /* ── The real store comes first ──────────────────────────────
+     *
+     * This file was written before the write half existed, against the schema
+     * ask_index.h documents: two tables inside the GRAPH database. The write
+     * half that actually landed (src/ask/ask_vectors.c) keeps the vectors in a
+     * SEPARATE per-project file, <cache>/vectors/<project>.db, deliberately —
+     * surviving a re-index is the whole reason it is its own file.
+     *
+     * Nothing caught the divergence, because until an encoder existed no index
+     * could be built and every test built the fixture by hand. The first real
+     * `hyponoia embed` run produced 4,117 vectors and `ask` answered
+     * `no_semantic_index`, which is the worst shape a bug can take here: a
+     * confident claim that the tool has nothing, about a corpus it had just
+     * finished embedding.
+     *
+     * So: ask the real store, and fall back to the in-graph tables only when
+     * it has nothing. The fallback is what the 25 response-shaping tests drive,
+     * and it is deliberately SECOND — production data must win. */
+    if (ask_status_from_vector_file(project, backend, out)) {
         return;
     }
 
@@ -178,6 +321,17 @@ int hyp_ask_index_search(hyp_store_t *s, const char *project, const float *qvec,
     *out_count = 0;
     if (!s || !project || !project[0] || !qvec) {
         return HYP_STORE_ERR;
+    }
+    if (limit <= 0) {
+        limit = HYP_DEFAULT_SEARCH_LIMIT;
+    }
+    if (limit > ASK_MAX_LIMIT) {
+        limit = ASK_MAX_LIMIT;
+    }
+    /* The real store first, for the reason spelled out in
+     * hyp_ask_index_status. The in-graph tables below are the fixture path. */
+    if (ask_search_vector_file(project, qvec, limit, out, out_count)) {
+        return HYP_STORE_OK;
     }
     sqlite3 *db = hyp_store_get_db(s);
     if (!db || !ask_table_exists(db, HYP_ASK_VECTORS_TABLE)) {

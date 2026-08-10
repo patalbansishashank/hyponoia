@@ -83,15 +83,14 @@ typedef enum {
  * every answer, not only when a truncated row ranks — a caveat that appeared
  * only when a truncated span ranked would be silent in exactly the case that
  * hurts, the one where truncation is WHY it did not. */
-typedef enum {
-    HYP_ASK_TRUNC_UNKNOWN = 0,
-    HYP_ASK_TRUNC_NONE,
-    HYP_ASK_TRUNC_SOME,
-} hyp_ask_trunc_t;
+/* The three states are defined once, in semantic/ask_embed.h, which this
+ * header already includes. They used to be declared here AND in
+ * src/ask/ask_vectors.h — the latter as a STRUCT of the same name — and the
+ * collision was invisible until one file needed both. */
 
 typedef struct {
     hyp_ask_avail_t avail;
-    hyp_ask_trunc_t trunc;
+    hyp_ask_trunc_state_t trunc;
     int trunc_count;                       /* meaningful only when trunc == HYP_ASK_TRUNC_SOME */
     int n_vectors;                         /* rows for this project; 0 unless AVAILABLE */
     int dim;                               /* dimension recorded in the index, 0 when none */

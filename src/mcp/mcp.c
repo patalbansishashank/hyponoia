@@ -57,6 +57,7 @@ enum {
 #include "pipeline/pass_cross_repo.h"
 #include "git/git_context.h"
 #include "cli/cli.h"
+#include "ask/ask_llama.h"
 #include "cli/model_fetch.h"
 #include "watcher/watcher.h"
 #include "foundation/mem.h"
@@ -4130,10 +4131,9 @@ static char *handle_ask(hyp_mcp_server_t *srv, const char *args) {
      * layer is already reachable. Order matters: someone with neither weights
      * nor index must be told to fetch the model, because the embed pass that
      * builds the index is the thing that needs it. */
-    if (st.avail == HYP_ASK_NO_INDEX || st.avail == HYP_ASK_AVAILABLE) {
-        if (!hyp_model_ask_present()) {
-            st.avail = HYP_ASK_NO_WEIGHTS;
-        }
+    if ((st.avail == HYP_ASK_NO_INDEX || st.avail == HYP_ASK_AVAILABLE) &&
+        hyp_ask_llama_backend_installed() && !hyp_model_ask_present()) {
+        st.avail = HYP_ASK_NO_WEIGHTS;
     }
     if (st.avail != HYP_ASK_AVAILABLE) {
         char *result = ask_emit_unavailable(&st, project, json);

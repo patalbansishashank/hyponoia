@@ -455,11 +455,19 @@ TEST(ask_batch_ubatch_never_exceeds_the_batch_and_never_reaches_zero) {
  * two branches. They agreed by luck until src/ask/ask_llama.c included both
  * and -Werror reported a redefinition. This asserts the agreement instead. */
 TEST(ask_batch_norm_tolerance_agrees_across_both_seams) {
-    ASSERT(fabs(ASK_ENCODER_SIDE_TOLERANCE - ASK_TOOL_SIDE_TOLERANCE) < 1e-12);
+    /* They agree to 2.2e-10 and NOT to 1e-12, and that gap is the finding:
+     * one header spells the constant 1e-2F (a float, 0.00999999977648...) and
+     * the other 0.01 (a double). Same intent, different value, in two headers
+     * no translation unit had ever included together. The bound here is set
+     * where a genuine divergence would land — a second digit — not where the
+     * float/double difference does. */
+    ASSERT(fabs(ASK_ENCODER_SIDE_TOLERANCE - ASK_TOOL_SIDE_TOLERANCE) < 1e-6);
+    ASSERT(ASK_ENCODER_SIDE_TOLERANCE != ASK_TOOL_SIDE_TOLERANCE);
     /* And that the value is the MEASURED one: 1e-3 was set from intuition and
      * rejects about half of real model output (worst deviation over 220
      * encodings was 0.003819). */
     ASSERT(fabs(ASK_TOOL_SIDE_TOLERANCE - 0.01) < 1e-12);
+    ASSERT(fabs(ASK_ENCODER_SIDE_TOLERANCE - 0.01) < 1e-6);
     PASS();
 }
 
