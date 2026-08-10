@@ -27,14 +27,14 @@
 /* printf template with exactly one %s (the display name). Split across two
  * adjacent literals only to stay inside the 100-column limit; the
  * concatenation is byte-exact with encoders.py, trailing space included. */
-#define HYP_ASK_INSTRUCT_TEMPLATE                                                                  \
-    "Instruct: Given a natural-language description of %s code, retrieve the declaration it "      \
+#define HYP_ASK_INSTRUCT_TEMPLATE                                                             \
+    "Instruct: Given a natural-language description of %s code, retrieve the declaration it " \
     "describes.\nQuery: "
 
-/* Comfortably above template length (101 bytes without %s) plus the longest
- * display name; hyp_ask_render_instruct_prefix() refuses on truncation
- * regardless, so this is a convenience size for callers, not a load-bearing
- * bound. */
+/* Comfortably above template length (103 bytes with the %s removed; 106
+ * rendered with "C++") plus the longest display name;
+ * hyp_ask_render_instruct_prefix() refuses on truncation regardless, so
+ * this is a convenience size for callers, not a load-bearing bound. */
 enum { HYP_ASK_PREFIX_MAX = HYP_SZ_256 };
 
 /* Render the instruct prefix for `lang` into `buf`.
