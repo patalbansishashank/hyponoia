@@ -74,6 +74,16 @@ ALLOWED_URLS=(
     "https://github.com/patalbansishashank/hyponoia"
     "http://127.0.0.1"
     "http://localhost"
+    # The `ask` lane's embedding weights (NEXT-STEPS.md 2.1, runs/ASK/T2).
+    # Qwen3-Embedding-0.6B Q8_0 GGUF is 639 MB, so it is fetched on first use
+    # of that lane instead of shipped. REVIEWED: the URL is pinned to one repo
+    # revision and one filename, its SHA-256 is a compile-time constant, and
+    # the only caller is `hyponoia fetch-model` -- a command a person types,
+    # which still refuses to run unattended without --yes. No index, tool call
+    # or daemon session can reach it, so the binary keeps the "no network
+    # request by default" property scripts/security-network.sh checks.
+    # See src/cli/model_fetch.h.
+    "https://huggingface.co/Qwen/Qwen3-Embedding-0.6B-GGUF"
     # SQLite internal URLs (part of vendored sqlite3 strings)
     "https://sqlite.org"
     "https://www.sqlite.org"

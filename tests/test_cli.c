@@ -2989,7 +2989,10 @@ TEST(cli_skill_files_content) {
     /* Reference capabilities */
     ASSERT(strstr(sk[0].content, "query_graph") != NULL);
     ASSERT(strstr(sk[0].content, "Cypher") != NULL);
-    ASSERT(strstr(sk[0].content, "15 MCP Tools") != NULL);
+    ASSERT(strstr(sk[0].content, "16 MCP Tools") != NULL);
+    /* `ask` is one of the 16 and the skill has to name it, or an agent
+     * reading the skill never learns the semantic lane exists. */
+    ASSERT(strstr(sk[0].content, "`ask`") != NULL);
 
     /* Gotchas section */
     ASSERT(strstr(sk[0].content, "Gotchas") != NULL);

@@ -31,7 +31,10 @@
 #include "daemon/version_cohort.h"
 #include "mcp/mcp.h"
 #include "mcp/index_supervisor.h"
+#include "ask/ask_cmd.h"
+#include "ask/ask_llama.h"
 #include "cli/cli.h"
+#include "cli/model_fetch.h"
 #include "cli/progress_sink.h"
 #include "foundation/constants.h"
 
@@ -897,6 +900,11 @@ static void print_help(void) {
     printf("  hyponoia uninstall [-y|-n] [--dry-run]\n");
     printf("  hyponoia update [-y|-n]\n");
     printf("  hyponoia config <list|get|set|reset>\n");
+    printf("  hyponoia embed --project <name> [--status]\n"
+           "                                      Opt-in second pass: per-declaration\n"
+           "                                      vectors for the `ask` lane\n");
+    printf("  hyponoia fetch-model [-y] [--force] [--verify] [--path]\n");
+    printf("                                      Download the `ask` lane's embedding model\n");
     printf("  hyponoia --version    Print version\n");
     printf("  hyponoia --help       Print this help\n");
     printf("\nUI options:\n");
@@ -1080,6 +1088,22 @@ static int handle_subcommand(int argc, char **argv, hyp_project_lock_manager_t *
         }
         if (strcmp(argv[i], "config") == 0) {
             return hyp_cmd_config(argc - i - SKIP_ONE, argv + i + SKIP_ONE);
+        }
+        /* The `ask` lane's opt-in second pass. Deliberately NOT a flag on
+         * index_repository: keeping it a separate invocation is what makes
+         * "the structural index is untouched" a property of the build rather
+         * than a claim about a branch nobody took. */
+        if (strcmp(argv[i], "embed") == 0) {
+            hyp_mem_init(hyp_mem_ram_fraction_for_total(hyp_system_info().total_ram));
+            return hyp_cmd_embed(argc - i - SKIP_ONE, argv + i + SKIP_ONE);
+        }
+
+        /* The ONLY caller of the model fetcher, and it is a command a person
+         * types. Nothing on the MCP or daemon path can reach it, which is what
+         * keeps "no network request by default" a property of this binary
+         * rather than a claim about it. See src/cli/model_fetch.h. */
+        if (strcmp(argv[i], "fetch-model") == 0) {
+            return hyp_cmd_fetch_model(argc - i - SKIP_ONE, argv + i + SKIP_ONE);
         }
     }
     return HYP_NOT_FOUND;
@@ -2366,6 +2390,17 @@ int main(int argc, char **argv) {
     hyp_cli_set_version(HYP_VERSION);
     hyp_profile_init();
     hyp_log_init_from_env();
+
+    /* Register the `ask` lane's query encoder. This is a VTABLE INSTALL, not a
+     * model load: the 639 MB of weights are opened on the first encode_query
+     * and never by a process that does not ask one. Installing unconditionally
+     * is what makes hyp_ask_backend() non-NULL, which is what moves the lane's
+     * unavailable cause off `no_encoder` — a claim about the BUILD — and onto
+     * the causes that are about this machine and this project.
+     *
+     * In a build without the runtime this is a no-op and hyp_ask_backend()
+     * stays NULL, which is the correct answer for that binary. */
+    (void)hyp_ask_llama_backend_install();
 
     hyp_mcp_tool_profile_t tool_profile = HYP_MCP_TOOL_PROFILE_ALL;
     if (role == HYP_DAEMON_PROCESS_MCP_CLIENT &&
