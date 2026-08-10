@@ -6,6 +6,7 @@
 #include "daemon/ipc.h"
 #include "daemon/service.h"
 #include "foundation/compat.h"
+#include "foundation/constants.h"
 #include "foundation/platform.h"
 
 #include <limits.h>
@@ -233,6 +234,27 @@ hyp_daemon_ipc_endpoint_t *hyp_daemon_bootstrap_endpoint_new(const char *runtime
     if (!hyp_daemon_rendezvous_key(key)) {
         return NULL;
     }
+#ifdef HYP_ENABLE_TEST_SEAMS
+    /* HYP_TEST_DAEMON_RUNTIME_PARENT exists so a run can have its own
+     * rendezvous namespace instead of the account-wide one. It was read in
+     * exactly ONE caller (main.c's daemon role), which left every other
+     * daemon-coordinated path — including `hyponoia cli <tool>`, the shape
+     * every measurement harness uses — attached to the real namespace with no
+     * way to opt out. Found while measuring §2.2 lever 4: two other agents'
+     * builds held the version cohort, and the seam whose whole purpose is
+     * isolation did not reach the command being measured.
+     *
+     * Reading it HERE covers every caller by construction, and an explicit
+     * argument still wins. With seams compiled out — every production build —
+     * this block does not exist and the function is byte-for-byte what it
+     * was. */
+    char seam_parent[HYP_SZ_1K];
+    if (!runtime_parent) {
+        runtime_parent =
+            hyp_safe_getenv("HYP_TEST_DAEMON_RUNTIME_PARENT", seam_parent, sizeof(seam_parent),
+                            NULL);
+    }
+#endif
     return hyp_daemon_ipc_endpoint_new(key, runtime_parent);
 }
 

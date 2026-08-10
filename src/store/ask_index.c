@@ -166,6 +166,7 @@ static bool ask_search_vector_file(const char *project, const float *qvec, int l
         conv[i].start_line = hits[i].start_line;
         conv[i].end_line = hits[i].end_line;
         conv[i].score = (double)hits[i].score;
+        conv[i].dense = (double)hits[i].score;
         conv[i].truncated = hits[i].truncated;
     }
     hyp_ask_vec_hits_free(hits, n);
@@ -448,6 +449,7 @@ int hyp_ask_index_search(hyp_store_t *s, const char *project, const float *qvec,
         h->start_line = sqlite3_column_int(nq, 4);
         h->end_line = sqlite3_column_int(nq, 5);
         h->score = scored[i].score;
+        h->dense = scored[i].score;
         h->truncated = scored[i].truncated;
         emitted++;
     }
