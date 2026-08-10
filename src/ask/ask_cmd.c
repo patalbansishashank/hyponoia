@@ -43,16 +43,24 @@ static void ask_embed_usage(void) {
            "  --limit <n>            Stop after n declarations (partial index).\n"
            "  --budget <slots>       Padded-slot ceiling per forward pass (default %d).\n"
            "  --max-docs <n>         Documents per forward pass (default %d).\n"
+           "  --device auto|gpu|cpu  Which device to encode on. Default auto: GPU when\n"
+           "                         one can be used safely, else CPU. `gpu` refuses\n"
+           "                         rather than falling back silently.\n"
            "  --stub                 Use the deterministic stub encoder.\n"
            "  --stub-no-truncation-report\n"
            "                         Stub that cannot report token counts, so the\n"
            "                         truncation state comes out UNKNOWN.\n"
            "\n"
+           "Device matters more than any other knob here: %.2f declarations/s on GPU\n"
+           "against %.3f on CPU, measured on this corpus — about 3 minutes versus 45.\n"
+           "Every run prints which device it actually used, and the index records it.\n"
+           "\n"
            "Without an inference backend, --stub is the only encoder available. A stub\n"
            "index carries model id `%s` and can never be silently\n"
            "mistaken for a real one: its vectors have the right shape and no retrieval\n"
            "quality at all.\n",
-           HYP_ASK_TOKEN_BUDGET, HYP_ASK_MAX_DOCS, HYP_ASK_STUB_MODEL_ID);
+           HYP_ASK_TOKEN_BUDGET, HYP_ASK_MAX_DOCS, HYP_ASK_GPU_DOCS_PER_SEC,
+           HYP_ASK_CPU_DOCS_PER_SEC, HYP_ASK_STUB_MODEL_ID);
 }
 
 static int ask_cmd_status(const char *project) {
@@ -90,6 +98,9 @@ static int ask_cmd_status(const char *project) {
     printf("  window           %d tokens\n", m.window_tokens);
     printf("  rows             %lld\n", (long long)m.row_count);
     printf("  graph generation %s\n", m.graph_generation ? m.graph_generation : "?");
+    printf("  built on         %s\n",
+           (m.device_note && m.device_note[0]) ? m.device_note
+                                               : "UNKNOWN — this index predates device recording");
     printf("  built at         %s\n", m.built_at && m.built_at[0] ? m.built_at : "(incomplete)");
     printf("  vector bytes     %lld  (%lld x %d x 4)\n",
            (long long)(m.row_count * (int64_t)m.dim * 4), (long long)m.row_count, m.dim);
@@ -104,6 +115,79 @@ static int ask_cmd_status(const char *project) {
     }
     hyp_ask_vectors_close(v);
     return 0;
+}
+
+
+/* What the GPU can be asked for on this machine, priced BEFORE anything is
+ * allocated.
+ *
+ * The pre-flight is not politeness. On a developer machine the compute GPU is
+ * usually the display GPU, and llama.cpp's failure mode for over-allocating
+ * there is not an error return — amdgpu resets the device, which tears down the
+ * compositor's context along with everything else. Track 2 lost the desktop
+ * session twice to a single mis-sized n_ctx. Refusing costs one multiplication.
+ *
+ * The KV cache, not the 1.2 GB of weights, is what bounds this: n_ctx is
+ * n_seq_max * seq_len and is charged whether the documents fill it or not. */
+static void ask_report_device_plan(hyp_ask_device_pref_t pref) {
+    printf("embed: device requested = %s\n", hyp_ask_device_pref_name(pref));
+
+    if (pref != HYP_ASK_DEVICE_CPU) {
+        double total = 0.0;
+        double used = 0.0;
+        if (!hyp_ask_device_vram_mib(&total, &used)) {
+            printf("  GPU: no device exposes its VRAM to this process, so a ceiling cannot be\n"
+                   "       CHECKED — and it must never be assumed. %s\n",
+                   pref == HYP_ASK_DEVICE_GPU
+                       ? "--device gpu will REFUSE rather than guess."
+                       : "Falling back to CPU.");
+        } else {
+            double ceiling = hyp_ask_gpu_ceiling_mib(total, used);
+            int seq_len = hyp_ask_seq_len_for_kv(HYP_ASK_MAX_DOCS, ceiling);
+            hyp_ask_kv_plan_t plan;
+            bool ok = hyp_ask_kv_plan(HYP_ASK_MAX_DOCS, seq_len > 0 ? seq_len : 1, ceiling, &plan);
+            printf("  GPU: %.0f MiB total, %.0f MiB already in use (this card also drives the\n"
+                   "       display), so the ceiling is %.0f MiB of what is FREE.\n",
+                   total, used, ceiling);
+            if (ok && seq_len > 0) {
+                printf("       plan: n_seq_max=%d x seq_len=%d -> n_ctx=%lld, KV %.0f MiB,\n"
+                       "       %.0f MiB with the backend's fixed cost. ADMISSIBLE.\n",
+                       plan.n_seq_max, plan.seq_len, (long long)plan.n_ctx, plan.kv_mib,
+                       plan.total_mib);
+                printf("       expected throughput ~%.1f declarations/s (~%.0f min per 4,000).\n",
+                       HYP_ASK_GPU_DOCS_PER_SEC, 4000.0 / HYP_ASK_GPU_DOCS_PER_SEC / 60.0);
+                /* seq_len here is the LARGEST admissible per-sequence length,
+                 * not a recommendation. KV is charged for n_seq_max * seq_len
+                 * whether the documents fill it or not, so a backend should
+                 * size seq_len to the longest document it will accept and
+                 * pocket the difference. And seq_len IS the effective window:
+                 * a declaration longer than it is truncated and the counter
+                 * must be denominated in this number, not in the model's
+                 * %d-token maximum. */
+                printf("       (seq_len above is the CEILING; size it to the longest declaration\n"
+                       "        instead — KV is charged for the whole rectangle. seq_len is also\n"
+                       "        the effective window the truncation counter is denominated in,\n"
+                       "        not the model's %d.)\n",
+                       HYP_ASK_MODEL_WINDOW);
+            } else {
+                printf("       plan: REFUSED before allocating — %.0f MiB free cannot hold the\n"
+                       "       backend's fixed cost plus a usable KV cache. %s\n",
+                       ceiling,
+                       pref == HYP_ASK_DEVICE_GPU ? "--device gpu will not proceed."
+                                                  : "Falling back to CPU.");
+            }
+        }
+    }
+    if (pref != HYP_ASK_DEVICE_GPU) {
+        printf("  CPU fallback: ~%.3f declarations/s (~%.0f min per 4,000) — %.0fx slower than\n"
+               "       the GPU path. Kept as a fallback, never as a silent one.\n",
+               HYP_ASK_CPU_DOCS_PER_SEC, 4000.0 / HYP_ASK_CPU_DOCS_PER_SEC / 60.0,
+               HYP_ASK_GPU_DOCS_PER_SEC / HYP_ASK_CPU_DOCS_PER_SEC);
+    }
+    /* Flushed so the notice reaches the terminal BEFORE the wait it warns
+     * about, and before any unbuffered error from the run overtakes it. A
+     * warning that arrives after the thing it warned about is not a warning. */
+    (void)fflush(stdout);
 }
 
 int hyp_cmd_embed(int argc, char **argv) {
@@ -139,6 +223,18 @@ int hyp_cmd_embed(int argc, char **argv) {
             opts.token_budget = (int)strtol(argv[++i], NULL, 10);
         } else if (strcmp(a, "--max-docs") == 0 && has_next) {
             opts.max_docs = (int)strtol(argv[++i], NULL, 10);
+        } else if (strcmp(a, "--device") == 0 && has_next) {
+            const char *d = argv[++i];
+            if (strcmp(d, "gpu") == 0) {
+                opts.device_pref = HYP_ASK_DEVICE_GPU;
+            } else if (strcmp(d, "cpu") == 0) {
+                opts.device_pref = HYP_ASK_DEVICE_CPU;
+            } else if (strcmp(d, "auto") == 0) {
+                opts.device_pref = HYP_ASK_DEVICE_AUTO;
+            } else {
+                (void)fprintf(stderr, "embed: --device must be auto, gpu or cpu (got '%s')\n", d);
+                return 2;
+            }
         } else if (strcmp(a, "--stub") == 0) {
             use_stub = true;
         } else if (strcmp(a, "--stub-no-truncation-report") == 0) {
@@ -178,20 +274,7 @@ int hyp_cmd_embed(int argc, char **argv) {
         return 3;
     }
 
-    /* Say what the wait is before the wait, not after. The in-binary lane is
-     * CPU-only and was measured at 1.581 declarations per second; lld/ELF's
-     * 4,117 declarations are about 43 minutes. The stub is not the backend, so
-     * this notice is about the shape of the real run, not this one. */
-    printf("embed: the in-binary lane is CPU-only, measured at %.3f declarations/s\n"
-           "  (~%.0f minutes per 4,000 declarations). GPU indexing is %.0fx faster and\n"
-           "  belongs to the out-of-process extractor.\n",
-           HYP_ASK_CPU_DOCS_PER_SEC, 4000.0 / HYP_ASK_CPU_DOCS_PER_SEC / 60.0,
-           24.09 / HYP_ASK_CPU_DOCS_PER_SEC);
-    /* Flushed here so the notice reaches the terminal BEFORE the wait it is
-     * warning about, and before any unbuffered error from the run below
-     * overtakes it. A warning that arrives after the thing it warned about is
-     * not a warning. */
-    (void)fflush(stdout);
+    ask_report_device_plan(opts.device_pref);
 
     hyp_ask_encoder_t *enc =
         hyp_ask_encoder_stub_create(HYP_ASK_DIM_DEFAULT, HYP_ASK_MODEL_WINDOW,
@@ -209,6 +292,7 @@ int hyp_cmd_embed(int argc, char **argv) {
         return 1;
     }
     if (rc == HYP_ASK_EMBED_NO_WORK) {
+        hyp_ask_embed_report_free(&rep);
         /* Loud, and a non-zero exit. A run that indexed nothing must not look
          * like a run that indexed everything. */
         (void)fprintf(stderr,
@@ -223,6 +307,14 @@ int hyp_cmd_embed(int argc, char **argv) {
 
     printf("embed: project=%s model=%s dim=%d window=%d\n", opts.project,
            HYP_ASK_STUB_MODEL_ID, HYP_ASK_DIM_DEFAULT, HYP_ASK_MODEL_WINDOW);
+    /* First line of the result, not a footnote. Which device ran is the single
+     * biggest determinant of what this cost. */
+    printf("  DEVICE USED        %s\n", rep.device_note ? rep.device_note : "unreported");
+    if (rep.device_downgraded) {
+        printf("  ** a GPU was requested and NOT used — this run was ~%.0fx slower than the\n"
+               "     device that was asked for **\n",
+               HYP_ASK_GPU_DOCS_PER_SEC / HYP_ASK_CPU_DOCS_PER_SEC);
+    }
     printf("  declarations seen  %lld\n", (long long)rep.declarations_seen);
     printf("  embedded           %lld\n", (long long)rep.embedded);
     printf("  reused (unchanged) %lld\n", (long long)rep.reused);
@@ -253,5 +345,6 @@ int hyp_cmd_embed(int argc, char **argv) {
         }
         hyp_ask_vectors_close(v);
     }
+    hyp_ask_embed_report_free(&rep);
     return 0;
 }

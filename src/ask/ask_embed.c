@@ -76,6 +76,14 @@ static const char *ae_itoa(int64_t v, char *buf, size_t sz) {
     return buf;
 }
 
+void hyp_ask_embed_report_free(hyp_ask_embed_report_t *r) {
+    if (!r) {
+        return;
+    }
+    free(r->device_note);
+    r->device_note = NULL;
+}
+
 void hyp_ask_content_hash(const char *text, char *out) {
     char hex[HYP_SHA256_HEX_LEN + 1];
     hyp_sha256_hex(text ? text : "", text ? strlen(text) : 0, hex);
@@ -369,10 +377,27 @@ int hyp_ask_embed_run(const hyp_ask_encoder_t *enc, const hyp_ask_embed_opts_t *
     hyp_clock_gettime(CLOCK_MONOTONIC, &t0);
 
     const char *model_id = hyp_ask_encoder_model_id(enc);
+    /* WHICH DEVICE ACTUALLY RAN — asked of the encoder, never inferred from
+     * what the caller requested. A run that asked for a GPU and quietly got a
+     * CPU takes 45 minutes instead of 3 and looks identical afterwards; the
+     * only defence is to write down what happened. */
+    const char *device_note = hyp_ask_encoder_device_note(enc);
+    bool device_is_gpu = hyp_ask_encoder_device_is_gpu(enc);
+    rep.device_note = ae_strdup(device_note);
+    rep.device_was_gpu = device_is_gpu;
+    rep.device_downgraded = (opts->device_pref == HYP_ASK_DEVICE_GPU && !device_is_gpu);
+    if (rep.device_downgraded) {
+        hyp_log_warn("ask.embed.device_downgraded", "requested", "gpu", "got", device_note,
+                     "cost", "~15x slower than the device that was asked for");
+    } else {
+        hyp_log_info("ask.embed.device", "requested",
+                     hyp_ask_device_pref_name(opts->device_pref), "using", device_note);
+    }
     int dim = hyp_ask_encoder_dim(enc);
     int window = hyp_ask_encoder_window(enc);
     if (!model_id || dim <= 0 || window <= 0) {
         hyp_log_error("ask.embed.encoder", "err", "encoder did not report model/dim/window");
+        free(rep.device_note);
         return -1;
     }
 
@@ -383,27 +408,32 @@ int hyp_ask_embed_run(const hyp_ask_encoder_t *enc, const hyp_ask_embed_opts_t *
         const char *cache = hyp_resolve_cache_dir();
         cache = cache ? cache : hyp_tmpdir();
         if (!cache) {
+            free(rep.device_note);
             return -1;
         }
         int n = snprintf(graph_path, sizeof(graph_path), "%s/%s.db", cache, opts->project);
         if (n < 0 || (size_t)n >= sizeof(graph_path)) {
+            free(rep.device_note);
             return -1;
         }
     }
     if (!hyp_file_exists(graph_path)) {
         hyp_log_error("ask.embed.no_graph", "path", graph_path, "hint",
                       "index_repository has not run for this project");
+        free(rep.device_note);
         return -1;
     }
 
     ae_graph_t graph;
     if (!ae_graph_open(&graph, graph_path, opts->project)) {
+        free(rep.device_note);
         return -1;
     }
     const char *root = opts->repo_path ? opts->repo_path : graph.root_path;
     if (!root || !root[0]) {
         hyp_log_error("ask.embed.no_root", "project", opts->project);
         ae_graph_close(&graph);
+        free(rep.device_note);
         return -1;
     }
 
@@ -414,6 +444,7 @@ int hyp_ask_embed_run(const hyp_ask_encoder_t *enc, const hyp_ask_embed_opts_t *
     if (!store) {
         hyp_log_error("ask.embed.vectors_open", "project", opts->project);
         ae_graph_close(&graph);
+        free(rep.device_note);
         return -1;
     }
     /* Whether the PREVIOUS index's truncation flags attest anything. Read
@@ -429,18 +460,20 @@ int hyp_ask_embed_run(const hyp_ask_encoder_t *enc, const hyp_ask_embed_opts_t *
         }
     }
     int begin = hyp_ask_vectors_begin_build(store, model_id, dim, window, graph.generation,
-                                            opts->allow_model_change);
+                                            device_note, opts->allow_model_change);
     if (begin == HYP_ASK_VEC_INCOMPATIBLE) {
         hyp_log_error("ask.embed.incompatible", "err", hyp_ask_vectors_error(store), "hint",
                       "re-run with --allow-model-change to discard and rebuild");
         hyp_ask_vectors_close(store);
         ae_graph_close(&graph);
+        free(rep.device_note);
         return -1;
     }
     if (begin != HYP_ASK_VEC_OK) {
         hyp_log_error("ask.embed.begin", "err", hyp_ask_vectors_error(store));
         hyp_ask_vectors_close(store);
         ae_graph_close(&graph);
+        free(rep.device_note);
         return -1;
     }
 
@@ -458,6 +491,7 @@ int hyp_ask_embed_run(const hyp_ask_encoder_t *enc, const hyp_ask_embed_opts_t *
         hyp_log_error("ask.embed.scan_prepare", "err", sqlite3_errmsg(graph.db));
         hyp_ask_vectors_close(store);
         ae_graph_close(&graph);
+        free(rep.device_note);
         return -1;
     }
     sqlite3_bind_text(st, 1, opts->project, -1, SQLITE_STATIC);
@@ -688,6 +722,9 @@ int hyp_ask_embed_run(const hyp_ask_encoder_t *enc, const hyp_ask_embed_opts_t *
     rep.elapsed_ms = ae_elapsed_ms(t0);
     if (out) {
         *out = rep;
+    } else {
+        free(rep.device_note);
+        rep.device_note = NULL;
     }
     if (rc != 0) {
         return rc;

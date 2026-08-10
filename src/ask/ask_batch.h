@@ -123,8 +123,100 @@ void hyp_ask_batches_free(hyp_ask_batches_t *b);
  * branch: that clamp made the function able only ever to LOWER the budget on a
  * small card and never to raise it on a large one, which is why the reference's
  * copy returned 8,192 unchanged on a 16 GB card and bought no throughput at
- * all. It was also dead code — called by nothing. */
+ * all. It was also dead code — called by nothing.
+ *
+ * NOTE: this is the PyTorch/SDPA activation model, kept because it is what the
+ * recorded ctxengine numbers were derived under. For the llama.cpp backend the
+ * binding quantity is the KV cache, not activations, and the KV arithmetic
+ * below is exact rather than fitted. Prefer it. */
 int hyp_ask_token_budget_for_device(double device_total_mib, bool is_gpu);
+
+/* ── The KV cache, which is what actually bounds a llama.cpp batch ──
+ *
+ * READ THIS BEFORE SIZING ANYTHING. It cost two desktop sessions.
+ *
+ * llama.cpp's `n_ctx` is NOT a per-sequence context length. It is the TOTAL
+ * capacity of the unified KV cache, and llama.cpp DIVIDES it by `n_seq_max` to
+ * get the per-sequence limit. So the correct sizing is
+ *
+ *     n_ctx = n_seq_max * seq_len          (seq_len = the LONGEST DOCUMENT
+ *                                           the batch will accept)
+ *
+ * and the line that looks right and is not is `n_ctx = n_batch * n_seq_max`.
+ * With n_batch 8,192 and n_seq_max 64 that asks for 524,288 tokens of KV —
+ * about 57 GB — on a 16 GB card that is also driving the compositor. amdgpu
+ * does not return an error for that; it RESETS THE DEVICE, which tears down
+ * every context including the desktop's. Track 2 lost the session twice before
+ * the cause was found, and it was this line, not the backend being unsafe:
+ * after the fix, nine runs across six configurations completed cleanly at peaks
+ * up to 6,110 MB.
+ *
+ * The consequence for THIS module is the useful part: `n_seq_max * seq_len` is
+ * exactly the padded rectangle that `hyp_ask_group_by_token_budget` already
+ * bounds. The budget IS n_ctx. A grouping that respects the budget cannot ask
+ * for a KV cache larger than the context was created with, which is the whole
+ * safety property — provided the budget was derived from the KV arithmetic
+ * rather than guessed.
+ *
+ * And KV is charged for the WHOLE rectangle whether the documents fill it or
+ * not, which is why a wide batch of short documents is not free even though it
+ * looks free in padded-slot terms.
+ */
+
+/* KV bytes for ONE token of Qwen3-Embedding-0.6B under llama.cpp:
+ * 28 layers x 2 (K and V) x 1024 dim x 2 bytes (f16) = 114,688 = 112 KiB.
+ *
+ * Verified exactly against all five of track 2's measured configurations:
+ * n_ctx 8,192 -> 896 MB; 18,432 -> 2,016; 36,864 -> 4,032; 73,728 -> 8,064;
+ * 131,072 -> 14,336. Not a fitted constant — an arithmetic one. */
+#define HYP_ASK_KV_BYTES_PER_TOKEN (28 * 2 * 1024 * 2)
+#define HYP_ASK_KV_MIB_PER_TOKEN (HYP_ASK_KV_BYTES_PER_TOKEN / 1048576.0)
+
+/* What the backend occupies before a single KV byte: Q8_0 weights (~639 MB)
+ * plus llama.cpp's compute buffers. Track 2's peaks minus their KV give 1,953
+ * MB at n_ctx 8,192, 1,875 at 18,432 and 2,078 at 36,864 — flat, as it should
+ * be, since only the KV scales with n_ctx. 2,100 is the top of that range. */
+#define HYP_ASK_LLAMA_FIXED_MIB 2100.0
+
+typedef struct {
+    int n_seq_max;      /* sequences per forward pass */
+    int seq_len;        /* per-sequence token limit = n_ctx / n_seq_max */
+    int64_t n_ctx;      /* what llama.cpp is asked to allocate */
+    double kv_mib;      /* KV implied by n_ctx */
+    double total_mib;   /* kv_mib + the fixed backend cost */
+    double ceiling_mib; /* what it was checked against */
+    bool admissible;    /* false = REFUSE, do not attempt */
+} hyp_ask_kv_plan_t;
+
+/* Price a (n_seq_max, seq_len) pair against a VRAM ceiling.
+ *
+ * REFUSES rather than attempts. On a machine where the compute GPU is also the
+ * display GPU — the common case for the developers this tool targets — an
+ * over-allocation is not an OOM error, it is the user losing their session.
+ * A pre-flight check that costs one multiplication is the difference. */
+bool hyp_ask_kv_plan(int n_seq_max, int seq_len, double ceiling_mib, hyp_ask_kv_plan_t *out);
+
+/* The largest per-sequence length that fits `ceiling_mib` at `n_seq_max`.
+ * 0 when even one token does not fit, which is the caller's cue to fall back to
+ * the CPU rather than to try a smaller batch. */
+int hyp_ask_seq_len_for_kv(int n_seq_max, double ceiling_mib);
+
+/* Read the device's real VRAM, in MiB, from sysfs — the files
+ * mem_info_vram_total and mem_info_vram_used under
+ * /sys/class/drm/cardN/device.
+ *
+ * CHECKED, NOT ASSUMED, and `used` matters as much as `total`: this card also
+ * drives the display and its baseline is ~2.5 GB of the 16 GB. Planning against
+ * the nominal total plans against memory somebody else is already holding.
+ * Returns false when no amdgpu-style device exposes the files — every other
+ * platform, in which case the caller must fall back to the CPU rather than
+ * guess a ceiling. */
+bool hyp_ask_device_vram_mib(double *out_total_mib, double *out_used_mib);
+
+/* Ceiling to plan a GPU pass against, from live VRAM:
+ *     (total - used) * HYP_ASK_VRAM_HEADROOM
+ * i.e. a fraction of what is FREE right now, not of what the card has. */
+double hyp_ask_gpu_ceiling_mib(double total_mib, double used_mib);
 
 /* Total padded slots the grouping will push through the model, and the largest
  * single rectangle among them. Diagnostics for the pass report: `slots` is what

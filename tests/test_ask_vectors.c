@@ -63,7 +63,7 @@ TEST(ask_vectors_roundtrip_and_meta) {
     ASSERT_NOT_NULL(dir);
     hyp_ask_vectors_t *v = hyp_ask_vectors_open_path("p", TH_PATH(dir, "v.db"));
     ASSERT_NOT_NULL(v);
-    ASSERT_EQ(hyp_ask_vectors_begin_build(v, "m1", AV_TEST_DIM, 32768, "gen7", false),
+    ASSERT_EQ(hyp_ask_vectors_begin_build(v, "m1", AV_TEST_DIM, 32768, "gen7", "CPU (test)", false),
               HYP_ASK_VEC_OK);
     float a[AV_TEST_DIM];
     float b[AV_TEST_DIM];
@@ -82,6 +82,9 @@ TEST(ask_vectors_roundtrip_and_meta) {
     ASSERT_EQ(m.dim, AV_TEST_DIM);
     ASSERT_EQ(m.window_tokens, 32768);
     ASSERT_STR_EQ(m.graph_generation, "gen7");
+    /* Which device built the index is recorded. A 45-minute CPU build and a
+     * 3-minute GPU build produce indistinguishable files otherwise. */
+    ASSERT_STR_EQ(m.device_note, "CPU (test)");
     ASSERT_EQ(m.row_count, 2);
     ASSERT(m.truncation_known);
     ASSERT_EQ(m.truncated_count, 0);
@@ -99,7 +102,7 @@ TEST(ask_vectors_refuses_a_row_that_is_not_unit_normalised) {
     ASSERT_NOT_NULL(dir);
     hyp_ask_vectors_t *v = hyp_ask_vectors_open_path("p", TH_PATH(dir, "v.db"));
     ASSERT_NOT_NULL(v);
-    ASSERT_EQ(hyp_ask_vectors_begin_build(v, "m1", AV_TEST_DIM, 32768, "g", false),
+    ASSERT_EQ(hyp_ask_vectors_begin_build(v, "m1", AV_TEST_DIM, 32768, "g", "CPU (test)", false),
               HYP_ASK_VEC_OK);
     float bad[AV_TEST_DIM];
     for (int i = 0; i < AV_TEST_DIM; i++) {
@@ -130,7 +133,7 @@ TEST(ask_vectors_refuses_a_different_model_unless_told_to_wipe) {
 
     hyp_ask_vectors_t *v = hyp_ask_vectors_open_path("p", kept);
     ASSERT_NOT_NULL(v);
-    ASSERT_EQ(hyp_ask_vectors_begin_build(v, "m1", AV_TEST_DIM, 32768, "g", false),
+    ASSERT_EQ(hyp_ask_vectors_begin_build(v, "m1", AV_TEST_DIM, 32768, "g", "CPU (test)", false),
               HYP_ASK_VEC_OK);
     float a[AV_TEST_DIM];
     unit_axis(a, AV_TEST_DIM, 0);
@@ -140,21 +143,21 @@ TEST(ask_vectors_refuses_a_different_model_unless_told_to_wipe) {
 
     /* Same dim, different model: two models' vectors are not comparable and
      * nothing downstream can detect the mix, so this refuses. */
-    ASSERT_EQ(hyp_ask_vectors_begin_build(v, "m2", AV_TEST_DIM, 32768, "g", false),
+    ASSERT_EQ(hyp_ask_vectors_begin_build(v, "m2", AV_TEST_DIM, 32768, "g", "CPU (test)", false),
               HYP_ASK_VEC_INCOMPATIBLE);
     ASSERT_EQ(hyp_ask_vectors_count(v), 1);
 
     /* Same model, different dim: also refused. */
-    ASSERT_EQ(hyp_ask_vectors_begin_build(v, "m1", AV_TEST_DIM + 1, 32768, "g", false),
+    ASSERT_EQ(hyp_ask_vectors_begin_build(v, "m1", AV_TEST_DIM + 1, 32768, "g", "CPU (test)", false),
               HYP_ASK_VEC_INCOMPATIBLE);
 
     /* A different window changes what the truncation set is denominated in. */
-    ASSERT_EQ(hyp_ask_vectors_begin_build(v, "m1", AV_TEST_DIM, 4096, "g", false),
+    ASSERT_EQ(hyp_ask_vectors_begin_build(v, "m1", AV_TEST_DIM, 4096, "g", "CPU (test)", false),
               HYP_ASK_VEC_INCOMPATIBLE);
 
     /* Explicitly asked to replace: the old rows go, because keeping them would
      * make the matrix a mixture. */
-    ASSERT_EQ(hyp_ask_vectors_begin_build(v, "m2", AV_TEST_DIM, 32768, "g", true),
+    ASSERT_EQ(hyp_ask_vectors_begin_build(v, "m2", AV_TEST_DIM, 32768, "g", "CPU (test)", true),
               HYP_ASK_VEC_OK);
     ASSERT_EQ(hyp_ask_vectors_count(v), 0);
     hyp_ask_vectors_close(v);
@@ -167,7 +170,7 @@ TEST(ask_vectors_search_is_exact_top_k) {
     ASSERT_NOT_NULL(dir);
     hyp_ask_vectors_t *v = hyp_ask_vectors_open_path("p", TH_PATH(dir, "v.db"));
     ASSERT_NOT_NULL(v);
-    ASSERT_EQ(hyp_ask_vectors_begin_build(v, "m1", AV_TEST_DIM, 32768, "g", false),
+    ASSERT_EQ(hyp_ask_vectors_begin_build(v, "m1", AV_TEST_DIM, 32768, "g", "CPU (test)", false),
               HYP_ASK_VEC_OK);
     /* One basis vector per axis: the top-k for axis j is exactly row j. */
     float vecs[AV_TEST_DIM][AV_TEST_DIM];
@@ -231,7 +234,7 @@ TEST(ask_vectors_truncation_has_three_states) {
     unit_axis(b, AV_TEST_DIM, 1);
 
     /* 1. UNKNOWN — the encoder could not say. Not the same claim as "none". */
-    ASSERT_EQ(hyp_ask_vectors_begin_build(v, "m1", AV_TEST_DIM, 32768, "g", false),
+    ASSERT_EQ(hyp_ask_vectors_begin_build(v, "m1", AV_TEST_DIM, 32768, "g", "CPU (test)", false),
               HYP_ASK_VEC_OK);
     hyp_ask_vec_row_t rows[2] = {make_row("p.A", a, "aaaa1111aaaa1111aaaa1111aaaa1111", true),
                                  make_row("p.B", b, "bbbb2222bbbb2222bbbb2222bbbb2222", false)};
@@ -286,7 +289,7 @@ TEST(ask_vectors_prune_removes_only_what_is_gone) {
     ASSERT_NOT_NULL(dir);
     hyp_ask_vectors_t *v = hyp_ask_vectors_open_path("p", TH_PATH(dir, "v.db"));
     ASSERT_NOT_NULL(v);
-    ASSERT_EQ(hyp_ask_vectors_begin_build(v, "m1", AV_TEST_DIM, 32768, "g", false),
+    ASSERT_EQ(hyp_ask_vectors_begin_build(v, "m1", AV_TEST_DIM, 32768, "g", "CPU (test)", false),
               HYP_ASK_VEC_OK);
     float a[AV_TEST_DIM];
     float b[AV_TEST_DIM];
@@ -313,7 +316,7 @@ TEST(ask_vectors_stored_hash_is_the_reuse_key) {
     ASSERT_NOT_NULL(dir);
     hyp_ask_vectors_t *v = hyp_ask_vectors_open_path("p", TH_PATH(dir, "v.db"));
     ASSERT_NOT_NULL(v);
-    ASSERT_EQ(hyp_ask_vectors_begin_build(v, "m1", AV_TEST_DIM, 32768, "g", false),
+    ASSERT_EQ(hyp_ask_vectors_begin_build(v, "m1", AV_TEST_DIM, 32768, "g", "CPU (test)", false),
               HYP_ASK_VEC_OK);
     float a[AV_TEST_DIM];
     unit_axis(a, AV_TEST_DIM, 0);
@@ -333,6 +336,12 @@ TEST(ask_vectors_stored_hash_is_the_reuse_key) {
 TEST(ask_vectors_stub_encoder_returns_unit_rows) {
     hyp_ask_encoder_t *e = hyp_ask_encoder_stub_create(64, 32768, true);
     ASSERT_NOT_NULL(e);
+    /* The encoder must say which device it ran on, and the stub must not
+     * pretend to be a GPU. An encoder that will not say returns the UNKNOWN
+     * sentence rather than a guess — a wrong device note is worse than an
+     * absent one because it is believed. */
+    ASSERT_STR_EQ(hyp_ask_encoder_device_note(e), HYP_ASK_STUB_DEVICE_NOTE);
+    ASSERT_EQ(hyp_ask_encoder_device_is_gpu(e), false);
     ASSERT_EQ(hyp_ask_encoder_dim(e), 64);
     ASSERT_EQ(hyp_ask_encoder_window(e), 32768);
     ASSERT_STR_EQ(hyp_ask_encoder_model_id(e), HYP_ASK_STUB_MODEL_ID);

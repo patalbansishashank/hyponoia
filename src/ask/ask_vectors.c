@@ -149,6 +149,10 @@ static int av_init_schema(hyp_ask_vectors_t *v) {
         "  dim              INTEGER NOT NULL,"
         "  window_tokens    INTEGER NOT NULL,"
         "  graph_generation TEXT NOT NULL DEFAULT '',"
+        /* Which device built it. A 45-minute CPU build and a 3-minute GPU
+         * build produce indistinguishable files; this is the only place the
+         * difference survives. */
+        "  device_note      TEXT NOT NULL DEFAULT '',"
         "  built_at         TEXT NOT NULL DEFAULT '',"
         "  row_count        INTEGER NOT NULL DEFAULT 0,"
         /* 0 = the encoder could not say. NOT the same claim as
@@ -279,7 +283,7 @@ int hyp_ask_vectors_get_meta(hyp_ask_vectors_t *v, hyp_ask_vec_meta_t *out) {
     memset(out, 0, sizeof(*out));
     sqlite3_stmt *st = NULL;
     const char *sql = "SELECT format, project, model_id, dim, window_tokens, graph_generation,"
-                      "       built_at, row_count, truncation_known, truncated_count"
+                      "       built_at, row_count, truncation_known, truncated_count, device_note"
                       " FROM ask_index WHERE singleton = 1";
     if (sqlite3_prepare_v2(v->db, sql, -1, &st, NULL) != SQLITE_OK) {
         av_err_sqlite(v, "meta prepare");
@@ -297,6 +301,7 @@ int hyp_ask_vectors_get_meta(hyp_ask_vectors_t *v, hyp_ask_vec_meta_t *out) {
         out->row_count = sqlite3_column_int64(st, 7);
         out->truncation_known = sqlite3_column_int(st, 8) != 0;
         out->truncated_count = sqlite3_column_int64(st, 9);
+        out->device_note = av_strdup((const char *)sqlite3_column_text(st, 10));
         rc = HYP_ASK_VEC_OK;
     }
     sqlite3_finalize(st);
@@ -310,6 +315,7 @@ void hyp_ask_vec_meta_free(hyp_ask_vec_meta_t *m) {
     free(m->project);
     free(m->model_id);
     free(m->graph_generation);
+    free(m->device_note);
     free(m->built_at);
     memset(m, 0, sizeof(*m));
 }
@@ -354,7 +360,7 @@ int hyp_ask_vectors_check_compatible(hyp_ask_vectors_t *v, const char *model_id,
 
 int hyp_ask_vectors_begin_build(hyp_ask_vectors_t *v, const char *model_id, int dim,
                                 int window_tokens, const char *graph_generation,
-                                bool wipe_incompatible) {
+                                const char *device_note, bool wipe_incompatible) {
     if (!v || !model_id || dim <= 0 || window_tokens <= 0) {
         av_err(v, "begin_build: bad arguments");
         return HYP_ASK_VEC_ERR;
@@ -375,14 +381,15 @@ int hyp_ask_vectors_begin_build(hyp_ask_vectors_t *v, const char *model_id, int 
     sqlite3_stmt *st = NULL;
     const char *sql =
         "INSERT INTO ask_index (singleton, format, project, model_id, dim, window_tokens,"
-        "                       graph_generation, built_at, row_count, truncation_known,"
-        "                       truncated_count)"
-        " VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, '', 0, 0, 0)"
+        "                       graph_generation, device_note, built_at, row_count,"
+        "                       truncation_known, truncated_count)"
+        " VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, ?7, '', 0, 0, 0)"
         " ON CONFLICT(singleton) DO UPDATE SET"
         "   format = excluded.format, project = excluded.project,"
         "   model_id = excluded.model_id, dim = excluded.dim,"
         "   window_tokens = excluded.window_tokens,"
-        "   graph_generation = excluded.graph_generation";
+        "   graph_generation = excluded.graph_generation,"
+        "   device_note = excluded.device_note";
     if (sqlite3_prepare_v2(v->db, sql, -1, &st, NULL) != SQLITE_OK) {
         av_err_sqlite(v, "begin_build prepare");
         return HYP_ASK_VEC_ERR;
@@ -393,6 +400,7 @@ int hyp_ask_vectors_begin_build(hyp_ask_vectors_t *v, const char *model_id, int 
     sqlite3_bind_int(st, 4, dim);
     sqlite3_bind_int(st, 5, window_tokens);
     sqlite3_bind_text(st, 6, graph_generation ? graph_generation : "", -1, AV_TRANSIENT);
+    sqlite3_bind_text(st, 7, device_note ? device_note : "", -1, AV_TRANSIENT);
     int step = sqlite3_step(st);
     sqlite3_finalize(st);
     if (step != SQLITE_DONE) {

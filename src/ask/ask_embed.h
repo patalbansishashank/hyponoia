@@ -8,7 +8,7 @@
  * §2.1 requires that "the structural index keeps the speed it has today,
  * untouched", and that the embed work be opt-in because it scales with
  * declaration count: 4,117 declarations on lld/ELF are ~3 minutes on a GPU and
- * ~23 minutes on a CPU, against ten seconds for the whole structural index.
+ * ~45 minutes on a CPU, against ten seconds for the whole structural index.
  *
  * A pass inside the pipeline, gated off by default, would satisfy the letter of
  * that. A separate entry point satisfies it as a PROPERTY: nothing in
@@ -70,18 +70,22 @@
  * only in documents would let a handful of them exhaust host memory. */
 #define HYP_ASK_SORT_WINDOW_BYTES (64 * 1024 * 1024)
 
-/* Measured throughput of the in-binary lane, in declarations per second.
+/* Measured throughput, in declarations per second, from track 2's ladder over
+ * whole lld/ELF declarations with llama.cpp + Qwen3-Embedding-0.6B at Q8_0.
  *
- * Track 2 measured llama.cpp with Qwen3-Embedding-0.6B encoding whole lld/ELF
- * declarations: 1.581 docs/s on 16 CPU threads against 24.09 docs/s on the GPU
- * at the peak batch. The recommendation is to ship the in-binary lane CPU-only
- * and leave GPU indexing to the out-of-process extractor, which makes ~15x the
- * honest expectation for anyone running this command. lld/ELF's 4,117
- * declarations are about 43 minutes here.
+ * GPU IS THE PRIMARY PATH. 24.09 against 1.581 is 15.2x — lld/ELF's 4,117
+ * declarations are ~3 minutes against ~45, and on a corpus of any real size the
+ * CPU path is not slow, it is unusable. An opt-in pass nobody can afford to opt
+ * into is not a feature. Track 2 recommended shipping the in-binary lane
+ * CPU-only on install-story grounds (see ask_batch.h for what a GPU build costs
+ * in linking); that recommendation was weighed and overridden. The CPU path
+ * REMAINS as a fallback and is never removed — it is what runs where there is
+ * no usable device, and the pass says which one ran.
  *
  * Used ONLY to tell the user what they are about to wait for, before they wait
- * for it. It is a corpus-shaped number and the command says so. */
+ * for it. Corpus-shaped numbers, and the command says so. */
 #define HYP_ASK_CPU_DOCS_PER_SEC 1.581
+#define HYP_ASK_GPU_DOCS_PER_SEC 24.093
 
 typedef struct {
     const char *project;
@@ -103,6 +107,10 @@ typedef struct {
     /* 0 uses the compiled defaults from ask_batch.h. */
     int token_budget;
     int max_docs;
+    /* What device the caller WANTS. The encoder decides what it can honour and
+     * reports the answer through device_note; the pass records both so a run
+     * that asked for a GPU and got a CPU is visible rather than merely slow. */
+    hyp_ask_device_pref_t device_pref;
     /* Stop after this many declarations. 0 = the whole corpus. For smoke runs;
      * an index built with a limit is a PARTIAL index and the report says so. */
     int limit;
@@ -130,7 +138,18 @@ typedef struct {
     int64_t truncated;
     bool partial; /* limit was hit — the index does not cover the corpus */
     double elapsed_ms;
+    /* What device actually ran, copied from the encoder. Owned; freed by
+     * hyp_ask_embed_report_free. */
+    char *device_note;
+    bool device_was_gpu;
+    /* True when the caller asked for a GPU and did not get one. The whole
+     * reason device_note exists: 24.09 docs/s against 1.581 is ~3 minutes
+     * against ~45, and a silent fallback is the failure that wastes an
+     * afternoon. */
+    bool device_downgraded;
 } hyp_ask_embed_report_t;
+
+void hyp_ask_embed_report_free(hyp_ask_embed_report_t *r);
 
 /* Run the pass.
  *

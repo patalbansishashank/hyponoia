@@ -204,6 +204,7 @@ TEST(ask_embed_runs_end_to_end_and_embeds_every_spanned_node) {
     ASSERT_EQ(hyp_ask_vectors_stored_hash(v, "p.file.x_c", stored, NULL),
               HYP_ASK_VEC_NOT_FOUND);
     hyp_ask_vectors_close(v);
+    hyp_ask_embed_report_free(&rep);
     hyp_ask_encoder_destroy(enc);
     th_cleanup(dir);
     PASS();
@@ -242,6 +243,9 @@ TEST(ask_embed_reuses_byte_identical_declarations_on_a_rerun) {
     ASSERT_EQ(hyp_ask_embed_run(enc, &opts, &third), 0);
     ASSERT_EQ(third.embedded, 3);
     ASSERT_EQ(third.reused, 0);
+    hyp_ask_embed_report_free(&first);
+    hyp_ask_embed_report_free(&second);
+    hyp_ask_embed_report_free(&third);
     hyp_ask_encoder_destroy(enc);
     th_cleanup(dir);
     PASS();
@@ -268,6 +272,7 @@ TEST(ask_embed_prunes_declarations_that_no_longer_exist) {
     hyp_ask_embed_report_t rep;
     ASSERT_EQ(hyp_ask_embed_run(enc, &opts, &rep), 0);
     ASSERT_EQ(rep.embedded, 3);
+    hyp_ask_embed_report_free(&rep);
 
     /* Remove one declaration from the graph and re-run. */
     hyp_store_t *s = hyp_store_open_path(graph_db);
@@ -283,6 +288,7 @@ TEST(ask_embed_prunes_declarations_that_no_longer_exist) {
     ASSERT_NOT_NULL(v);
     ASSERT_EQ(hyp_ask_vectors_count(v), 2);
     hyp_ask_vectors_close(v);
+    hyp_ask_embed_report_free(&rep);
     hyp_ask_encoder_destroy(enc);
     th_cleanup(dir);
     PASS();
@@ -322,6 +328,8 @@ TEST(ask_embed_limited_run_is_marked_partial_and_never_prunes) {
     ASSERT_NOT_NULL(v);
     ASSERT_EQ(hyp_ask_vectors_count(v), 3);
     hyp_ask_vectors_close(v);
+    hyp_ask_embed_report_free(&full);
+    hyp_ask_embed_report_free(&part);
     hyp_ask_encoder_destroy(enc);
     th_cleanup(dir);
     PASS();
@@ -357,6 +365,7 @@ TEST(ask_embed_truncation_unknown_then_reprobed_to_attested) {
     ASSERT_EQ(hyp_ask_embed_run(quiet, &opts, &r1), 0);
     ASSERT_EQ(r1.truncation_known, false);
     ASSERT_EQ(r1.truncated, 0);
+    hyp_ask_embed_report_free(&r1);
     hyp_ask_encoder_destroy(quiet);
 
     hyp_ask_vectors_t *v = hyp_ask_vectors_open_path("p", vec_db);
@@ -378,6 +387,7 @@ TEST(ask_embed_truncation_unknown_then_reprobed_to_attested) {
     ASSERT_EQ(r2.reused, 3);
     ASSERT(r2.truncation_known);
     ASSERT_EQ(r2.truncated, 3);
+    hyp_ask_embed_report_free(&r2);
     hyp_ask_encoder_destroy(loud);
 
     v = hyp_ask_vectors_open_path("p", vec_db);
@@ -434,6 +444,7 @@ TEST(ask_embed_counts_unreadable_spans_instead_of_hiding_them) {
     ASSERT_EQ(rep.declarations_seen, 4);
     ASSERT_EQ(rep.embedded, 3);
     ASSERT_EQ(rep.skipped_unreadable, 1);
+    hyp_ask_embed_report_free(&rep);
     hyp_ask_encoder_destroy(enc);
     th_cleanup(dir);
     PASS();
@@ -468,6 +479,7 @@ TEST(ask_embed_zero_work_is_not_reported_as_success) {
     ASSERT_EQ(hyp_ask_embed_run(enc, &opts, &rep), HYP_ASK_EMBED_NO_WORK);
     ASSERT_EQ(rep.declarations_seen, 0);
     ASSERT_EQ(rep.embedded, 0);
+    hyp_ask_embed_report_free(&rep);
     hyp_ask_encoder_destroy(enc);
     th_cleanup(dir);
     PASS();

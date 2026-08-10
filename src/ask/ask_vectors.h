@@ -144,6 +144,14 @@ typedef struct {
      * while the structural lane is fresh, AND SAY SO, instead of answering
      * confidently from an older corpus. */
     char *graph_generation;
+    /* Which device built this index, as the encoder reported it. Recorded
+     * because a 45-minute CPU build and a 3-minute GPU build produce
+     * indistinguishable files, and the only way to find out afterwards which
+     * one you paid for is to have written it down. Not a reuse gate: track 2
+     * measured GPU and CPU vectors agreeing at min cosine 0.9996, so a
+     * GPU-built index is searchable from a CPU query encoder and mixing the two
+     * devices is safe. Mixing MODELS is not, and that is a separate field. */
+    char *device_note;
     char *built_at;
     int64_t row_count;
     /* THE THIRD STATE. false means the encoder could not say whether anything
@@ -237,7 +245,7 @@ int hyp_ask_vectors_check_compatible(hyp_ask_vectors_t *v, const char *model_id,
  * `wipe_incompatible` is false. */
 int hyp_ask_vectors_begin_build(hyp_ask_vectors_t *v, const char *model_id, int dim,
                                 int window_tokens, const char *graph_generation,
-                                bool wipe_incompatible);
+                                const char *device_note, bool wipe_incompatible);
 
 /* Upsert `count` rows in one transaction. Rows are keyed on qualified_name. */
 int hyp_ask_vectors_put(hyp_ask_vectors_t *v, const hyp_ask_vec_row_t *rows, int count);

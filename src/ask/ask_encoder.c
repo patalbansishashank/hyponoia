@@ -17,6 +17,35 @@ const char *hyp_ask_encoder_model_id(const hyp_ask_encoder_t *e) {
     return (e && e->vt && e->vt->model_id) ? e->vt->model_id(e->self) : NULL;
 }
 
+const char *hyp_ask_encoder_device_note(const hyp_ask_encoder_t *e) {
+    if (e && e->vt && e->vt->device_note) {
+        const char *n = e->vt->device_note(e->self);
+        if (n && n[0]) {
+            return n;
+        }
+    }
+    /* An encoder that will not say which device it used is itself a finding.
+     * The one thing this must never do is guess "CPU" or "GPU" — a wrong device
+     * note is worse than an absent one, because it is believed. */
+    return "UNKNOWN — this encoder does not report its device";
+}
+
+bool hyp_ask_encoder_device_is_gpu(const hyp_ask_encoder_t *e) {
+    return (e && e->vt && e->vt->device_is_gpu) ? e->vt->device_is_gpu(e->self) : false;
+}
+
+const char *hyp_ask_device_pref_name(hyp_ask_device_pref_t p) {
+    switch (p) {
+    case HYP_ASK_DEVICE_GPU:
+        return "gpu";
+    case HYP_ASK_DEVICE_CPU:
+        return "cpu";
+    case HYP_ASK_DEVICE_AUTO:
+    default:
+        return "auto";
+    }
+}
+
 int hyp_ask_encoder_dim(const hyp_ask_encoder_t *e) {
     return (e && e->vt && e->vt->dim) ? e->vt->dim(e->self) : 0;
 }
@@ -97,6 +126,16 @@ typedef struct {
 static const char *stub_model_id(void *self) {
     (void)self;
     return HYP_ASK_STUB_MODEL_ID;
+}
+
+static const char *stub_device_note(void *self) {
+    (void)self;
+    return HYP_ASK_STUB_DEVICE_NOTE;
+}
+
+static bool stub_device_is_gpu(void *self) {
+    (void)self;
+    return false;
 }
 
 static int stub_dim(void *self) {
@@ -213,6 +252,8 @@ static void stub_destroy(void *self) {
 
 static const hyp_ask_encoder_vt_t STUB_VT = {
     .model_id = stub_model_id,
+    .device_note = stub_device_note,
+    .device_is_gpu = stub_device_is_gpu,
     .dim = stub_dim,
     .window_tokens = stub_window,
     .token_length = stub_token_length,

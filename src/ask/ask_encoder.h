@@ -60,6 +60,22 @@ typedef struct {
      * the gate that stops a mixed index from existing. */
     const char *(*model_id)(void *self);
 
+    /* Which device this encoder is ACTUALLY running on, as a line a user can
+     * read: "GPU (AMD Radeon RX 6900 XT, Vulkan)" or "CPU (16 threads)".
+     *
+     * NOT optional, and not cosmetic. GPU is 24.09 docs/s and CPU is 1.581 —
+     * 15.2x, or ~3 minutes against ~45 on the pinned corpus. A silent fallback
+     * to CPU is not a slower success, it is the failure that wastes somebody's
+     * afternoon, and it is invisible unless the device is stated. §2's GPU work
+     * carried a `device_note` for the same reason and it is the precedent being
+     * followed. Every artifact this pass writes records it. */
+    const char *(*device_note)(void *self);
+
+    /* True when device_note describes a GPU. Kept separate from the string so a
+     * caller can COMPARE what it asked for against what it got without parsing
+     * prose. */
+    bool (*device_is_gpu)(void *self);
+
     int (*dim)(void *self);
 
     /* The model's context window in tokens. The truncation counter is
@@ -112,6 +128,8 @@ struct hyp_ask_encoder {
 /* ── Thin forwarders, so call sites read as the two-entry-point API ── */
 
 const char *hyp_ask_encoder_model_id(const hyp_ask_encoder_t *e);
+const char *hyp_ask_encoder_device_note(const hyp_ask_encoder_t *e);
+bool hyp_ask_encoder_device_is_gpu(const hyp_ask_encoder_t *e);
 int hyp_ask_encoder_dim(const hyp_ask_encoder_t *e);
 int hyp_ask_encoder_window(const hyp_ask_encoder_t *e);
 int hyp_ask_encoder_token_length(const hyp_ask_encoder_t *e, const char *text);
@@ -145,6 +163,18 @@ bool hyp_ask_vectors_are_unit(const float *vecs, int count, int dim, int *out_ba
  * grouping rule and the truncation counter's three states. */
 #define HYP_ASK_STUB_MODEL_ID "stub/deterministic-hash-v1"
 #define HYP_ASK_STUB_BYTES_PER_TOKEN 4
+#define HYP_ASK_STUB_DEVICE_NOTE "CPU (stub — no inference runtime, no retrieval quality)"
+
+/* What the caller WANTS. The backend decides what it can honour and reports the
+ * answer through device_note; these two must never be conflated, which is why
+ * the request is an input and the outcome is an output. */
+typedef enum {
+    HYP_ASK_DEVICE_AUTO = 0, /* GPU if it can be had safely, else CPU */
+    HYP_ASK_DEVICE_GPU = 1,  /* GPU or fail — never silently fall back */
+    HYP_ASK_DEVICE_CPU = 2,
+} hyp_ask_device_pref_t;
+
+const char *hyp_ask_device_pref_name(hyp_ask_device_pref_t p);
 
 /* `can_report_truncation` false makes full_token_length return "cannot say",
  * which is how the UNKNOWN truncation state is reachable from a test. */

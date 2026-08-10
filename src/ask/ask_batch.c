@@ -124,6 +124,7 @@
 
 #include "ask/ask_batch.h"
 
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -255,6 +256,107 @@ int hyp_ask_token_budget_for_device(double device_total_mib, bool is_gpu) {
         return INT32_MAX;
     }
     return (int)slots;
+}
+
+/* ── The KV cache ──────────────────────────────────────────────── */
+
+bool hyp_ask_kv_plan(int n_seq_max, int seq_len, double ceiling_mib, hyp_ask_kv_plan_t *out) {
+    if (!out) {
+        return false;
+    }
+    memset(out, 0, sizeof(*out));
+    out->n_seq_max = n_seq_max;
+    out->seq_len = seq_len;
+    out->ceiling_mib = ceiling_mib;
+    if (n_seq_max < 1 || seq_len < 1 || ceiling_mib <= 0.0) {
+        return false;
+    }
+    /* n_ctx = n_seq_max * seq_len. NOT n_batch * n_seq_max — see the long note
+     * in ask_batch.h. Computed in int64 because the wrong version of this
+     * expression overflowed into a 57 GB request. */
+    out->n_ctx = (int64_t)n_seq_max * (int64_t)seq_len;
+    out->kv_mib = (double)out->n_ctx * HYP_ASK_KV_MIB_PER_TOKEN;
+    out->total_mib = out->kv_mib + HYP_ASK_LLAMA_FIXED_MIB;
+    out->admissible = out->total_mib <= ceiling_mib;
+    return out->admissible;
+}
+
+int hyp_ask_seq_len_for_kv(int n_seq_max, double ceiling_mib) {
+    if (n_seq_max < 1 || ceiling_mib <= HYP_ASK_LLAMA_FIXED_MIB) {
+        return 0;
+    }
+    double kv_budget = ceiling_mib - HYP_ASK_LLAMA_FIXED_MIB;
+    double tokens = kv_budget / HYP_ASK_KV_MIB_PER_TOKEN;
+    double per_seq = tokens / (double)n_seq_max;
+    if (per_seq < 1.0) {
+        return 0;
+    }
+    if (per_seq > (double)HYP_ASK_MODEL_WINDOW) {
+        /* No point allocating KV for more context than the model has. */
+        return HYP_ASK_MODEL_WINDOW;
+    }
+    return (int)per_seq;
+}
+
+bool hyp_ask_device_vram_mib(double *out_total_mib, double *out_used_mib) {
+    if (out_total_mib) {
+        *out_total_mib = 0.0;
+    }
+    if (out_used_mib) {
+        *out_used_mib = 0.0;
+    }
+    /* amdgpu (and amdkfd) expose these; nothing else does. Absence is not an
+     * error, it is "this platform cannot be interrogated", and the caller must
+     * fall back to the CPU rather than guess a ceiling for a card it cannot
+     * see. Cards are probed in order because the compute GPU is not reliably
+     * card0 — on this machine it is card2. */
+    for (int card = 0; card < 10; card++) {
+        char path[128];
+        double total = 0.0;
+        double used = 0.0;
+        snprintf(path, sizeof(path), "/sys/class/drm/card%d/device/mem_info_vram_total", card);
+        FILE *fp = fopen(path, "re");
+        if (!fp) {
+            continue;
+        }
+        unsigned long long raw = 0;
+        int got = fscanf(fp, "%llu", &raw);
+        (void)fclose(fp);
+        if (got != 1 || raw == 0) {
+            continue;
+        }
+        total = (double)raw / 1048576.0;
+        snprintf(path, sizeof(path), "/sys/class/drm/card%d/device/mem_info_vram_used", card);
+        fp = fopen(path, "re");
+        if (fp) {
+            unsigned long long used_raw = 0;
+            if (fscanf(fp, "%llu", &used_raw) == 1) {
+                used = (double)used_raw / 1048576.0;
+            }
+            (void)fclose(fp);
+        }
+        if (out_total_mib) {
+            *out_total_mib = total;
+        }
+        if (out_used_mib) {
+            *out_used_mib = used;
+        }
+        return true;
+    }
+    return false;
+}
+
+double hyp_ask_gpu_ceiling_mib(double total_mib, double used_mib) {
+    /* A fraction of what is FREE, not of what the card has. The measured
+     * desktop baseline on this card is 2,442-2,586 MB of 16,368, and planning
+     * against the nominal total plans against memory the compositor is already
+     * holding — which is how an allocation that "fits" takes the session down
+     * instead of returning an error. */
+    double free_mib = total_mib - used_mib;
+    if (free_mib <= 0.0) {
+        return 0.0;
+    }
+    return free_mib * HYP_ASK_VRAM_HEADROOM;
 }
 
 void hyp_ask_batches_cost(const hyp_ask_batches_t *b, const int *lengths, int64_t *out_slots,

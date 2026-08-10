@@ -11,6 +11,7 @@
 
 #include "ask/ask_batch.h"
 
+#include <math.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -294,6 +295,90 @@ TEST(ask_batch_device_budget_has_no_clamp_that_forbids_growth) {
     PASS();
 }
 
+TEST(ask_batch_kv_arithmetic_matches_every_measured_configuration) {
+    /* The KV cost of a token is arithmetic, not a fit: 28 layers x 2 (K,V) x
+     * 1024 dim x 2 bytes = 112 KiB. Track 2 measured five configurations and
+     * this reproduces all five exactly. If it ever stops doing so, either the
+     * model changed shape or the cache dtype did, and the budget derived from
+     * it is no longer safe. */
+    struct {
+        int n_seq_max;
+        int seq_len;
+        int64_t n_ctx;
+        double kv_mib;
+    } cases[] = {
+        {1, 8192, 8192, 896.0},      {8, 2304, 18432, 2016.0}, {16, 2304, 36864, 4032.0},
+        {32, 2304, 73728, 8064.0},   {16, 8192, 131072, 14336.0},
+    };
+    for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
+        hyp_ask_kv_plan_t p;
+        /* A ceiling big enough that only the arithmetic is under test. */
+        (void)hyp_ask_kv_plan(cases[i].n_seq_max, cases[i].seq_len, 1e9, &p);
+        ASSERT_EQ((long long)p.n_ctx, (long long)cases[i].n_ctx);
+        ASSERT(fabs(p.kv_mib - cases[i].kv_mib) < 0.5);
+    }
+    PASS();
+}
+
+TEST(ask_batch_kv_preflight_refuses_before_allocating) {
+    /* The two configurations track 2's pre-flight REFUSED must still be
+     * refused, and the one it ran must still be admitted. On a display GPU an
+     * over-allocation is not an OOM error — amdgpu resets the device and the
+     * user loses their session. This check is the difference and it costs one
+     * multiplication. */
+    hyp_ask_kv_plan_t p;
+    const double ceiling = 5500.0; /* track 2's guardrail */
+
+    ASSERT(hyp_ask_kv_plan(8, 2304, ceiling, &p));
+    ASSERT(p.admissible);
+    ASSERT_EQ((long long)p.n_ctx, 18432);
+
+    /* 32 x 2304 -> 8,064 MiB of KV over a 5,500 MiB ceiling. */
+    ASSERT(!hyp_ask_kv_plan(32, 2304, ceiling, &p));
+    ASSERT(!p.admissible);
+    ASSERT_EQ((long long)p.n_ctx, 73728);
+
+    /* 16 x 8192 -> 14,336 MiB. */
+    ASSERT(!hyp_ask_kv_plan(16, 8192, ceiling, &p));
+    ASSERT(!p.admissible);
+
+    /* THE LINE THAT COST TWO DESKTOP SESSIONS. n_ctx = n_batch * n_seq_max
+     * with n_batch 8,192 and n_seq_max 64 is 524,288 tokens — ~57 GB. Whatever
+     * else changes, this must never be admissible on a 16 GB card. */
+    ASSERT(!hyp_ask_kv_plan(64, 8192, ceiling, &p));
+    ASSERT_EQ((long long)p.n_ctx, 524288);
+    ASSERT_GT((long long)p.kv_mib, 57000);
+    PASS();
+}
+
+TEST(ask_batch_gpu_ceiling_is_taken_from_free_not_total) {
+    /* The card also drives the display. Its measured baseline is ~2.5 GB of
+     * 16,368, and planning against the nominal total plans against memory the
+     * compositor already holds. */
+    double busy = hyp_ask_gpu_ceiling_mib(16368.0, 2586.0);
+    double idle = hyp_ask_gpu_ceiling_mib(16368.0, 0.0);
+    ASSERT_LT(busy, idle);
+    ASSERT(fabs(busy - (16368.0 - 2586.0) * HYP_ASK_VRAM_HEADROOM) < 0.5);
+    /* A fully occupied card yields no ceiling at all, which is a refusal and
+     * not a small number to squeeze into. */
+    ASSERT(hyp_ask_gpu_ceiling_mib(16368.0, 16368.0) <= 0.0);
+
+    /* And the per-sequence length that fits follows from it. */
+    int seq = hyp_ask_seq_len_for_kv(HYP_ASK_MAX_DOCS, busy);
+    ASSERT_GT(seq, 0);
+    hyp_ask_kv_plan_t p;
+    ASSERT(hyp_ask_kv_plan(HYP_ASK_MAX_DOCS, seq, busy, &p));
+    ASSERT(p.admissible);
+    /* One more token per sequence must NOT fit — the helper returns the
+     * largest admissible length, not a comfortable one. */
+    ASSERT(!hyp_ask_kv_plan(HYP_ASK_MAX_DOCS, seq + 64, busy, &p) || seq >= HYP_ASK_MODEL_WINDOW);
+
+    /* A card too small for the backend's fixed cost refuses rather than
+     * returning a tiny sequence length nobody can use. */
+    ASSERT_EQ(hyp_ask_seq_len_for_kv(HYP_ASK_MAX_DOCS, 1000.0), 0);
+    PASS();
+}
+
 SUITE(ask_batch) {
     RUN_TEST(ask_batch_empty_is_zero_groups);
     RUN_TEST(ask_batch_returns_a_permutation_of_original_indices);
@@ -307,4 +392,7 @@ SUITE(ask_batch) {
     RUN_TEST(ask_batch_the_cap_governs_only_the_short_end);
     RUN_TEST(ask_batch_padded_slots_do_not_move_with_the_cap);
     RUN_TEST(ask_batch_device_budget_has_no_clamp_that_forbids_growth);
+    RUN_TEST(ask_batch_kv_arithmetic_matches_every_measured_configuration);
+    RUN_TEST(ask_batch_kv_preflight_refuses_before_allocating);
+    RUN_TEST(ask_batch_gpu_ceiling_is_taken_from_free_not_total);
 }
