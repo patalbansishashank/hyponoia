@@ -94,6 +94,55 @@
 #define HYP_ASK_CPU_DOCS_PER_SEC 1.581
 #define HYP_ASK_GPU_DOCS_PER_SEC 24.093
 
+/* ═════════════════════════════════════════════════════════════════════════
+ * WHOLE-FILE SPANS (NEXT-STEPS §2.2 lever 3)
+ * ═════════════════════════════════════════════════════════════════════════
+ *
+ * The extractor emits one `Module` node per file whose span is line 1 to EOF
+ * (internal/hyp/extract_defs.c, hyp_extract_definitions — "always first
+ * definition"). Embedded whole, that row is a document containing every other
+ * document in the file, and a document that contains everything matches
+ * everything: on the pinned lld/ELF corpus a whole-file row outranks the gold
+ * declaration on 25 of the 60 frozen queries, while NO class, struct or enum
+ * ever outranks its own method. They are 1.1% of rows and 48.2% of tokens, and
+ * both truncated rows on that corpus are whole-file spans.
+ *
+ * DROP versus DEMOTE was measured rather than argued, and the measurement is
+ * that the choice does not exist on the ranking:
+ *
+ *   - dropping the 47 rows moves the enlarged-population median from 14.0 to
+ *     12.5 and recall@10 from 0.467 to 0.483, 34 queries improved and 0
+ *     worsened;
+ *   - a query-time score penalty reproduces those numbers EXACTLY once it
+ *     exceeds the largest margin by which a whole-file row outscores a gold
+ *     (0.193 on this corpus), and reproduces every headline metric from 0.05.
+ *
+ * So demotion buys nothing the drop does not, and it keeps the whole cost: the
+ * 48% of tokens, the entire seq_len-32768 forward-pass bucket (20 of 20
+ * documents there are whole-file rows), and the truncation set. The row is
+ * dropped at INDEX time, where the cost is.
+ *
+ * ONE EXEMPTION, AND IT IS THE ONE THAT MATTERS. A file whose only span-bearing
+ * node is its whole-file row would become unreachable — on lld/ELF that is
+ * CMakeLists.txt and README.md, which is precisely the "where is X configured"
+ * question a file-level row is legitimately the answer to. Those rows are kept.
+ * They cost 528 tokens between them and change no benchmark number.
+ *
+ * KEEP restores the previous behaviour. Flipping the knob does not require a
+ * rebuild of anything: the pass prunes rows it did not see, so KEEP -> DROP
+ * costs one scan, and DROP -> KEEP costs one scan plus the whole-file rows. */
+typedef enum {
+    /* Default. Skip whole-file spans that are not the only row for their file. */
+    HYP_ASK_WHOLE_FILE_DROP = 0,
+    HYP_ASK_WHOLE_FILE_KEEP = 1,
+} hyp_ask_whole_file_t;
+
+/* "drop" / "keep". Never NULL. */
+const char *hyp_ask_whole_file_name(hyp_ask_whole_file_t p);
+
+/* Parse "drop" or "keep" into `*out`. False (and `*out` untouched) otherwise. */
+bool hyp_ask_whole_file_parse(const char *s, hyp_ask_whole_file_t *out);
+
 typedef struct {
     const char *project;
     /* Repo root. NULL takes it from the graph's projects.root_path, which is
@@ -121,6 +170,10 @@ typedef struct {
     /* Stop after this many declarations. 0 = the whole corpus. For smoke runs;
      * an index built with a limit is a PARTIAL index and the report says so. */
     int limit;
+    /* What to do with a span that covers its whole file. Zero-initialising the
+     * options struct selects DROP, which is the recommended default — see the
+     * comment on hyp_ask_whole_file_t for the measurement that chose it. */
+    hyp_ask_whole_file_t whole_file_spans;
 } hyp_ask_embed_opts_t;
 
 typedef struct {
@@ -133,6 +186,17 @@ typedef struct {
      * file holding X could not be read" is exactly the distinction the rest of
      * this engine spends its effort preserving. */
     int64_t skipped_unreadable;
+    /* Whole-file spans this run declined to embed. Reported separately from
+     * skipped_unreadable because they are a POLICY exclusion, not a failure —
+     * and separately counted at all because a population that silently differs
+     * between two indexes is a recall number nobody can compare. Always 0 under
+     * HYP_ASK_WHOLE_FILE_KEEP. */
+    int64_t skipped_whole_file;
+    /* Whole-file spans kept BECAUSE they were the only span-bearing row for
+     * their file, under a policy that would otherwise have dropped them. The
+     * exemption is small and load-bearing, so it is counted rather than
+     * assumed. */
+    int64_t whole_file_kept_sole;
     int64_t pruned;
     /* Batching cost, so a throughput change is visible without a stopwatch. */
     int64_t forward_passes;
@@ -181,6 +245,22 @@ int hyp_ask_embed_run(const hyp_ask_encoder_t *enc, const hyp_ask_embed_opts_t *
  * exactly gets embedded" is the one thing a port cannot afford to get subtly
  * wrong. */
 char *hyp_ask_read_span(const char *abs_path, int start, int end);
+
+/* As hyp_ask_read_span, and additionally reports the file's total line count
+ * through `out_file_lines` when it is non-NULL.
+ *
+ * The count is what decides whether a span is a WHOLE-FILE span, and it is
+ * taken here rather than from a second stat/read because this function has
+ * already read the file: asking twice would let the answer change between the
+ * two reads, and "is this the whole file" would then be a claim about a file
+ * that no longer exists in that shape. Lines are counted the same way the span
+ * is sliced — on '\n' — so the two can never disagree. A file with no trailing
+ * newline still counts its last partial line. */
+char *hyp_ask_read_span_lines(const char *abs_path, int start, int end, int *out_file_lines);
+
+/* Does `start`..`end` cover every line of a file that has `file_lines` lines?
+ * Line 1 to EOF, which is exactly the extractor's per-file Module span. */
+bool hyp_ask_span_is_whole_file(int start, int end, int file_lines);
 
 /* sha256 of `text`, truncated to HYP_ASK_VEC_HASH_LEN hex chars. `out` must
  * hold HYP_ASK_VEC_HASH_LEN + 1 bytes. */

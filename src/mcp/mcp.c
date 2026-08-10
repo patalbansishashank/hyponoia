@@ -3953,6 +3953,23 @@ static void ask_truncation_text(const hyp_ask_status_t *st, char *out, size_t ou
     }
 }
 
+/* What this index did with spans covering a whole file, said beside the
+ * population it ranked.
+ *
+ * The caller can see every row that came back and none of the rows that could
+ * not. "This codebase has no file-level answer" and "file-level rows were left
+ * out of this index" are different claims with different remedies, and only
+ * one of them is about the codebase — which is the shape of confident silence
+ * the rest of this lane is arranged to remove. One sentence, on every answer,
+ * for the same reason the truncation state is. */
+static const char *ask_whole_file_text(const hyp_ask_status_t *st) {
+    return st->whole_file_spans_dropped
+               ? "dropped — a span covering a whole file is not ranked, because it contains "
+                 "every declaration in that file and would outrank all of them. A file whose "
+                 "only row is its whole-file span is kept, so a config file is still findable"
+               : "kept — spans covering a whole file are ranked alongside declarations";
+}
+
 /* Distinct file paths in the project's graph, for language derivation.
  * Sampled through the SAME hyp_language_for_filename() the indexer uses,
  * rather than through get_architecture's `languages` aspect: that aspect
@@ -4214,6 +4231,7 @@ static char *handle_ask(hyp_mcp_server_t *srv, const char *args) {
                                lang_explicit ? "explicit" : "derived");
         yyjson_mut_obj_add_strcpy(doc, root, "truncation", trunc_text);
         yyjson_mut_obj_add_int(doc, root, "population", st.n_vectors);
+        yyjson_mut_obj_add_str(doc, root, "whole_file_spans", ask_whole_file_text(&st));
         yyjson_mut_val *jcols = yyjson_mut_arr(doc);
         for (int c = 0; c < ncols; c++) {
             yyjson_mut_arr_add_str(doc, jcols, cols[c]);
@@ -4248,6 +4266,7 @@ static char *handle_ask(hyp_mcp_server_t *srv, const char *args) {
         hyp_tree_scalar_str(&sb, "language_source", lang_explicit ? "explicit" : "derived");
         hyp_tree_scalar_str(&sb, "truncation", trunc_text);
         hyp_tree_scalar_int(&sb, "population", st.n_vectors);
+        hyp_tree_scalar_str(&sb, "whole_file_spans", ask_whole_file_text(&st));
         hyp_tree_table_header(&sb, "results", hit_count, cols, ncols);
         for (int i = 0; i < hit_count; i++) {
             char lines[HYP_SZ_32];

@@ -36,6 +36,7 @@ enum {
     AV_PATHBUF = 1024,
     AV_DIR_PERMS = 0700,
     AV_TIMEBUF = 32,
+    AV_SQLBUF = 256,
 };
 
 struct hyp_ask_vectors {
@@ -135,6 +136,44 @@ static bool av_ensure_parent_dir(const char *path) {
 
 /* ── Schema ────────────────────────────────────────────────────── */
 
+/* Add a column to an EXISTING table, once. `CREATE TABLE IF NOT EXISTS` gives
+ * the column to new databases and nothing to old ones, so without this an index
+ * built by a previous binary would fail every statement naming the column.
+ *
+ * The alternative — bumping HYP_ASK_VEC_FORMAT — would REFUSE every existing
+ * index and force a re-embed for a field that only records what the build did.
+ * That is the right response to a change in what a vector MEANS and the wrong
+ * one to a change in what the index says about itself, so the column is added
+ * with a default that describes the old behaviour truthfully instead. */
+static int av_add_column_if_absent(hyp_ask_vectors_t *v, const char *table, const char *column,
+                                   const char *decl) {
+    sqlite3_stmt *st = NULL;
+    char q[AV_SQLBUF];
+    /* `table` is a compile-time literal from this file; nothing user-supplied
+     * reaches here, and PRAGMA does not accept a bound parameter for its
+     * argument. */
+    snprintf(q, sizeof(q), "PRAGMA table_info(%s)", table);
+    if (sqlite3_prepare_v2(v->db, q, -1, &st, NULL) != SQLITE_OK) {
+        av_err_sqlite(v, "table_info");
+        return HYP_ASK_VEC_ERR;
+    }
+    bool found = false;
+    int step = 0;
+    while ((step = sqlite3_step(st)) == SQLITE_ROW) {
+        const char *name = (const char *)sqlite3_column_text(st, 1);
+        if (name && strcmp(name, column) == 0) {
+            found = true;
+            break;
+        }
+    }
+    sqlite3_finalize(st);
+    if (found) {
+        return HYP_ASK_VEC_OK;
+    }
+    snprintf(q, sizeof(q), "ALTER TABLE %s ADD COLUMN %s %s", table, column, decl);
+    return av_exec(v, q);
+}
+
 static int av_init_schema(hyp_ask_vectors_t *v) {
     /* No REFERENCES to the graph's nodes table: it lives in a different file.
      * The link is (project, qualified_name), which is what survives a
@@ -158,7 +197,12 @@ static int av_init_schema(hyp_ask_vectors_t *v) {
         /* 0 = the encoder could not say. NOT the same claim as
          * truncated_count = 0, and the two must never collapse. */
         "  truncation_known INTEGER NOT NULL DEFAULT 0,"
-        "  truncated_count  INTEGER NOT NULL DEFAULT 0"
+        "  truncated_count  INTEGER NOT NULL DEFAULT 0,"
+        /* What the build did with spans covering a whole file. 'keep' is the
+         * DEFAULT because that is what every index written before this column
+         * existed did, and a column that defaults to the current behaviour
+         * would make an old index claim a population it never had. */
+        "  whole_file_spans TEXT NOT NULL DEFAULT 'keep'"
         ");"
         "CREATE TABLE IF NOT EXISTS ask_vectors ("
         "  qualified_name TEXT PRIMARY KEY,"
@@ -177,7 +221,12 @@ static int av_init_schema(hyp_ask_vectors_t *v) {
          * table is a full scan by design. */
         "CREATE INDEX IF NOT EXISTS idx_ask_truncated ON ask_vectors(truncated)"
         " WHERE truncated = 1;";
-    return av_exec(v, ddl);
+    int rc = av_exec(v, ddl);
+    if (rc != HYP_ASK_VEC_OK) {
+        return rc;
+    }
+    return av_add_column_if_absent(v, "ask_index", "whole_file_spans",
+                                   "TEXT NOT NULL DEFAULT 'keep'");
 }
 
 static int av_configure(hyp_ask_vectors_t *v) {
@@ -283,7 +332,8 @@ int hyp_ask_vectors_get_meta(hyp_ask_vectors_t *v, hyp_ask_vec_meta_t *out) {
     memset(out, 0, sizeof(*out));
     sqlite3_stmt *st = NULL;
     const char *sql = "SELECT format, project, model_id, dim, window_tokens, graph_generation,"
-                      "       built_at, row_count, truncation_known, truncated_count, device_note"
+                      "       built_at, row_count, truncation_known, truncated_count, device_note,"
+                      "       whole_file_spans"
                       " FROM ask_index WHERE singleton = 1";
     if (sqlite3_prepare_v2(v->db, sql, -1, &st, NULL) != SQLITE_OK) {
         av_err_sqlite(v, "meta prepare");
@@ -302,6 +352,7 @@ int hyp_ask_vectors_get_meta(hyp_ask_vectors_t *v, hyp_ask_vec_meta_t *out) {
         out->truncation_known = sqlite3_column_int(st, 8) != 0;
         out->truncated_count = sqlite3_column_int64(st, 9);
         out->device_note = av_strdup((const char *)sqlite3_column_text(st, 10));
+        out->whole_file_spans = av_strdup((const char *)sqlite3_column_text(st, 11));
         rc = HYP_ASK_VEC_OK;
     }
     sqlite3_finalize(st);
@@ -316,6 +367,7 @@ void hyp_ask_vec_meta_free(hyp_ask_vec_meta_t *m) {
     free(m->model_id);
     free(m->graph_generation);
     free(m->device_note);
+    free(m->whole_file_spans);
     free(m->built_at);
     memset(m, 0, sizeof(*m));
 }
@@ -408,6 +460,28 @@ int hyp_ask_vectors_begin_build(hyp_ask_vectors_t *v, const char *model_id, int 
         return HYP_ASK_VEC_ERR;
     }
     v->dim = dim;
+    return HYP_ASK_VEC_OK;
+}
+
+int hyp_ask_vectors_set_whole_file_spans(hyp_ask_vectors_t *v, const char *policy) {
+    if (!v || !policy || !policy[0]) {
+        av_err(v, "set_whole_file_spans: bad arguments");
+        return HYP_ASK_VEC_ERR;
+    }
+    sqlite3_stmt *st = NULL;
+    if (sqlite3_prepare_v2(v->db,
+                           "UPDATE ask_index SET whole_file_spans = ?1 WHERE singleton = 1", -1,
+                           &st, NULL) != SQLITE_OK) {
+        av_err_sqlite(v, "set_whole_file_spans prepare");
+        return HYP_ASK_VEC_ERR;
+    }
+    sqlite3_bind_text(st, 1, policy, -1, AV_TRANSIENT);
+    int step = sqlite3_step(st);
+    sqlite3_finalize(st);
+    if (step != SQLITE_DONE) {
+        av_err_sqlite(v, "set_whole_file_spans");
+        return HYP_ASK_VEC_ERR;
+    }
     return HYP_ASK_VEC_OK;
 }
 

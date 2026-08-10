@@ -44,6 +44,19 @@ static void ask_embed_usage(void) {
            "  --force                Re-encode even byte-identical declarations.\n"
            "  --allow-model-change   Discard vectors from a different model/dim/window.\n"
            "  --limit <n>            Stop after n declarations (partial index).\n"
+           "  --whole-file-spans drop|keep\n"
+           "                         What to do with a declaration whose span covers its\n"
+           "                         whole file — the extractor's per-file `Module` node.\n"
+           "                         Default drop, and it is a retrieval decision, not a\n"
+           "                         saving: such a row contains every other document in\n"
+           "                         the file, so it competes with all of them. On the\n"
+           "                         measured corpus they are 1.1%% of rows and 48%% of\n"
+           "                         tokens, they outrank the right answer on 25 of 60\n"
+           "                         benchmark questions, and both truncated rows are\n"
+           "                         whole-file spans. A file whose ONLY row is its\n"
+           "                         whole-file span keeps it either way, so a\n"
+           "                         CMakeLists.txt does not become invisible.\n"
+           "                         Also settable with HYP_ASK_WHOLE_FILE_SPANS.\n"
            "  --budget <slots>       Padded-slot ceiling per forward pass (default %d).\n"
            "  --max-docs <n>         Documents per forward pass (default %d).\n"
            "  --device auto|gpu|cpu  Which device to encode on. Default auto: GPU when\n"
@@ -101,6 +114,13 @@ static int ask_cmd_status(const char *project) {
     printf("  window           %d tokens\n", m.window_tokens);
     printf("  rows             %lld\n", (long long)m.row_count);
     printf("  graph generation %s\n", m.graph_generation ? m.graph_generation : "?");
+    /* Which POPULATION was indexed. Two indexes over the same corpus under the
+     * two policies rank different candidate sets, so a recall number carried
+     * from one to the other is not the same measurement. */
+    printf("  whole-file spans %s\n",
+           (m.whole_file_spans && m.whole_file_spans[0])
+               ? m.whole_file_spans
+               : "keep — this index predates the policy being recorded");
     printf("  built on         %s\n",
            (m.device_note && m.device_note[0]) ? m.device_note
                                                : "UNKNOWN — this index predates device recording");
@@ -200,6 +220,17 @@ int hyp_cmd_embed(int argc, char **argv) {
     bool use_stub = false;
     bool stub_reports_truncation = true;
 
+    /* The environment is read FIRST so an explicit flag always wins. An
+     * unrecognised value is refused rather than ignored: a typo that silently
+     * selected the default would change which population got indexed and leave
+     * no trace of having done so. */
+    const char *env_wfs = getenv("HYP_ASK_WHOLE_FILE_SPANS");
+    if (env_wfs && env_wfs[0] && !hyp_ask_whole_file_parse(env_wfs, &opts.whole_file_spans)) {
+        (void)fprintf(stderr,
+                      "embed: HYP_ASK_WHOLE_FILE_SPANS must be drop or keep (got '%s')\n", env_wfs);
+        return 2;
+    }
+
     for (int i = 0; i < argc; i++) {
         const char *a = argv[i];
         bool has_next = (i + 1) < argc;
@@ -236,6 +267,13 @@ int hyp_cmd_embed(int argc, char **argv) {
                 opts.device_pref = HYP_ASK_DEVICE_AUTO;
             } else {
                 (void)fprintf(stderr, "embed: --device must be auto, gpu or cpu (got '%s')\n", d);
+                return 2;
+            }
+        } else if (strcmp(a, "--whole-file-spans") == 0 && has_next) {
+            const char *p = argv[++i];
+            if (!hyp_ask_whole_file_parse(p, &opts.whole_file_spans)) {
+                (void)fprintf(stderr,
+                              "embed: --whole-file-spans must be drop or keep (got '%s')\n", p);
                 return 2;
             }
         } else if (strcmp(a, "--stub") == 0) {
@@ -350,6 +388,9 @@ int hyp_cmd_embed(int argc, char **argv) {
     printf("  embedded           %lld\n", (long long)rep.embedded);
     printf("  reused (unchanged) %lld\n", (long long)rep.reused);
     printf("  unreadable spans   %lld\n", (long long)rep.skipped_unreadable);
+    printf("  whole-file spans   %s — %lld dropped, %lld kept as a file's only row\n",
+           hyp_ask_whole_file_name(opts.whole_file_spans), (long long)rep.skipped_whole_file,
+           (long long)rep.whole_file_kept_sole);
     printf("  pruned (gone)      %lld\n", (long long)rep.pruned);
     printf("  forward passes     %lld  (%.1f docs/pass)\n", (long long)rep.forward_passes,
            rep.forward_passes ? (double)rep.embedded / (double)rep.forward_passes : 0.0);

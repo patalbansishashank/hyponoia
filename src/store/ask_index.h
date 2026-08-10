@@ -93,6 +93,14 @@ typedef struct {
     hyp_ask_trunc_state_t trunc;
     int trunc_count;                       /* meaningful only when trunc == HYP_ASK_TRUNC_SOME */
     int n_vectors;                         /* rows for this project; 0 unless AVAILABLE */
+    /* Whether spans covering a whole file were embedded (NEXT-STEPS §2.2
+     * lever 3). Read from the index, never assumed, and disclosed beside
+     * `population` on every answer for the same reason the truncation state
+     * is: the caller cannot see what was NOT ranked, and "no file-level
+     * answer exists" and "file-level answers were excluded from this index"
+     * are different claims with different remedies. False when the index
+     * predates the policy being recorded, which is what those indexes did. */
+    bool whole_file_spans_dropped;
     int dim;                               /* dimension recorded in the index, 0 when none */
     char model_id[HYP_ASK_MODEL_ID_MAX];   /* the index's model, "" when none */
     char backend_id[HYP_ASK_MODEL_ID_MAX]; /* the linked encoder's, "" when none */

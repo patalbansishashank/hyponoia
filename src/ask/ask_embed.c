@@ -17,6 +17,7 @@
 
 #include <sqlite3.h>
 
+#include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -91,9 +92,43 @@ void hyp_ask_content_hash(const char *text, char *out) {
     out[HYP_ASK_VEC_HASH_LEN] = '\0';
 }
 
+const char *hyp_ask_whole_file_name(hyp_ask_whole_file_t p) {
+    return p == HYP_ASK_WHOLE_FILE_KEEP ? "keep" : "drop";
+}
+
+bool hyp_ask_whole_file_parse(const char *s, hyp_ask_whole_file_t *out) {
+    if (!s || !out) {
+        return false;
+    }
+    if (strcmp(s, "drop") == 0) {
+        *out = HYP_ASK_WHOLE_FILE_DROP;
+        return true;
+    }
+    if (strcmp(s, "keep") == 0) {
+        *out = HYP_ASK_WHOLE_FILE_KEEP;
+        return true;
+    }
+    return false;
+}
+
+bool hyp_ask_span_is_whole_file(int start, int end, int file_lines) {
+    /* `>=` rather than `==` on the end: tree-sitter's end row for the file's
+     * root node lands on the last line whether or not the file ends with a
+     * newline, and a span that claims MORE lines than the file has still covers
+     * all of them. An empty file has no whole-file span to speak of. */
+    return file_lines > 0 && start == 1 && end >= file_lines;
+}
+
 /* ── Reading the span ──────────────────────────────────────────── */
 
 char *hyp_ask_read_span(const char *abs_path, int start, int end) {
+    return hyp_ask_read_span_lines(abs_path, start, end, NULL);
+}
+
+char *hyp_ask_read_span_lines(const char *abs_path, int start, int end, int *out_file_lines) {
+    if (out_file_lines) {
+        *out_file_lines = 0;
+    }
     if (!abs_path || start < 1 || end < start) {
         return NULL;
     }
@@ -118,6 +153,20 @@ char *hyp_ask_read_span(const char *abs_path, int start, int end) {
     size_t got = fread(buf, 1, (size_t)size, fp);
     (void)fclose(fp);
     buf[got] = '\0';
+
+    if (out_file_lines) {
+        size_t nl = 0;
+        for (size_t k = 0; k < got; k++) {
+            if (buf[k] == '\n') {
+                nl++;
+            }
+        }
+        /* A final line with no terminator still counts. Split on '\n', exactly
+         * as the slice below does, so the count and the span can never
+         * disagree about where line N ends. */
+        size_t lines = nl + ((got > 0 && buf[got - 1] != '\n') ? 1 : 0);
+        *out_file_lines = lines > (size_t)INT_MAX ? INT_MAX : (int)lines;
+    }
 
     /* Walk to the first byte of `start`. Lines are separated by '\n' — which is
      * how tree-sitter counted them when it produced start_line/end_line, so it
@@ -230,6 +279,46 @@ static bool ae_graph_open(ae_graph_t *g, const char *db_path, const char *projec
     }
     if (!g->generation) {
         g->generation = ae_strdup("legacy");
+    }
+    return true;
+}
+
+/* Is `node_id`'s whole-file span the ONLY span-bearing row this file has?
+ *
+ * The exemption that keeps a file answerable at all. lld/ELF's CMakeLists.txt
+ * and README.md carry no declaration the extractor recognises, so their
+ * whole-file row is the single thing standing between them and being invisible
+ * to `ask` — and "where is X configured" is the question a file-level row is
+ * legitimately the best answer to. Two rows, 528 tokens, no benchmark effect.
+ *
+ * Errs towards KEEPING: a query that cannot be prepared or stepped answers
+ * "sole", because dropping a row on the strength of a failed lookup is the one
+ * outcome that is silently wrong. Runs at most once per whole-file span — 47
+ * times on the pinned corpus, against a 4,117-row scan. */
+static bool ae_file_has_only_this_span(sqlite3 *db, const char *project, const char *file_path,
+                                       int64_t node_id) {
+    sqlite3_stmt *st = NULL;
+    const char *sql = "SELECT 1 FROM nodes"
+                      " WHERE project = ?1 AND file_path = ?2 AND id <> ?3"
+                      "   AND start_line > 0 AND end_line >= start_line"
+                      " LIMIT 1";
+    if (sqlite3_prepare_v2(db, sql, -1, &st, NULL) != SQLITE_OK) {
+        hyp_log_warn("ask.embed.sole_span_prepare", "err", sqlite3_errmsg(db), "effect",
+                     "the whole-file span is kept rather than dropped on a failed lookup");
+        return true;
+    }
+    sqlite3_bind_text(st, 1, project, -1, SQLITE_STATIC);
+    sqlite3_bind_text(st, 2, file_path, -1, SQLITE_STATIC);
+    sqlite3_bind_int64(st, 3, node_id);
+    int step = sqlite3_step(st);
+    sqlite3_finalize(st);
+    if (step == SQLITE_ROW) {
+        return false;
+    }
+    if (step != SQLITE_DONE) {
+        hyp_log_warn("ask.embed.sole_span_step", "err", sqlite3_errmsg(db), "effect",
+                     "the whole-file span is kept rather than dropped on a failed lookup");
+        return true;
     }
     return true;
 }
@@ -476,6 +565,16 @@ int hyp_ask_embed_run(const hyp_ask_encoder_t *enc, const hyp_ask_embed_opts_t *
         free(rep.device_note);
         return -1;
     }
+    /* Written BEFORE any row, so an interrupted build still says which
+     * population it was assembling rather than inheriting the last one's. */
+    if (hyp_ask_vectors_set_whole_file_spans(
+            store, hyp_ask_whole_file_name(opts->whole_file_spans)) != HYP_ASK_VEC_OK) {
+        hyp_log_error("ask.embed.whole_file_policy", "err", hyp_ask_vectors_error(store));
+        hyp_ask_vectors_close(store);
+        ae_graph_close(&graph);
+        free(rep.device_note);
+        return -1;
+    }
 
     /* EVERY node with a span. The ORDER BY is not cosmetic: the scan must be
      * deterministic so two runs over the same corpus produce the same batches
@@ -546,10 +645,31 @@ int hyp_ask_embed_run(const hyp_ask_encoder_t *enc, const hyp_ask_embed_opts_t *
             rep.skipped_unreadable++;
             continue;
         }
-        char *text = hyp_ask_read_span(abs_path, start_line, end_line);
+        int file_lines = 0;
+        char *text = hyp_ask_read_span_lines(abs_path, start_line, end_line, &file_lines);
         if (!text) {
             rep.skipped_unreadable++;
             continue;
+        }
+
+        /* LEVER 3. A span that covers its whole file contains every other
+         * document in that file, so it competes with all of them and wins on
+         * generality rather than on relevance. Both halves of the test matter:
+         * `Module` alone would also catch a TypeScript namespace, which is a
+         * real declaration and not a file; the whole-file test alone would
+         * catch a hypothetical single-declaration file. It is dropped HERE,
+         * before the keep set, so a re-run with the policy flipped prunes the
+         * rows a previous run wrote instead of leaving them behind. */
+        if (opts->whole_file_spans == HYP_ASK_WHOLE_FILE_DROP && label &&
+            strcmp(label, "Module") == 0 &&
+            hyp_ask_span_is_whole_file(start_line, end_line, file_lines)) {
+            if (ae_file_has_only_this_span(graph.db, opts->project, rel, node_id)) {
+                rep.whole_file_kept_sole++;
+            } else {
+                rep.skipped_whole_file++;
+                free(text);
+                continue;
+            }
         }
 
         if (keep_count >= keep_cap) {
@@ -704,6 +824,14 @@ int hyp_ask_embed_run(const hyp_ask_encoder_t *enc, const hyp_ask_embed_opts_t *
             hyp_log_error("ask.embed.finish", "err", hyp_ask_vectors_error(store));
             rc = -1;
         }
+    }
+    if (rc == 0 && (rep.skipped_whole_file > 0 || rep.whole_file_kept_sole > 0)) {
+        char b1[AE_NUMBUF];
+        char b2[AE_NUMBUF];
+        hyp_log_info("ask.embed.whole_file_spans", "policy",
+                     hyp_ask_whole_file_name(opts->whole_file_spans), "dropped",
+                     ae_itoa(rep.skipped_whole_file, b1, sizeof(b1)), "kept_as_sole_row",
+                     ae_itoa(rep.whole_file_kept_sole, b2, sizeof(b2)));
     }
     if (rc == 0) {
         hyp_ask_trunc_t tr;
