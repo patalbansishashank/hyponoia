@@ -342,7 +342,8 @@ PIPELINE_SRCS = \
 SIMHASH_SRCS = src/simhash/minhash.c
 
 # Semantic embedding module
-SEMANTIC_SRCS = src/semantic/semantic.c src/semantic/ast_profile.c src/semantic/rotsq.c
+SEMANTIC_SRCS = src/semantic/semantic.c src/semantic/ast_profile.c src/semantic/rotsq.c \
+                src/semantic/ask_prefix.c
 
 # nomic-embed-code pretrained vectors (assembler blob)
 UNIXCODER_BLOB_SRC = vendored/nomic/code_vectors_blob.S
