@@ -417,7 +417,8 @@ TEST(ask_unavailable_says_so_and_emits_no_rows) {
     hyp_mcp_server_t *srv = ask_srv_with_nodes("askproj");
     ASSERT_NOT_NULL(srv);
 
-    char *resp = ask_call(srv, "{\"project\":\"askproj\",\"question\":\"how are sections ordered\"}");
+    char *resp =
+        ask_call(srv, "{\"project\":\"askproj\",\"question\":\"how are sections ordered\"}");
     ASSERT_NOT_NULL(resp);
     char *inner = ask_inner_text(resp);
     ASSERT_NOT_NULL(inner);
@@ -528,8 +529,7 @@ TEST(ask_discloses_the_language_it_rendered) {
     free(resp);
 
     /* Explicit overrides, and reaches the encoder. */
-    resp = ask_call(srv,
-                    "{\"project\":\"askproj\",\"question\":\"GOLD\",\"language\":\"cpp\"}");
+    resp = ask_call(srv, "{\"project\":\"askproj\",\"question\":\"GOLD\",\"language\":\"cpp\"}");
     inner = ask_inner_text(resp);
     ASSERT_NOT_NULL(inner);
     ASSERT_NOT_NULL(strstr(inner, "language_source: explicit"));
@@ -549,8 +549,8 @@ TEST(ask_refuses_an_unknown_language_rather_than_defaulting) {
     hyp_mcp_server_t *srv = ask_srv_with_nodes("askproj");
     ASSERT_NOT_NULL(srv);
 
-    char *resp = ask_call(
-        srv, "{\"project\":\"askproj\",\"question\":\"GOLD\",\"language\":\"klingon\"}");
+    char *resp =
+        ask_call(srv, "{\"project\":\"askproj\",\"question\":\"GOLD\",\"language\":\"klingon\"}");
     ASSERT_NOT_NULL(resp);
     ASSERT_TRUE(ask_is_error(resp));
     char *inner = ask_inner_text(resp);

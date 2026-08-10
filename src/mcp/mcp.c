@@ -829,9 +829,12 @@ static bool mcp_tool_allowed(hyp_mcp_tool_profile_t profile, const char *name) {
      * unavailable belongs on the surface where an agent is already expected
      * to reason about index state. */
     static const char *const analysis_tools[] = {
-        "search_graph",     "ask",                  "query_graph",    "trace_path",
-        "get_code_snippet", "get_graph_schema",     "get_architecture", "search_code",
-        "list_projects",    "index_status",         "check_index_coverage", "detect_changes",
+        "search_graph",         "ask",
+        "query_graph",          "trace_path",
+        "get_code_snippet",     "get_graph_schema",
+        "get_architecture",     "search_code",
+        "list_projects",        "index_status",
+        "check_index_coverage", "detect_changes",
     };
     static const char *const scout_tools[] = {
         "search_graph",  "trace_path",   "get_code_snippet",     "get_architecture",
@@ -4165,8 +4168,8 @@ static char *handle_ask(hyp_mcp_server_t *srv, const char *args) {
     free(qvec);
     if (rc != HYP_STORE_OK) {
         return ask_error("the semantic index could not be read. Re-run index_status; if the "
-                         "project is healthy the vector store needs rebuilding.", project,
-                         question);
+                         "project is healthy the vector store needs rebuilding.",
+                         project, question);
     }
 
     char trunc_text[ASK_MSG];

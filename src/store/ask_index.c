@@ -78,8 +78,9 @@ void hyp_ask_index_status(hyp_store_t *s, const char *project, hyp_ask_status_t 
     }
 
     sqlite3_stmt *st = NULL;
-    const char *sql = "SELECT model_id, dim, trunc_state, trunc_count, n_rows FROM " HYP_ASK_META_TABLE
-                      " WHERE project = ?1";
+    const char *sql =
+        "SELECT model_id, dim, trunc_state, trunc_count, n_rows FROM " HYP_ASK_META_TABLE
+        " WHERE project = ?1";
     if (sqlite3_prepare_v2(db, sql, ASK_SQL_AUTO_LEN, &st, NULL) != SQLITE_OK) {
         out->avail = HYP_ASK_NO_INDEX;
         return;
@@ -190,8 +191,8 @@ int hyp_ask_index_search(hyp_store_t *s, const char *project, const float *qvec,
     }
 
     sqlite3_stmt *st = NULL;
-    const char *sql = "SELECT node_id, vec, truncated FROM " HYP_ASK_VECTORS_TABLE
-                      " WHERE project = ?1";
+    const char *sql =
+        "SELECT node_id, vec, truncated FROM " HYP_ASK_VECTORS_TABLE " WHERE project = ?1";
     if (sqlite3_prepare_v2(db, sql, ASK_SQL_AUTO_LEN, &st, NULL) != SQLITE_OK) {
         return HYP_STORE_ERR;
     }

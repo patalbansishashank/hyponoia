@@ -61,10 +61,10 @@
 #define HYP_ASK_META_TABLE "ask_index_meta"
 
 typedef enum {
-    HYP_ASK_AVAILABLE = 0,      /* vectors present, model matches, searchable */
-    HYP_ASK_NO_BACKEND,         /* no encoder linked into this binary */
-    HYP_ASK_NO_INDEX,           /* this project has never been embedded */
-    HYP_ASK_MODEL_MISMATCH,     /* vectors exist, made by a different model/dim */
+    HYP_ASK_AVAILABLE = 0,  /* vectors present, model matches, searchable */
+    HYP_ASK_NO_BACKEND,     /* no encoder linked into this binary */
+    HYP_ASK_NO_INDEX,       /* this project has never been embedded */
+    HYP_ASK_MODEL_MISMATCH, /* vectors exist, made by a different model/dim */
 } hyp_ask_avail_t;
 
 /* Truncation has THREE states and collapsing the first two is how a graph
@@ -82,9 +82,9 @@ typedef enum {
 typedef struct {
     hyp_ask_avail_t avail;
     hyp_ask_trunc_t trunc;
-    int trunc_count;  /* meaningful only when trunc == HYP_ASK_TRUNC_SOME */
-    int n_vectors;    /* rows for this project; 0 unless AVAILABLE */
-    int dim;          /* dimension recorded in the index, 0 when none */
+    int trunc_count;                       /* meaningful only when trunc == HYP_ASK_TRUNC_SOME */
+    int n_vectors;                         /* rows for this project; 0 unless AVAILABLE */
+    int dim;                               /* dimension recorded in the index, 0 when none */
     char model_id[HYP_ASK_MODEL_ID_MAX];   /* the index's model, "" when none */
     char backend_id[HYP_ASK_MODEL_ID_MAX]; /* the linked encoder's, "" when none */
 } hyp_ask_status_t;
