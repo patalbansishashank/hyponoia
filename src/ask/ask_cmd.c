@@ -187,6 +187,11 @@ int hyp_cmd_embed(int argc, char **argv) {
            "  belongs to the out-of-process extractor.\n",
            HYP_ASK_CPU_DOCS_PER_SEC, 4000.0 / HYP_ASK_CPU_DOCS_PER_SEC / 60.0,
            24.09 / HYP_ASK_CPU_DOCS_PER_SEC);
+    /* Flushed here so the notice reaches the terminal BEFORE the wait it is
+     * warning about, and before any unbuffered error from the run below
+     * overtakes it. A warning that arrives after the thing it warned about is
+     * not a warning. */
+    (void)fflush(stdout);
 
     hyp_ask_encoder_t *enc =
         hyp_ask_encoder_stub_create(HYP_ASK_DIM_DEFAULT, HYP_ASK_MODEL_WINDOW,
