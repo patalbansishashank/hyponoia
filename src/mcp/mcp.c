@@ -1,5 +1,8 @@
 /*
- * mcp.c — MCP server: JSON-RPC 2.0 over stdio with 14 graph tools.
+ * mcp.c — MCP server: JSON-RPC 2.0 over stdio with 16 graph tools.
+ *
+ * The count in this line was 14 while the registry held 15; it is derived
+ * nowhere, so it drifts silently. TOOL_COUNT is the truth.
  *
  * Uses yyjson for fast JSON parsing/building.
  * Single-threaded event loop: read line → parse → dispatch → respond.
@@ -47,6 +50,9 @@ enum {
 #include <sqlite3.h>
 #include "cypher/cypher.h"
 #include "discover/discover.h"
+#include "semantic/ask_embed.h"
+#include "semantic/ask_lang.h"
+#include "store/ask_index.h"
 #include "pipeline/pipeline.h"
 #include "pipeline/pass_cross_repo.h"
 #include "git/git_context.h"
@@ -465,6 +471,57 @@ static const tool_def_t TOOLS[] = {
      "for wide sweeps where per-row metadata is noise. default: full rows.\"}},"
      "\"required\":[\"project\"]}"},
 
+    /* `ask` is a SEPARATE TOOL from search_graph's semantic_query, not a mode
+     * of it (NEXT-STEPS.md §2.1). They differ in input type (one string vs an
+     * array of keywords), in result semantics (ranked, never exact), in cost,
+     * and — the decisive one — in AVAILABILITY: this lane can be unavailable
+     * when the semantic index has not been built, and no schema can express
+     * "this parameter sometimes does not exist". Overloading the array
+     * parameter would fight the schema, the docs, and every agent's
+     * expectation. search_graph stays exactly as it is. */
+    {"ask", "Ask",
+     "Ask ONE natural-language question; get ranked declarations back. The semantic lane: "
+     "declarations are encoded whole and bare, the question is encoded behind an instruct "
+     "prefix, and that asymmetry is what lets an answer match code sharing NONE of the "
+     "question's words. Use it when you can describe what code DOES but not what it is "
+     "called. "
+     "NOT search_graph: query='...' there is BM25 lexical; semantic_query=[...] there is an "
+     "ARRAY of keywords scored against a static per-token table. This takes ONE STRING and "
+     "runs the model over whole declarations. "
+     "RANKED, NEVER EXACT: there is no such thing as a guaranteed-correct ask result. Read "
+     "the top 2–3 and verify with get_code_snippet. "
+     "AVAILABILITY: this lane reads a semantic index built by an OPT-IN second pass. Until "
+     "that index exists the response is available=false with a reason and the exact remedy, "
+     "and NO rows. That is not 'nothing matched' — ask never conflates the two, because "
+     "'your codebase has no such code' is a claim about your code and 'the index is not "
+     "built' is a claim about this tool. "
+     "RESPONSE: available, then the disclosures (model, language, truncation, population), "
+     "then rows carrying qn/label/file/lines/score — the SAME span shape search_graph "
+     "returns, so an agent that can read one can read the other. A 'cut' column appears "
+     "only when the index reports truncated declarations. format=\"json\" returns cols plus "
+     "column-ordered row ARRAYS matching cols, never per-row key envelopes.",
+     "{\"type\":\"object\",\"properties\":{"
+     "\"question\":{\"type\":\"string\",\"description\":\"ONE natural-language question as a "
+     "plain string, e.g. \\\"how does the writer decide section ordering\\\". Not a keyword "
+     "list — for keywords use search_graph(semantic_query=[\\\"a\\\",\\\"b\\\"]). Not a regex, "
+     "not Cypher.\"},"
+     "\"project\":{\"type\":\"string\"},"
+     "\"language\":{\"type\":\"string\",\"description\":\"Which language's instruct prefix to "
+     "render — the one word substituted into the query-side prompt, and the only part of this "
+     "lane a caller can get wrong without any downstream signal. OPTIONAL: the project's "
+     "dominant language is derived from the files in its graph and DISCLOSED on every answer, "
+     "so a wrong derivation is visible. Pass it when asking about a minority language in a "
+     "polyglot repo. Accepts an extension (\\\"cpp\\\", \\\"rs\\\", \\\"py\\\") or a display "
+     "name (\\\"C++\\\", \\\"Rust\\\", \\\"Python\\\"); an unrecognised value is refused, never "
+     "defaulted.\"},"
+     "\"limit\":{\"type\":\"integer\",\"default\":10,\"description\":\"Max ranked results. "
+     "Default 10: the lane is ranked, so the top few are the answer and the tail is noise. "
+     "Capped at 500. There is no offset — raise limit rather than page a ranking.\"},"
+     "\"format\":{\"type\":\"string\",\"enum\":[\"tree\",\"json\"],\"default\":\"tree\","
+     "\"description\":\"Response encoding. tree (default): compact text rows. json: cols + "
+     "column-ordered row arrays (the SAME model, structured).\"}},"
+     "\"required\":[\"question\",\"project\"]}"},
+
     {"query_graph", "Query graph",
      "Execute a Cypher query against the knowledge graph for complex multi-hop patterns, "
      "aggregations, and cross-service analysis. The response includes 'total' (returned "
@@ -708,6 +765,10 @@ typedef struct {
 static const tool_annotation_def_t TOOL_ANNOTATIONS[] = {
     {"index_repository", false, false, true, false},
     {"search_graph", false, true, true, false},
+    /* read_only is false for the same reason search_graph's is: resolving a
+     * project can open (and, on a corrupt file, quarantine) a store. Nothing
+     * in the ask lane itself writes — it never CREATEs its own tables. */
+    {"ask", false, true, true, false},
     {"query_graph", false, true, true, false},
     {"trace_path", false, true, true, false},
     {"get_code_snippet", false, true, true, false},
@@ -766,10 +827,17 @@ static void mcp_add_tool_def(yyjson_mut_doc *doc, yyjson_mut_val *tools, int i) 
 }
 
 static bool mcp_tool_allowed(hyp_mcp_tool_profile_t profile, const char *name) {
+    /* `ask` joins analysis but NOT scout. Scout's promise is a small surface
+     * whose every tool answers; a lane that can legitimately report
+     * unavailable belongs on the surface where an agent is already expected
+     * to reason about index state. */
     static const char *const analysis_tools[] = {
-        "search_graph",     "query_graph",          "trace_path",     "get_code_snippet",
-        "get_graph_schema", "get_architecture",     "search_code",    "list_projects",
-        "index_status",     "check_index_coverage", "detect_changes",
+        "search_graph",         "ask",
+        "query_graph",          "trace_path",
+        "get_code_snippet",     "get_graph_schema",
+        "get_architecture",     "search_code",
+        "list_projects",        "index_status",
+        "check_index_coverage", "detect_changes",
     };
     static const char *const scout_tools[] = {
         "search_graph",  "trace_path",   "get_code_snippet",     "get_architecture",
@@ -3768,6 +3836,429 @@ static char *handle_search_graph(hyp_mcp_server_t *srv, const char *args) {
 
     char *result = hyp_mcp_text_result(json, false);
     free(json);
+    return result;
+}
+
+/* ── ask: the semantic lane (NEXT-STEPS.md §2.1) ─────────────────────
+ *
+ * One natural-language string in, ranked spans out. The shaping deliberately
+ * mirrors bm25_search's — total/cols/rows/lines — because §3's goal is that an
+ * agent which can read one answer can read the other without learning a second
+ * format.
+ *
+ * The part that is NOT like the other tools is `available`. Every other tool
+ * either answers or errors; this one has a third outcome that is neither, and
+ * getting it wrong is worse than getting the ranking wrong. See ask_emit_*. */
+
+enum {
+    ASK_DEFAULT_LIMIT = 10,
+    ASK_MAX_LIMIT = 500,
+    ASK_QUESTION_MAX = 4096,
+    ASK_MSG = HYP_SZ_1K,
+    ASK_LANG_SAMPLE_MAX = 20000, /* distinct files sampled to derive the language */
+};
+
+/* Machine-readable reason tokens. Stable strings: a caller branches on these,
+ * so they are part of the contract and the human sentence beside them is not. */
+static const char *ask_reason_token(hyp_ask_avail_t a) {
+    switch (a) {
+    case HYP_ASK_NO_BACKEND:
+        return "no_encoder";
+    case HYP_ASK_NO_INDEX:
+        return "no_semantic_index";
+    case HYP_ASK_MODEL_MISMATCH:
+        return "model_mismatch";
+    case HYP_ASK_AVAILABLE:
+    default:
+        return "available";
+    }
+}
+
+/* What is missing, and what fixes it. Two separate fields on purpose: an
+ * agent that only reads one should still be able to act, and `detail` alone
+ * ("no index") has historically been read as "no results". */
+static void ask_unavailable_text(const hyp_ask_status_t *st, const char *project, char *detail,
+                                 size_t detail_len, char *remedy, size_t remedy_len) {
+    switch (st->avail) {
+    case HYP_ASK_NO_BACKEND:
+        snprintf(detail, detail_len,
+                 "this build has no embedding backend linked, so a question cannot be turned "
+                 "into a vector at all. NOTHING was searched — this is not a statement about "
+                 "the code in \"%s\".",
+                 project ? project : "");
+        snprintf(remedy, remedy_len,
+                 "Use search_graph(query=\"...\") for lexical search or "
+                 "search_graph(semantic_query=[\"a\",\"b\"]) for the static per-token vectors, "
+                 "both of which work in every build. The ask lane needs a build with the "
+                 "embedding backend.");
+        break;
+    case HYP_ASK_MODEL_MISMATCH:
+        snprintf(detail, detail_len,
+                 "\"%s\" has %d vector(s) built by model \"%s\" at dim %d, but this build "
+                 "encodes with \"%s\". Two models' vectors are not comparable and the scores "
+                 "would look ordinary, so they are REFUSED rather than mixed.",
+                 project ? project : "", st->n_vectors, st->model_id, st->dim, st->backend_id);
+        snprintf(remedy, remedy_len,
+                 "Rebuild the semantic index for this project with the current model, then "
+                 "re-run ask.");
+        break;
+    case HYP_ASK_NO_INDEX:
+    default:
+        snprintf(detail, detail_len,
+                 "\"%s\" has no semantic index. The ask lane reads per-declaration vectors "
+                 "built by an opt-in second pass, which has not run here. NOTHING was "
+                 "searched — this is not a statement about the code in \"%s\".",
+                 project ? project : "", project ? project : "");
+        snprintf(remedy, remedy_len,
+                 "Build it once for this project (it scales with declaration count and leaves "
+                 "the structural index untouched), or use search_graph(query=\"...\") / "
+                 "search_graph(semantic_query=[\"a\",\"b\"]) meanwhile — both work with the "
+                 "index you already have.");
+        break;
+    }
+}
+
+/* The truncation disclosure, on EVERY answer rather than only when a
+ * truncated row ranks. A caveat that appeared only when a cut span ranked
+ * would be silent in exactly the case that hurts — the one where truncation
+ * is WHY it did not. Three states, and `unknown` is not `none`. */
+static void ask_truncation_text(const hyp_ask_status_t *st, char *out, size_t outlen) {
+    switch (st->trunc) {
+    case HYP_ASK_TRUNC_NONE:
+        snprintf(out, outlen, "none — every declaration fit the model's window");
+        break;
+    case HYP_ASK_TRUNC_SOME:
+        snprintf(out, outlen,
+                 "%d declaration(s) exceeded the model's window and were encoded FROM THEIR "
+                 "FIRST TOKENS ONLY; a miss on one of those is a measurement artifact, not a "
+                 "retrieval failure",
+                 st->trunc_count);
+        break;
+    case HYP_ASK_TRUNC_UNKNOWN:
+    default:
+        snprintf(out, outlen,
+                 "unknown — the encoder that built this index does not report it, so whether "
+                 "any declaration was encoded from its head alone cannot be said here");
+        break;
+    }
+}
+
+/* Distinct file paths in the project's graph, for language derivation.
+ * Sampled through the SAME hyp_language_for_filename() the indexer uses,
+ * rather than through get_architecture's `languages` aspect: that aspect
+ * yields DISPLAY STRINGS from a separate 44-entry extension table in store.c,
+ * and turning one back into a grammar id would need a second reverse map —
+ * the display-name/grammar-id confusion §2.1 warns about, doubled. */
+static HYPLanguage ask_derive_language(hyp_store_t *store, const char *project) {
+    sqlite3 *db = hyp_store_get_db(store);
+    if (!db) {
+        return HYP_LANG_COUNT;
+    }
+    sqlite3_stmt *st = NULL;
+    if (sqlite3_prepare_v2(db,
+                           "SELECT DISTINCT file_path FROM nodes "
+                           "WHERE project = ?1 AND file_path <> '' LIMIT ?2",
+                           -1, &st, NULL) != SQLITE_OK) {
+        return HYP_LANG_COUNT;
+    }
+    sqlite3_bind_text(st, 1, project, -1, MCP_SQLITE_TRANSIENT);
+    sqlite3_bind_int(st, MCP_COL_2, ASK_LANG_SAMPLE_MAX);
+
+    char **paths = NULL;
+    int n = 0;
+    int cap = 0;
+    while (sqlite3_step(st) == SQLITE_ROW) {
+        const char *p = (const char *)sqlite3_column_text(st, 0);
+        if (!p || !p[0]) {
+            continue;
+        }
+        if (n == cap) {
+            int next = cap ? cap * MCP_RETURN_2 : HYP_SZ_256;
+            char **grown = (char **)realloc(paths, (size_t)next * sizeof(*paths));
+            if (!grown) {
+                break;
+            }
+            paths = grown;
+            cap = next;
+        }
+        paths[n] = heap_strdup(p);
+        if (!paths[n]) {
+            break;
+        }
+        n++;
+    }
+    sqlite3_finalize(st);
+
+    HYPLanguage lang = hyp_ask_dominant_language((const char *const *)paths, n);
+    for (int i = 0; i < n; i++) {
+        free(paths[i]);
+    }
+    free(paths);
+    return lang;
+}
+
+/* Column set. `cut` is present only when the index reports truncated rows —
+ * a per-row flag that is always false costs every caller a column to learn
+ * nothing, and the header declares the columns anyway. */
+static void ask_cols(const char *cols[], int *ncols, bool with_cut) {
+    int i = 0;
+    cols[i++] = "qn";
+    cols[i++] = "label";
+    cols[i++] = "file";
+    cols[i++] = "lines";
+    cols[i++] = "score";
+    if (with_cut) {
+        cols[i++] = "cut";
+    }
+    *ncols = i;
+}
+
+/* The unavailable answer. NO results table is emitted — not an empty one.
+ * An empty `results[0]{...}:` is how "the index was never built" gets read as
+ * "your codebase has nothing like that", which is a claim about the caller's
+ * code that this tool has no basis to make. */
+static char *ask_emit_unavailable(const hyp_ask_status_t *st, const char *project, bool json) {
+    char detail[ASK_MSG];
+    char remedy[ASK_MSG];
+    ask_unavailable_text(st, project, detail, sizeof(detail), remedy, sizeof(remedy));
+
+    if (json) {
+        yyjson_mut_doc *doc = yyjson_mut_doc_new(NULL);
+        yyjson_mut_val *root = yyjson_mut_obj(doc);
+        yyjson_mut_doc_set_root(doc, root);
+        yyjson_mut_obj_add_bool(doc, root, "available", false);
+        yyjson_mut_obj_add_str(doc, root, "reason", ask_reason_token(st->avail));
+        yyjson_mut_obj_add_strcpy(doc, root, "detail", detail);
+        yyjson_mut_obj_add_strcpy(doc, root, "remedy", remedy);
+        yyjson_mut_obj_add_bool(doc, root, "searched", false);
+        char *json_text = yy_doc_to_str(doc);
+        yyjson_mut_doc_free(doc);
+        char *result = hyp_mcp_text_result(json_text ? json_text : "{}", false);
+        free(json_text);
+        return result;
+    }
+
+    hyp_sb_t sb;
+    hyp_sb_init(&sb);
+    hyp_tree_scalar_bool(&sb, "available", false);
+    hyp_tree_scalar_str(&sb, "reason", ask_reason_token(st->avail));
+    hyp_tree_scalar_str(&sb, "detail", detail);
+    hyp_tree_scalar_str(&sb, "remedy", remedy);
+    hyp_tree_scalar_bool(&sb, "searched", false);
+    char *text = hyp_sb_finish(&sb);
+    char *result = hyp_mcp_text_result(text ? text : "out of memory", text == NULL);
+    free(text);
+    return result;
+}
+
+static char *ask_error(const char *msg, char *project, char *question) {
+    free(project);
+    free(question);
+    return hyp_mcp_text_result(msg, true);
+}
+
+static char *handle_ask(hyp_mcp_server_t *srv, const char *args) {
+    char *project = get_project_arg(args);
+    hyp_store_t *store = resolve_store(srv, project);
+    REQUIRE_STORE(store, project);
+
+    char *not_indexed = verify_project_indexed(store, project);
+    if (not_indexed) {
+        free(project);
+        return not_indexed;
+    }
+
+    char *format_arg = hyp_mcp_get_string_arg(args, "format");
+    bool json = format_arg && strcmp(format_arg, "json") == 0;
+    free(format_arg);
+
+    /* Argument validation before availability: a malformed call is the
+     * caller's to fix whether or not the lane happens to be built today. */
+    char *question = hyp_mcp_get_string_arg(args, "question");
+    if (!question || !question[0]) {
+        /* Distinguish "absent" from "wrong type", because the wrong type an
+         * agent actually reaches for is the array — semantic_query's shape —
+         * and pointing at the right tool costs one sentence. */
+        bool was_array = false;
+        yyjson_doc *ad = yyjson_read(args, strlen(args), 0);
+        if (ad) {
+            yyjson_val *q = yyjson_obj_get(yyjson_doc_get_root(ad), "question");
+            was_array = q && yyjson_is_arr(q);
+            yyjson_doc_free(ad);
+        }
+        if (was_array) {
+            return ask_error("ask takes ONE natural-language string, not an array — e.g. "
+                             "question=\"how does the writer decide section ordering\". For an "
+                             "array of keywords use search_graph(semantic_query=[\"send\","
+                             "\"publish\"]), which is a different lane with different result "
+                             "semantics.",
+                             project, question);
+        }
+        return ask_error("question is required: one natural-language string, e.g. "
+                         "question=\"how does the writer decide section ordering\".",
+                         project, question);
+    }
+    if (strlen(question) > ASK_QUESTION_MAX) {
+        return ask_error("question is too long. This lane encodes one QUESTION, not a document; "
+                         "if you have a body of text to match against, that is the indexing "
+                         "side of the lane, not the query side.",
+                         project, question);
+    }
+
+    int limit = hyp_mcp_get_int_arg(args, "limit", ASK_DEFAULT_LIMIT);
+    if (limit <= 0) {
+        limit = ASK_DEFAULT_LIMIT;
+    }
+    if (limit > ASK_MAX_LIMIT) {
+        limit = ASK_MAX_LIMIT;
+    }
+
+    hyp_ask_status_t st;
+    hyp_ask_index_status(store, project, &st);
+    if (st.avail != HYP_ASK_AVAILABLE) {
+        char *result = ask_emit_unavailable(&st, project, json);
+        free(project);
+        free(question);
+        return result;
+    }
+
+    /* Language: explicit wins, derivation is the fallback, and NEITHER falls
+     * back to a default. A question about Rust encoded behind the C++ prefix
+     * still returns unit vectors and a plausible ranking — there is no
+     * downstream signal at all, so the signal has to be here. */
+    char *lang_arg = hyp_mcp_get_string_arg(args, "language");
+    bool lang_explicit = lang_arg && lang_arg[0];
+    HYPLanguage lang =
+        lang_explicit ? hyp_ask_resolve_language(lang_arg) : ask_derive_language(store, project);
+    if (lang_explicit && lang == HYP_LANG_COUNT) {
+        char msg[ASK_MSG];
+        snprintf(msg, sizeof(msg),
+                 "language \"%s\" is not recognised. Pass an extension (\"cpp\", \"rs\", \"py\") "
+                 "or a display name (\"C++\", \"Rust\", \"Python\"). It is not defaulted, "
+                 "because the wrong language renders a prefix that still ranks and still "
+                 "returns answers — just not the ones any measurement describes.",
+                 lang_arg);
+        free(lang_arg);
+        return ask_error(msg, project, question);
+    }
+    free(lang_arg);
+    const char *lang_name = hyp_ask_language_display(lang);
+    if (!lang_name) {
+        return ask_error("could not determine which language's instruct prefix to render: no "
+                         "file in this project's graph maps to a known language. Pass "
+                         "language=\"...\" explicitly (an extension like \"cpp\" or a display "
+                         "name like \"C++\").",
+                         project, question);
+    }
+
+    const hyp_ask_backend_t *backend = hyp_ask_backend();
+    float *qvec = (float *)calloc(HYP_ASK_DIM, sizeof(float));
+    if (!qvec) {
+        return ask_error("out of memory encoding the question", project, question);
+    }
+    char encerr[ASK_MSG] = "";
+    if (backend->encode_query(lang, question, qvec, encerr, sizeof(encerr)) != 0) {
+        char msg[ASK_MSG + HYP_SZ_128];
+        snprintf(msg, sizeof(msg), "could not encode the question: %s",
+                 encerr[0] ? encerr : "the encoder failed without a reason");
+        free(qvec);
+        return ask_error(msg, project, question);
+    }
+
+    hyp_ask_hit_t *hits = NULL;
+    int hit_count = 0;
+    int rc = hyp_ask_index_search(store, project, qvec, limit, &hits, &hit_count);
+    free(qvec);
+    if (rc != HYP_STORE_OK) {
+        return ask_error("the semantic index could not be read. Re-run index_status; if the "
+                         "project is healthy the vector store needs rebuilding.",
+                         project, question);
+    }
+
+    char trunc_text[ASK_MSG];
+    ask_truncation_text(&st, trunc_text, sizeof(trunc_text));
+    bool with_cut = st.trunc == HYP_ASK_TRUNC_SOME;
+    const char *cols[6];
+    int ncols = 0;
+    ask_cols(cols, &ncols, with_cut);
+
+    char *result = NULL;
+    if (json) {
+        yyjson_mut_doc *doc = yyjson_mut_doc_new(NULL);
+        yyjson_mut_val *root = yyjson_mut_obj(doc);
+        yyjson_mut_doc_set_root(doc, root);
+        yyjson_mut_obj_add_bool(doc, root, "available", true);
+        yyjson_mut_obj_add_strcpy(doc, root, "model", st.model_id);
+        yyjson_mut_obj_add_strcpy(doc, root, "language", lang_name);
+        yyjson_mut_obj_add_str(doc, root, "language_source",
+                               lang_explicit ? "explicit" : "derived");
+        yyjson_mut_obj_add_strcpy(doc, root, "truncation", trunc_text);
+        yyjson_mut_obj_add_int(doc, root, "population", st.n_vectors);
+        yyjson_mut_val *jcols = yyjson_mut_arr(doc);
+        for (int c = 0; c < ncols; c++) {
+            yyjson_mut_arr_add_str(doc, jcols, cols[c]);
+        }
+        yyjson_mut_obj_add_val(doc, root, "cols", jcols);
+        yyjson_mut_val *rows = yyjson_mut_arr(doc);
+        for (int i = 0; i < hit_count; i++) {
+            char lines[HYP_SZ_32];
+            sg_lines_str(lines, sizeof(lines), hits[i].start_line, hits[i].end_line);
+            yyjson_mut_val *row = yyjson_mut_arr(doc);
+            yyjson_mut_arr_add_strcpy(doc, row, hits[i].qualified_name);
+            yyjson_mut_arr_add_strcpy(doc, row, hits[i].label);
+            yyjson_mut_arr_add_strcpy(doc, row, hits[i].file_path);
+            yyjson_mut_arr_add_strcpy(doc, row, lines);
+            yyjson_mut_arr_add_real(doc, row, hits[i].score);
+            if (with_cut) {
+                yyjson_mut_arr_add_bool(doc, row, hits[i].truncated);
+            }
+            yyjson_mut_arr_add_val(rows, row);
+        }
+        yyjson_mut_obj_add_val(doc, root, "rows", rows);
+        char *json_text = yy_doc_to_str(doc);
+        yyjson_mut_doc_free(doc);
+        result = hyp_mcp_text_result(json_text ? json_text : "{}", false);
+        free(json_text);
+    } else {
+        hyp_sb_t sb;
+        hyp_sb_init(&sb);
+        hyp_tree_scalar_bool(&sb, "available", true);
+        hyp_tree_scalar_str(&sb, "model", st.model_id);
+        hyp_tree_scalar_str(&sb, "language", lang_name);
+        hyp_tree_scalar_str(&sb, "language_source", lang_explicit ? "explicit" : "derived");
+        hyp_tree_scalar_str(&sb, "truncation", trunc_text);
+        hyp_tree_scalar_int(&sb, "population", st.n_vectors);
+        hyp_tree_table_header(&sb, "results", hit_count, cols, ncols);
+        for (int i = 0; i < hit_count; i++) {
+            char lines[HYP_SZ_32];
+            sg_lines_str(lines, sizeof(lines), hits[i].start_line, hits[i].end_line);
+            hyp_tree_row_begin(&sb);
+            hyp_tree_cell_str(&sb, hits[i].qualified_name, true);
+            hyp_tree_cell_str(&sb, hits[i].label, false);
+            hyp_tree_cell_str(&sb, hits[i].file_path, false);
+            hyp_tree_cell_str(&sb, lines, false);
+            hyp_tree_cell_real(&sb, hits[i].score, false);
+            if (with_cut) {
+                hyp_tree_cell_bool(&sb, hits[i].truncated, false);
+            }
+            hyp_tree_row_end(&sb);
+        }
+        if (hit_count == 0) {
+            /* A REAL empty result: the index exists, the question encoded, and
+             * nothing scored. Said in words so it cannot be confused with the
+             * unavailable answer above, which never gets this far. */
+            hyp_tree_scalar_str(&sb, "hint",
+                                "the index was searched and returned nothing. Unlike "
+                                "available=false, this IS a statement about the code.");
+        }
+        char *text = hyp_sb_finish(&sb);
+        result = hyp_mcp_text_result(text ? text : "out of memory", text == NULL);
+        free(text);
+    }
+
+    hyp_ask_free_hits(hits, hit_count);
+    free(project);
+    free(question);
     return result;
 }
 
@@ -10911,6 +11402,9 @@ static char *dispatch_tool(hyp_mcp_server_t *srv, const char *tool_name, const c
     }
     if (strcmp(tool_name, "search_graph") == 0) {
         return handle_search_graph(srv, args_json);
+    }
+    if (strcmp(tool_name, "ask") == 0) {
+        return handle_ask(srv, args_json);
     }
     if (strcmp(tool_name, "query_graph") == 0) {
         return handle_query_graph(srv, args_json);
