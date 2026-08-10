@@ -450,6 +450,246 @@ TEST(ask_embed_counts_unreadable_spans_instead_of_hiding_them) {
     PASS();
 }
 
+/* ── Whole-file spans (NEXT-STEPS §2.2 lever 3) ────────────────── */
+
+TEST(ask_embed_span_reports_the_files_line_count) {
+    char *dir = th_mktempdir("hyp-askwf");
+    ASSERT_NOT_NULL(dir);
+    char path[512];
+    snprintf(path, sizeof(path), "%s/a.c", dir);
+    ASSERT_EQ(th_write_file(path, "one\ntwo\nthree\n"), 0);
+    int lines = -1;
+    char *s = hyp_ask_read_span_lines(path, 2, 2, &lines);
+    ASSERT_NOT_NULL(s);
+    ASSERT_STR_EQ(s, "two");
+    ASSERT_EQ(lines, 3);
+    free(s);
+
+    /* A last line with no terminator still counts, or the extractor's end row
+     * would look like it overshot a file it exactly covers. */
+    snprintf(path, sizeof(path), "%s/b.c", dir);
+    ASSERT_EQ(th_write_file(path, "one\ntwo"), 0);
+    s = hyp_ask_read_span_lines(path, 1, 2, &lines);
+    ASSERT_NOT_NULL(s);
+    ASSERT_EQ(lines, 2);
+    free(s);
+
+    ASSERT(hyp_ask_span_is_whole_file(1, 3, 3));
+    ASSERT(hyp_ask_span_is_whole_file(1, 4, 3)); /* claims more than it needs */
+    ASSERT(!hyp_ask_span_is_whole_file(2, 3, 3));
+    ASSERT(!hyp_ask_span_is_whole_file(1, 2, 3));
+    ASSERT(!hyp_ask_span_is_whole_file(1, 1, 0)); /* an empty file has none */
+    th_cleanup(dir);
+    PASS();
+}
+
+/* Three files, one of each shape the policy has to tell apart:
+ *   whole.c   a whole-file Module span sitting over a real declaration
+ *   only.txt  a whole-file Module span that is the file's ONLY row
+ *   ns.ts     a Module span that is NOT the whole file (a TS namespace), over
+ *             a file that has another row, so the sole-row exemption cannot be
+ *             what keeps it. */
+static int build_wholefile_fixture(const char *dir, const char *graph_db, const char *project) {
+    char src[512];
+    snprintf(src, sizeof(src), "%s/src", dir);
+    if (th_mkdir_p(src) != 0) {
+        return -1;
+    }
+    char file[600];
+    snprintf(file, sizeof(file), "%s/whole.c", src);
+    if (th_write_file(file, "int alpha(void) {\n"
+                            "    return 1;\n"
+                            "}\n"
+                            "static int spare = 2;\n") != 0) {
+        return -1;
+    }
+    snprintf(file, sizeof(file), "%s/only.txt", src);
+    if (th_write_file(file, "set(SOURCES a.c)\nadd_library(x)\n") != 0) {
+        return -1;
+    }
+    snprintf(file, sizeof(file), "%s/ns.ts", src);
+    if (th_write_file(file, "import x from 'y';\n"
+                            "namespace N {\n"
+                            "  export const k = 1;\n"
+                            "}\n"
+                            "function tail() {}\n") != 0) {
+        return -1;
+    }
+    hyp_store_t *s = hyp_store_open_path(graph_db);
+    if (!s) {
+        return -1;
+    }
+    if (hyp_store_upsert_project(s, project, dir) != HYP_STORE_OK) {
+        hyp_store_close(s);
+        return -1;
+    }
+    hyp_node_t nodes[6];
+    memset(nodes, 0, sizeof(nodes));
+    nodes[0] = (hyp_node_t){.project = project,
+                            .label = "Module",
+                            .name = "whole.c",
+                            .qualified_name = "p.whole",
+                            .file_path = "src/whole.c",
+                            .start_line = 1,
+                            .end_line = 4};
+    nodes[1] = (hyp_node_t){.project = project,
+                            .label = "Function",
+                            .name = "alpha",
+                            .qualified_name = "p.whole.alpha",
+                            .file_path = "src/whole.c",
+                            .start_line = 1,
+                            .end_line = 3};
+    nodes[2] = (hyp_node_t){.project = project,
+                            .label = "Module",
+                            .name = "only.txt",
+                            .qualified_name = "p.only",
+                            .file_path = "src/only.txt",
+                            .start_line = 1,
+                            .end_line = 2};
+    nodes[3] = (hyp_node_t){.project = project,
+                            .label = "Module",
+                            .name = "N",
+                            .qualified_name = "p.ns.N",
+                            .file_path = "src/ns.ts",
+                            .start_line = 2,
+                            .end_line = 4};
+    nodes[4] = (hyp_node_t){.project = project,
+                            .label = "Function",
+                            .name = "tail",
+                            .qualified_name = "p.ns.tail",
+                            .file_path = "src/ns.ts",
+                            .start_line = 5,
+                            .end_line = 5};
+    /* The per-file Module of ns.ts, so the file is not a special case. */
+    nodes[5] = (hyp_node_t){.project = project,
+                            .label = "Module",
+                            .name = "ns.ts",
+                            .qualified_name = "p.ns",
+                            .file_path = "src/ns.ts",
+                            .start_line = 1,
+                            .end_line = 5};
+    int rc = hyp_store_upsert_node_batch(s, nodes, 6, NULL);
+    hyp_store_close(s);
+    return rc == HYP_STORE_OK ? 0 : -1;
+}
+
+TEST(ask_embed_drops_whole_file_spans_by_default) {
+    char *dir = th_mktempdir("hyp-askwf");
+    ASSERT_NOT_NULL(dir);
+    char graph_db[512];
+    char vec_db[512];
+    snprintf(graph_db, sizeof(graph_db), "%s/graph.db", dir);
+    snprintf(vec_db, sizeof(vec_db), "%s/vec.db", dir);
+    if (build_wholefile_fixture(dir, graph_db, "p") != 0) {
+        th_cleanup(dir);
+        FAIL("could not build the graph fixture");
+    }
+    hyp_ask_encoder_t *enc = hyp_ask_encoder_stub_create(16, 32768, true);
+    ASSERT_NOT_NULL(enc);
+    hyp_ask_embed_opts_t opts;
+    memset(&opts, 0, sizeof(opts)); /* zeroed options select DROP */
+    opts.project = "p";
+    opts.graph_db_path = graph_db;
+    opts.vectors_db_path = vec_db;
+    hyp_ask_embed_report_t rep;
+    ASSERT_EQ(hyp_ask_embed_run(enc, &opts, &rep), 0);
+
+    ASSERT_EQ(rep.declarations_seen, 6);
+    /* whole.c's and ns.ts's per-file rows go; only.txt's stays because it is
+     * the file's only row. */
+    ASSERT_EQ(rep.skipped_whole_file, 2);
+    ASSERT_EQ(rep.whole_file_kept_sole, 1);
+    ASSERT_EQ(rep.embedded, 4);
+    ASSERT_EQ(rep.skipped_unreadable, 0);
+    hyp_ask_embed_report_free(&rep);
+
+    hyp_ask_vectors_t *v = hyp_ask_vectors_open_path("p", vec_db);
+    ASSERT_NOT_NULL(v);
+    char stored[HYP_ASK_VEC_HASH_LEN + 1];
+    ASSERT_EQ(hyp_ask_vectors_stored_hash(v, "p.whole", stored, NULL), HYP_ASK_VEC_NOT_FOUND);
+    ASSERT_EQ(hyp_ask_vectors_stored_hash(v, "p.ns", stored, NULL), HYP_ASK_VEC_NOT_FOUND);
+    /* Kept: the declaration inside the dropped span, the file with nothing
+     * else, and the namespace that is a Module but not a file. */
+    ASSERT_EQ(hyp_ask_vectors_stored_hash(v, "p.whole.alpha", stored, NULL), HYP_ASK_VEC_OK);
+    ASSERT_EQ(hyp_ask_vectors_stored_hash(v, "p.only", stored, NULL), HYP_ASK_VEC_OK);
+    ASSERT_EQ(hyp_ask_vectors_stored_hash(v, "p.ns.N", stored, NULL), HYP_ASK_VEC_OK);
+    ASSERT_EQ(hyp_ask_vectors_stored_hash(v, "p.ns.tail", stored, NULL), HYP_ASK_VEC_OK);
+    ASSERT_EQ(hyp_ask_vectors_count(v), 4);
+
+    /* The index says which population it holds — two indexes over one corpus
+     * under the two policies rank different candidate sets. */
+    hyp_ask_vec_meta_t m;
+    ASSERT_EQ(hyp_ask_vectors_get_meta(v, &m), HYP_ASK_VEC_OK);
+    ASSERT_NOT_NULL(m.whole_file_spans);
+    ASSERT_STR_EQ(m.whole_file_spans, "drop");
+    hyp_ask_vec_meta_free(&m);
+    hyp_ask_vectors_close(v);
+    hyp_ask_encoder_destroy(enc);
+    th_cleanup(dir);
+    PASS();
+}
+
+TEST(ask_embed_keeps_whole_file_spans_when_asked) {
+    char *dir = th_mktempdir("hyp-askwf");
+    ASSERT_NOT_NULL(dir);
+    char graph_db[512];
+    char vec_db[512];
+    snprintf(graph_db, sizeof(graph_db), "%s/graph.db", dir);
+    snprintf(vec_db, sizeof(vec_db), "%s/vec.db", dir);
+    if (build_wholefile_fixture(dir, graph_db, "p") != 0) {
+        th_cleanup(dir);
+        FAIL("could not build the graph fixture");
+    }
+    hyp_ask_encoder_t *enc = hyp_ask_encoder_stub_create(16, 32768, true);
+    ASSERT_NOT_NULL(enc);
+    hyp_ask_embed_opts_t opts;
+    memset(&opts, 0, sizeof(opts));
+    opts.project = "p";
+    opts.graph_db_path = graph_db;
+    opts.vectors_db_path = vec_db;
+    opts.whole_file_spans = HYP_ASK_WHOLE_FILE_KEEP;
+    hyp_ask_embed_report_t rep;
+    ASSERT_EQ(hyp_ask_embed_run(enc, &opts, &rep), 0);
+    ASSERT_EQ(rep.embedded, 6);
+    ASSERT_EQ(rep.skipped_whole_file, 0);
+    ASSERT_EQ(rep.whole_file_kept_sole, 0);
+    hyp_ask_embed_report_free(&rep);
+
+    hyp_ask_vectors_t *v = hyp_ask_vectors_open_path("p", vec_db);
+    ASSERT_NOT_NULL(v);
+    char stored[HYP_ASK_VEC_HASH_LEN + 1];
+    ASSERT_EQ(hyp_ask_vectors_stored_hash(v, "p.whole", stored, NULL), HYP_ASK_VEC_OK);
+    hyp_ask_vec_meta_t m;
+    ASSERT_EQ(hyp_ask_vectors_get_meta(v, &m), HYP_ASK_VEC_OK);
+    ASSERT_STR_EQ(m.whole_file_spans, "keep");
+    hyp_ask_vec_meta_free(&m);
+    hyp_ask_vectors_close(v);
+
+    /* FLIPPING THE KNOB DOES NOT NEED A REBUILD. The pass prunes what it did
+     * not see, so a second run under DROP removes the rows the first wrote and
+     * re-encodes nothing else. This is what makes the decision revisitable. */
+    opts.whole_file_spans = HYP_ASK_WHOLE_FILE_DROP;
+    hyp_ask_embed_report_t second;
+    ASSERT_EQ(hyp_ask_embed_run(enc, &opts, &second), 0);
+    ASSERT_EQ(second.embedded, 0);
+    ASSERT_EQ(second.reused, 4);
+    ASSERT_EQ(second.skipped_whole_file, 2);
+    ASSERT_EQ(second.pruned, 2);
+    hyp_ask_embed_report_free(&second);
+
+    v = hyp_ask_vectors_open_path("p", vec_db);
+    ASSERT_NOT_NULL(v);
+    ASSERT_EQ(hyp_ask_vectors_count(v), 4);
+    ASSERT_EQ(hyp_ask_vectors_stored_hash(v, "p.whole", stored, NULL), HYP_ASK_VEC_NOT_FOUND);
+    ASSERT_EQ(hyp_ask_vectors_get_meta(v, &m), HYP_ASK_VEC_OK);
+    ASSERT_STR_EQ(m.whole_file_spans, "drop");
+    hyp_ask_vec_meta_free(&m);
+    hyp_ask_vectors_close(v);
+    hyp_ask_encoder_destroy(enc);
+    th_cleanup(dir);
+    PASS();
+}
+
 TEST(ask_embed_zero_work_is_not_reported_as_success) {
     /* A run that found no declaration completed everything it attempted and
      * indexed nothing. If that returned 0 like any other run, "measured
@@ -495,5 +735,8 @@ SUITE(ask_embed) {
     RUN_TEST(ask_embed_limited_run_is_marked_partial_and_never_prunes);
     RUN_TEST(ask_embed_truncation_unknown_then_reprobed_to_attested);
     RUN_TEST(ask_embed_counts_unreadable_spans_instead_of_hiding_them);
+    RUN_TEST(ask_embed_span_reports_the_files_line_count);
+    RUN_TEST(ask_embed_drops_whole_file_spans_by_default);
+    RUN_TEST(ask_embed_keeps_whole_file_spans_when_asked);
     RUN_TEST(ask_embed_zero_work_is_not_reported_as_success);
 }
