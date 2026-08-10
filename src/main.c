@@ -2440,17 +2440,7 @@ int main(int argc, char **argv) {
             (void)fputs("Preparing one-shot local HYP command...\n", feedback);
             (void)fflush(feedback);
         }
-        /* main_daemon_endpoint_new(), not bootstrap_endpoint_new(NULL): the
-         * one-shot local CLI is the ONLY daemon-coordinated path that ignored
-         * the HYP_TEST_DAEMON_RUNTIME_PARENT seam, so `hyponoia cli <tool>`
-         * could not be isolated from the developer's real account-wide
-         * rendezvous even in a seam build. Found while measuring §2.2 lever 4:
-         * two other agents' binaries were holding the version cohort, and the
-         * seam that exists precisely to give a measurement its own namespace
-         * did not reach the command being measured. With seams compiled OUT —
-         * every production build — main_daemon_endpoint_new() IS
-         * bootstrap_endpoint_new(NULL), so this is a literal no-op there. */
-        hyp_daemon_ipc_endpoint_t *local_endpoint = main_daemon_endpoint_new();
+        hyp_daemon_ipc_endpoint_t *local_endpoint = hyp_daemon_bootstrap_endpoint_new(NULL);
         char local_executable[MAIN_PATH_CAP];
         hyp_daemon_build_identity_t local_identity;
         hyp_project_lock_manager_t *project_locks =

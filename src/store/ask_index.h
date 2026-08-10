@@ -131,31 +131,6 @@ void hyp_ask_index_status(hyp_store_t *s, const char *project, hyp_ask_status_t 
 int hyp_ask_index_search(hyp_store_t *s, const char *project, const float *qvec, int limit,
                          hyp_ask_hit_t **out, int *out_count);
 
-/* One candidate the LEXICAL lane produced: the graph gives both keys, and the
- * two vector stores are keyed differently — the real per-project file on
- * `qualified_name` (its PRIMARY KEY, stable across re-indexes), the in-graph
- * fixture table on (project, node_id). Carrying both means neither store needs
- * a scan to answer a point lookup. */
-typedef struct {
-    int64_t node_id;
-    const char *qualified_name; /* borrowed; must outlive the call */
-} hyp_ask_ref_t;
-
-/* Score these declarations against `qvec`, in the order given, dropping the
- * ones the vector index does not hold.
- *
- * The dense lane's twin for reciprocal rank fusion (§2.2 lever 4). Fusion
- * needs to promote a declaration the dense top-k never reached, and a promoted
- * row still has to be a citable answer — real span, real cosine, real `cut`
- * flag, and inside the population the answer discloses. Fetching it from the
- * VECTOR index rather than assembling it from the graph is what guarantees
- * that: a lexical hit on something never embedded is dropped, not served.
- *
- * ADDITIVE. hyp_ask_index_search is not touched by this, and a build where the
- * lexical lane finds nothing produces exactly the ranking it produced before. */
-int hyp_ask_index_fetch(hyp_store_t *s, const char *project, const float *qvec,
-                        const hyp_ask_ref_t *refs, int n, hyp_ask_hit_t **out, int *out_count);
-
 void hyp_ask_free_hits(hyp_ask_hit_t *hits, int count);
 
 #endif /* HYP_ASK_INDEX_H */
