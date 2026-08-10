@@ -535,6 +535,24 @@ TEST(model_fetch_translates_every_transport_failure) {
     PASS();
 }
 
+/* hyp_exec_no_shell reports "could not spawn" and "died on a signal" with the
+ * same -1. Telling someone whose download the OOM killer ate that curl is not
+ * installed sends them to fix the wrong thing, so bytes on disk break the tie. */
+TEST(model_fetch_does_not_blame_a_missing_curl_for_a_killed_one) {
+    mf_begin();
+    mf_arm(-1, 9 * MF_MB, 'k'); /* curl wrote 9 MB, then died on a signal */
+    hyp_model_fetch_opts_t opts = mf_opts_yes();
+    ASSERT_EQ(hyp_model_fetch(&opts), HYP_MODEL_FETCH_INTERRUPTED);
+
+    hyp_model_probe_t probe;
+    hyp_model_ask_probe(&probe);
+    ASSERT_EQ(probe.state, HYP_MODEL_PARTIAL);
+    ASSERT_EQ(probe.part_bytes, 9 * MF_MB);
+    mf_disarm();
+    mf_end();
+    PASS();
+}
+
 /* An interrupted fetch keeps its bytes and the next one continues from them.
  * This machine has restarted twice mid-work; interruption is the normal case,
  * not the exceptional one. */
@@ -741,6 +759,7 @@ SUITE(model_fetch) {
     RUN_TEST(model_fetch_refuses_to_run_unattended_without_yes);
 #endif
     RUN_TEST(model_fetch_translates_every_transport_failure);
+    RUN_TEST(model_fetch_does_not_blame_a_missing_curl_for_a_killed_one);
     RUN_TEST(model_fetch_keeps_the_partial_and_resumes_from_it);
     RUN_TEST(model_fetch_restarts_when_the_server_will_not_resume);
 #ifndef _WIN32

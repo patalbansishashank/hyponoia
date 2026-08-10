@@ -285,12 +285,17 @@ TEST(daemon_bootstrap_classifies_stateless_commands_without_client) {
     char *uninstall[] = {"hyponoia", "uninstall", NULL};
     char *update[] = {"hyponoia", "update", "-n", NULL};
     char *verify_runtime_assets[] = {"hyponoia", "--verify-runtime-assets", NULL};
+    /* fetch-model writes one file into the user's cache. Unlisted, it would
+     * fall through to MCP_CLIENT and BLOCK serving the protocol on stdin
+     * instead of downloading anything. */
+    char *fetch_model[] = {"hyponoia", "fetch-model", "--path", NULL};
     ASSERT_EQ(classify(2, version), HYP_DAEMON_PROCESS_STATELESS);
     ASSERT_EQ(classify(3, help), HYP_DAEMON_PROCESS_STATELESS);
     ASSERT_EQ(classify(3, install), HYP_DAEMON_PROCESS_STATELESS);
     ASSERT_EQ(classify(2, uninstall), HYP_DAEMON_PROCESS_STATELESS);
     ASSERT_EQ(classify(3, update), HYP_DAEMON_PROCESS_STATELESS);
     ASSERT_EQ(classify(2, verify_runtime_assets), HYP_DAEMON_PROCESS_STATELESS);
+    ASSERT_EQ(classify(3, fetch_model), HYP_DAEMON_PROCESS_STATELESS);
     ASSERT_FALSE(hyp_daemon_process_role_requires_client(HYP_DAEMON_PROCESS_STATELESS));
     PASS();
 }

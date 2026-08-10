@@ -35,7 +35,11 @@ enum {
     MODEL_HASH_CHUNK = HYP_SZ_64K,   /* 64 KiB reads: 639 MB in ~10k syscalls */
     MODEL_DIR_MODE = 0700,           /* the cache is the user's, nobody else's */
     MODEL_ANSWER_MAX = HYP_SZ_16,    /* enough for "yes\n" and any typo of it */
-    MODEL_MB = 1024 * 1024,          /* for the human-facing megabyte counts */
+    /* DECIMAL megabytes, deliberately: HYP_MODEL_ASK_SIZE_TEXT says "639 MB"
+     * because that is what Hugging Face publishes and what T2 recorded, and
+     * 639150592 / 1024^2 is 609. Mixing the two units prints "273 of 609 MB"
+     * under a banner that promised 639, which reads as a bug in the count. */
+    MODEL_MB = 1000 * 1000,
     MODEL_SPACE_SLACK_MB = 64,       /* headroom demanded above the artifact */
     MODEL_HEX_PER_BYTE = 2,          /* two hex characters per digest byte */
     MODEL_HEX_HIGH_SHIFT = 4,        /* high nibble */
@@ -512,7 +516,16 @@ static int model_transfer(const char *url, const char *dest, int64_t resume_from
     return model_transfer_curl(url, dest, resume_from, &q);
 }
 
-static hyp_model_fetch_result_t model_classify(int exit_code) {
+/* `progressed` is whether the .part file grew during the attempt, and it is
+ * load-bearing for exactly one case: hyp_exec_no_shell cannot distinguish "no
+ * curl on PATH" from "curl died on a signal" — both come back as
+ * HYP_NOT_FOUND. Telling someone whose download was killed by the OOM killer
+ * that curl is not installed sends them to fix the wrong thing. Bytes on disk
+ * settle it: curl obviously ran. */
+static hyp_model_fetch_result_t model_classify(int exit_code, bool progressed) {
+    if (exit_code == HYP_NOT_FOUND) {
+        return progressed ? HYP_MODEL_FETCH_INTERRUPTED : HYP_MODEL_FETCH_NO_DOWNLOADER;
+    }
     switch (exit_code) {
     case MODEL_CURL_RESOLVE_PROXY:
     case MODEL_CURL_RESOLVE_HOST:
@@ -528,7 +541,6 @@ static hyp_model_fetch_result_t model_classify(int exit_code) {
     case MODEL_CURL_SSL_CACERT:
         return HYP_MODEL_FETCH_TLS;
     case MODEL_CURL_NOT_FOUND:
-    case HYP_NOT_FOUND:
         return HYP_MODEL_FETCH_NO_DOWNLOADER;
     default:
         return HYP_MODEL_FETCH_TRANSFER_FAILED;
@@ -688,9 +700,16 @@ hyp_model_fetch_result_t hyp_model_fetch(const hyp_model_fetch_opts_t *opts) {
         rc = model_transfer(HYP_MODEL_ASK_URL, probe.part_path, 0, o->quiet);
     }
     if (rc != MODEL_CURL_OK) {
-        hyp_model_fetch_result_t result = model_classify(rc);
+        int64_t now = hyp_file_size(probe.part_path);
+        bool progressed = now > probe.part_bytes;
+        hyp_model_fetch_result_t result = model_classify(rc, progressed);
         (void)fprintf(stderr, "\ndownload failed (curl exit %d): %s\n", rc,
                       hyp_model_fetch_result_text(result));
+        if (progressed) {
+            (void)fprintf(stderr, "%" PRId64 " of %" PRId64 " MB are on disk at %s.\n",
+                          now / MODEL_MB, (int64_t)HYP_MODEL_ASK_BYTES / MODEL_MB,
+                          probe.part_path);
+        }
         return result;
     }
 
