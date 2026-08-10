@@ -344,6 +344,13 @@ SIMHASH_SRCS = src/simhash/minhash.c
 # Semantic embedding module
 SEMANTIC_SRCS = src/semantic/semantic.c src/semantic/ast_profile.c src/semantic/rotsq.c
 
+# `ask` lane (NEXT-STEPS §2.1): per-declaration transformer vectors, their own
+# SQLite file, and the opt-in second pass that fills it. Deliberately its own
+# module and its own subcommand — nothing here runs during index_repository, so
+# the structural index keeps exactly the speed it has.
+ASK_SRCS = src/ask/ask_batch.c src/ask/ask_encoder.c src/ask/ask_vectors.c \
+           src/ask/ask_embed.c src/ask/ask_cmd.c
+
 # nomic-embed-code pretrained vectors (assembler blob)
 UNIXCODER_BLOB_SRC = vendored/nomic/code_vectors_blob.S
 
@@ -457,7 +464,7 @@ TRE_CFLAGS = -std=c11 -g -O1 -w -Ivendored/tre
 YYJSON_SRC = vendored/yyjson/yyjson.c
 
 # All production sources
-PROD_SRCS = $(FOUNDATION_SRCS) $(STORE_SRCS) $(CYPHER_SRCS) $(MCP_SRCS) $(DAEMON_SRCS) $(DISCOVER_SRCS) $(GRAPH_BUFFER_SRCS) $(PIPELINE_SRCS) $(SIMHASH_SRCS) $(SEMANTIC_SRCS) $(TRACES_SRCS) $(WATCHER_SRCS) $(GIT_SRCS) $(CLI_SRCS) $(UI_SRCS) $(YYJSON_SRC)
+PROD_SRCS = $(FOUNDATION_SRCS) $(STORE_SRCS) $(CYPHER_SRCS) $(MCP_SRCS) $(DAEMON_SRCS) $(DISCOVER_SRCS) $(GRAPH_BUFFER_SRCS) $(PIPELINE_SRCS) $(SIMHASH_SRCS) $(SEMANTIC_SRCS) $(ASK_SRCS) $(TRACES_SRCS) $(WATCHER_SRCS) $(GIT_SRCS) $(CLI_SRCS) $(UI_SRCS) $(YYJSON_SRC)
 TEST_PROD_SRCS = $(subst src/ui/asset_pack_stub.c,src/ui/asset_pack.c src/ui/asset_manifest_stub.c,$(PROD_SRCS))
 EXISTING_C_SRCS = $(EXTRACTION_SRCS) $(LSP_SRCS) $(TS_RUNTIME_SRC) \
                   $(GRAMMAR_SRCS) $(AC_LZ4_SRCS) $(ZSTD_SRCS) $(SQLITE_WRITER_SRC)
