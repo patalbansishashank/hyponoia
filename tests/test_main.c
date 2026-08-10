@@ -684,6 +684,7 @@ extern void suite_config_toml_edit(void);
 extern void suite_config_yaml_edit(void);
 extern void suite_config_text_edit(void);
 extern void suite_activation_transaction(void);
+extern void suite_model_fetch(void);
 extern void suite_system_info(void);
 extern void suite_worker_pool(void);
 extern void suite_parallel(void);
@@ -987,6 +988,7 @@ int main(int argc, char **argv) {
     RUN_SELECTED_SUITE(config_yaml_edit);
     RUN_SELECTED_SUITE(config_text_edit);
     RUN_SELECTED_SUITE(activation_transaction);
+    RUN_SELECTED_SUITE(model_fetch);
 
     /* System info + worker pool (parallelism) */
     RUN_SELECTED_SUITE(system_info);

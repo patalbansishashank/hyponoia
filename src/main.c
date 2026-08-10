@@ -33,6 +33,7 @@
 #include "mcp/index_supervisor.h"
 #include "ask/ask_cmd.h"
 #include "cli/cli.h"
+#include "cli/model_fetch.h"
 #include "cli/progress_sink.h"
 #include "foundation/constants.h"
 
@@ -901,6 +902,8 @@ static void print_help(void) {
     printf("  hyponoia embed --project <name> [--status]\n"
            "                                      Opt-in second pass: per-declaration\n"
            "                                      vectors for the `ask` lane\n");
+    printf("  hyponoia fetch-model [-y] [--force] [--verify] [--path]\n");
+    printf("                                      Download the `ask` lane's embedding model\n");
     printf("  hyponoia --version    Print version\n");
     printf("  hyponoia --help       Print this help\n");
     printf("\nUI options:\n");
@@ -1092,6 +1095,14 @@ static int handle_subcommand(int argc, char **argv, hyp_project_lock_manager_t *
         if (strcmp(argv[i], "embed") == 0) {
             hyp_mem_init(hyp_mem_ram_fraction_for_total(hyp_system_info().total_ram));
             return hyp_cmd_embed(argc - i - SKIP_ONE, argv + i + SKIP_ONE);
+        }
+
+        /* The ONLY caller of the model fetcher, and it is a command a person
+         * types. Nothing on the MCP or daemon path can reach it, which is what
+         * keeps "no network request by default" a property of this binary
+         * rather than a claim about it. See src/cli/model_fetch.h. */
+        if (strcmp(argv[i], "fetch-model") == 0) {
+            return hyp_cmd_fetch_model(argc - i - SKIP_ONE, argv + i + SKIP_ONE);
         }
     }
     return HYP_NOT_FOUND;
