@@ -41,12 +41,7 @@
 #include <unistd.h>
 #endif
 
-enum {
-    MF_MB = 1024 * 1024,
-    MF_SMALL = 4096,
-    MF_URL_MAX = 1024,
-    MF_HEX = 64
-};
+enum { MF_MB = 1024 * 1024, MF_SMALL = 4096, MF_URL_MAX = 1024, MF_HEX = 64 };
 
 /* Digests produced by sha256sum(1), not by the code under test. Hashing that
  * only agrees with itself is not verification. */
@@ -315,9 +310,9 @@ TEST(model_verify_accepts_exactly_the_right_bytes) {
     mf_begin();
     char err[HYP_MODEL_MSG_MAX];
     ASSERT_EQ(th_write_file(TH_PATH(g_cache, "good"), "hyponoia"), 0);
-    ASSERT_EQ(hyp_model_verify_file(TH_PATH(g_cache, "good"), MF_SHA_HYPONOIA, true, err,
-                                    sizeof(err)),
-              0);
+    ASSERT_EQ(
+        hyp_model_verify_file(TH_PATH(g_cache, "good"), MF_SHA_HYPONOIA, true, err, sizeof(err)),
+        0);
     ASSERT_STR_EQ(err, "");
     ASSERT_TRUE(hyp_file_exists(TH_PATH(g_cache, "good")));
     mf_end();
@@ -382,9 +377,9 @@ TEST(model_verify_keeps_the_file_when_told_not_to_delete) {
 TEST(model_verify_refuses_what_it_cannot_read) {
     mf_begin();
     char err[HYP_MODEL_MSG_MAX];
-    ASSERT_NEQ(hyp_model_verify_file(TH_PATH(g_cache, "nope"), MF_SHA_HYPONOIA, true, err,
-                                     sizeof(err)),
-               0);
+    ASSERT_NEQ(
+        hyp_model_verify_file(TH_PATH(g_cache, "nope"), MF_SHA_HYPONOIA, true, err, sizeof(err)),
+        0);
     ASSERT_NOT_NULL(strstr(err, "cannot be verified"));
     ASSERT_NEQ(hyp_model_verify_file(NULL, MF_SHA_HYPONOIA, false, err, sizeof(err)), 0);
     mf_end();
@@ -408,8 +403,8 @@ TEST(model_unavailable_says_what_is_missing_how_big_and_what_to_type) {
     ASSERT_NOT_NULL(strstr(remedy, HYP_MODEL_ASK_COMMAND));
     ASSERT_NOT_NULL(strstr(remedy, HYP_MODEL_ASK_SIZE_TEXT));
     ASSERT_NOT_NULL(strstr(remedy, "SHA-256"));
-    ASSERT_NOT_NULL(strstr(remedy, g_cache));   /* where it will live */
-    ASSERT_NOT_NULL(strstr(remedy, "rm "));     /* and how to get rid of it */
+    ASSERT_NOT_NULL(strstr(remedy, g_cache));        /* where it will live */
+    ASSERT_NOT_NULL(strstr(remedy, "rm "));          /* and how to get rid of it */
     ASSERT_NOT_NULL(strstr(remedy, "search_graph")); /* what still works meanwhile */
     mf_end();
     PASS();
@@ -451,15 +446,22 @@ TEST(model_unavailable_does_not_claim_absence_when_present) {
 
 /* Every outcome has to tell the user something they can act on. */
 TEST(model_every_failure_says_what_to_do) {
-    static const hyp_model_fetch_result_t all[] = {
-        HYP_MODEL_FETCH_OK,          HYP_MODEL_FETCH_ALREADY_PRESENT,
-        HYP_MODEL_FETCH_DECLINED,    HYP_MODEL_FETCH_NO_CACHE_DIR,
-        HYP_MODEL_FETCH_MKDIR_FAILED, HYP_MODEL_FETCH_NO_SPACE,
-        HYP_MODEL_FETCH_NO_DOWNLOADER, HYP_MODEL_FETCH_DNS,
-        HYP_MODEL_FETCH_OFFLINE,     HYP_MODEL_FETCH_HTTP,
-        HYP_MODEL_FETCH_TLS,         HYP_MODEL_FETCH_DISK_FULL,
-        HYP_MODEL_FETCH_INTERRUPTED, HYP_MODEL_FETCH_DIGEST_MISMATCH,
-        HYP_MODEL_FETCH_INSTALL_FAILED, HYP_MODEL_FETCH_TRANSFER_FAILED};
+    static const hyp_model_fetch_result_t all[] = {HYP_MODEL_FETCH_OK,
+                                                   HYP_MODEL_FETCH_ALREADY_PRESENT,
+                                                   HYP_MODEL_FETCH_DECLINED,
+                                                   HYP_MODEL_FETCH_NO_CACHE_DIR,
+                                                   HYP_MODEL_FETCH_MKDIR_FAILED,
+                                                   HYP_MODEL_FETCH_NO_SPACE,
+                                                   HYP_MODEL_FETCH_NO_DOWNLOADER,
+                                                   HYP_MODEL_FETCH_DNS,
+                                                   HYP_MODEL_FETCH_OFFLINE,
+                                                   HYP_MODEL_FETCH_HTTP,
+                                                   HYP_MODEL_FETCH_TLS,
+                                                   HYP_MODEL_FETCH_DISK_FULL,
+                                                   HYP_MODEL_FETCH_INTERRUPTED,
+                                                   HYP_MODEL_FETCH_DIGEST_MISMATCH,
+                                                   HYP_MODEL_FETCH_INSTALL_FAILED,
+                                                   HYP_MODEL_FETCH_TRANSFER_FAILED};
     size_t n = sizeof(all) / sizeof(all[0]);
     for (size_t i = 0; i < n; i++) {
         const char *text = hyp_model_fetch_result_text(all[i]);
@@ -508,14 +510,14 @@ TEST(model_fetch_translates_every_transport_failure) {
         int curl_exit;
         hyp_model_fetch_result_t expect;
     } cases[] = {
-        {6, HYP_MODEL_FETCH_DNS},          /* could not resolve host */
-        {5, HYP_MODEL_FETCH_DNS},          /* could not resolve proxy */
-        {7, HYP_MODEL_FETCH_OFFLINE},      /* could not connect */
-        {28, HYP_MODEL_FETCH_OFFLINE},     /* timed out */
-        {22, HYP_MODEL_FETCH_HTTP},        /* 404 on the pinned revision */
-        {23, HYP_MODEL_FETCH_DISK_FULL},   /* write error */
-        {35, HYP_MODEL_FETCH_TLS},         /* TLS connect */
-        {60, HYP_MODEL_FETCH_TLS},         /* CA bundle */
+        {6, HYP_MODEL_FETCH_DNS},             /* could not resolve host */
+        {5, HYP_MODEL_FETCH_DNS},             /* could not resolve proxy */
+        {7, HYP_MODEL_FETCH_OFFLINE},         /* could not connect */
+        {28, HYP_MODEL_FETCH_OFFLINE},        /* timed out */
+        {22, HYP_MODEL_FETCH_HTTP},           /* 404 on the pinned revision */
+        {23, HYP_MODEL_FETCH_DISK_FULL},      /* write error */
+        {35, HYP_MODEL_FETCH_TLS},            /* TLS connect */
+        {60, HYP_MODEL_FETCH_TLS},            /* CA bundle */
         {127, HYP_MODEL_FETCH_NO_DOWNLOADER}, /* curl not on PATH */
         {-1, HYP_MODEL_FETCH_NO_DOWNLOADER},  /* spawn failed outright */
         {99, HYP_MODEL_FETCH_TRANSFER_FAILED} /* anything else */

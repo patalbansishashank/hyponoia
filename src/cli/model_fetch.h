@@ -64,8 +64,8 @@
 #define HYP_MODEL_ASK_REPO "Qwen/Qwen3-Embedding-0.6B-GGUF"
 #define HYP_MODEL_ASK_REVISION "370f27d7550e0def9b39c1f16d3fbaa13aa67728"
 #define HYP_MODEL_ASK_SHA256 "06507c7b42688469c4e7298b0a1e16deff06caf291cf0a5b278c308249c3e439"
-#define HYP_MODEL_ASK_URL                                                                          \
-    "https://huggingface.co/" HYP_MODEL_ASK_REPO "/resolve/" HYP_MODEL_ASK_REVISION                \
+#define HYP_MODEL_ASK_URL                                                           \
+    "https://huggingface.co/" HYP_MODEL_ASK_REPO "/resolve/" HYP_MODEL_ASK_REVISION \
     "/" HYP_MODEL_ASK_FILE
 
 /* Exact byte count, so a short download is caught before the digest is even
@@ -97,11 +97,11 @@ enum {
 /* ── What is on disk ─────────────────────────────────────────────── */
 
 typedef enum {
-    HYP_MODEL_PRESENT = 0,  /* full-size file in place; fetched and verified */
-    HYP_MODEL_ABSENT,       /* nothing here */
-    HYP_MODEL_PARTIAL,      /* an interrupted fetch is resumable */
-    HYP_MODEL_WRONG_SIZE,   /* a file is in place but is not the pinned artifact */
-    HYP_MODEL_NO_CACHE_DIR  /* neither HYP_CACHE_DIR nor HOME resolves */
+    HYP_MODEL_PRESENT = 0, /* full-size file in place; fetched and verified */
+    HYP_MODEL_ABSENT,      /* nothing here */
+    HYP_MODEL_PARTIAL,     /* an interrupted fetch is resumable */
+    HYP_MODEL_WRONG_SIZE,  /* a file is in place but is not the pinned artifact */
+    HYP_MODEL_NO_CACHE_DIR /* neither HYP_CACHE_DIR nor HOME resolves */
 } hyp_model_state_t;
 
 typedef struct {
