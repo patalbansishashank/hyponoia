@@ -38,7 +38,10 @@ void hyp_tree_scalar_str(hyp_sb_t *sb, const char *key, const char *val);
 void hyp_tree_scalar_int(hyp_sb_t *sb, const char *key, long long v);
 void hyp_tree_scalar_bool(hyp_sb_t *sb, const char *key, bool v);
 
-/* `key[n]{col1,col2,...}:` table header; rows follow at 2-space indent. */
+/* `key: n  (cols: col1 col2 ...)` table header; rows follow at 2-space
+ * indent. NOTE: this comment used to describe a `key[n]{col1,col2}:` form the
+ * emitter has never produced — a test written from the header failed against
+ * working code. Kept in sync with hyp_tree_table_header() below. */
 void hyp_tree_table_header(hyp_sb_t *sb, const char *key, int n, const char *const *cols,
                            int ncols);
 

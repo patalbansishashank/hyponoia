@@ -1,5 +1,8 @@
 /*
- * mcp.c — MCP server: JSON-RPC 2.0 over stdio with 14 graph tools.
+ * mcp.c — MCP server: JSON-RPC 2.0 over stdio with 16 graph tools.
+ *
+ * The count in this line was 14 while the registry held 15; it is derived
+ * nowhere, so it drifts silently. TOOL_COUNT is the truth.
  *
  * Uses yyjson for fast JSON parsing/building.
  * Single-threaded event loop: read line → parse → dispatch → respond.
