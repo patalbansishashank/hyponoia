@@ -176,6 +176,10 @@ typedef struct {
     int end_line;
     char *lang;
     int64_t node_id;
+    /* Meaningful ONLY when the index's truncation state is not UNKNOWN. When it
+     * is unknown every row reads false, because false is what an unattested
+     * flag has to be — and the index says UNKNOWN so nobody may read that false
+     * as "this row fitted". Check hyp_ask_vectors_truncation first. */
     bool truncated;
     float score; /* cosine == dot product; both sides are unit vectors */
 } hyp_ask_vec_hit_t;
@@ -261,6 +265,19 @@ int hyp_ask_vectors_finish_build(hyp_ask_vectors_t *v, bool truncation_known);
  * UNKNOWN it attests nothing and the row is re-probed. */
 int hyp_ask_vectors_stored_hash(hyp_ask_vectors_t *v, const char *qualified_name, char *out_hash,
                                 bool *out_truncated);
+
+/* Correct the truncation flag on rows whose VECTOR was reused.
+ *
+ * This exists because of one specific way the three states can be corrupted. A
+ * row copied from a previous index carries its previous truncation flag on the
+ * licence that let its vector be reused — but that licence covers the VECTOR
+ * (same text, same model), not the DISCLOSURE. If the previous index's
+ * truncation state was UNKNOWN, its per-row flags attest nothing, and carrying
+ * them into a run that CAN report would let an unattested zero be published as
+ * an attested one. The reference implementation's rule is to re-probe those
+ * rows; this is where the re-probed answer is written back. */
+int hyp_ask_vectors_set_truncated_batch(hyp_ask_vectors_t *v, const char *const *qualified_names,
+                                        const bool *flags, int count);
 
 /* ── Reading ───────────────────────────────────────────────────── */
 

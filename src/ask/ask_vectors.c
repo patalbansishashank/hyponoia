@@ -546,6 +546,16 @@ int hyp_ask_vectors_finish_build(hyp_ask_vectors_t *v, bool truncation_known) {
     }
     char now[AV_TIMEBUF];
     av_iso_now(now, sizeof(now));
+    if (!truncation_known) {
+        /* Nothing may be left holding an attested-looking flag under an
+         * unattested index. Clearing them costs one indexed delete-shaped
+         * update and removes the only way a caller could read a stale `true`
+         * out of a store that has just said it does not know. */
+        if (av_exec(v, "UPDATE ask_vectors SET truncated = 0 WHERE truncated = 1;") !=
+            HYP_ASK_VEC_OK) {
+            return HYP_ASK_VEC_ERR;
+        }
+    }
     sqlite3_stmt *st = NULL;
     /* truncated_count is derived from the rows rather than counted by the
      * caller, so the number disclosed and the set enumerated can never
@@ -605,6 +615,48 @@ int hyp_ask_vectors_stored_hash(hyp_ask_vectors_t *v, const char *qualified_name
     }
     sqlite3_finalize(st);
     return rc;
+}
+
+int hyp_ask_vectors_set_truncated_batch(hyp_ask_vectors_t *v, const char *const *qualified_names,
+                                        const bool *flags, int count) {
+    if (!v || (count > 0 && (!qualified_names || !flags))) {
+        av_err(v, "set_truncated: bad arguments");
+        return HYP_ASK_VEC_ERR;
+    }
+    if (count <= 0) {
+        return HYP_ASK_VEC_OK;
+    }
+    if (av_exec(v, "BEGIN IMMEDIATE;") != HYP_ASK_VEC_OK) {
+        return HYP_ASK_VEC_ERR;
+    }
+    sqlite3_stmt *st = NULL;
+    if (sqlite3_prepare_v2(v->db, "UPDATE ask_vectors SET truncated = ?2 WHERE qualified_name = ?1",
+                           -1, &st, NULL) != SQLITE_OK) {
+        av_err_sqlite(v, "set_truncated prepare");
+        (void)av_exec(v, "ROLLBACK;");
+        return HYP_ASK_VEC_ERR;
+    }
+    int rc = HYP_ASK_VEC_OK;
+    for (int i = 0; i < count; i++) {
+        if (!qualified_names[i]) {
+            continue;
+        }
+        sqlite3_reset(st);
+        sqlite3_clear_bindings(st);
+        sqlite3_bind_text(st, 1, qualified_names[i], -1, SQLITE_STATIC);
+        sqlite3_bind_int(st, 2, flags[i] ? 1 : 0);
+        if (sqlite3_step(st) != SQLITE_DONE) {
+            av_err_sqlite(v, "set_truncated step");
+            rc = HYP_ASK_VEC_ERR;
+            break;
+        }
+    }
+    sqlite3_finalize(st);
+    if (rc != HYP_ASK_VEC_OK) {
+        (void)av_exec(v, "ROLLBACK;");
+        return rc;
+    }
+    return av_exec(v, "COMMIT;");
 }
 
 /* ── Reading ───────────────────────────────────────────────────── */

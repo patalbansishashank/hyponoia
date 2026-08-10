@@ -416,6 +416,18 @@ int hyp_ask_embed_run(const hyp_ask_encoder_t *enc, const hyp_ask_embed_opts_t *
         ae_graph_close(&graph);
         return -1;
     }
+    /* Whether the PREVIOUS index's truncation flags attest anything. Read
+     * before begin_build, because begin_build may wipe the index. If the
+     * previous state was UNKNOWN, a reused row's stored flag is unattested and
+     * has to be re-probed before this run may publish it as attested. */
+    bool prev_truncation_known = false;
+    {
+        hyp_ask_vec_meta_t prev;
+        if (hyp_ask_vectors_get_meta(store, &prev) == HYP_ASK_VEC_OK) {
+            prev_truncation_known = prev.truncation_known;
+            hyp_ask_vec_meta_free(&prev);
+        }
+    }
     int begin = hyp_ask_vectors_begin_build(store, model_id, dim, window, graph.generation,
                                             opts->allow_model_change);
     if (begin == HYP_ASK_VEC_INCOMPATIBLE) {
@@ -461,6 +473,13 @@ int hyp_ask_embed_run(const hyp_ask_encoder_t *enc, const hyp_ask_embed_opts_t *
     char **keep = NULL;
     int keep_count = 0;
     int keep_cap = 0;
+
+    /* Reused rows whose stored truncation flag turned out to be wrong. Only
+     * ever populated when the PREVIOUS index could not attest its flags. */
+    char **reprobe_qn = NULL;
+    bool *reprobe_flag = NULL;
+    int reprobe_count = 0;
+    int reprobe_cap = 0;
 
     /* THE TRUNCATION COUNTER'S THIRD STATE. It starts as "the encoder can say"
      * and is demoted the first time the encoder answers "I cannot". A single
@@ -526,6 +545,41 @@ int hyp_ask_embed_run(const hyp_ask_encoder_t *enc, const hyp_ask_embed_opts_t *
                     HYP_ASK_VEC_OK &&
                 strcmp(stored, doc.hash) == 0) {
                 rep.reused++;
+                /* The vector is licensed for reuse; the DISCLOSURE is not.
+                 * Re-probe the truncation flag when the stored index could not
+                 * say — otherwise an unattested zero would be republished as an
+                 * attested one. One tokenisation, no forward pass; the
+                 * reference pays the same price for the same reason. */
+                if (!prev_truncation_known) {
+                    int fl = hyp_ask_encoder_full_token_length(enc, text);
+                    if (fl < 0) {
+                        truncation_known = false;
+                    } else {
+                        bool now_trunc = fl > window;
+                        if (now_trunc != stored_trunc) {
+                            if (reprobe_count >= reprobe_cap) {
+                                int nc = reprobe_cap ? reprobe_cap * 2 : 64;
+                                char **gq = realloc(reprobe_qn, (size_t)nc * sizeof(*gq));
+                                bool *gf = realloc(reprobe_flag, (size_t)nc * sizeof(*gf));
+                                if (gq) {
+                                    reprobe_qn = gq;
+                                }
+                                if (gf) {
+                                    reprobe_flag = gf;
+                                }
+                                if (!gq || !gf) {
+                                    free(text);
+                                    rc = -1;
+                                    break;
+                                }
+                                reprobe_cap = nc;
+                            }
+                            reprobe_qn[reprobe_count] = ae_strdup(qn);
+                            reprobe_flag[reprobe_count] = now_trunc;
+                            reprobe_count++;
+                        }
+                    }
+                }
                 free(text);
                 continue;
             }
@@ -579,6 +633,23 @@ int hyp_ask_embed_run(const hyp_ask_encoder_t *enc, const hyp_ask_embed_opts_t *
     }
     ae_window_clear(&win);
     free(win.docs);
+
+    if (rc == 0 && reprobe_count > 0) {
+        if (hyp_ask_vectors_set_truncated_batch(store, (const char *const *)reprobe_qn,
+                                                reprobe_flag, reprobe_count) != HYP_ASK_VEC_OK) {
+            hyp_log_error("ask.embed.reprobe", "err", hyp_ask_vectors_error(store));
+            rc = -1;
+        } else {
+            char b[AE_NUMBUF];
+            hyp_log_info("ask.embed.reprobed", "rows", ae_itoa(reprobe_count, b, sizeof(b)),
+                         "reason", "previous index could not attest its truncation flags");
+        }
+    }
+    for (int i = 0; i < reprobe_count; i++) {
+        free(reprobe_qn[i]);
+    }
+    free(reprobe_qn);
+    free(reprobe_flag);
 
     if (rc == 0 && !rep.partial) {
         /* Only a run that saw the WHOLE corpus may prune: a limited run has no
