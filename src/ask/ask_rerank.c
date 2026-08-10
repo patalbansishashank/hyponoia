@@ -791,8 +791,17 @@ hyp_ask_rerank_status_t hyp_ask_rerank_score(const char *question, const char *l
     (void)question;
     (void)language_display;
     (void)docs;
-    (void)n;
     (void)out;
+    if (err && errlen) {
+        err[0] = '\0';
+    }
+    /* Nothing to score is a no-op in EVERY build. A caller with an empty
+     * candidate list has not asked this build for anything it cannot do, and
+     * answering `no_backend` there would make an ordinary empty result look
+     * like a missing feature. */
+    if (n <= 0) {
+        return HYP_ASK_RERANK_OK;
+    }
     if (err && errlen) {
         (void)snprintf(err, errlen, "this build has no inference runtime, so no cross-encoder");
     }

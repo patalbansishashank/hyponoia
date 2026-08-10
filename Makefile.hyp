@@ -823,7 +823,8 @@ TEST_SEMANTIC_SRCS = tests/test_semantic.c
 # Kept OUT of TEST_FOUNDATION_SUITE_SRCS on purpose: the foundation target is
 # the seconds-long loop for src/foundation and links no store.
 TEST_ASK_SRCS = tests/test_ask.c tests/test_ask_batch.c \
-                tests/test_ask_vectors.c tests/test_ask_embed.c
+                tests/test_ask_vectors.c tests/test_ask_embed.c \
+                tests/test_ask_rerank.c
 TEST_AST_PROFILE_SRCS = tests/test_ast_profile.c
 TEST_SLAB_ALLOC_SRCS = tests/test_slab_alloc.c
 
