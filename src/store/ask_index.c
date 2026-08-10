@@ -93,7 +93,11 @@ void hyp_ask_index_status(hyp_store_t *s, const char *project, hyp_ask_status_t 
 
     ask_copy(out->model_id, sizeof(out->model_id), (const char *)sqlite3_column_text(st, 0));
     out->dim = sqlite3_column_int(st, 1);
-    const char *trunc_state = (const char *)sqlite3_column_text(st, 2);
+    /* Copied, not aliased: sqlite3_column_text hands back memory owned by the
+     * statement, which sqlite3_finalize below invalidates. Reading it after is
+     * a use-after-free that happens to work often enough to ship. */
+    char trunc_state[HYP_SZ_32];
+    ask_copy(trunc_state, sizeof(trunc_state), (const char *)sqlite3_column_text(st, 2));
     out->trunc_count = sqlite3_column_int(st, 3);
     out->n_vectors = sqlite3_column_int(st, 4);
     sqlite3_finalize(st);
@@ -101,9 +105,9 @@ void hyp_ask_index_status(hyp_store_t *s, const char *project, hyp_ask_status_t 
     /* An UNRECOGNISED trunc_state reads as UNKNOWN, never as NONE. A writer
      * from a future version that learned a fourth word must degrade into "I
      * cannot say", not into "nothing was cut". */
-    if (trunc_state && strcmp(trunc_state, "some") == 0) {
+    if (strcmp(trunc_state, "some") == 0) {
         out->trunc = HYP_ASK_TRUNC_SOME;
-    } else if (trunc_state && strcmp(trunc_state, "none") == 0) {
+    } else if (strcmp(trunc_state, "none") == 0) {
         out->trunc = HYP_ASK_TRUNC_NONE;
     } else {
         out->trunc = HYP_ASK_TRUNC_UNKNOWN;

@@ -727,6 +727,7 @@ extern void suite_grammar_probe_f(void);
 extern void suite_grammar_probe_g(void);
 extern void suite_incremental(void);
 extern void suite_semantic(void);
+extern void suite_ask(void);
 extern void suite_ast_profile(void);
 extern void suite_slab_alloc(void);
 extern void suite_simhash(void);
@@ -1012,6 +1013,7 @@ int main(int argc, char **argv) {
 
     /* SimHash / SIMILAR_TO */
     RUN_SELECTED_SUITE(semantic);
+    RUN_SELECTED_SUITE(ask);
     RUN_SELECTED_SUITE(ast_profile);
     RUN_SELECTED_SUITE(simhash);
 
