@@ -50,6 +50,19 @@
 enum { RR_CPU_THREADS = 16 };
 enum { RR_NGL_ALL = 99 };
 
+/* Tokens one forward pass may carry. A chunk is filled to this OR to
+ * HYP_ASK_RERANK_MAX_PAIRS, whichever binds first, so short candidates pack
+ * many to a pass and long ones go a few at a time. It is also exactly what
+ * n_batch is set to — see rr_make_ctx. */
+enum { RR_CHUNK_TOKENS = 8192 };
+
+/* ask_batch.h's HYP_ASK_UBATCH_MAX of 2,048 is REUSED here rather than raised,
+ * and that was measured rather than assumed: at n_ubatch 4,096 the four passes
+ * of a 50-candidate rerank took 510.9 / 827.6 / 1897.7 / 1453.6 ms against
+ * 506.8 / 835.5 / 1879.5 / 1472.7 at 2,048 — 5,311 ms against 5,285, which is
+ * noise. The law transfers: a pass already full of whole declarations fills a
+ * launch, so a bigger micro-batch buys padding, not throughput. */
+
 /* Per-sequence context lengths a rerank context will be built at. Same reason
  * as the encoder's buckets: n_ctx is fixed at creation and rebuilding it per
  * chunk would re-allocate the KV cache for every group of 16. */
@@ -232,7 +245,15 @@ static bool rr_make_ctx(ask_rerank_t *s, int n_seq, int seq_len, char *err, size
     cp.n_ctx = (uint32_t)plan.n_ctx;
     cp.n_seq_max = (uint32_t)n_seq;
 
-    int n_batch = n_seq * seq_len;
+    /* n_batch is the tokens ONE decode may carry, and the chunker already
+     * bounds that at RR_CHUNK_TOKENS. Sizing it at the RECTANGLE instead —
+     * n_seq x seq_len, the obvious upper bound — makes llama.cpp reserve
+     * host-pinned staging for tokens no chunk will ever carry, and the Vulkan
+     * driver answers `Failed to allocate pinned memory` and silently falls back
+     * to unpinned transfers. T9 recorded that as the most likely mechanism
+     * behind a 2.9x slowdown at its largest shape; the same trap is one line
+     * away here. A single over-long pair still needs seq_len. */
+    int n_batch = seq_len > RR_CHUNK_TOKENS ? seq_len : RR_CHUNK_TOKENS;
     if ((int64_t)n_batch > plan.n_ctx) {
         n_batch = (int)plan.n_ctx;
     }
@@ -620,23 +641,65 @@ hyp_ask_rerank_status_t hyp_ask_rerank_score(const char *question, const char *l
         }
     }
 
-    /* Chunked so the KV rectangle stays inside the ceiling. Grouping is by
-     * POSITION rather than by length on purpose: a length sort would reorder
-     * the candidates and the mapping back is one more thing to get wrong, for a
-     * padding saving that does not exist here — llama.cpp charges for tokens
-     * decoded, not for a padded rectangle. Only the KV allocation is
-     * rectangular, and the bucket already absorbs that. */
-    for (int off = 0; off < n && ok; off += HYP_ASK_RERANK_MAX_PAIRS) {
-        int chunk = n - off < HYP_ASK_RERANK_MAX_PAIRS ? n - off : HYP_ASK_RERANK_MAX_PAIRS;
-        /* Narrow further if the ceiling says so, one pair at a time down. */
-        if (s->on_gpu) {
-            int longest = 1;
-            for (int i = off; i < off + chunk; i++) {
-                if (lens[i] > longest) {
-                    longest = lens[i];
-                }
+    /* LENGTH-SORTED, then chunked.
+     *
+     * The KV cache is charged for the RECTANGLE — n_seq x the bucket that holds
+     * the chunk's longest member — so one 2,000-token whole-file span dropped
+     * among fifteen 300-token functions charges all sixteen at 2,048 and picks
+     * the largest context. Sorting puts the long ones together, which is the
+     * same reason the embed pass sorts, and it also stops the bucket
+     * oscillating from chunk to chunk and re-allocating the context each time.
+     *
+     * The permutation is applied to an INDEX array, never to the candidates:
+     * `ord` decides what is decoded next and every score is scattered back
+     * through it, so the caller's order is the only order anything else sees. */
+    int *ord = (int *)calloc((size_t)n, sizeof(int));
+    llama_token **crows = (llama_token **)calloc((size_t)n, sizeof(*crows));
+    int *clens = (int *)calloc((size_t)n, sizeof(int));
+    float *cscores = (float *)calloc((size_t)n, sizeof(float));
+    if (!ord || !crows || !clens || !cscores) {
+        ok = false;
+        (void)snprintf(err, errlen, "out of memory");
+    } else {
+        for (int i = 0; i < n; i++) {
+            ord[i] = i;
+        }
+        /* Insertion sort by length: n is at most HYP_ASK_RERANK_MAX_N (200),
+         * and it is STABLE, so equal-length candidates keep the dense order —
+         * which matters because the tiebreak downstream is that order. */
+        for (int i = 1; i < n; i++) {
+            int v = ord[i];
+            int j = i - 1;
+            while (j >= 0 && lens[ord[j]] > lens[v]) {
+                ord[j + 1] = ord[j];
+                j--;
             }
-            int bucket = rr_bucket_for(longest);
+            ord[j + 1] = v;
+        }
+    }
+
+    int pos = 0;
+    while (pos < n && ok) {
+        /* Fill the chunk to whichever bound binds first. At least one pair
+         * always goes in, however long it is — a candidate that cannot share a
+         * pass still has to be scored. */
+        int chunk = 0;
+        int tokens = 0;
+        int longest = 1;
+        while (pos + chunk < n && chunk < HYP_ASK_RERANK_MAX_PAIRS) {
+            int len = lens[ord[pos + chunk]];
+            if (chunk > 0 && tokens + len > RR_CHUNK_TOKENS) {
+                break;
+            }
+            tokens += len;
+            if (len > longest) {
+                longest = len;
+            }
+            chunk++;
+        }
+
+        int bucket = rr_bucket_for(longest);
+        if (s->on_gpu) {
             int fit = 0;
             for (int m = chunk; m >= 1; m--) {
                 hyp_ask_kv_plan_t plan;
@@ -657,15 +720,23 @@ hyp_ask_rerank_status_t hyp_ask_rerank_score(const char *question, const char *l
                 chunk = fit;
             }
         }
-        ok = rr_score_chunk(s, rows + off, lens + off, chunk, scores + off, err, errlen);
-        if (ok && chunk < HYP_ASK_RERANK_MAX_PAIRS) {
-            /* The loop step is the constant, so a narrowed chunk has to walk
-             * back the difference or candidates would be skipped unscored —
-             * which would leave a zero in `scores` and sort a real answer to
-             * the bottom. */
-            off -= (HYP_ASK_RERANK_MAX_PAIRS - chunk);
+
+        for (int k = 0; k < chunk; k++) {
+            crows[k] = rows[ord[pos + k]];
+            clens[k] = lens[ord[pos + k]];
         }
+        ok = rr_score_chunk(s, crows, clens, chunk, cscores, err, errlen);
+        if (ok) {
+            for (int k = 0; k < chunk; k++) {
+                scores[ord[pos + k]] = cscores[k];
+            }
+        }
+        pos += chunk;
     }
+    free(ord);
+    free(crows);
+    free(clens);
+    free(cscores);
 
     struct timespec w1;
     (void)clock_gettime(CLOCK_MONOTONIC, &w1);

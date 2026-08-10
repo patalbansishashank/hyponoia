@@ -110,7 +110,11 @@ typedef struct {
     char *file_path;
     int start_line;
     int end_line;
-    double score;   /* cosine == dot product; both sides are unit vectors */
+    double score;   /* THE RANKING SCORE. Cosine here; a later stage may replace
+                     * it — see the score band in mcp.c's ask_apply_rerank. */
+    double dense;   /* the cosine, always, whatever `score` becomes. Kept so a
+                     * reranked answer can still show what retrieval thought,
+                     * and so the two scales are never confused for each other. */
     bool truncated; /* this row's span exceeded the model window when embedded */
 } hyp_ask_hit_t;
 
