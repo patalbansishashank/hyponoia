@@ -149,6 +149,46 @@ static void ask_fixture_put_vector(sqlite3 *db, const char *project, int64_t nod
     sqlite3_finalize(st);
 }
 
+
+/* Populate nodes_fts the way the pipeline's generation_rebuild_fts does. The
+ * FTS table is created with the schema but only ever filled by an index run,
+ * so a hand-built fixture has to fill it too — otherwise the lexical lane is
+ * legitimately empty and fusion is untestable. */
+static void ask_fixture_index_fts(sqlite3 *db, int64_t node_id, const char *name,
+                                  const char *qualified_name, const char *label,
+                                  const char *file_path) {
+    sqlite3_stmt *st = NULL;
+    if (sqlite3_prepare_v2(db,
+                           "INSERT INTO nodes_fts(rowid,name,qualified_name,label,file_path)"
+                           " VALUES(?1,?2,?3,?4,?5)",
+                           -1, &st, NULL) != SQLITE_OK) {
+        return;
+    }
+    sqlite3_bind_int64(st, 1, node_id);
+    sqlite3_bind_text(st, 2, name, -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(st, 3, qualified_name, -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(st, 4, label, -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(st, 5, file_path, -1, SQLITE_TRANSIENT);
+    sqlite3_step(st);
+    sqlite3_finalize(st);
+}
+
+/* Pull the qualified names out of a tree answer, in row order. Returns how
+ * many were found. Deliberately order-reading rather than order-asserting:
+ * BM25 ties break on nodes.id, which is AUTOINCREMENT and assigned at index
+ * time, so no test here may pin an absolute lexical rank. */
+static int ask_row_order(const char *inner, const char *const *qns, int n, int *out_pos) {
+    int found = 0;
+    for (int i = 0; i < n; i++) {
+        const char *at = strstr(inner, qns[i]);
+        out_pos[i] = at ? (int)(at - inner) : -1;
+        if (at) {
+            found++;
+        }
+    }
+    return found;
+}
+
 /* Pull the tool payload out of a JSON-RPC envelope: result.content[0].text. */
 static char *ask_inner_text(const char *response) {
     yyjson_doc *doc = response ? yyjson_read(response, strlen(response), 0) : NULL;
@@ -783,6 +823,173 @@ TEST(ask_is_a_separate_tool_and_semantic_query_is_unchanged) {
     PASS();
 }
 
+
+/* ── §2.2 lever 4: reciprocal rank fusion ───────────────────────── */
+
+/* THE mechanism: a declaration the dense lane ranks BELOW another can be
+ * lifted above it by the lexical lane, which is the whole point of fusing —
+ * "the two methods fail on different queries". */
+TEST(ask_fusion_lets_the_lexical_lane_promote_a_row) {
+    fake_reset();
+    ASSERT_EQ(hyp_ask_backend_install(&g_fake_backend), 0);
+    hyp_mcp_server_t *srv = ask_srv_with_nodes("askproj");
+    ASSERT_NOT_NULL(srv);
+    hyp_store_t *st = hyp_mcp_server_store(srv);
+    sqlite3 *db = hyp_store_get_db(st);
+
+    /* The question is on NO document's axis, so every cosine is 0.0 and the
+     * dense order is decided by node id alone: orderSections, emit, Reader.
+     * Only `Reader` matches lexically. Fusion must move it to the top. */
+    int64_t rid = 0;
+    sqlite3_stmt *q = NULL;
+    sqlite3_prepare_v2(db, "SELECT id FROM nodes WHERE qualified_name='askproj.reader.Reader'", -1,
+                       &q, NULL);
+    if (sqlite3_step(q) == SQLITE_ROW) {
+        rid = sqlite3_column_int64(q, 0);
+    }
+    sqlite3_finalize(q);
+    ASSERT_TRUE(rid > 0);
+    ask_fixture_index_fts(db, rid, "Reader", "askproj.reader.Reader", "Class", "src/reader.c");
+
+    char *resp = ask_call(srv, "{\"project\":\"askproj\",\"question\":\"reader\"}");
+    char *inner = ask_inner_text(resp);
+    ASSERT_NOT_NULL(inner);
+    const char *qns[] = {"askproj.reader.Reader", "askproj.writer.orderSections"};
+    int pos[2];
+    ASSERT_EQ(ask_row_order(inner, qns, 2, pos), 2);
+    ASSERT_TRUE(pos[0] < pos[1]);
+    /* And the fusion is DISCLOSED, because `score` stopped being a cosine. */
+    ASSERT_NOT_NULL(strstr(inner, "fusion: \"rrf(dense,bm25) k=60"));
+    ASSERT_NOT_NULL(strstr(inner, "not a cosine"));
+    ASSERT_NOT_NULL(strstr(inner, "lexical_candidates: 1"));
+    free(inner);
+    free(resp);
+    hyp_mcp_server_free(srv);
+    hyp_ask_backend_install(NULL);
+    PASS();
+}
+
+/* With nothing in the lexical lane the fused score is 1/(60+dense_rank),
+ * which is strictly decreasing in the dense rank — so the ORDER is exactly
+ * the order the dense lane produced on its own. Fusion is inert, not merely
+ * harmless. */
+TEST(ask_fusion_is_inert_when_the_lexical_lane_finds_nothing) {
+    fake_reset();
+    ASSERT_EQ(hyp_ask_backend_install(&g_fake_backend), 0);
+    hyp_mcp_server_t *srv = ask_srv_with_nodes("askproj");
+    ASSERT_NOT_NULL(srv);
+
+    char *resp = ask_call(srv, "{\"project\":\"askproj\",\"question\":\"GOLD\"}");
+    char *inner = ask_inner_text(resp);
+    ASSERT_NOT_NULL(inner);
+    ASSERT_NOT_NULL(strstr(inner, "lexical_candidates: 0"));
+    const char *qns[] = {"askproj.writer.orderSections", "askproj.writer.emit",
+                         "askproj.reader.Reader"};
+    int pos[3];
+    ASSERT_EQ(ask_row_order(inner, qns, 3, pos), 3);
+    ASSERT_TRUE(pos[0] < pos[1]);
+    ASSERT_TRUE(pos[0] < pos[2]);
+    free(inner);
+    free(resp);
+    hyp_mcp_server_free(srv);
+    hyp_ask_backend_install(NULL);
+    PASS();
+}
+
+/* The top of the answer must not depend on how much of it was asked for.
+ * The dense lane is taken to ASK_RRF_DENSE_DEPTH regardless, so the first N
+ * rows of a limit=50 call are the rows of a limit=N call. */
+TEST(ask_fusion_top_rows_do_not_depend_on_limit) {
+    fake_reset();
+    ASSERT_EQ(hyp_ask_backend_install(&g_fake_backend), 0);
+    hyp_mcp_server_t *srv = ask_srv_with_nodes("askproj");
+    ASSERT_NOT_NULL(srv);
+    hyp_store_t *st = hyp_mcp_server_store(srv);
+    sqlite3 *db = hyp_store_get_db(st);
+    sqlite3_stmt *q = NULL;
+    sqlite3_prepare_v2(db, "SELECT id, name, qualified_name, label, file_path FROM nodes", -1, &q,
+                       NULL);
+    while (sqlite3_step(q) == SQLITE_ROW) {
+        ask_fixture_index_fts(db, sqlite3_column_int64(q, 0),
+                              (const char *)sqlite3_column_text(q, 1),
+                              (const char *)sqlite3_column_text(q, 2),
+                              (const char *)sqlite3_column_text(q, 3),
+                              (const char *)sqlite3_column_text(q, 4));
+    }
+    sqlite3_finalize(q);
+
+    char *r1 = ask_call(srv, "{\"project\":\"askproj\",\"question\":\"reader writer\",\"limit\":1}");
+    char *r50 =
+        ask_call(srv, "{\"project\":\"askproj\",\"question\":\"reader writer\",\"limit\":50}");
+    char *i1 = ask_inner_text(r1);
+    char *i50 = ask_inner_text(r50);
+    ASSERT_NOT_NULL(i1);
+    ASSERT_NOT_NULL(i50);
+    /* The one row limit=1 returned must be the FIRST row limit=50 returned. */
+    const char *qns[] = {"askproj.writer.orderSections", "askproj.writer.emit",
+                         "askproj.reader.Reader"};
+    int p1[3];
+    int p50[3];
+    (void)ask_row_order(i1, qns, 3, p1);
+    ASSERT_EQ(ask_row_order(i50, qns, 3, p50), 3);
+    int only = -1;
+    for (int i = 0; i < 3; i++) {
+        if (p1[i] >= 0) {
+            ASSERT_EQ(only, -1);
+            only = i;
+        }
+    }
+    ASSERT_TRUE(only >= 0);
+    for (int i = 0; i < 3; i++) {
+        if (i != only) {
+            ASSERT_TRUE(p50[only] < p50[i]);
+        }
+    }
+    free(i1);
+    free(i50);
+    free(r1);
+    free(r50);
+    hyp_mcp_server_free(srv);
+    hyp_ask_backend_install(NULL);
+    PASS();
+}
+
+/* A lexical hit on a declaration the semantic index does not hold is DROPPED,
+ * not served: `population:` claims how many vectors were ranked, and a row
+ * from outside that population would make the claim false — and would have no
+ * cosine and no truncation flag to report. */
+TEST(ask_fusion_never_injects_a_node_that_was_not_embedded) {
+    fake_reset();
+    ASSERT_EQ(hyp_ask_backend_install(&g_fake_backend), 0);
+    hyp_mcp_server_t *srv = ask_srv_with_nodes("askproj");
+    ASSERT_NOT_NULL(srv);
+    hyp_store_t *st = hyp_mcp_server_store(srv);
+    hyp_node_t ghost = {.project = "askproj",
+                        .label = "Function",
+                        .name = "reader",
+                        .qualified_name = "askproj.ghost.reader",
+                        .file_path = "src/ghost.c",
+                        .start_line = 1,
+                        .end_line = 9};
+    int64_t gid = hyp_store_upsert_node(st, &ghost);
+    ASSERT_TRUE(gid > 0);
+    sqlite3 *db = hyp_store_get_db(st);
+    /* Lexically perfect, semantically absent: no vector was ever written. */
+    ask_fixture_index_fts(db, gid, "reader", "askproj.ghost.reader", "Function", "src/ghost.c");
+
+    char *resp = ask_call(srv, "{\"project\":\"askproj\",\"question\":\"reader\"}");
+    char *inner = ask_inner_text(resp);
+    ASSERT_NOT_NULL(inner);
+    ASSERT_NULL(strstr(inner, "askproj.ghost.reader"));
+    ASSERT_NOT_NULL(strstr(inner, "lexical_candidates: 0"));
+    ASSERT_NOT_NULL(strstr(inner, "population: 3"));
+    free(inner);
+    free(resp);
+    hyp_mcp_server_free(srv);
+    hyp_ask_backend_install(NULL);
+    PASS();
+}
+
 SUITE(ask) {
     RUN_TEST(ask_backend_none_by_default);
     RUN_TEST(ask_backend_install_and_uninstall);
@@ -809,4 +1016,8 @@ SUITE(ask) {
     RUN_TEST(ask_requires_a_question);
     RUN_TEST(ask_schema_declares_what_the_help_promises);
     RUN_TEST(ask_is_a_separate_tool_and_semantic_query_is_unchanged);
+    RUN_TEST(ask_fusion_lets_the_lexical_lane_promote_a_row);
+    RUN_TEST(ask_fusion_is_inert_when_the_lexical_lane_finds_nothing);
+    RUN_TEST(ask_fusion_top_rows_do_not_depend_on_limit);
+    RUN_TEST(ask_fusion_never_injects_a_node_that_was_not_embedded);
 }
