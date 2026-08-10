@@ -70,6 +70,19 @@
  * only in documents would let a handful of them exhaust host memory. */
 #define HYP_ASK_SORT_WINDOW_BYTES (64 * 1024 * 1024)
 
+/* Measured throughput of the in-binary lane, in declarations per second.
+ *
+ * Track 2 measured llama.cpp with Qwen3-Embedding-0.6B encoding whole lld/ELF
+ * declarations: 1.581 docs/s on 16 CPU threads against 24.09 docs/s on the GPU
+ * at the peak batch. The recommendation is to ship the in-binary lane CPU-only
+ * and leave GPU indexing to the out-of-process extractor, which makes ~15x the
+ * honest expectation for anyone running this command. lld/ELF's 4,117
+ * declarations are about 43 minutes here.
+ *
+ * Used ONLY to tell the user what they are about to wait for, before they wait
+ * for it. It is a corpus-shaped number and the command says so. */
+#define HYP_ASK_CPU_DOCS_PER_SEC 1.581
+
 typedef struct {
     const char *project;
     /* Repo root. NULL takes it from the graph's projects.root_path, which is
@@ -119,7 +132,20 @@ typedef struct {
     double elapsed_ms;
 } hyp_ask_embed_report_t;
 
-/* Run the pass. Returns 0 on success. `out` may be NULL. */
+/* Run the pass.
+ *
+ * Returns 0 when work was done, HYP_ASK_EMBED_NO_WORK when the run completed
+ * without finding a single declaration, and < 0 on failure.
+ *
+ * NO_WORK IS ITS OWN RETURN CODE ON PURPOSE. A run that scans an empty or
+ * wrong-named project succeeds at everything it attempts and produces an index
+ * of nothing; folding that into 0 would make "measured nothing" and "measured
+ * successfully" the same answer. Track 2 lost a whole VRAM measurement to
+ * exactly that shape — a watcher reported `docs:0` and exited 0 because its
+ * stdin had been redirected away, so it silently measured nothing,
+ * successfully. Zero work has to be loud. */
+#define HYP_ASK_EMBED_NO_WORK 1
+
 int hyp_ask_embed_run(const hyp_ask_encoder_t *enc, const hyp_ask_embed_opts_t *opts,
                       hyp_ask_embed_report_t *out);
 

@@ -30,20 +30,23 @@
  * and the failure grew with the WORST document in the tree rather than with the
  * corpus, which is why a per-document cap cannot fix it.
  *
- * MAX_DOCS — a sanity cap on the number of documents in one pass. It is NOT a
- * memory bound: the budget check below is unconditional, so the padded
- * rectangle can never exceed BUDGET however high MAX_DOCS goes. It bounds the
- * per-batch host-side bookkeeping (the pointer array, per-document tokeniser
- * state), it keeps a batch inside whatever `n_seq_max` the inference backend
- * was built with, and it bounds the blast radius of one failed forward pass.
+ * MAX_DOCS — the number of sequences in one forward pass. It is NOT a memory
+ * bound: the budget check below is unconditional, so the padded rectangle can
+ * never exceed BUDGET however high MAX_DOCS goes, and the backend was measured
+ * running 64 sequences cleanly at 3,678 MB. It is a THROUGHPUT knob, and the
+ * measurement says the useful range is single digits — see the long note in
+ * ask_batch.c before changing it upward.
  */
 enum {
     /* Padded-slot ceiling for one forward pass on CPU. */
     HYP_ASK_TOKEN_BUDGET = 8192,
 
-    /* Document cap. Raised from the reference implementation's 16 — see the
-     * long note in ask_batch.c for the measured arithmetic behind 128. */
-    HYP_ASK_MAX_DOCS = 128,
+    /* Sequences per forward pass. LOWERED from the reference implementation's
+     * 16, not raised: the backend was measured at 17.18 docs/s at one sequence,
+     * 24.09 at eight, and 16.37 at sixteen. Sixteen is slower than one. The
+     * arithmetic and the reason are in ask_batch.c and are worth reading before
+     * anyone "optimises" this number. */
+    HYP_ASK_MAX_DOCS = 8,
 
     /* Qwen3-Embedding-0.6B's context window. The encoder reports its own; this
      * is the default the truncation counter is denominated in when it cannot. */

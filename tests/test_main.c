@@ -727,6 +727,9 @@ extern void suite_grammar_probe_f(void);
 extern void suite_grammar_probe_g(void);
 extern void suite_incremental(void);
 extern void suite_semantic(void);
+extern void suite_ask_batch(void);
+extern void suite_ask_vectors(void);
+extern void suite_ask_embed(void);
 extern void suite_ast_profile(void);
 extern void suite_slab_alloc(void);
 extern void suite_simhash(void);
@@ -1013,6 +1016,11 @@ int main(int argc, char **argv) {
     /* SimHash / SIMILAR_TO */
     RUN_SELECTED_SUITE(semantic);
     RUN_SELECTED_SUITE(ast_profile);
+
+    /* `ask` lane: the batch rule, the vector store, the opt-in embed pass */
+    RUN_SELECTED_SUITE(ask_batch);
+    RUN_SELECTED_SUITE(ask_vectors);
+    RUN_SELECTED_SUITE(ask_embed);
     RUN_SELECTED_SUITE(simhash);
 
     /* Stack overflow regression (GitHub #199) — split a/b/c so no single

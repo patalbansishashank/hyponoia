@@ -64,6 +64,12 @@ static int ask_cmd_status(const char *project) {
     hyp_ask_vec_meta_t m;
     int rc = hyp_ask_vectors_get_meta(v, &m);
     if (rc == HYP_ASK_VEC_NOT_FOUND) {
+        /* One of the TWO reasons the lane can be unavailable, and they want
+         * different sentences. This one is "the index has not been built" and
+         * the fix is to run the pass. The other is "the model has not been
+         * fetched" — the backend downloads its weights on first use of this
+         * lane — and the fix is to fetch it. Collapsing them into one
+         * "unavailable" would send half the users to the wrong remedy. */
         printf("ask index: NOT BUILT for '%s'.\n", project);
         printf("  The `ask` lane is unavailable for this project until `hyponoia embed` runs.\n");
         /* UNKNOWN, disclosed rather than defaulted — see hyp_ask_trunc_t. */
@@ -156,7 +162,13 @@ int hyp_cmd_embed(int argc, char **argv) {
     if (!use_stub) {
         /* Refusing is the right answer here. The inference runtime is a
          * separate piece of work; guessing one, or silently falling back to the
-         * stub, would produce an index that looks real and retrieves nothing. */
+         * stub, would produce an index that looks real and retrieves nothing.
+         *
+         * When the backend lands this message splits in two, because the lane
+         * has two distinct unavailable states: the model has not been fetched
+         * (it is downloaded on first use of this lane, ~639 MB at Q8_0, SHA-256
+         * verified) versus the index has not been built. They have different
+         * remedies and must not share a sentence. */
         (void)fprintf(stderr,
                       "embed: no inference backend is compiled in.\n"
                       "  The document/query encoder is a separate track. Until it lands, the\n"
@@ -165,6 +177,16 @@ int hyp_cmd_embed(int argc, char **argv) {
                       "  truncation counter end to end and has NO retrieval quality.\n");
         return 3;
     }
+
+    /* Say what the wait is before the wait, not after. The in-binary lane is
+     * CPU-only and was measured at 1.581 declarations per second; lld/ELF's
+     * 4,117 declarations are about 43 minutes. The stub is not the backend, so
+     * this notice is about the shape of the real run, not this one. */
+    printf("embed: the in-binary lane is CPU-only, measured at %.3f declarations/s\n"
+           "  (~%.0f minutes per 4,000 declarations). GPU indexing is %.0fx faster and\n"
+           "  belongs to the out-of-process extractor.\n",
+           HYP_ASK_CPU_DOCS_PER_SEC, 4000.0 / HYP_ASK_CPU_DOCS_PER_SEC / 60.0,
+           24.09 / HYP_ASK_CPU_DOCS_PER_SEC);
 
     hyp_ask_encoder_t *enc =
         hyp_ask_encoder_stub_create(HYP_ASK_DIM_DEFAULT, HYP_ASK_MODEL_WINDOW,
@@ -177,9 +199,21 @@ int hyp_cmd_embed(int argc, char **argv) {
     hyp_ask_embed_report_t rep;
     int rc = hyp_ask_embed_run(enc, &opts, &rep);
     hyp_ask_encoder_destroy(enc);
-    if (rc != 0) {
+    if (rc < 0) {
         (void)fprintf(stderr, "embed: failed — see the log lines above\n");
         return 1;
+    }
+    if (rc == HYP_ASK_EMBED_NO_WORK) {
+        /* Loud, and a non-zero exit. A run that indexed nothing must not look
+         * like a run that indexed everything. */
+        (void)fprintf(stderr,
+                      "embed: NO DECLARATIONS FOUND for project '%s'.\n"
+                      "  Nothing was embedded and no index was built. This is not a success:\n"
+                      "  either the project name is wrong, or index_repository has not stored\n"
+                      "  any node with a source span. `hyponoia cli list_projects` lists what\n"
+                      "  is actually indexed.\n",
+                      opts.project);
+        return 4;
     }
 
     printf("embed: project=%s model=%s dim=%d window=%d\n", opts.project,

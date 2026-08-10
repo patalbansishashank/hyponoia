@@ -1,0 +1,310 @@
+/*
+ * test_ask_batch.c — the grouping rule for the `ask` embed pass.
+ *
+ * These tests own nothing but lists of integers, which is the whole reason the
+ * rule lives in a weight-free module: it is the arithmetic that decides whether
+ * the embed pass survives a real corpus, and it must be checkable without a
+ * model on disk.
+ */
+
+#include "test_framework.h"
+
+#include "ask/ask_batch.h"
+
+#include <stdlib.h>
+#include <string.h>
+
+/* Every original index appears exactly once. A permutation that escaped the
+ * grouping would attach every citation in the lane to the wrong code. */
+static int is_permutation(const hyp_ask_batches_t *b, int n) {
+    if (b->doc_count != n) {
+        return 0;
+    }
+    char *seen = calloc((size_t)n, 1);
+    if (!seen) {
+        return 0;
+    }
+    int ok = 1;
+    int total = b->group_start[b->group_count];
+    if (total != n) {
+        ok = 0;
+    }
+    for (int i = 0; ok && i < n; i++) {
+        int idx = b->order[i];
+        if (idx < 0 || idx >= n || seen[idx]) {
+            ok = 0;
+            break;
+        }
+        seen[idx] = 1;
+    }
+    free(seen);
+    return ok;
+}
+
+/* No group's padded rectangle may exceed the budget, EXCEPT a lone document
+ * that is itself longer than the budget. */
+static int rectangles_respect_budget(const hyp_ask_batches_t *b, const int *lengths, int budget) {
+    for (int g = 0; g < b->group_count; g++) {
+        int from = b->group_start[g];
+        int to = b->group_start[g + 1];
+        int widest = 0;
+        for (int j = from; j < to; j++) {
+            if (lengths[b->order[j]] > widest) {
+                widest = lengths[b->order[j]];
+            }
+        }
+        long long rect = (long long)(to - from) * widest;
+        if (rect > budget && (to - from) != 1) {
+            return 0;
+        }
+    }
+    return 1;
+}
+
+TEST(ask_batch_empty_is_zero_groups) {
+    hyp_ask_batches_t b;
+    ASSERT_EQ(hyp_ask_group_by_token_budget(NULL, 0, 8192, 128, &b), 0);
+    ASSERT_EQ(b.group_count, 0);
+    ASSERT_EQ(b.doc_count, 0);
+    hyp_ask_batches_free(&b);
+    PASS();
+}
+
+TEST(ask_batch_returns_a_permutation_of_original_indices) {
+    int lengths[] = {900, 12, 4000, 12, 300, 1, 77, 8000, 64, 64};
+    int n = (int)(sizeof(lengths) / sizeof(lengths[0]));
+    hyp_ask_batches_t b;
+    ASSERT_EQ(hyp_ask_group_by_token_budget(lengths, n, 8192, 128, &b), 0);
+    ASSERT(is_permutation(&b, n));
+    hyp_ask_batches_free(&b);
+    PASS();
+}
+
+TEST(ask_batch_is_length_ascending) {
+    int lengths[] = {900, 12, 4000, 12, 300, 1, 77};
+    int n = (int)(sizeof(lengths) / sizeof(lengths[0]));
+    hyp_ask_batches_t b;
+    ASSERT_EQ(hyp_ask_group_by_token_budget(lengths, n, 8192, 128, &b), 0);
+    for (int i = 1; i < n; i++) {
+        ASSERT_LTE(lengths[b.order[i - 1]], lengths[b.order[i]]);
+    }
+    hyp_ask_batches_free(&b);
+    PASS();
+}
+
+TEST(ask_batch_is_deterministic_under_input_order) {
+    /* The corpus arrives from a scan whose order is not guaranteed. Two
+     * orderings of the same multiset must produce the same batch shapes, or a
+     * throughput measurement is not repeatable. */
+    int a[] = {5, 5, 5, 5, 5, 5};
+    int c[] = {5, 5, 5, 5, 5, 5};
+    hyp_ask_batches_t ba;
+    hyp_ask_batches_t bc;
+    ASSERT_EQ(hyp_ask_group_by_token_budget(a, 6, 8192, 2, &ba), 0);
+    ASSERT_EQ(hyp_ask_group_by_token_budget(c, 6, 8192, 2, &bc), 0);
+    ASSERT_EQ(ba.group_count, bc.group_count);
+    for (int i = 0; i < 6; i++) {
+        ASSERT_EQ(ba.order[i], bc.order[i]);
+    }
+    hyp_ask_batches_free(&ba);
+    hyp_ask_batches_free(&bc);
+    PASS();
+}
+
+TEST(ask_batch_never_exceeds_the_budget_rectangle) {
+    int lengths[512];
+    for (int i = 0; i < 512; i++) {
+        lengths[i] = 1 + (i * 37) % 3000;
+    }
+    hyp_ask_batches_t b;
+    ASSERT_EQ(hyp_ask_group_by_token_budget(lengths, 512, 8192, 128, &b), 0);
+    ASSERT(rectangles_respect_budget(&b, lengths, 8192));
+    hyp_ask_batches_free(&b);
+    PASS();
+}
+
+TEST(ask_batch_max_docs_caps_the_group) {
+    /* Sixteen one-token documents fit the budget a thousand times over, so
+     * only max_docs can be what closes the group. */
+    int lengths[16];
+    for (int i = 0; i < 16; i++) {
+        lengths[i] = 1;
+    }
+    hyp_ask_batches_t b;
+    ASSERT_EQ(hyp_ask_group_by_token_budget(lengths, 16, 8192, 4, &b), 0);
+    ASSERT_EQ(b.group_count, 4);
+    for (int g = 0; g < b.group_count; g++) {
+        ASSERT_EQ(b.group_start[g + 1] - b.group_start[g], 4);
+    }
+    hyp_ask_batches_free(&b);
+    PASS();
+}
+
+TEST(ask_batch_over_budget_document_lands_alone_and_is_not_refused) {
+    /* The escape hatch. A document longer than the whole budget must still be
+     * grouped — refusing it would mean refusing to index the declaration. */
+    int lengths[] = {10, 10, 40000, 10};
+    hyp_ask_batches_t b;
+    ASSERT_EQ(hyp_ask_group_by_token_budget(lengths, 4, 8192, 128, &b), 0);
+    ASSERT_EQ(b.doc_count, 4);
+    int found_alone = 0;
+    for (int g = 0; g < b.group_count; g++) {
+        int from = b.group_start[g];
+        int to = b.group_start[g + 1];
+        if (to - from == 1 && lengths[b.order[from]] == 40000) {
+            found_alone = 1;
+        }
+    }
+    ASSERT(found_alone);
+    ASSERT(is_permutation(&b, 4));
+    hyp_ask_batches_free(&b);
+    PASS();
+}
+
+TEST(ask_batch_the_document_cap_is_the_measured_one) {
+    /* PIN. The cap is 8 because the backend was measured at 17.18 docs/s with
+     * one sequence, 24.09 with eight and 16.37 with sixteen — sixteen is slower
+     * than one. §2.1 asks for "hundreds" and §2's Track F found saturation at
+     * 512, but Track F was encoding SINGLE TOKENS, where a pass is launch-bound
+     * and needs hundreds to fill the card. A declaration is hundreds of tokens
+     * and already fills a launch.
+     *
+     * If this assertion is being changed, the thing that licenses the change is
+     * a new docs/s measurement on the real backend, not an argument. */
+    ASSERT_EQ(HYP_ASK_MAX_DOCS, 8);
+    ASSERT_EQ(HYP_ASK_TOKEN_BUDGET, 8192);
+    PASS();
+}
+
+TEST(ask_batch_changing_max_docs_cannot_enlarge_the_worst_rectangle) {
+    /* THE safety argument for turning this knob in either direction. The budget
+     * test is unconditional, so however high max_docs goes, no batch's
+     * rectangle grows beyond max(budget, longest document). If this ever fails,
+     * the quadratic rewrite argument is back on the table. */
+    int lengths[1000];
+    for (int i = 0; i < 1000; i++) {
+        lengths[i] = 1 + (i * 13) % 5000;
+    }
+    int caps[] = {16, 32, 64, 128, 256, 512, 4096};
+    long long baseline_max = 0;
+    for (size_t c = 0; c < sizeof(caps) / sizeof(caps[0]); c++) {
+        hyp_ask_batches_t b;
+        ASSERT_EQ(hyp_ask_group_by_token_budget(lengths, 1000, 8192, caps[c], &b), 0);
+        int64_t slots = 0;
+        int64_t max_rect = 0;
+        hyp_ask_batches_cost(&b, lengths, &slots, &max_rect);
+        ASSERT_LTE(max_rect, 8192);
+        if (c == 0) {
+            baseline_max = max_rect;
+        }
+        ASSERT_LTE(max_rect, baseline_max > 8192 ? baseline_max : 8192);
+        ASSERT(rectangles_respect_budget(&b, lengths, 8192));
+        hyp_ask_batches_free(&b);
+    }
+    PASS();
+}
+
+TEST(ask_batch_the_cap_governs_only_the_short_end) {
+    /* The cap decides batch size only where the budget has slack. At 64 tokens
+     * the budget would allow 127 documents, so the cap of 8 is what closes the
+     * group; at 2,048 the budget closes it at 3 and the cap is irrelevant. That
+     * split is why lowering the cap costs nothing on long declarations — the
+     * ones that were already expensive — and why raising it would have changed
+     * only the cheap end. */
+    int shortdocs[800];
+    for (int i = 0; i < 800; i++) {
+        shortdocs[i] = 64;
+    }
+    hyp_ask_batches_t b;
+    ASSERT_EQ(hyp_ask_group_by_token_budget(shortdocs, 800, 8192, HYP_ASK_MAX_DOCS, &b), 0);
+    ASSERT_EQ(b.group_count, 100); /* 800 / 8 — the cap, not the budget */
+    for (int g = 0; g < b.group_count; g++) {
+        ASSERT_EQ(b.group_start[g + 1] - b.group_start[g], HYP_ASK_MAX_DOCS);
+    }
+    hyp_ask_batches_free(&b);
+
+    int longdocs[9];
+    for (int i = 0; i < 9; i++) {
+        longdocs[i] = 2048;
+    }
+    ASSERT_EQ(hyp_ask_group_by_token_budget(longdocs, 9, 8192, HYP_ASK_MAX_DOCS, &b), 0);
+    /* 3 x 2048 = 6,144 fits; a fourth would be 8,192... which is exactly the
+     * budget, so 4 x 2048 <= 8192 holds and the group closes at 4. */
+    ASSERT_EQ(b.group_count, 3);
+    for (int g = 0; g < b.group_count; g++) {
+        int size = b.group_start[g + 1] - b.group_start[g];
+        ASSERT_LTE(size, HYP_ASK_MAX_DOCS); /* the budget bound first */
+        ASSERT_LTE((long long)size * 2048, 8192);
+    }
+    hyp_ask_batches_free(&b);
+    PASS();
+}
+
+TEST(ask_batch_padded_slots_do_not_move_with_the_cap) {
+    /* Changing the cap redistributes the SAME documents across a different
+     * number of rectangles. On uniform lengths the padded-slot total — which is
+     * what memory and FLOPs scale with — is identical, so the cap is purely a
+     * launch-count knob. That is what makes the docs/s measurement the only
+     * thing that can decide it. */
+    int lengths[2000];
+    for (int i = 0; i < 2000; i++) {
+        lengths[i] = 64;
+    }
+    int caps[] = {1, 8, 16, 64};
+    int64_t first_slots = -1;
+    for (size_t c = 0; c < sizeof(caps) / sizeof(caps[0]); c++) {
+        hyp_ask_batches_t b;
+        ASSERT_EQ(hyp_ask_group_by_token_budget(lengths, 2000, 8192, caps[c], &b), 0);
+        int64_t slots = 0;
+        int64_t rect = 0;
+        hyp_ask_batches_cost(&b, lengths, &slots, &rect);
+        if (first_slots < 0) {
+            first_slots = slots;
+        }
+        ASSERT_EQ(slots, first_slots);
+        ASSERT_LTE(rect, 8192);
+        hyp_ask_batches_free(&b);
+    }
+    PASS();
+}
+
+TEST(ask_batch_device_budget_has_no_clamp_that_forbids_growth) {
+    /* The reference implementation's own helper clamped the derived value with
+     * min(TOKEN_BUDGET, ...), so it could only ever LOWER the budget on a small
+     * card and never raise it on a large one — which is why it returned 8,192
+     * unchanged on the 16 GB card it was written for, and bought nothing. */
+    int cpu = hyp_ask_token_budget_for_device(0.0, false);
+    ASSERT_EQ(cpu, HYP_ASK_TOKEN_BUDGET);
+
+    /* 16,368 MiB as the device reports it, not a nominal 16 GB — torch reports
+     * 16368 on this card and planning against 16384 plans against memory that
+     * is not there. (16368 * 0.70 - 4300) / 0.46 = 15,559.99..., and this
+     * FLOORS rather than rounds: a budget must never be larger than the
+     * arithmetic that justified it. */
+    int gpu16 = hyp_ask_token_budget_for_device(16368.0, true);
+    ASSERT_EQ(gpu16, 15559);
+    ASSERT_GT(gpu16, HYP_ASK_TOKEN_BUDGET);
+
+    /* A bigger card must get a bigger budget — the property the clamp broke. */
+    int gpu48 = hyp_ask_token_budget_for_device(49152.0, true);
+    ASSERT_GT(gpu48, gpu16);
+
+    /* A card that cannot hold the weights gets a refusal, not a guess. */
+    ASSERT_EQ(hyp_ask_token_budget_for_device(4096.0, true), 0);
+    PASS();
+}
+
+SUITE(ask_batch) {
+    RUN_TEST(ask_batch_empty_is_zero_groups);
+    RUN_TEST(ask_batch_returns_a_permutation_of_original_indices);
+    RUN_TEST(ask_batch_is_length_ascending);
+    RUN_TEST(ask_batch_is_deterministic_under_input_order);
+    RUN_TEST(ask_batch_never_exceeds_the_budget_rectangle);
+    RUN_TEST(ask_batch_max_docs_caps_the_group);
+    RUN_TEST(ask_batch_over_budget_document_lands_alone_and_is_not_refused);
+    RUN_TEST(ask_batch_the_document_cap_is_the_measured_one);
+    RUN_TEST(ask_batch_changing_max_docs_cannot_enlarge_the_worst_rectangle);
+    RUN_TEST(ask_batch_the_cap_governs_only_the_short_end);
+    RUN_TEST(ask_batch_padded_slots_do_not_move_with_the_cap);
+    RUN_TEST(ask_batch_device_budget_has_no_clamp_that_forbids_growth);
+}

@@ -689,5 +689,18 @@ int hyp_ask_embed_run(const hyp_ask_encoder_t *enc, const hyp_ask_embed_opts_t *
     if (out) {
         *out = rep;
     }
-    return rc;
+    if (rc != 0) {
+        return rc;
+    }
+    /* Zero work is not success. A scan that found no declaration completed
+     * everything it attempted and indexed nothing — reporting that as 0 would
+     * make "measured nothing" indistinguishable from "measured fine", which is
+     * how a silent no-op survives a green run. */
+    if (rep.declarations_seen == 0) {
+        hyp_log_warn("ask.embed.no_declarations", "project", opts->project, "graph", graph_path,
+                     "hint",
+                     "the project has no node with a source span — check the project name");
+        return HYP_ASK_EMBED_NO_WORK;
+    }
+    return 0;
 }

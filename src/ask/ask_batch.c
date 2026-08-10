@@ -51,58 +51,75 @@
  *   the constraint has the wrong functional form for the quantity it bounds.
  *
  * ─────────────────────────────────────────────────────────────────────────
- * WHAT ACTUALLY BOUND THE SHORT DECLARATIONS, AND WHAT 128 IS DERIVED FROM
+ * AND WHY THE DOCUMENT CAP GOES DOWN TO 8, NOT UP TO THE HUNDREDS
  * ─────────────────────────────────────────────────────────────────────────
  *
- * §2.1's symptom is real — short declarations do get small batches on a card
- * that could take far more — but it names the wrong knob. At budget 8,192:
+ * §2.1 is wrong about this twice over: wrong about the MECHANISM (memory is
+ * linear, see above) and wrong about the DIRECTION. It asks for "batches of
+ * hundreds"; the measurement says single digits, and that sixteen — the
+ * reference implementation's own value — is already past the peak.
  *
- *     max_len   n allowed by budget   n actually used   binding
- *          32                   255                16   max_docs
- *          64                   127                16   max_docs
- *         128                    63                16   max_docs
- *         256                    31                16   max_docs
- *         512                    15                15   budget
- *       2,048                     3                 3   budget
- *       8,192                     1                 1   budget (batch of one)
+ * The symptom §2.1 describes is real. At budget 8,192 the cap, not the budget,
+ * is what closes a batch of short declarations:
  *
- * Below ~512 tokens — which is most of a real corpus — the budget is not what
- * limits the batch. `max_docs = 16` is. (§2.1's "batches of 40" appears
- * nowhere: the reference's value is 16, and it measured 13.8 documents per
- * forward pass on lld/ELF.)
+ *     max_len   n allowed by budget   n allowed by a cap of 16   binding
+ *          32                   255                         16   cap
+ *          64                   127                         16   cap
+ *         128                    63                         16   cap
+ *         256                    31                         16   cap
+ *         512                    15                         15   budget
+ *       2,048                     3                          3   budget
+ *       8,192                     1                          1   budget (alone)
  *
- * So the fix is to RAISE max_docs and keep the constraint linear. 128 is
- * derived, not guessed. Simulating this exact function over the 4,117 real
- * declaration spans of the pinned lld/ELF corpus, with token length modelled as
- * span bytes / r and r swept over 2.5, 3.0, 3.5, 4.0 bytes per token:
+ * (§2.1's "batches of 40" appears nowhere. The reference's cap is 16 and it
+ * measured 13.8 documents per forward pass on lld/ELF. This function, run over
+ * the 4,117 real declaration spans of that corpus at a cap of 16, produces 13.5
+ * — it reproduces a measurement it was never fitted to, which is the reason to
+ * trust the rest of its arithmetic.)
  *
- *   max_docs   forward passes   docs/pass   padded slots   padding tax
- *         16      327..303        12.6..13.6   1,291,769..847,597    1.01x
- *         32      214..185        19.2..22.3   1,295,151..849,733    1.01x
- *         64      164..131        25.1..31.4   1,297,042..853,053    1.02x
- *        128      142..107        29.0..38.5   1,300,112..855,767    1.02x
- *        256      133.. 97        31.0..42.4   1,303,082..857,992    1.02x
- *        512      130.. 93        31.7..44.3   1,303,753..860,060    1.02x
+ * But "the cap binds" does not imply "raise it". Track 2 measured the actual
+ * backend — llama.cpp with Qwen3-Embedding-0.6B, encoding WHOLE lld/ELF
+ * declarations on a Radeon RX 6900 XT:
  *
- * Two things fall out of that table and both matter.
+ *     configuration          docs/s      peak VRAM
+ *     CPU, 16 threads          1.581      —
+ *     GPU, n_seq =  1         17.18       2,849 MB
+ *     GPU, n_seq =  8         24.09       3,891 MB     <- peak
+ *     GPU, n_seq = 16         16.37       6,110 MB
  *
- *   1. At max_docs=16 this function predicts 12.6-13.6 documents per pass
- *      across the whole ratio sweep. The reference implementation MEASURED
- *      13.8 on the same corpus. The model reproduces the measurement it was
- *      never fitted to, which is the reason to trust the rest of the table.
+ * Sixteen sequences is SLOWER THAN ONE, at 2.1x the VRAM. Batching buys +40%
+ * over a single sequence and then reverses. The ceiling is not what binds:
+ * n_seq = 64 ran cleanly at 3,678 MB. Throughput binds.
  *
- *   2. 16 -> 128 removes 2.7x of the forward passes for +0.8% padded slots.
- *      128 -> 512 buys a further 1.15x for another +0.5%. The curve is flat
- *      past 128, and every step past it raises the per-batch host bookkeeping
- *      and the blast radius of one failed pass for nothing. 128 is where the
- *      throughput is and the risk is not.
+ * WHY, and this is the part that must not be lost, because someone will come
+ * back with §2's numbers and "fix" it: §2's Track F found saturation at batch
+ * 512 and it was measuring a DIFFERENT WORKLOAD. That pipeline encoded
+ * SINGLE TOKENS — 40,856 one-token forward passes — where each pass is
+ * launch-bound and you need hundreds of them to fill the GPU. A declaration is
+ * hundreds of tokens. One declaration already fills a launch. Every sequence
+ * added after that buys padding waste, not parallelism, and pays for it in
+ * activation memory and in the widest member setting the rectangle for its
+ * neighbours. The two numbers are not in conflict; they are about two
+ * different things, and reading §2's 512 into this lane makes it slower while
+ * tripling its memory.
  *
- * Raising max_docs cannot cost memory. The budget test below is unconditional,
- * so a group of n documents with widest member w always satisfies n*w <= budget
- * unless n == 1 and w > budget — the deliberate batch-of-one escape hatch. The
- * worst-case rectangle is max(budget, longest document) whatever max_docs is.
- * That is the whole argument for why this knob is safe to turn and the
- * quadratic rewrite is not.
+ * So: 8. Measured peak, on this corpus, on this card, at this model. It is a
+ * corpus-shaped number rather than a law — a corpus of one-line declarations
+ * would push it up, and re-measuring is the only way to move it.
+ *
+ * What the cap CANNOT do, in either direction, is change the memory ceiling.
+ * The budget test below is unconditional, so a group of n documents with widest
+ * member w always satisfies n*w <= budget unless n == 1 and w > budget — the
+ * deliberate batch-of-one escape hatch. The worst-case rectangle is
+ * max(budget, longest document) whatever the cap is. That is why turning this
+ * knob is safe and why the quadratic rewrite is not.
+ *
+ * One more thing the measurement settles, for the pass that calls this: the
+ * in-binary lane is CPU-only, and CPU is 1.581 docs/s. lld/ELF's 4,117
+ * declarations are ~43 minutes there against ~3 minutes on the GPU. The
+ * grouping rule is not what makes that difference and cannot fix it; the
+ * command says so up front rather than letting a user discover it at minute
+ * forty.
  */
 
 #include "ask/ask_batch.h"
