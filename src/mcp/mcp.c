@@ -57,7 +57,9 @@ enum {
 #include "pipeline/pass_cross_repo.h"
 #include "git/git_context.h"
 #include "cli/cli.h"
+#include "ask/ask_embed.h"    /* hyp_ask_read_span */
 #include "ask/ask_llama.h"
+#include "ask/ask_rerank.h"
 #include "cli/model_fetch.h"
 #include "watcher/watcher.h"
 #include "foundation/mem.h"
@@ -519,6 +521,17 @@ static const tool_def_t TOOLS[] = {
      "\"limit\":{\"type\":\"integer\",\"default\":10,\"description\":\"Max ranked results. "
      "Default 10: the lane is ranked, so the top few are the answer and the tail is noise. "
      "Capped at 500. There is no offset — raise limit rather than page a ranking.\"},"
+     "\"rerank\":{\"type\":\"integer\",\"default\":0,\"description\":\"Re-read the top N "
+     "candidates with a CROSS-ENCODER and reorder them. 0 (default) is off. Retrieval compares "
+     "two vectors that were made independently; a cross-encoder reads the question and the "
+     "candidate in ONE forward pass, which is why it can beat the ranking it is given. "
+     "COSTS SECONDS, not milliseconds — it is N whole declarations through a 0.6B model — and "
+     "needs a second model (`hyponoia fetch-model --rerank`). Without those weights the answer "
+     "is the dense ordering and says so. IT CANNOT FIND WHAT RETRIEVAL MISSED: rerank=50 "
+     "reorders the top 50 and nothing else, so raising it past the depth where the answer "
+     "actually is buys nothing. 50 is the useful setting; capped at 200. When it runs, `score` "
+     "becomes 1+P(relevant) for reranked rows and a `dense` column carries the original "
+     "cosine.\"},"
      "\"format\":{\"type\":\"string\",\"enum\":[\"tree\",\"json\"],\"default\":\"tree\","
      "\"description\":\"Response encoding. tree (default): compact text rows. json: cols + "
      "column-ordered row arrays (the SAME model, structured).\"}},"
@@ -3855,6 +3868,10 @@ static char *handle_search_graph(hyp_mcp_server_t *srv, const char *args) {
 enum {
     ASK_DEFAULT_LIMIT = 10,
     ASK_MAX_LIMIT = 500,
+    /* Reranking is OPT-IN. It costs seconds where the rest of this tool costs
+     * milliseconds and it needs a second 639 MB model, so a caller who did not
+     * ask for it must not silently pay for it. Every answer names the flag. */
+    ASK_RERANK_DEFAULT_DEPTH = 0,
     ASK_QUESTION_MAX = 4096,
     ASK_MSG = HYP_SZ_1K,
     ASK_LANG_SAMPLE_MAX = 20000, /* distinct files sampled to derive the language */
@@ -3953,6 +3970,23 @@ static void ask_truncation_text(const hyp_ask_status_t *st, char *out, size_t ou
     }
 }
 
+/* What this index did with spans covering a whole file, said beside the
+ * population it ranked.
+ *
+ * The caller can see every row that came back and none of the rows that could
+ * not. "This codebase has no file-level answer" and "file-level rows were left
+ * out of this index" are different claims with different remedies, and only
+ * one of them is about the codebase — which is the shape of confident silence
+ * the rest of this lane is arranged to remove. One sentence, on every answer,
+ * for the same reason the truncation state is. */
+static const char *ask_whole_file_text(const hyp_ask_status_t *st) {
+    return st->whole_file_spans_dropped
+               ? "dropped — a span covering a whole file is not ranked, because it contains "
+                 "every declaration in that file and would outrank all of them. A file whose "
+                 "only row is its whole-file span is kept, so a config file is still findable"
+               : "kept — spans covering a whole file are ranked alongside declarations";
+}
+
 /* Distinct file paths in the project's graph, for language derivation.
  * Sampled through the SAME hyp_language_for_filename() the indexer uses,
  * rather than through get_architecture's `languages` aspect: that aspect
@@ -4010,13 +4044,20 @@ static HYPLanguage ask_derive_language(hyp_store_t *store, const char *project) 
 /* Column set. `cut` is present only when the index reports truncated rows —
  * a per-row flag that is always false costs every caller a column to learn
  * nothing, and the header declares the columns anyway. */
-static void ask_cols(const char *cols[], int *ncols, bool with_cut) {
+static void ask_cols(const char *cols[], int *ncols, bool with_cut, bool with_dense) {
     int i = 0;
     cols[i++] = "qn";
     cols[i++] = "label";
     cols[i++] = "file";
     cols[i++] = "lines";
     cols[i++] = "score";
+    /* Only when a rerank actually happened. With the stage off, `score` IS the
+     * cosine and a second column holding the same number would be noise —
+     * and it would change the response shape of a call that asked for nothing
+     * new, which is how a schema quietly stops matching its documentation. */
+    if (with_dense) {
+        cols[i++] = "dense";
+    }
     if (with_cut) {
         cols[i++] = "cut";
     }
@@ -4065,6 +4106,202 @@ static char *ask_error(const char *msg, char *project, char *question) {
     free(project);
     free(question);
     return hyp_mcp_text_result(msg, true);
+}
+
+/* Defined below, with the rest of the project-root helpers. */
+static char *project_root_from_store(hyp_store_t *store, const char *project);
+
+/* ── rerank: the cross-encoder stage (NEXT-STEPS.md §2.2 lever 2) ──
+ *
+ * Defined here rather than in ask_rerank.c because the ORDERING policy belongs
+ * to the tool, not to the model: ask_rerank.c answers "how relevant is this
+ * pair", and what that does to a result list is this file's decision.
+ *
+ * THE SCORE BAND. `score` stays the ranking score — monotone with the row
+ * order, which is what lets any consumer sort by it and get the answer back.
+ * A reranked row carries 1 + P(yes), so it lands in [1, 2]; an un-reranked row
+ * keeps its cosine, which is below 1 because both sides are unit vectors. The
+ * +1 is not a fudge to make the numbers line up: it IS the policy "rerank the
+ * top N" states — a row the cross-encoder read outranks a row it did not,
+ * because the cross-encoder is the better judge and the tail was never
+ * submitted to it. The untouched cosine survives in the `dense` column, so
+ * nothing is lost and the two scales are never silently mixed. */
+enum { ASK_RERANK_DENSE_CEIL_SCALE = 1 }; /* see ask_dense_band() */
+
+/* A cosine cannot exceed 1 for unit vectors, but two byte-identical
+ * declarations produce two identical vectors and a dot product that rounds to
+ * exactly 1.0 — which would tie with the worst possible reranked row. One ulp
+ * of clamping costs nothing and removes the tie. */
+static double ask_dense_band(double cosine) {
+    const double ceil_excl = 0.9999999;
+    return cosine > ceil_excl ? ceil_excl : cosine;
+}
+
+typedef struct {
+    hyp_ask_hit_t hit;
+    int dense_pos; /* original position, so ties resolve to the dense order */
+} ask_rank_row_t;
+
+static int ask_rank_cmp(const void *a, const void *b) {
+    const ask_rank_row_t *x = (const ask_rank_row_t *)a;
+    const ask_rank_row_t *y = (const ask_rank_row_t *)b;
+    if (x->hit.score > y->hit.score) {
+        return -1;
+    }
+    if (x->hit.score < y->hit.score) {
+        return 1;
+    }
+    /* qsort is not stable, and an unstable sort over a ranking makes the
+     * output depend on the libc. The dense position is the tiebreak. */
+    return x->dense_pos < y->dense_pos ? -1 : (x->dense_pos > y->dense_pos ? 1 : 0);
+}
+
+/* Reorder `hits[0..n)`'s first `depth` rows by cross-encoder score.
+ *
+ * Returns the status; `note` always receives a sentence for the `rerank`
+ * disclosure, which is emitted on EVERY answer — the same rule the truncation
+ * counter follows, and for the same reason: a caveat that only appears when it
+ * bites is silent in exactly the case where it mattered. */
+static hyp_ask_rerank_status_t ask_apply_rerank(hyp_store_t *store, const char *project,
+                                                const char *question, const char *lang_name,
+                                                hyp_ask_hit_t *hits, int n, int depth, char *note,
+                                                size_t note_sz) {
+    int depth_used = depth < n ? depth : n;
+    if (depth_used <= 0) {
+        (void)snprintf(note, note_sz, "off — nothing to rerank");
+        return HYP_ASK_RERANK_OFF;
+    }
+    if (!hyp_ask_rerank_compiled_in()) {
+        (void)snprintf(note, note_sz,
+                       "REQUESTED BUT NOT AVAILABLE: this binary has no inference runtime, so "
+                       "there is no cross-encoder to run. The rows below are the dense ordering, "
+                       "which is a real answer — just not a reranked one.");
+        return HYP_ASK_RERANK_NO_BACKEND;
+    }
+    if (!hyp_model_rerank_present()) {
+        char detail[ASK_MSG];
+        char remedy[ASK_MSG];
+        hyp_model_unavailable_text_spec(hyp_model_rerank_spec(), project, detail, sizeof(detail),
+                                        remedy, sizeof(remedy));
+        (void)snprintf(note, note_sz, "REQUESTED BUT NOT AVAILABLE: %s %s", detail, remedy);
+        return HYP_ASK_RERANK_NO_WEIGHTS;
+    }
+
+    char *root = project_root_from_store(store, project);
+    if (!root || !root[0]) {
+        free(root);
+        (void)snprintf(note, note_sz,
+                       "REQUESTED BUT NOT AVAILABLE: this project's source root is not recorded, "
+                       "so the candidates' text cannot be read back. A cross-encoder reads the "
+                       "QUESTION AND THE CODE TOGETHER; without the code there is nothing to "
+                       "cross. The rows below are the dense ordering.");
+        return HYP_ASK_RERANK_FAILED;
+    }
+
+    /* The candidates' text, read back from disk exactly the way the embed pass
+     * read it when it built the vectors — same function, same span, same
+     * bytes. Anything else and the reranker would be scoring a different
+     * document from the one that was retrieved. */
+    char **docs = (char **)calloc((size_t)depth_used, sizeof(char *));
+    if (!docs) {
+        free(root);
+        (void)snprintf(note, note_sz, "REQUESTED BUT NOT AVAILABLE: out of memory");
+        return HYP_ASK_RERANK_FAILED;
+    }
+    int unreadable = 0;
+    for (int i = 0; i < depth_used; i++) {
+        char abs_path[HYP_SZ_4K];
+        int pn = snprintf(abs_path, sizeof(abs_path), "%s/%s", root, hits[i].file_path);
+        if (pn > 0 && (size_t)pn < sizeof(abs_path)) {
+            docs[i] = hyp_ask_read_span(abs_path, hits[i].start_line, hits[i].end_line);
+        }
+        if (!docs[i]) {
+            unreadable++;
+        }
+    }
+    free(root);
+
+    /* A row whose span cannot be read is NOT reranked and NOT invented a score
+     * for. It keeps the dense band, which puts it below every row the
+     * cross-encoder actually read. That is a real demotion and it is why
+     * `unreadable` is in the disclosure rather than in a log line. */
+    int scored_n = 0;
+    const char **texts = (const char **)calloc((size_t)depth_used, sizeof(char *));
+    int *map = (int *)calloc((size_t)depth_used, sizeof(int));
+    float *probs = (float *)calloc((size_t)depth_used, sizeof(float));
+    if (!texts || !map || !probs) {
+        for (int i = 0; i < depth_used; i++) {
+            free(docs[i]);
+        }
+        free(docs);
+        free(texts);
+        free(map);
+        free(probs);
+        (void)snprintf(note, note_sz, "REQUESTED BUT NOT AVAILABLE: out of memory");
+        return HYP_ASK_RERANK_FAILED;
+    }
+    for (int i = 0; i < depth_used; i++) {
+        if (docs[i]) {
+            texts[scored_n] = docs[i];
+            map[scored_n] = i;
+            scored_n++;
+        }
+    }
+
+    char err[ASK_MSG] = "";
+    hyp_ask_rerank_status_t st =
+        hyp_ask_rerank_score(question, lang_name, texts, scored_n, probs, err, sizeof(err));
+
+    if (st == HYP_ASK_RERANK_OK) {
+        for (int i = 0; i < n; i++) {
+            hits[i].score = ask_dense_band(hits[i].score);
+        }
+        for (int k = 0; k < scored_n; k++) {
+            hits[map[k]].score = 1.0 + (double)probs[k];
+        }
+        /* ONLY the reranked prefix is reordered. The tail keeps the dense
+         * order it arrived in, because nothing has been learned about it. */
+        ask_rank_row_t *rows = (ask_rank_row_t *)calloc((size_t)depth_used, sizeof(*rows));
+        if (rows) {
+            for (int i = 0; i < depth_used; i++) {
+                rows[i].hit = hits[i];
+                rows[i].dense_pos = i;
+            }
+            qsort(rows, (size_t)depth_used, sizeof(*rows), ask_rank_cmp);
+            for (int i = 0; i < depth_used; i++) {
+                hits[i] = rows[i].hit;
+            }
+            free(rows);
+        }
+        int cut = hyp_ask_rerank_last_truncated();
+        (void)snprintf(note, note_sz,
+                       "applied to the top %d of %d by %s on %s in %.0f ms (%.0f ms/candidate). "
+                       "Scores in [1,2] are P(relevant) from the cross-encoder, +1; scores below "
+                       "1 are the untouched dense cosine of rows it never read. %d candidate(s) "
+                       "had their text cut at the %d-token pair window%s%s",
+                       depth_used, n, hyp_ask_rerank_model_id(), hyp_ask_rerank_device_note(),
+                       hyp_ask_rerank_last_ms(),
+                       scored_n ? hyp_ask_rerank_last_ms() / (double)scored_n : 0.0, cut,
+                       HYP_ASK_RERANK_PAIR_WINDOW,
+                       unreadable ? "" : ".",
+                       unreadable ? "; and some candidates' source could not be read, so they "
+                                    "were left in the dense band below every reranked row."
+                                  : "");
+    } else {
+        (void)snprintf(note, note_sz,
+                       "REQUESTED BUT IT DID NOT RUN: %s. The rows below are the dense ordering, "
+                       "unreranked.",
+                       err[0] ? err : "the reranker failed without a reason");
+    }
+
+    for (int i = 0; i < depth_used; i++) {
+        free(docs[i]);
+    }
+    free(docs);
+    free(texts);
+    free(map);
+    free(probs);
+    return st;
 }
 
 static char *handle_ask(hyp_mcp_server_t *srv, const char *args) {
@@ -4121,6 +4358,25 @@ static char *handle_ask(hyp_mcp_server_t *srv, const char *args) {
     }
     if (limit > ASK_MAX_LIMIT) {
         limit = ASK_MAX_LIMIT;
+    }
+
+    /* rerank=N re-reads the top N candidates with the cross-encoder. Negative
+     * is 0 — "rerank the top minus five" has no meaning, and silently reading
+     * it as the default would be a request the caller did not make. */
+    int rerank_n = hyp_mcp_get_int_arg(args, "rerank", ASK_RERANK_DEFAULT_DEPTH);
+    if (rerank_n < 0) {
+        rerank_n = 0;
+    }
+    if (rerank_n > HYP_ASK_RERANK_MAX_N) {
+        rerank_n = HYP_ASK_RERANK_MAX_N;
+    }
+    /* The dense stage has to fetch at least as deep as the rerank stage will
+     * read, or "rerank the top 50" reorders a top 10. The extra depth is
+     * discarded before the answer is emitted, so a caller asking for 10 still
+     * gets 10 — it just costs the retrieval, which is microseconds. */
+    int search_limit = rerank_n > limit ? rerank_n : limit;
+    if (search_limit > ASK_MAX_LIMIT) {
+        search_limit = ASK_MAX_LIMIT;
     }
 
     hyp_ask_status_t st;
@@ -4187,7 +4443,7 @@ static char *handle_ask(hyp_mcp_server_t *srv, const char *args) {
 
     hyp_ask_hit_t *hits = NULL;
     int hit_count = 0;
-    int rc = hyp_ask_index_search(store, project, qvec, limit, &hits, &hit_count);
+    int rc = hyp_ask_index_search(store, project, qvec, search_limit, &hits, &hit_count);
     free(qvec);
     if (rc != HYP_STORE_OK) {
         return ask_error("the semantic index could not be read. Re-run index_status; if the "
@@ -4195,12 +4451,40 @@ static char *handle_ask(hyp_mcp_server_t *srv, const char *args) {
                          project, question);
     }
 
+    /* THE RERANK STAGE, between retrieval and the answer. It reorders in place
+     * and never adds or removes a row: a cross-encoder is a second opinion on
+     * an ordering, not a second retrieval. */
+    char rerank_text[ASK_MSG * 2];
+    hyp_ask_rerank_status_t rr_st = HYP_ASK_RERANK_OFF;
+    if (rerank_n > 0) {
+        rr_st = ask_apply_rerank(store, project, question, lang_name, hits, hit_count, rerank_n,
+                                 rerank_text, sizeof(rerank_text));
+    } else {
+        (void)snprintf(rerank_text, sizeof(rerank_text),
+                       "off — these are the dense retrieval scores. Pass rerank=%d to re-read the "
+                       "top candidates together with the question using a cross-encoder, which "
+                       "reorders them and costs seconds rather than milliseconds.",
+                       HYP_ASK_RERANK_DEFAULT_N);
+    }
+    /* Trimmed AFTER reranking: the extra depth existed only to give the
+     * cross-encoder something to reorder. */
+    if (hit_count > limit) {
+        for (int i = limit; i < hit_count; i++) {
+            free(hits[i].qualified_name);
+            free(hits[i].name);
+            free(hits[i].label);
+            free(hits[i].file_path);
+        }
+        hit_count = limit;
+    }
+
     char trunc_text[ASK_MSG];
     ask_truncation_text(&st, trunc_text, sizeof(trunc_text));
     bool with_cut = st.trunc == HYP_ASK_TRUNC_SOME;
-    const char *cols[6];
+    bool with_dense = rr_st == HYP_ASK_RERANK_OK;
+    const char *cols[7];
     int ncols = 0;
-    ask_cols(cols, &ncols, with_cut);
+    ask_cols(cols, &ncols, with_cut, with_dense);
 
     char *result = NULL;
     if (json) {
@@ -4213,7 +4497,9 @@ static char *handle_ask(hyp_mcp_server_t *srv, const char *args) {
         yyjson_mut_obj_add_str(doc, root, "language_source",
                                lang_explicit ? "explicit" : "derived");
         yyjson_mut_obj_add_strcpy(doc, root, "truncation", trunc_text);
+        yyjson_mut_obj_add_strcpy(doc, root, "rerank", rerank_text);
         yyjson_mut_obj_add_int(doc, root, "population", st.n_vectors);
+        yyjson_mut_obj_add_str(doc, root, "whole_file_spans", ask_whole_file_text(&st));
         yyjson_mut_val *jcols = yyjson_mut_arr(doc);
         for (int c = 0; c < ncols; c++) {
             yyjson_mut_arr_add_str(doc, jcols, cols[c]);
@@ -4229,6 +4515,9 @@ static char *handle_ask(hyp_mcp_server_t *srv, const char *args) {
             yyjson_mut_arr_add_strcpy(doc, row, hits[i].file_path);
             yyjson_mut_arr_add_strcpy(doc, row, lines);
             yyjson_mut_arr_add_real(doc, row, hits[i].score);
+            if (with_dense) {
+                yyjson_mut_arr_add_real(doc, row, hits[i].dense);
+            }
             if (with_cut) {
                 yyjson_mut_arr_add_bool(doc, row, hits[i].truncated);
             }
@@ -4247,7 +4536,9 @@ static char *handle_ask(hyp_mcp_server_t *srv, const char *args) {
         hyp_tree_scalar_str(&sb, "language", lang_name);
         hyp_tree_scalar_str(&sb, "language_source", lang_explicit ? "explicit" : "derived");
         hyp_tree_scalar_str(&sb, "truncation", trunc_text);
+        hyp_tree_scalar_str(&sb, "rerank", rerank_text);
         hyp_tree_scalar_int(&sb, "population", st.n_vectors);
+        hyp_tree_scalar_str(&sb, "whole_file_spans", ask_whole_file_text(&st));
         hyp_tree_table_header(&sb, "results", hit_count, cols, ncols);
         for (int i = 0; i < hit_count; i++) {
             char lines[HYP_SZ_32];
@@ -4258,6 +4549,9 @@ static char *handle_ask(hyp_mcp_server_t *srv, const char *args) {
             hyp_tree_cell_str(&sb, hits[i].file_path, false);
             hyp_tree_cell_str(&sb, lines, false);
             hyp_tree_cell_real(&sb, hits[i].score, false);
+            if (with_dense) {
+                hyp_tree_cell_real(&sb, hits[i].dense, false);
+            }
             if (with_cut) {
                 hyp_tree_cell_bool(&sb, hits[i].truncated, false);
             }

@@ -86,6 +86,11 @@ static bool ask_status_from_vector_file(const char *project, const hyp_ask_backe
     ask_copy(out->model_id, sizeof(out->model_id), meta.model_id);
     out->dim = meta.dim;
     out->n_vectors = (int)meta.row_count;
+    /* Only the exact word counts as "dropped". An unrecognised value — a
+     * writer from a future version that learned a third policy — reads as
+     * "not dropped", which is the claim that promises the caller LESS. */
+    out->whole_file_spans_dropped =
+        meta.whole_file_spans && strcmp(meta.whole_file_spans, "drop") == 0;
 
     /* PROVENANCE IS A HARD GATE. Two models' vectors are not comparable and
      * nothing downstream can detect the mix, so a disagreement is REFUSED
@@ -161,6 +166,7 @@ static bool ask_search_vector_file(const char *project, const float *qvec, int l
         conv[i].start_line = hits[i].start_line;
         conv[i].end_line = hits[i].end_line;
         conv[i].score = (double)hits[i].score;
+        conv[i].dense = (double)hits[i].score;
         conv[i].truncated = hits[i].truncated;
     }
     hyp_ask_vec_hits_free(hits, n);
@@ -443,6 +449,7 @@ int hyp_ask_index_search(hyp_store_t *s, const char *project, const float *qvec,
         h->start_line = sqlite3_column_int(nq, 4);
         h->end_line = sqlite3_column_int(nq, 5);
         h->score = scored[i].score;
+        h->dense = scored[i].score;
         h->truncated = scored[i].truncated;
         emitted++;
     }

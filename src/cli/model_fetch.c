@@ -63,6 +63,50 @@ enum {
     MODEL_CURL_NOT_FOUND = 127 /* hyp_exec_no_shell's child could not execvp */
 };
 
+/* ── The pinned artifacts ────────────────────────────────────────── */
+
+static const hyp_model_spec_t MODEL_ASK = {
+    .model = HYP_MODEL_ASK_MODEL,
+    .quant = HYP_MODEL_ASK_QUANT,
+    .file = HYP_MODEL_ASK_FILE,
+    .repo = HYP_MODEL_ASK_REPO,
+    .revision = HYP_MODEL_ASK_REVISION,
+    .sha256 = HYP_MODEL_ASK_SHA256,
+    .bytes = HYP_MODEL_ASK_BYTES,
+    .size_text = HYP_MODEL_ASK_SIZE_TEXT,
+    .url = HYP_MODEL_ASK_URL,
+    .command = HYP_MODEL_ASK_COMMAND,
+    .what = "the ask lane's embedding weights",
+    .without_it = "A question cannot be turned into a vector without them, so NOTHING was "
+                  "searched",
+};
+
+static const hyp_model_spec_t MODEL_RERANK = {
+    .model = HYP_MODEL_RERANK_MODEL,
+    .quant = HYP_MODEL_RERANK_QUANT,
+    .file = HYP_MODEL_RERANK_FILE,
+    .repo = HYP_MODEL_RERANK_REPO,
+    .revision = HYP_MODEL_RERANK_REVISION,
+    .sha256 = HYP_MODEL_RERANK_SHA256,
+    .bytes = HYP_MODEL_RERANK_BYTES,
+    .size_text = HYP_MODEL_RERANK_SIZE_TEXT,
+    .url = HYP_MODEL_RERANK_URL,
+    .command = HYP_MODEL_RERANK_COMMAND,
+    .what = "the ask lane's reranker weights",
+    /* Deliberately NOT "nothing was searched". Everything was searched; what is
+     * missing is the second opinion on the order it came back in. */
+    .without_it = "`ask` still answers — the results are the dense ordering, unreranked, and "
+                  "every answer says so",
+};
+
+const hyp_model_spec_t *hyp_model_ask_spec(void) {
+    return &MODEL_ASK;
+}
+
+const hyp_model_spec_t *hyp_model_rerank_spec(void) {
+    return &MODEL_RERANK;
+}
+
 /* ── Paths ───────────────────────────────────────────────────────── */
 
 const char *hyp_model_ask_dir(char *out, size_t out_sz) {
@@ -82,8 +126,8 @@ const char *hyp_model_ask_dir(char *out, size_t out_sz) {
     return out;
 }
 
-const char *hyp_model_ask_path(char *out, size_t out_sz) {
-    if (!out || out_sz == 0) {
+const char *hyp_model_spec_path(const hyp_model_spec_t *spec, char *out, size_t out_sz) {
+    if (!spec || !out || out_sz == 0) {
         return NULL;
     }
     char dir[HYP_MODEL_PATH_MAX];
@@ -91,7 +135,7 @@ const char *hyp_model_ask_path(char *out, size_t out_sz) {
     if (!hyp_model_ask_dir(dir, sizeof(dir))) {
         return NULL;
     }
-    int written = snprintf(out, out_sz, "%s/%s", dir, HYP_MODEL_ASK_FILE);
+    int written = snprintf(out, out_sz, "%s/%s", dir, spec->file);
     if (written <= 0 || (size_t)written >= out_sz) {
         out[0] = '\0';
         return NULL;
@@ -99,13 +143,21 @@ const char *hyp_model_ask_path(char *out, size_t out_sz) {
     return out;
 }
 
-static const char *model_part_path(char *out, size_t out_sz) {
+const char *hyp_model_ask_path(char *out, size_t out_sz) {
+    return hyp_model_spec_path(&MODEL_ASK, out, out_sz);
+}
+
+const char *hyp_model_rerank_path(char *out, size_t out_sz) {
+    return hyp_model_spec_path(&MODEL_RERANK, out, out_sz);
+}
+
+static const char *model_part_path(const hyp_model_spec_t *spec, char *out, size_t out_sz) {
     char final_path[HYP_MODEL_PATH_MAX];
     if (!out || out_sz == 0) {
         return NULL;
     }
     out[0] = '\0';
-    if (!hyp_model_ask_path(final_path, sizeof(final_path))) {
+    if (!hyp_model_spec_path(spec, final_path, sizeof(final_path))) {
         return NULL;
     }
     int written = snprintf(out, out_sz, "%s%s", final_path, HYP_MODEL_PART_SUFFIX);
@@ -118,16 +170,20 @@ static const char *model_part_path(char *out, size_t out_sz) {
 
 /* ── Probe ───────────────────────────────────────────────────────── */
 
-void hyp_model_ask_probe(hyp_model_probe_t *out) {
+void hyp_model_probe_spec(const hyp_model_spec_t *spec, hyp_model_probe_t *out) {
     if (!out) {
         return;
     }
     memset(out, 0, sizeof(*out));
     out->bytes = -1;
     out->part_bytes = 0;
+    if (!spec) {
+        out->state = HYP_MODEL_NO_CACHE_DIR;
+        return;
+    }
 
-    if (!hyp_model_ask_path(out->path, sizeof(out->path)) ||
-        !model_part_path(out->part_path, sizeof(out->part_path))) {
+    if (!hyp_model_spec_path(spec, out->path, sizeof(out->path)) ||
+        !model_part_path(spec, out->part_path, sizeof(out->part_path))) {
         out->state = HYP_MODEL_NO_CACHE_DIR;
         return;
     }
@@ -143,13 +199,25 @@ void hyp_model_ask_probe(hyp_model_probe_t *out) {
     out->bytes = size;
     /* Exact-size, not at-least: a file longer than the artifact is as wrong as
      * one shorter, and "close enough" is how a truncated blob gets loaded. */
-    out->state = size == HYP_MODEL_ASK_BYTES ? HYP_MODEL_PRESENT : HYP_MODEL_WRONG_SIZE;
+    out->state = size == spec->bytes ? HYP_MODEL_PRESENT : HYP_MODEL_WRONG_SIZE;
+}
+
+void hyp_model_ask_probe(hyp_model_probe_t *out) {
+    hyp_model_probe_spec(&MODEL_ASK, out);
+}
+
+bool hyp_model_spec_present(const hyp_model_spec_t *spec) {
+    hyp_model_probe_t probe;
+    hyp_model_probe_spec(spec, &probe);
+    return probe.state == HYP_MODEL_PRESENT;
 }
 
 bool hyp_model_ask_present(void) {
-    hyp_model_probe_t probe;
-    hyp_model_ask_probe(&probe);
-    return probe.state == HYP_MODEL_PRESENT;
+    return hyp_model_spec_present(&MODEL_ASK);
+}
+
+bool hyp_model_rerank_present(void) {
+    return hyp_model_spec_present(&MODEL_RERANK);
 }
 
 /* ── Digest ──────────────────────────────────────────────────────── */
@@ -226,57 +294,58 @@ int hyp_model_verify_file(const char *path, const char *expect_hex, bool remove_
 
 /* ── The unavailable message ─────────────────────────────────────── */
 
-void hyp_model_unavailable_text(const char *project, char *detail, size_t detail_sz, char *remedy,
-                                size_t remedy_sz) {
+void hyp_model_unavailable_text_spec(const hyp_model_spec_t *spec, const char *project,
+                                     char *detail, size_t detail_sz, char *remedy,
+                                     size_t remedy_sz) {
+    if (!spec) {
+        spec = &MODEL_ASK;
+    }
     hyp_model_probe_t probe;
-    hyp_model_ask_probe(&probe);
-    const char *where =
-        probe.path[0] ? probe.path : "~/.cache/hyponoia/" HYP_MODEL_DIR_NAME "/" HYP_MODEL_ASK_FILE;
+    hyp_model_probe_spec(spec, &probe);
+    char fallback[HYP_MODEL_PATH_MAX];
+    (void)snprintf(fallback, sizeof(fallback), "~/.cache/hyponoia/%s/%s", HYP_MODEL_DIR_NAME,
+                   spec->file);
+    const char *where = probe.path[0] ? probe.path : fallback;
     const char *name = project ? project : "";
 
     if (detail && detail_sz > 0) {
         switch (probe.state) {
         case HYP_MODEL_PRESENT:
             (void)snprintf(detail, detail_sz,
-                           "the embedding weights ARE present at %s; whatever made this lane "
+                           "%s ARE present at %s; whatever made this lane "
                            "unavailable, it was not the model.",
-                           where);
+                           spec->what, where);
             break;
         case HYP_MODEL_PARTIAL:
             (void)snprintf(detail, detail_sz,
-                           "the ask lane's embedding weights are only partly downloaded — "
-                           "%" PRId64 " MB of " HYP_MODEL_ASK_SIZE_TEXT
-                           " are in %s. A question cannot be turned into a vector until the "
-                           "rest arrives, so NOTHING was searched — this is not a statement "
-                           "about the code in \"%s\".",
-                           probe.part_bytes / MODEL_MB, probe.part_path, name);
+                           "%s are only partly downloaded — %" PRId64 " MB of %s are in %s. %s — "
+                           "this is not a statement about the code in \"%s\".",
+                           spec->what, probe.part_bytes / MODEL_MB, spec->size_text,
+                           probe.part_path, spec->without_it, name);
             break;
         case HYP_MODEL_WRONG_SIZE:
             (void)snprintf(detail, detail_sz,
                            "a file sits at %s but it is %" PRId64 " bytes, not the pinned "
-                           "%" PRId64 ". It is NOT the " HYP_MODEL_ASK_MODEL " " HYP_MODEL_ASK_QUANT
-                           " artifact and is refused rather than "
-                           "loaded. NOTHING was searched.",
-                           where, probe.bytes, (int64_t)HYP_MODEL_ASK_BYTES);
+                           "%" PRId64 ". It is NOT the %s %s artifact and is refused rather than "
+                           "loaded. %s.",
+                           where, probe.bytes, spec->bytes, spec->model, spec->quant,
+                           spec->without_it);
             break;
         case HYP_MODEL_NO_CACHE_DIR:
             (void)snprintf(detail, detail_sz,
-                           "the ask lane's embedding weights are missing AND the cache "
-                           "directory cannot be resolved, so there is nowhere to keep them. "
-                           "NOTHING was searched — this is not a statement about the code in "
-                           "\"%s\".",
-                           name);
+                           "%s are missing AND the cache directory cannot be resolved, so there "
+                           "is nowhere to keep them. %s — this is not a statement about the code "
+                           "in \"%s\".",
+                           spec->what, spec->without_it, name);
             break;
         case HYP_MODEL_ABSENT:
         default:
-            (void)snprintf(
-                detail, detail_sz,
-                "the ask lane's embedding weights are not on this machine. " HYP_MODEL_ASK_MODEL
-                " (" HYP_MODEL_ASK_QUANT " GGUF, " HYP_MODEL_ASK_SIZE_TEXT
-                ") is fetched on first use of this lane and kept at %s. A question "
-                "cannot be turned into a vector without it, so NOTHING was searched "
-                "— this is not a statement about the code in \"%s\".",
-                where, name);
+            (void)snprintf(detail, detail_sz,
+                           "%s are not on this machine. %s (%s GGUF, %s) is fetched on first use "
+                           "of this lane and kept at %s. %s — this is not a statement about the "
+                           "code in \"%s\".",
+                           spec->what, spec->model, spec->quant, spec->size_text, where,
+                           spec->without_it, name);
             break;
         }
     }
@@ -287,38 +356,42 @@ void hyp_model_unavailable_text(const char *project, char *detail, size_t detail
     switch (probe.state) {
     case HYP_MODEL_PRESENT:
         (void)snprintf(remedy, remedy_sz,
-                       "Nothing to fetch. Re-run `" HYP_MODEL_ASK_COMMAND
-                       " --verify` if you suspect the file on disk.");
+                       "Nothing to fetch. Re-run `%s --verify` if you suspect the file on disk.",
+                       spec->command);
         break;
     case HYP_MODEL_NO_CACHE_DIR:
         (void)snprintf(remedy, remedy_sz,
                        "Set HOME, or point HYP_CACHE_DIR at a writable directory, then run "
-                       "`" HYP_MODEL_ASK_COMMAND "`. Meanwhile search_graph(query=\"...\") and "
-                       "search_graph(semantic_query=[\"a\",\"b\"]) need no model at all.");
+                       "`%s`. Meanwhile search_graph(query=\"...\") and "
+                       "search_graph(semantic_query=[\"a\",\"b\"]) need no model at all.",
+                       spec->command);
         break;
     case HYP_MODEL_PARTIAL:
         (void)snprintf(remedy, remedy_sz,
-                       "Run `" HYP_MODEL_ASK_COMMAND "` to RESUME the download (it continues "
-                       "from the %" PRId64 " MB already fetched). Hyponoia never downloads it "
-                       "on its own. Meanwhile search_graph(query=\"...\") and "
-                       "search_graph(semantic_query=[\"a\",\"b\"]) work with the index you "
-                       "already have.",
-                       probe.part_bytes / MODEL_MB);
+                       "Run `%s` to RESUME the download (it continues from the %" PRId64
+                       " MB already fetched). Hyponoia never downloads it on its own. Meanwhile "
+                       "search_graph(query=\"...\") and search_graph(semantic_query=[\"a\",\"b\"]) "
+                       "work with the index you already have.",
+                       spec->command, probe.part_bytes / MODEL_MB);
         break;
     case HYP_MODEL_WRONG_SIZE:
     case HYP_MODEL_ABSENT:
     default:
         (void)snprintf(remedy, remedy_sz,
-                       "Run `" HYP_MODEL_ASK_COMMAND
-                       "` once — it downloads " HYP_MODEL_ASK_SIZE_TEXT
-                       " from Hugging Face at a pinned revision, verifies it against a SHA-256 "
-                       "compiled into this binary, and keeps it at %s (delete it any time with "
-                       "`rm %s`). Hyponoia never downloads it on its own. Meanwhile "
-                       "search_graph(query=\"...\") and search_graph(semantic_query=[\"a\",\"b\"]) "
-                       "work with the index you already have.",
-                       where, where);
+                       "Run `%s` once — it downloads %s from Hugging Face at a pinned revision, "
+                       "verifies it against a SHA-256 compiled into this binary, and keeps it at "
+                       "%s (delete it any time with `rm %s`). Hyponoia never downloads it on its "
+                       "own. Meanwhile search_graph(query=\"...\") and "
+                       "search_graph(semantic_query=[\"a\",\"b\"]) work with the index you "
+                       "already have.",
+                       spec->command, spec->size_text, where, where);
         break;
     }
+}
+
+void hyp_model_unavailable_text(const char *project, char *detail, size_t detail_sz, char *remedy,
+                                size_t remedy_sz) {
+    hyp_model_unavailable_text_spec(&MODEL_ASK, project, detail, detail_sz, remedy, remedy_sz);
 }
 
 /* ── Outcome messages ────────────────────────────────────────────── */
@@ -337,11 +410,11 @@ const char *hyp_model_fetch_result_text(hyp_model_fetch_result_t result) {
         return "could not create the models directory: check permissions and free space on the "
                "cache filesystem";
     case HYP_MODEL_FETCH_NO_SPACE:
-        return "not enough free space for " HYP_MODEL_ASK_SIZE_TEXT
-               ": free some, or point HYP_CACHE_DIR at a larger filesystem";
+        return "not enough free space for the model: free some, or point HYP_CACHE_DIR at a "
+               "larger filesystem";
     case HYP_MODEL_FETCH_NO_DOWNLOADER:
-        return "curl was not found on PATH: install curl, or copy " HYP_MODEL_ASK_FILE
-               " into the models directory yourself and run `" HYP_MODEL_ASK_COMMAND " --verify`";
+        return "curl was not found on PATH: install curl, or copy the GGUF into the models "
+               "directory yourself and re-run with --verify";
     case HYP_MODEL_FETCH_DNS:
         return "huggingface.co did not resolve: you are offline, or DNS/a proxy is blocking it";
     case HYP_MODEL_FETCH_OFFLINE:
@@ -402,14 +475,14 @@ static bool model_space_ok(const char *dir, int64_t need_bytes, int64_t *free_mb
  * the decision was informed — the size, the source and the destination are on
  * screen before a byte moves. Unattended (no TTY) without --yes is a REFUSAL,
  * not a silent yes: 639 MB must never be the default answer to a question. */
-static bool model_confirm(const hyp_model_fetch_opts_t *opts, const char *dest, int64_t resume_mb) {
-    printf("Fetch the `ask` lane's embedding model?\n\n");
-    printf("  model     " HYP_MODEL_ASK_MODEL " (" HYP_MODEL_ASK_QUANT " GGUF)\n");
-    printf("  size      " HYP_MODEL_ASK_SIZE_TEXT " (%" PRId64 " bytes)\n",
-           (int64_t)HYP_MODEL_ASK_BYTES);
-    printf("  from      " HYP_MODEL_ASK_URL "\n");
-    printf("  revision  " HYP_MODEL_ASK_REVISION "\n");
-    printf("  sha256    " HYP_MODEL_ASK_SHA256 "\n");
+static bool model_confirm(const hyp_model_spec_t *spec, const hyp_model_fetch_opts_t *opts,
+                          const char *dest, int64_t resume_mb) {
+    printf("Fetch %s?\n\n", spec->what);
+    printf("  model     %s (%s GGUF)\n", spec->model, spec->quant);
+    printf("  size      %s (%" PRId64 " bytes)\n", spec->size_text, spec->bytes);
+    printf("  from      %s\n", spec->url);
+    printf("  revision  %s\n", spec->revision);
+    printf("  sha256    %s\n", spec->sha256);
     printf("  into      %s\n", dest);
     if (resume_mb > 0) {
         printf("  resuming  %" PRId64 " MB already fetched\n", resume_mb);
@@ -422,12 +495,14 @@ static bool model_confirm(const hyp_model_fetch_opts_t *opts, const char *dest, 
     }
 #ifndef _WIN32
     if (!isatty(0)) {
-        (void)fprintf(stderr, "\nrefusing to download " HYP_MODEL_ASK_SIZE_TEXT
-                              " unattended: re-run with --yes if that is what you want.\n");
+        (void)fprintf(stderr,
+                      "\nrefusing to download %s unattended: re-run with --yes if that is what "
+                      "you want.\n",
+                      spec->size_text);
         return false;
     }
 #endif
-    printf("\nDownload " HYP_MODEL_ASK_SIZE_TEXT " now? [y/N] ");
+    printf("\nDownload %s now? [y/N] ", spec->size_text);
     (void)fflush(stdout);
     char answer[MODEL_ANSWER_MAX];
     if (!fgets(answer, sizeof(answer), stdin)) {
@@ -571,23 +646,23 @@ static void model_sync_file(const char *path) {
 /* Size, then digest, then rename. In that order, because a short file has a
  * cheaper and far more useful explanation than "the hash did not match", and
  * because the rename is the ONLY way bytes acquire the trusted name. */
-static hyp_model_fetch_result_t model_install(const char *part, const char *final_path) {
+static hyp_model_fetch_result_t model_install(const hyp_model_spec_t *spec, const char *part,
+                                              const char *final_path) {
     int64_t got = hyp_file_size(part);
-    if (got != HYP_MODEL_ASK_BYTES) {
-        (void)fprintf(
-            stderr,
-            "\nincomplete: %" PRId64 " of %" PRId64 " bytes (%" PRId64 " of "
-            "%" PRId64 " MB). The partial file was KEPT at %s — re-run `" HYP_MODEL_ASK_COMMAND
-            "` to resume.\n",
-            got < 0 ? 0 : got, (int64_t)HYP_MODEL_ASK_BYTES, (got < 0 ? 0 : got) / MODEL_MB,
-            (int64_t)HYP_MODEL_ASK_BYTES / MODEL_MB, part);
+    if (got != spec->bytes) {
+        (void)fprintf(stderr,
+                      "\nincomplete: %" PRId64 " of %" PRId64 " bytes (%" PRId64 " of "
+                      "%" PRId64 " MB). The partial file was KEPT at %s — re-run `%s` to "
+                      "resume.\n",
+                      got < 0 ? 0 : got, spec->bytes, (got < 0 ? 0 : got) / MODEL_MB,
+                      spec->bytes / MODEL_MB, part, spec->command);
         return HYP_MODEL_FETCH_INTERRUPTED;
     }
 
-    printf("Verifying SHA-256 (%" PRId64 " MB)... ", (int64_t)HYP_MODEL_ASK_BYTES / MODEL_MB);
+    printf("Verifying SHA-256 (%" PRId64 " MB)... ", spec->bytes / MODEL_MB);
     (void)fflush(stdout);
     char err[HYP_MODEL_MSG_MAX];
-    if (hyp_model_verify_file(part, HYP_MODEL_ASK_SHA256, true, err, sizeof(err)) != 0) {
+    if (hyp_model_verify_file(part, spec->sha256, true, err, sizeof(err)) != 0) {
         printf("REJECTED\n");
         (void)fprintf(stderr, "%s\n", err);
         (void)fprintf(stderr, "the file was DELETED rather than left where a later run would "
@@ -607,7 +682,8 @@ static hyp_model_fetch_result_t model_install(const char *part, const char *fina
 
 /* ── Verify-only ─────────────────────────────────────────────────── */
 
-static hyp_model_fetch_result_t model_verify_only(const hyp_model_probe_t *probe) {
+static hyp_model_fetch_result_t model_verify_only(const hyp_model_spec_t *spec,
+                                                  const hyp_model_probe_t *probe) {
     if (probe->state == HYP_MODEL_NO_CACHE_DIR) {
         (void)fprintf(stderr, "%s\n", hyp_model_fetch_result_text(HYP_MODEL_FETCH_NO_CACHE_DIR));
         return HYP_MODEL_FETCH_NO_CACHE_DIR;
@@ -621,36 +697,40 @@ static hyp_model_fetch_result_t model_verify_only(const hyp_model_probe_t *probe
     /* Do NOT delete on a --verify mismatch: the user asked a question, not for
      * a repair, and unlinking 639 MB they may want to inspect is not an answer
      * to it. The fetch path deletes because it owns the bytes it just wrote. */
-    if (hyp_model_verify_file(probe->path, HYP_MODEL_ASK_SHA256, false, err, sizeof(err)) != 0) {
+    if (hyp_model_verify_file(probe->path, spec->sha256, false, err, sizeof(err)) != 0) {
         (void)fprintf(stderr, "%s\n", err);
         (void)fprintf(stderr,
                       "this file is NOT the pinned artifact. Delete it (`rm %s`) and "
-                      "re-run `" HYP_MODEL_ASK_COMMAND "`.\n",
-                      probe->path);
+                      "re-run `%s`.\n",
+                      probe->path, spec->command);
         return HYP_MODEL_FETCH_DIGEST_MISMATCH;
     }
-    printf("ok — " HYP_MODEL_ASK_SHA256 "\n");
+    printf("ok — %s\n", spec->sha256);
     return HYP_MODEL_FETCH_OK;
 }
 
 /* ── The fetch ───────────────────────────────────────────────────── */
 
-hyp_model_fetch_result_t hyp_model_fetch(const hyp_model_fetch_opts_t *opts) {
+hyp_model_fetch_result_t hyp_model_fetch_spec(const hyp_model_spec_t *spec,
+                                              const hyp_model_fetch_opts_t *opts) {
     const hyp_model_fetch_opts_t defaults = {0};
     const hyp_model_fetch_opts_t *o = opts ? opts : &defaults;
+    if (!spec) {
+        spec = &MODEL_ASK;
+    }
 
     hyp_model_probe_t probe;
-    hyp_model_ask_probe(&probe);
+    hyp_model_probe_spec(spec, &probe);
 
     if (o->verify_only) {
-        return model_verify_only(&probe);
+        return model_verify_only(spec, &probe);
     }
     if (probe.state == HYP_MODEL_NO_CACHE_DIR) {
         (void)fprintf(stderr, "%s\n", hyp_model_fetch_result_text(HYP_MODEL_FETCH_NO_CACHE_DIR));
         return HYP_MODEL_FETCH_NO_CACHE_DIR;
     }
     if (probe.state == HYP_MODEL_PRESENT && !o->force) {
-        printf("Already present: %s (" HYP_MODEL_ASK_SIZE_TEXT ")\n", probe.path);
+        printf("Already present: %s (%s)\n", probe.path, spec->size_text);
         printf("%s\n", hyp_model_fetch_result_text(HYP_MODEL_FETCH_ALREADY_PRESENT));
         return HYP_MODEL_FETCH_ALREADY_PRESENT;
     }
@@ -670,11 +750,11 @@ hyp_model_fetch_result_t hyp_model_fetch(const hyp_model_fetch_opts_t *opts) {
      *   - a .part longer than the artifact cannot be resumed into either, since
      *     a byte range past the end of the object is a 416, not a download. */
     const bool clear_wrong_size = probe.state == HYP_MODEL_WRONG_SIZE;
-    const bool clear_oversized_part = probe.part_bytes > HYP_MODEL_ASK_BYTES;
+    const bool clear_oversized_part = probe.part_bytes > spec->bytes;
     int64_t resume_from = clear_oversized_part ? 0 : probe.part_bytes;
 
     int64_t free_mb = -1;
-    int64_t need = HYP_MODEL_ASK_BYTES - resume_from;
+    int64_t need = spec->bytes - resume_from;
     if (!model_space_ok(dir, need, &free_mb)) {
         (void)fprintf(stderr, "%s\n  need ~%" PRId64 " MB free in %s, have %" PRId64 " MB\n",
                       hyp_model_fetch_result_text(HYP_MODEL_FETCH_NO_SPACE),
@@ -686,7 +766,7 @@ hyp_model_fetch_result_t hyp_model_fetch(const hyp_model_fetch_opts_t *opts) {
         (void)fprintf(stderr,
                       "%s is %" PRId64 " bytes, not the pinned %" PRId64 " — it is not "
                       "the pinned artifact and will be replaced.\n",
-                      probe.path, probe.bytes, (int64_t)HYP_MODEL_ASK_BYTES);
+                      probe.path, probe.bytes, spec->bytes);
     }
     if (clear_oversized_part) {
         (void)fprintf(stderr,
@@ -695,7 +775,7 @@ hyp_model_fetch_result_t hyp_model_fetch(const hyp_model_fetch_opts_t *opts) {
                       probe.part_bytes);
     }
 
-    if (!model_confirm(o, probe.path, resume_from / MODEL_MB)) {
+    if (!model_confirm(spec, o, probe.path, resume_from / MODEL_MB)) {
         return HYP_MODEL_FETCH_DECLINED;
     }
 
@@ -707,7 +787,7 @@ hyp_model_fetch_result_t hyp_model_fetch(const hyp_model_fetch_opts_t *opts) {
         probe.part_bytes = 0;
     }
 
-    int rc = model_transfer(HYP_MODEL_ASK_URL, probe.part_path, probe.part_bytes, o->quiet);
+    int rc = model_transfer(spec->url, probe.part_path, probe.part_bytes, o->quiet);
     /* A server that will not resume, or a partial file the server disagrees
      * with, is recoverable exactly once and only by starting over. Doing it
      * automatically is right: the alternative is telling a user to delete a
@@ -715,7 +795,7 @@ hyp_model_fetch_result_t hyp_model_fetch(const hyp_model_fetch_opts_t *opts) {
     if (rc == MODEL_CURL_RANGE_ERROR || rc == MODEL_CURL_BAD_RESUME) {
         (void)fprintf(stderr, "\nthe partial download could not be resumed; restarting it.\n");
         (void)hyp_unlink(probe.part_path);
-        rc = model_transfer(HYP_MODEL_ASK_URL, probe.part_path, 0, o->quiet);
+        rc = model_transfer(spec->url, probe.part_path, 0, o->quiet);
     }
     if (rc != MODEL_CURL_OK) {
         int64_t now = hyp_file_size(probe.part_path);
@@ -725,29 +805,48 @@ hyp_model_fetch_result_t hyp_model_fetch(const hyp_model_fetch_opts_t *opts) {
                       hyp_model_fetch_result_text(result));
         if (progressed) {
             (void)fprintf(stderr, "%" PRId64 " of %" PRId64 " MB are on disk at %s.\n",
-                          now / MODEL_MB, (int64_t)HYP_MODEL_ASK_BYTES / MODEL_MB, probe.part_path);
+                          now / MODEL_MB, spec->bytes / MODEL_MB, probe.part_path);
         }
         return result;
     }
 
-    hyp_model_fetch_result_t result = model_install(probe.part_path, probe.path);
+    hyp_model_fetch_result_t result = model_install(spec, probe.part_path, probe.path);
     if (result == HYP_MODEL_FETCH_OK) {
         printf("\nInstalled: %s\n", probe.path);
-        printf("The `ask` lane can now encode questions. Delete it any time with `rm %s`.\n",
+        printf("%s Delete it any time with `rm %s`.\n",
+               spec == &MODEL_RERANK
+                   ? "`ask` will now rerank its top candidates with a cross-encoder."
+                   : "The `ask` lane can now encode questions.",
                probe.path);
     }
     return result;
 }
 
+hyp_model_fetch_result_t hyp_model_fetch(const hyp_model_fetch_opts_t *opts) {
+    return hyp_model_fetch_spec(&MODEL_ASK, opts);
+}
+
 /* ── The command ─────────────────────────────────────────────────── */
 
 static void model_fetch_help(void) {
-    printf("Usage: hyponoia fetch-model [--yes] [--force] [--verify] [--path]\n\n");
-    printf("Download the embedding model the `ask` lane needs.\n\n");
-    printf("  " HYP_MODEL_ASK_MODEL " (" HYP_MODEL_ASK_QUANT " GGUF), " HYP_MODEL_ASK_SIZE_TEXT
-           ", fetched once and kept in the\n");
-    printf("  Hyponoia cache. Nothing else downloads it: no index, no tool call and no\n");
-    printf("  daemon session ever fetches " HYP_MODEL_ASK_SIZE_TEXT " on your behalf.\n\n");
+    printf("Usage: hyponoia fetch-model [--rerank|--all] [--yes] [--force] [--verify] "
+           "[--path]\n\n");
+    printf("Download the models the `ask` lane uses. TWO models, fetched separately,\n");
+    printf("because they buy different things and one is optional:\n\n");
+    printf("  (default)  " HYP_MODEL_ASK_MODEL " (" HYP_MODEL_ASK_QUANT
+           " GGUF), " HYP_MODEL_ASK_SIZE_TEXT "\n");
+    printf("             REQUIRED. Without it `ask` cannot turn a question into a\n");
+    printf("             vector and answers available=false.\n\n");
+    printf("  --rerank   " HYP_MODEL_RERANK_MODEL " (" HYP_MODEL_RERANK_QUANT
+           " GGUF), " HYP_MODEL_RERANK_SIZE_TEXT "\n");
+    printf("             OPTIONAL. A cross-encoder that re-reads the top candidates\n");
+    printf("             together with the question. Without it `ask` still answers,\n");
+    printf("             with the dense ordering, and says so on every answer.\n\n");
+    printf("  --all      Both.\n\n");
+    printf("Fetched once and kept in the Hyponoia cache. Nothing else downloads them:\n");
+    printf("no index, no tool call and no daemon session ever fetches "
+           "" HYP_MODEL_ASK_SIZE_TEXT " on\n");
+    printf("your behalf.\n\n");
     printf("Options:\n");
     printf("  --yes, -y   Consent up front (required when stdin is not a terminal)\n");
     printf("  --force     Re-download even if the model is already present\n");
@@ -755,13 +854,15 @@ static void model_fetch_help(void) {
     printf("  --path      Print where the model lives (or would live) and exit\n");
     printf("  --quiet     No progress bar\n");
     printf("  --help      This text\n\n");
-    printf("Pinned revision " HYP_MODEL_ASK_REVISION "\n");
+    printf("Pinned revision " HYP_MODEL_ASK_REVISION "  (embedding)\n");
     printf("Pinned sha256   " HYP_MODEL_ASK_SHA256 "\n");
+    printf("Pinned revision " HYP_MODEL_RERANK_REVISION "  (reranker)\n");
+    printf("Pinned sha256   " HYP_MODEL_RERANK_SHA256 "\n");
 }
 
-static int model_print_path(void) {
+static int model_print_path(const hyp_model_spec_t *spec) {
     hyp_model_probe_t probe;
-    hyp_model_ask_probe(&probe);
+    hyp_model_probe_spec(spec, &probe);
     if (probe.state == HYP_MODEL_NO_CACHE_DIR) {
         (void)fprintf(stderr, "%s\n", hyp_model_fetch_result_text(HYP_MODEL_FETCH_NO_CACHE_DIR));
         return 1;
@@ -777,7 +878,7 @@ static int model_print_path(void) {
         break;
     case HYP_MODEL_WRONG_SIZE:
         printf("a file is there but is %" PRId64 " bytes, not the pinned %" PRId64 "\n",
-               probe.bytes, (int64_t)HYP_MODEL_ASK_BYTES);
+               probe.bytes, spec->bytes);
         break;
     case HYP_MODEL_ABSENT:
     case HYP_MODEL_NO_CACHE_DIR:
@@ -791,6 +892,8 @@ static int model_print_path(void) {
 int hyp_cmd_fetch_model(int argc, char **argv) {
     hyp_model_fetch_opts_t opts = {0};
     bool want_path = false;
+    bool want_rerank = false;
+    bool want_all = false;
 
     for (int i = 0; i < argc; i++) {
         const char *arg = argv[i];
@@ -808,6 +911,10 @@ int hyp_cmd_fetch_model(int argc, char **argv) {
             opts.quiet = true;
         } else if (strcmp(arg, "--path") == 0) {
             want_path = true;
+        } else if (strcmp(arg, "--rerank") == 0) {
+            want_rerank = true;
+        } else if (strcmp(arg, "--all") == 0) {
+            want_all = true;
         } else {
             /* An ignored unknown flag is how `install --help` once performed a
              * real installation (NEXT-STEPS.md §1). Not again, and especially
@@ -818,16 +925,46 @@ int hyp_cmd_fetch_model(int argc, char **argv) {
         }
     }
 
-    if (want_path) {
-        return model_print_path();
+    /* --all with --rerank is not an error, it is --all. Selecting neither is
+     * the embedding model, which is the one the lane cannot work without. */
+    const hyp_model_spec_t *chosen[2];
+    int n_chosen = 0;
+    if (want_all) {
+        chosen[n_chosen++] = &MODEL_ASK;
+        chosen[n_chosen++] = &MODEL_RERANK;
+    } else if (want_rerank) {
+        chosen[n_chosen++] = &MODEL_RERANK;
+    } else {
+        chosen[n_chosen++] = &MODEL_ASK;
     }
 
-    hyp_model_fetch_result_t result = hyp_model_fetch(&opts);
-    switch (result) {
-    case HYP_MODEL_FETCH_OK:
-    case HYP_MODEL_FETCH_ALREADY_PRESENT:
-        return 0;
-    default:
-        return 1;
+    if (want_path) {
+        int rc = 0;
+        for (int i = 0; i < n_chosen; i++) {
+            if (model_print_path(chosen[i]) != 0) {
+                rc = 1;
+            }
+        }
+        return rc;
     }
+
+    /* Each model is fetched, verified and reported on its own. A failure on the
+     * second does not undo the first — 639 MB that arrived intact stay on disk
+     * and the exit code says something went wrong. */
+    int rc = 0;
+    for (int i = 0; i < n_chosen; i++) {
+        if (n_chosen > 1) {
+            printf("%s[%d/%d] %s\n", i ? "\n" : "", i + 1, n_chosen, chosen[i]->model);
+        }
+        hyp_model_fetch_result_t result = hyp_model_fetch_spec(chosen[i], &opts);
+        switch (result) {
+        case HYP_MODEL_FETCH_OK:
+        case HYP_MODEL_FETCH_ALREADY_PRESENT:
+            break;
+        default:
+            rc = 1;
+            break;
+        }
+    }
+    return rc;
 }

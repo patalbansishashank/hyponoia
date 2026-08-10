@@ -502,6 +502,11 @@ TEST(ask_returns_ranked_spans_with_line_numbers) {
     ASSERT_NOT_NULL(strstr(inner, "truncation:"));
     /* No `cut` column when the index attests none were cut. */
     ASSERT_NULL(strstr(inner, " cut)"));
+    /* And so is what was left OUT of the population — the caller can see the
+     * rows that came back and not the ones that could not be there. This
+     * fixture is an in-graph table with no policy recorded, which is exactly
+     * what an index built before the policy existed looks like: `kept`. */
+    ASSERT_NOT_NULL(strstr(inner, "whole_file_spans: \"kept"));
 
     free(inner);
     free(resp);

@@ -154,6 +154,17 @@ typedef struct {
      * GPU-built index is searchable from a CPU query encoder and mixing the two
      * devices is safe. Mixing MODELS is not, and that is a separate field. */
     char *device_note;
+    /* "drop" or "keep" — what the build did with spans covering a whole file
+     * (NEXT-STEPS §2.2 lever 3). Recorded because the two policies index
+     * DIFFERENT POPULATIONS, and a recall number measured over one of them is
+     * not comparable to one measured over the other. An index written before
+     * the policy existed reads "keep", which is what it did.
+     *
+     * Not a reuse gate and deliberately not one: the excluded rows are keyed by
+     * qualified_name like every other, so flipping the policy and re-running
+     * converges by pruning and encoding, not by discarding vectors that are
+     * still correct. */
+    char *whole_file_spans;
     char *built_at;
     int64_t row_count;
     /* THE THIRD STATE. false means the encoder could not say whether anything
@@ -248,6 +259,13 @@ int hyp_ask_vectors_check_compatible(hyp_ask_vectors_t *v, const char *model_id,
 int hyp_ask_vectors_begin_build(hyp_ask_vectors_t *v, const char *model_id, int dim,
                                 int window_tokens, const char *graph_generation,
                                 const char *device_note, bool wipe_incompatible);
+
+/* Record which whole-file-span policy this build ran under: "drop" or "keep".
+ * Separate from begin_build rather than an argument to it because it is a
+ * DISCLOSURE, not a compatibility gate — mixing the two populations in one
+ * index is merely stale, where mixing two models is undetectably wrong, and
+ * only the second may refuse. */
+int hyp_ask_vectors_set_whole_file_spans(hyp_ask_vectors_t *v, const char *policy);
 
 /* Upsert `count` rows in one transaction. Rows are keyed on qualified_name. */
 int hyp_ask_vectors_put(hyp_ask_vectors_t *v, const hyp_ask_vec_row_t *rows, int count);
