@@ -35,8 +35,11 @@ jobs:
       - name: Install deps
         run: sudo apt-get update && sudo apt-get install -y zlib1g-dev ccache
 
-      # The repository's own pinned action and cache layout, so a warm entry
-      # written by cache-warm.yml can be read here.
+      # This workflow is now the only thing that warms the compiler cache. The
+      # nightly cache-warm matrix was removed: it ran five runners a day —
+      # including two macOS, billed at 10x on a private repository — and had
+      # been failing since the ask lane broke the build, so it spent minutes
+      # nightly to prove nothing.
       - name: Compiler cache (restore)
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
