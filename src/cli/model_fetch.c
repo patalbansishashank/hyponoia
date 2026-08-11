@@ -81,30 +81,8 @@ static const hyp_model_spec_t MODEL_ASK = {
                   "searched",
 };
 
-static const hyp_model_spec_t MODEL_RERANK = {
-    .model = HYP_MODEL_RERANK_MODEL,
-    .quant = HYP_MODEL_RERANK_QUANT,
-    .file = HYP_MODEL_RERANK_FILE,
-    .repo = HYP_MODEL_RERANK_REPO,
-    .revision = HYP_MODEL_RERANK_REVISION,
-    .sha256 = HYP_MODEL_RERANK_SHA256,
-    .bytes = HYP_MODEL_RERANK_BYTES,
-    .size_text = HYP_MODEL_RERANK_SIZE_TEXT,
-    .url = HYP_MODEL_RERANK_URL,
-    .command = HYP_MODEL_RERANK_COMMAND,
-    .what = "the ask lane's reranker weights",
-    /* Deliberately NOT "nothing was searched". Everything was searched; what is
-     * missing is the second opinion on the order it came back in. */
-    .without_it = "`ask` still answers — the results are the dense ordering, unreranked, and "
-                  "every answer says so",
-};
-
 const hyp_model_spec_t *hyp_model_ask_spec(void) {
     return &MODEL_ASK;
-}
-
-const hyp_model_spec_t *hyp_model_rerank_spec(void) {
-    return &MODEL_RERANK;
 }
 
 /* ── Paths ───────────────────────────────────────────────────────── */
@@ -145,10 +123,6 @@ const char *hyp_model_spec_path(const hyp_model_spec_t *spec, char *out, size_t 
 
 const char *hyp_model_ask_path(char *out, size_t out_sz) {
     return hyp_model_spec_path(&MODEL_ASK, out, out_sz);
-}
-
-const char *hyp_model_rerank_path(char *out, size_t out_sz) {
-    return hyp_model_spec_path(&MODEL_RERANK, out, out_sz);
 }
 
 static const char *model_part_path(const hyp_model_spec_t *spec, char *out, size_t out_sz) {
@@ -214,10 +188,6 @@ bool hyp_model_spec_present(const hyp_model_spec_t *spec) {
 
 bool hyp_model_ask_present(void) {
     return hyp_model_spec_present(&MODEL_ASK);
-}
-
-bool hyp_model_rerank_present(void) {
-    return hyp_model_spec_present(&MODEL_RERANK);
 }
 
 /* ── Digest ──────────────────────────────────────────────────────── */
@@ -813,10 +783,8 @@ hyp_model_fetch_result_t hyp_model_fetch_spec(const hyp_model_spec_t *spec,
     hyp_model_fetch_result_t result = model_install(spec, probe.part_path, probe.path);
     if (result == HYP_MODEL_FETCH_OK) {
         printf("\nInstalled: %s\n", probe.path);
-        printf("%s Delete it any time with `rm %s`.\n",
-               spec == &MODEL_RERANK
-                   ? "`ask` will now rerank its top candidates with a cross-encoder."
-                   : "The `ask` lane can now encode questions.",
+        printf("The `ask` lane can now encode questions. Delete it any time with "
+               "`rm %s`.\n",
                probe.path);
     }
     return result;
@@ -829,21 +797,13 @@ hyp_model_fetch_result_t hyp_model_fetch(const hyp_model_fetch_opts_t *opts) {
 /* ── The command ─────────────────────────────────────────────────── */
 
 static void model_fetch_help(void) {
-    printf("Usage: hyponoia fetch-model [--rerank|--all] [--yes] [--force] [--verify] "
-           "[--path]\n\n");
-    printf("Download the models the `ask` lane uses. TWO models, fetched separately,\n");
-    printf("because they buy different things and one is optional:\n\n");
-    printf("  (default)  " HYP_MODEL_ASK_MODEL " (" HYP_MODEL_ASK_QUANT
+    printf("Usage: hyponoia fetch-model [--yes] [--force] [--verify] [--path]\n\n");
+    printf("Download the model the `ask` lane uses:\n\n");
+    printf("  " HYP_MODEL_ASK_MODEL " (" HYP_MODEL_ASK_QUANT
            " GGUF), " HYP_MODEL_ASK_SIZE_TEXT "\n");
-    printf("             REQUIRED. Without it `ask` cannot turn a question into a\n");
-    printf("             vector and answers available=false.\n\n");
-    printf("  --rerank   " HYP_MODEL_RERANK_MODEL " (" HYP_MODEL_RERANK_QUANT
-           " GGUF), " HYP_MODEL_RERANK_SIZE_TEXT "\n");
-    printf("             OPTIONAL. A cross-encoder that re-reads the top candidates\n");
-    printf("             together with the question. Without it `ask` still answers,\n");
-    printf("             with the dense ordering, and says so on every answer.\n\n");
-    printf("  --all      Both.\n\n");
-    printf("Fetched once and kept in the Hyponoia cache. Nothing else downloads them:\n");
+    printf("  Without it `ask` cannot turn a question into a vector and answers\n");
+    printf("  available=false.\n\n");
+    printf("Fetched once and kept in the Hyponoia cache. Nothing else downloads it:\n");
     printf("no index, no tool call and no daemon session ever fetches "
            "" HYP_MODEL_ASK_SIZE_TEXT " on\n");
     printf("your behalf.\n\n");
@@ -854,10 +814,8 @@ static void model_fetch_help(void) {
     printf("  --path      Print where the model lives (or would live) and exit\n");
     printf("  --quiet     No progress bar\n");
     printf("  --help      This text\n\n");
-    printf("Pinned revision " HYP_MODEL_ASK_REVISION "  (embedding)\n");
+    printf("Pinned revision " HYP_MODEL_ASK_REVISION "\n");
     printf("Pinned sha256   " HYP_MODEL_ASK_SHA256 "\n");
-    printf("Pinned revision " HYP_MODEL_RERANK_REVISION "  (reranker)\n");
-    printf("Pinned sha256   " HYP_MODEL_RERANK_SHA256 "\n");
 }
 
 static int model_print_path(const hyp_model_spec_t *spec) {
@@ -892,8 +850,6 @@ static int model_print_path(const hyp_model_spec_t *spec) {
 int hyp_cmd_fetch_model(int argc, char **argv) {
     hyp_model_fetch_opts_t opts = {0};
     bool want_path = false;
-    bool want_rerank = false;
-    bool want_all = false;
 
     for (int i = 0; i < argc; i++) {
         const char *arg = argv[i];
@@ -911,10 +867,6 @@ int hyp_cmd_fetch_model(int argc, char **argv) {
             opts.quiet = true;
         } else if (strcmp(arg, "--path") == 0) {
             want_path = true;
-        } else if (strcmp(arg, "--rerank") == 0) {
-            want_rerank = true;
-        } else if (strcmp(arg, "--all") == 0) {
-            want_all = true;
         } else {
             /* An ignored unknown flag is how `install --help` once performed a
              * real installation (NEXT-STEPS.md §1). Not again, and especially
@@ -925,18 +877,9 @@ int hyp_cmd_fetch_model(int argc, char **argv) {
         }
     }
 
-    /* --all with --rerank is not an error, it is --all. Selecting neither is
-     * the embedding model, which is the one the lane cannot work without. */
-    const hyp_model_spec_t *chosen[2];
+    const hyp_model_spec_t *chosen[1];
     int n_chosen = 0;
-    if (want_all) {
-        chosen[n_chosen++] = &MODEL_ASK;
-        chosen[n_chosen++] = &MODEL_RERANK;
-    } else if (want_rerank) {
-        chosen[n_chosen++] = &MODEL_RERANK;
-    } else {
-        chosen[n_chosen++] = &MODEL_ASK;
-    }
+    chosen[n_chosen++] = &MODEL_ASK;
 
     if (want_path) {
         int rc = 0;
