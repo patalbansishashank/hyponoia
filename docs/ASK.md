@@ -44,11 +44,27 @@ and almost no MRR@10 (+0.003 against +0.206) — it moved answers into the top t
 without moving them to the top of it. The prefix does both, for free, which is
 why its wording is pinned by a test.
 
+**It earns that where the words don't match, and nowhere else.** Those 60
+questions were built to have a vocabulary gap — the developer says "deduplicate",
+the code says "ICF". Run the same test where the query is the function's *own*
+docstring and the prefix has nothing left to bridge:
+
+| public benchmark | queries | what the prefix does |
+|---|---|---|
+| our 60 C++ questions (vocabulary gap by construction) | 60 | **+0.117 recall@10** |
+| CoIR CosQA (Python) | 500 | +0.014 NDCG@10 |
+| CoIR CodeSearchNet Java (docstring → code) | 10,955 | −0.002 |
+| CoIR CodeSearchNet Go (docstring → code) | 8,122 | −0.003 |
+
+So the prefix is doing its work exactly where `ask` claims its value, and is
+inert where a plain text search would already have found the answer. That is the
+argument at the top of this page, measured.
+
 It is also a **contract with these particular weights**, not a free-standing
-improvement. The same prefix in front of the same questions *destroys* a model
-trained without one: `pplx-embed-v1-0.6b` falls from 0.567 to 0.333 recall@10
-when it is added. A different encoder is not a drop-in even when its dimensions
-match.
+improvement. The same prefix in front of a model trained without one *destroys*
+it: `pplx-embed-v1-0.6b` loses 19% on Java and 24% on Go when it is added, and
+falls from 0.567 to 0.333 recall@10 on the C++ questions. A different encoder is
+not a drop-in even when its dimensions match.
 
 ## It is opt-in, and says so
 
@@ -149,14 +165,22 @@ uncontaminated same-size alternative worth measuring:
 `perplexity-ai/pplx-embed-v1-0.6b` — same parameters, same dim 1024, same
 32,768 context, MIT, and a published CosQA well above ours.
 
-It was measured on both corpora and **declined**. It is the better model on
-CosQA (NDCG@10 41.26 against 38.11 in the same harness) and the worse one where
-it counts for us: on the C++ benchmark it scores MRR@10 0.335 against 0.379,
-putting 14 answers first where this model puts 18. Neither difference survives
-a per-query sign test (p = 0.36 and p = 0.77) — the two are, at 0.6B, the same
-model as far as either benchmark can resolve. Adopting it would cost a
-converter for an architecture llama.cpp does not register, a second pooling
-path, and the instruct prefix above.
+It was measured on four benchmarks and **declined**. On CosQA it really is
+better — NDCG@10 41.26 against 38.11 in the same harness, a genuine +8.3%
+(p = 0.030). But CosQA is 500 queries and every one is Python, so the gain was
+re-tested in two languages neither model's authors nor we chose:
+
+| | queries | language | pplx against this model |
+|---|---|---|---|
+| CoIR CosQA | 500 | Python | **+8.3%** (p = 0.030) |
+| CoIR CodeSearchNet Java | 10,955 | Java | −0.8% (p < 0.001) |
+| CoIR CodeSearchNet Go | 8,122 | Go | −0.6% (p < 0.001) |
+| our 60 questions | 60 | C++ | −12% MRR@10 (p = 0.25, underpowered) |
+
+The gain is a property of CosQA and Python, not of the weights: the two tests
+with twenty times CosQA's statistical power both go the other way. Adopting it
+would also cost a converter for an architecture llama.cpp does not register, a
+second pooling path, and the instruct prefix above.
 
 Anything larger loses outright: bge-code-v1 at 37.52, Qwen3-4B at 37.98 and
 Qwen3-8B at 38.04 are all below what we already score, and their dimensions
