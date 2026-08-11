@@ -38,6 +38,10 @@ DISAGREEMENT = {
     "zsh": "georgeharker/tree-sitter-zsh",
 }
 LIBS = {
+    # The `ask` lane's in-process encoder (NEXT-STEPS.md §2.1). MIT, "The ggml
+    # authors". Vendored as sources rather than a submodule for the same reason
+    # everything else here is: the build must not need a network.
+    "vendored/llama.cpp": ("ggml-org/llama.cpp", None),
     "vendored/mimalloc": ("microsoft/mimalloc", None),
     "vendored/tre": ("laurikari/tre", None),
     "vendored/xxhash": ("Cyan4973/xxHash", None),

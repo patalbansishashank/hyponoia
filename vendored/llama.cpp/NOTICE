@@ -1,0 +1,36 @@
+llama.cpp / ggml — vendored
+===========================
+
+Upstream: https://github.com/ggml-org/llama.cpp
+Licence:  MIT, "Copyright (c) 2023-2026 The ggml authors" — see LICENSE beside
+          this file, which is upstream's verbatim.
+
+What is here and why
+--------------------
+
+The `ask` lane encodes a whole declaration with a transformer, in-process
+(NEXT-STEPS.md §2.1). That needs an inference runtime, and this is it. Only the
+subset the encoder reaches is vendored and compiled: ggml's base and CPU
+backends, the llama library, and — when `HYP_ASK_GPU=vulkan` is passed — the
+Vulkan backend and its shader generator.
+
+Sources rather than a submodule, for the reason every other dependency here is
+vendored: the build must not need a network, and the exact bytes that were
+measured must be the exact bytes that ship.
+
+Building it
+-----------
+
+`HYP_ASK_GPU` selects the backend and defaults to **none** — the portable CPU
+path, which is the only one that builds on a machine without a Vulkan SDK.
+`HYP_ASK_GPU=vulkan` additionally requires a Vulkan-Headers tree, a
+SPIRV-Headers tree and `glslc`; point `VULKAN_INCLUDE` and `SPIRV_INCLUDE` at
+the first two. The GPU path only accelerates the opt-in `hyponoia embed` pass;
+nothing else in the product depends on it.
+
+Modifications
+-------------
+
+None to the vendored sources. The build integration lives in `Makefile.hyp`
+(see the "llama.cpp: the `ask` lane's in-process encoder" section) and the
+Hyponoia-side wrapper is `src/ask/ask_llama.c`, which is our code, not theirs.
