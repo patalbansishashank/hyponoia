@@ -46,6 +46,10 @@ outside this repository, under `engine/hyponoia/runs/`:
 - `COIR/` — the public CoIR benchmark: CosQA and CodeTransOcean-DL, scored with
   CoIR's own evaluator, plus the duplicate-text ceiling that reframes them.
 - `RERANK-COST/` — why the cross-encoder reranker was measured and then deleted.
+- `PPLX/` — what the instruct prefix is worth, and the same-size model that was
+  measured and declined.
+- `MODEL-SURVEY/` — 31 candidate encoders against the MTEB data, and what each
+  would cost.
 - `ASK/` — how the semantic lane was built, and the four levers tried on it.
 - `EMBED-SWAP/` — the Qwen3 static-table swap that was measured and rejected.
 

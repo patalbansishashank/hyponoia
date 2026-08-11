@@ -30,6 +30,26 @@ code with no boolean flag between them, because getting it backwards still
 produces a plausible ranking and there is no downstream signal that anything
 went wrong.
 
+**What the prefix is worth**, measured on the 60-question C++ benchmark by
+encoding the same questions with and without it against the same documents:
+
+| | median rank of the answer | recall@10 | MRR@10 |
+|---|---|---|---|
+| question encoded bare | 24.5 | 0.433 | 0.173 |
+| **question behind the prefix** | **6.0** | **0.550** | **0.379** |
+
+The prefix wins 50 of 60 questions and loses 5. For comparison, the reranker
+that used to be here bought more recall@10 (+0.183 against the prefix's +0.117)
+and almost no MRR@10 (+0.003 against +0.206) — it moved answers into the top ten
+without moving them to the top of it. The prefix does both, for free, which is
+why its wording is pinned by a test.
+
+It is also a **contract with these particular weights**, not a free-standing
+improvement. The same prefix in front of the same questions *destroys* a model
+trained without one: `pplx-embed-v1-0.6b` falls from 0.567 to 0.333 recall@10
+when it is added. A different encoder is not a drop-in even when its dimensions
+match.
+
 ## It is opt-in, and says so
 
 The vectors come from a second pass that you run deliberately:
@@ -122,9 +142,31 @@ The GPU path is opt-in at build time (`make HYP_ASK_GPU=vulkan`) and needs a
 Vulkan SDK. The default build is CPU-only and portable. Only the `embed` pass
 is affected; `ask` itself is unchanged either way.
 
+## Why this model and not another
+
+A survey of 31 candidates against the MTEB data found exactly one
+uncontaminated same-size alternative worth measuring:
+`perplexity-ai/pplx-embed-v1-0.6b` — same parameters, same dim 1024, same
+32,768 context, MIT, and a published CosQA well above ours.
+
+It was measured on both corpora and **declined**. It is the better model on
+CosQA (NDCG@10 41.26 against 38.11 in the same harness) and the worse one where
+it counts for us: on the C++ benchmark it scores MRR@10 0.335 against 0.379,
+putting 14 answers first where this model puts 18. Neither difference survives
+a per-query sign test (p = 0.36 and p = 0.77) — the two are, at 0.6B, the same
+model as far as either benchmark can resolve. Adopting it would cost a
+converter for an architecture llama.cpp does not register, a second pooling
+path, and the instruct prefix above.
+
+Anything larger loses outright: bge-code-v1 at 37.52, Qwen3-4B at 37.98 and
+Qwen3-8B at 38.04 are all below what we already score, and their dimensions
+scale the index 1.5× to 4×.
+
 ## Full records
 
 Every number here is reproducible from the run records:
 `engine/hyponoia/runs/COIR/` (the public benchmark),
-`engine/hyponoia/runs/RERANK-COST/` (the reranker's removal), and
+`engine/hyponoia/runs/RERANK-COST/` (the reranker's removal),
+`engine/hyponoia/runs/PPLX/` (the prefix measurement and the declined swap),
+`engine/hyponoia/runs/MODEL-SURVEY/` (the 31 candidates), and
 `engine/hyponoia/runs/ASK/` (how the lane was built).
