@@ -33,15 +33,23 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Install deps
-        run: sudo apt-get update && sudo apt-get install -y zlib1g-dev
+        run: sudo apt-get update && sudo apt-get install -y zlib1g-dev ccache
 
-      - name: ccache
-        uses: hendrikmuhs/ccache-action@63069e3931dedbf8d63e2c4b1b0121656d9e1dad # v1.2.18
+      # The repository's own pinned action and cache layout, so a warm entry
+      # written by cache-warm.yml can be read here.
+      - name: Compiler cache (restore)
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          key: ci-${{ runner.os }}
-          max-size: 1500M
+          path: ${{ github.workspace }}/.ccache
+          key: ci-ccache-${{ runner.os }}-${{ github.sha }}
+          restore-keys: |
+            ci-ccache-${{ runner.os }}-
+            ccache-${{ runner.os }}-
 
       - name: Build the product binary
+        env:
+          CCACHE_DIR: ${{ github.workspace }}/.ccache
+          CCACHE_MAXSIZE: 1500M
         run: |
           source scripts/env.sh
           make -j"$(nproc)" -f Makefile.hyp hyp
@@ -57,7 +65,17 @@ jobs:
           ./build/c/hyponoia fetch-model --path
 
       - name: Build and run the fast suite
+        env:
+          CCACHE_DIR: ${{ github.workspace }}/.ccache
+          CCACHE_MAXSIZE: 1500M
         run: |
           source scripts/env.sh
           make -j"$(nproc)" -f Makefile.hyp test-foundation
           ./build/c/test-foundation
+
+      - name: Compiler cache (save)
+        if: always() && github.event_name == 'push'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ github.workspace }}/.ccache
+          key: ci-ccache-${{ runner.os }}-${{ github.sha }}
