@@ -1,0 +1,63 @@
+# CI — the gate that actually runs on every change to main.
+#
+# There was no such gate before. `dry-run.yml` is workflow_dispatch only and had
+# never fired once; `pr.yml` runs on pull requests, and this repository pushes
+# to main directly. So the README's CI badge pointed at a workflow with no runs
+# and was permanently grey. This is the workflow the badge names, and it fails
+# when the build or the fast suite fails.
+#
+# Linux only, and deliberately: it is the platform whose green we can keep
+# honest. Release artifacts for macOS and Windows are built by release.yml,
+# which is where a cross-platform claim belongs.
+name: CI
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+    branches: [main, dev]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install deps
+        run: sudo apt-get update && sudo apt-get install -y zlib1g-dev
+
+      - name: ccache
+        uses: hendrikmuhs/ccache-action@63069e3931dedbf8d63e2c4b1b0121656d9e1dad # v1.2.18
+        with:
+          key: ci-${{ runner.os }}
+          max-size: 1500M
+
+      - name: Build the product binary
+        run: |
+          source scripts/env.sh
+          make -j"$(nproc)" -f Makefile.hyp hyp
+
+      # The `ask` lane's encoder is compiled in but never loaded here: no model
+      # is on the runner, and the tool reports available=false rather than
+      # failing. That is the behaviour worth having in CI — the binary must
+      # build and start on a machine with no weights.
+      - name: Version and help must work with no model present
+        run: |
+          ./build/c/hyponoia --version
+          ./build/c/hyponoia --help > /dev/null
+          ./build/c/hyponoia fetch-model --path
+
+      - name: Build and run the fast suite
+        run: |
+          source scripts/env.sh
+          make -j"$(nproc)" -f Makefile.hyp test-foundation
+          ./build/c/test-foundation

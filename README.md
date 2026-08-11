@@ -2,16 +2,13 @@
 
 [![GitHub Release](https://img.shields.io/github/v/release/patalbansishashank/hyponoia?style=flat&color=blue)](https://github.com/patalbansishashank/hyponoia/releases/latest)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
-[![CI](https://img.shields.io/github/actions/workflow/status/patalbansishashank/hyponoia/dry-run.yml?label=CI)](https://github.com/patalbansishashank/hyponoia/actions/workflows/dry-run.yml)
-[![Tests](https://img.shields.io/badge/tests-6768_passing-brightgreen)](https://github.com/patalbansishashank/hyponoia)
+[![CI](https://img.shields.io/github/actions/workflow/status/patalbansishashank/hyponoia/ci.yml?branch=main&label=CI)](https://github.com/patalbansishashank/hyponoia/actions/workflows/ci.yml)
+[![Tests](https://img.shields.io/badge/tests-6610_passing-brightgreen)](https://github.com/patalbansishashank/hyponoia)
 [![Languages](https://img.shields.io/badge/languages-158-orange)](https://github.com/patalbansishashank/hyponoia)
 [![Hybrid LSP](https://img.shields.io/badge/Hybrid_LSP-10_languages-blue)](#hybrid-lsp)
 [![Agents](https://img.shields.io/badge/agent_surfaces-43-purple)](https://github.com/patalbansishashank/hyponoia)
-[![Pure C](https://img.shields.io/badge/pure_C-no_language_runtime-blue)](https://github.com/patalbansishashank/hyponoia)
+[![No runtime](https://img.shields.io/badge/single_binary-no_language_runtime-blue)](https://github.com/patalbansishashank/hyponoia)
 [![Platform](https://img.shields.io/badge/macOS_%7C_Linux_%7C_Windows-supported-lightgrey)](https://github.com/patalbansishashank/hyponoia/releases/latest)
-[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/patalbansishashank/hyponoia/badge)](https://scorecard.dev/viewer/?uri=github.com/patalbansishashank/hyponoia)
-[![SLSA 3](https://slsa.dev/images/gh-badge-level3.svg)](https://slsa.dev)
-[![VirusTotal](https://img.shields.io/badge/VirusTotal-scanned_every_release-brightgreen?logo=virustotal)](https://github.com/patalbansishashank/hyponoia/releases/latest)
 
 **A code context engine for AI coding agents.** Hyponoia indexes your repositories into a persistent knowledge graph and answers structural questions against it in under a millisecond — so an agent asks where the code is instead of reading around until it finds out. It holds codebases far larger than any context window, queries across many repositories at once, and hands back the exact spans, with line numbers, rather than whole files.
 

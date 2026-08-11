@@ -162,8 +162,19 @@ endif
 # Which device the `ask` lane's in-process encoder can use. Declared here
 # because STATIC=1 below has to be able to refuse it; the full argument, the
 # measured costs and the source lists are in the llama.cpp section further
-# down. `vulkan` (default) or `none`.
-HYP_ASK_GPU ?= vulkan
+# down. `none` (default) or `vulkan`.
+#
+# THE DEFAULT IS `none` BECAUSE `vulkan` IS NOT PORTABLE. It needs a
+# Vulkan-Headers tree, a SPIRV-Headers tree and `glslc` on the build machine —
+# three build-time dependencies that stock CI runners and most contributors do
+# not have, and whose default locations below are one developer's cache
+# directory. A default that only builds on one machine is not a default.
+#
+# What `none` costs: only the OPT-IN `hyponoia embed` pass, which is ~15x
+# slower on the CPU. Ordinary indexing, every MCP tool and `ask` itself are
+# unaffected — `ask` still answers, it just took longer to build its index.
+# Opt in with `make HYP_ASK_GPU=vulkan` once the headers are in place.
+HYP_ASK_GPU ?= none
 HYP_ASK_GPU_VULKAN := $(if $(filter vulkan,$(HYP_ASK_GPU)),1,0)
 ifeq (,$(filter vulkan none,$(HYP_ASK_GPU)))
 $(error HYP_ASK_GPU must be `vulkan` or `none`, not `$(HYP_ASK_GPU)`. There is \
