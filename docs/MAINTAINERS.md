@@ -11,9 +11,9 @@ quorum, no delegation, and no escalation path, because with one person those
 would be fiction. `.github/CODEOWNERS` is the binding version of this file;
 this document explains it.
 
-Security reports go through [SECURITY.md](SECURITY.md), not the issue tracker.
+Security reports go through [SECURITY.md](../.github/SECURITY.md), not the issue tracker.
 Conduct reports go to the address above — see
-[CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md).
+[CODE_OF_CONDUCT.md](../.github/CODE_OF_CONDUCT.md).
 
 ## Release discipline
 

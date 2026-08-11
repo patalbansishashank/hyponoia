@@ -19,6 +19,8 @@
 | [Agent surfaces](AGENTS.md) | The 43-client matrix, what `install` writes, and where it deliberately does nothing. |
 | [Running Hyponoia](OPERATIONS.md) | Ignore rules, configuration, environment variables, persistence, troubleshooting. |
 | [Configuration files](CONFIGURATION.md) | The full config-file reference. |
+| [Third-party licences](THIRD_PARTY.md) | Every vendored dependency and its licence. |
+| [Maintainers](MAINTAINERS.md) | Who owns what, and how decisions are made. |
 | [`.hypignore`](hypignore.md) | Syntax, precedence across ignore layers, negation semantics. |
 
 ## Measurements and plans
@@ -33,7 +35,7 @@
 
 | | |
 |---|---|
-| [Security policy](../SECURITY.md) | How to report an issue. |
+| [Security policy](../.github/SECURITY.md) | How to report an issue. |
 | [Disclosure process](SECURITY-DISCLOSURE.md) | What happens after you report one. |
 
 ## Where the numbers come from

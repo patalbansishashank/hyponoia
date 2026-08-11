@@ -64,6 +64,11 @@ jobs:
           ./build/c/hyponoia --help > /dev/null
           ./build/c/hyponoia fetch-model --path
 
+      # Documented counts must match the binary. The tool count had drifted to
+      # four different values across seven files before this existed.
+      - name: Documentation claims match the binary
+        run: scripts/check-docs-claims.sh
+
       - name: Build and run the fast suite
         env:
           CCACHE_DIR: ${{ github.workspace }}/.ccache

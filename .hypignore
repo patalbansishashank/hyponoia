@@ -1,0 +1,7 @@
+# Hyponoia indexes itself (NEXT-STEPS.md §0). Exclude third-party and generated
+# trees: vendored/ alone carries 158 tree-sitter grammars including a 99 MB
+# parser.c, which is not our code and not what we ask questions about.
+vendored/
+internal/hyp/vendored/
+build/
+.git/

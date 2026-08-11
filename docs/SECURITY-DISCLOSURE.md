@@ -5,7 +5,7 @@ Hyponoia — what happens after you report a vulnerability, what you
 can expect from us, and how disclosure and credit work.
 
 For **how to report** a vulnerability and **what is in scope**, see
-[`SECURITY.md`](../SECURITY.md). This document covers the process *after* a
+[`SECURITY.md`](../.github/SECURITY.md). This document covers the process *after* a
 report arrives.
 
 > **This is a solo, volunteer-maintained project.** Everything below is handled
@@ -79,7 +79,7 @@ will work with you, not against you.
 
 ## What we ask of you
 
-- Report **privately** (see [`SECURITY.md`](../SECURITY.md)) — not as a public
+- Report **privately** (see [`SECURITY.md`](../.github/SECURITY.md)) — not as a public
   issue, PR, or social-media post.
 - Give us **reasonable time** to fix before any public write-up.
 - Provide enough detail to **reproduce** (affected version, steps, impact).

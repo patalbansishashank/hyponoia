@@ -37,7 +37,7 @@ done < <(git rev-list "$RANGE")
 
 if [ "$FAIL" -ne 0 ]; then
     echo "=== DCO CHECK FAILED — every commit must be signed off (git commit -s) ==="
-    echo "=== See the DCO file and CONTRIBUTING.md ==="
+    echo "=== See the DCO file and .github/CONTRIBUTING.md ==="
     exit 1
 fi
 echo "OK: $CHECKED commit(s) in $RANGE carry a valid Signed-off-by"

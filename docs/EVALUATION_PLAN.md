@@ -31,7 +31,7 @@ source code.
 
 | Old (v8) | New |
 |----------|-----|
-| 66 languages | **159 languages** (full `HYP_LANG_*` registry) |
+| 66 languages | **158 languages** (full `HYP_LANG_*` registry) |
 | 5 language *groups* share one 12-question set | **5 bespoke questions per language**, each its own subchapter (§12) |
 | Versioned result dirs `v(x)/` | **One** `eval-results/` tree, no versions |
 | MCP answered by a budget-capped sub-agent | **Hybrid**: main session orchestrates, graph-only sub-agents answer (§4) |
@@ -40,7 +40,7 @@ source code.
 
 ---
 
-## 2. Scope: the 159 languages
+## 2. Scope: the 158 languages
 
 The supported set is the `HYPLanguage` enum in `internal/hyp/hyp.h` (`HYP_LANG_GO=0` …
 `HYP_LANG_CFML`, before `HYP_LANG_COUNT`). The canonical short name used throughout this plan is the
@@ -744,7 +744,7 @@ run-over-run (git diff of `SUMMARY.md`).
 
 ## 12. Per-language chapter template
 
-Every one of the 159 languages gets its **own subchapter** in §14 with this exact structure. The 9
+Every one of the 158 languages gets its **own subchapter** in §14 with this exact structure. The 9
 LSP languages additionally include the §11 deep-dive block.
 
 ```markdown
@@ -1036,7 +1036,7 @@ The plan specifies "one judge model, fixed prompt" (§9.4) but does not name the
 ##### Alternatives Worth Considering
 
 **Alternative A: Tiered evaluation — deep on 9 LSP + stratified sample of Group E (not all 159).**
-795 hand-written questions across 159 languages is an enormous authoring investment. Most of the actionable signal lives in: (a) the 9 LSP languages where the graph has type-aware edges, (b) the ~20 popular languages where regressions would be noticed by users, and (c) a representative handful of Group E config/data languages. The other ~110 niche languages (fennel, squirrel, smali, beancount, pine, hyprlang…) will score similarly to each other and to a naive Grep baseline because the graph cannot index them structurally beyond token counting. A stratified sample of 30–40 languages would likely yield the same tier distribution with 1/4 the cost and would be rerunnable on demand. Trade-off: loses the "covers all 159" marketing claim. But a poorly-executed 159-language sweep is weaker evidence than a rigorous 40-language one.
+795 hand-written questions across 158 languages is an enormous authoring investment. Most of the actionable signal lives in: (a) the 9 LSP languages where the graph has type-aware edges, (b) the ~20 popular languages where regressions would be noticed by users, and (c) a representative handful of Group E config/data languages. The other ~110 niche languages (fennel, squirrel, smali, beancount, pine, hyprlang…) will score similarly to each other and to a naive Grep baseline because the graph cannot index them structurally beyond token counting. A stratified sample of 30–40 languages would likely yield the same tier distribution with 1/4 the cost and would be rerunnable on demand. Trade-off: loses the "covers all 159" marketing claim. But a poorly-executed 159-language sweep is weaker evidence than a rigorous 40-language one.
 
 **Alternative B: Symmetric question authoring — half written from grep discovery, half from graph discovery.**
 To remove the symbol-discovery bias identified in Assumption 1, split the 5 questions: questions for D1 and D3 (concrete retrieval) are written by a Grep-first author who finds symbols by text search without touching the graph, and questions for D2 and D4 are written by a graph author. D5 is intentionally graph-favoring (semantic/similarity) — acknowledge that openly rather than presenting it as neutral. Trade-off: doubles authoring complexity per language but removes the most serious validity threat.
@@ -1100,7 +1100,7 @@ If the Graph agent returns zero results on D2 (zero-result rate flagged in §5),
 2. **Judge model identity (§9.4):** What model will be the judge? If it is any Claude model, the same-family self-preference effect applies to every Claude-written Graph and Explorer answer. Have you considered a cross-family judge rotation, or at minimum disclosing the judge model in the report so readers can calibrate?
 3. **CROSS edge formation in OTel sub-dirs (§11.1, §15):** Before writing 157 more language chapters, have you actually run `index_repository(mode="cross-repo-intelligence")` on two OTel service sub-dirs and confirmed that CROSS_HTTP_CALLS edges form? This is the load-bearing question for the entire deep-dive block. What is the fallback plan if they don't?
 4. **Session continuity (§13):** What happens when the main session context window fills up or hits the usage limit at language 94? Is there a described checkpoint format — e.g., a manifest of completed languages that `clone-bench-repos.sh` can consult to skip already-done languages — or does the whole run restart from zero?
-5. **D5 cross-group comparability (§3, §8):** You aggregate D5 scores across all 159 languages. But D5 for Go means `semantic_query=["dispatch","route"]` surfacing functions from a vector index. D5 for gitignore means "naming-pattern / config↔code links." These are different operations using different graph tools. Do you actually intend the cross-language D5 rollup in §10.1 to be meaningful, or is it cosmetic?
+5. **D5 cross-group comparability (§3, §8):** You aggregate D5 scores across all 158 languages. But D5 for Go means `semantic_query=["dispatch","route"]` surfacing functions from a vector index. D5 for gitignore means "naming-pattern / config↔code links." These are different operations using different graph tools. Do you actually intend the cross-language D5 rollup in §10.1 to be meaningful, or is it cosmetic?
 6. **S2 ground truth (§11.2):** "3–5 known near-duplicate function pairs" — how will you construct this set for each of the 9 LSP languages? Will you use the simhash output the indexer already produces, or is this a manual read? A 3-pair sample with no inter-rater agreement cannot support a recall claim. What is the minimum ground-truth size you consider credible?
 7. **Token exclusion policy (§5):** If a developer is deciding whether to adopt Hyponoia, they pay the full session cost, including agent spawn, orientation, and formatting. Why should the reported "Token Ratio" exclude the Explorer's orientation cost? Would you consider reporting both the narrow metric and the full-session metric?
 8. **The 159-vs-tiered question (over-engineering check):** The plan acknowledges ~30 ⚠️ repos need validation before questions can be written. For languages like `regex` (fixture corpus), `csv` (data, not code), `dotenv` (a handful of fixture files), `sshconfig` (few files), what meaningful D1–D5 question set can be written? Is the signal from these languages worth the cost of the infrastructure to collect it?
@@ -1113,7 +1113,7 @@ The evaluation's most serious flaw is not operational — it is that the bespoke
 
 - **Fork A — scope: RESOLVED → full 159, specified in this document; execution is downstream.**
   This document is a **specification to be peer-reviewed before any run**. It therefore enumerates all
-  159 languages with complete chapters (§14). The challenger's pilot recommendation is preserved as
+  158 languages with complete chapters (§14). The challenger's pilot recommendation is preserved as
   an **execution-time** safeguard: §15 Gate 0 requires a pilot (9 LSP + ~10 representative others) to
   validate the methodology *before* the downstream team commits to the full sweep. So: the *plan*
   covers 159; the *first run* should still be a pilot.

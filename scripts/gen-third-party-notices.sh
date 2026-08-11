@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # Generates the third-party notices bundle shipped inside every release
-# archive: THIRD_PARTY.md + the grammar provenance manifest + the verbatim
+# archive: docs/THIRD_PARTY.md + the grammar provenance manifest + the verbatim
 # license/notice text of every vendored component (both vendored trees).
 # Deterministic output (sorted file order).
 #
@@ -17,14 +17,14 @@ mkdir -p "$(dirname "$OUT")"
     echo "# Third-Party Notices"
     echo
     echo "This file accompanies the hyponoia binary distribution."
-    echo "It aggregates THIRD_PARTY.md, the vendored grammar provenance"
+    echo "It aggregates docs/THIRD_PARTY.md, the vendored grammar provenance"
     echo "manifest, and the verbatim license / notice texts of every vendored"
     echo "component, satisfying binary-redistribution notice requirements"
     echo "(MIT, BSD, Apache-2.0)."
     echo
     echo "---"
     echo
-    cat "$ROOT/THIRD_PARTY.md"
+    cat "$ROOT/docs/THIRD_PARTY.md"
     echo
     echo "---"
     echo

@@ -135,7 +135,7 @@ Hyponoia makes **no network request of its own accord**; the only one it will
 ever make is the model download you ask for by running `fetch-model`, from a
 pinned revision verified against a SHA-256 compiled into the binary.
 
-Found a security issue? See [SECURITY.md](SECURITY.md).
+Found a security issue? See [SECURITY.md](.github/SECURITY.md).
 
 ## License
 
