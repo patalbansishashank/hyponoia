@@ -162,8 +162,19 @@ endif
 # Which device the `ask` lane's in-process encoder can use. Declared here
 # because STATIC=1 below has to be able to refuse it; the full argument, the
 # measured costs and the source lists are in the llama.cpp section further
-# down. `vulkan` (default) or `none`.
-HYP_ASK_GPU ?= vulkan
+# down. `none` (default) or `vulkan`.
+#
+# THE DEFAULT IS `none` BECAUSE `vulkan` IS NOT PORTABLE. It needs a
+# Vulkan-Headers tree, a SPIRV-Headers tree and `glslc` on the build machine —
+# three build-time dependencies that stock CI runners and most contributors do
+# not have, and whose default locations below are one developer's cache
+# directory. A default that only builds on one machine is not a default.
+#
+# What `none` costs: only the OPT-IN `hyponoia embed` pass, which is ~15x
+# slower on the CPU. Ordinary indexing, every MCP tool and `ask` itself are
+# unaffected — `ask` still answers, it just took longer to build its index.
+# Opt in with `make HYP_ASK_GPU=vulkan` once the headers are in place.
+HYP_ASK_GPU ?= none
 HYP_ASK_GPU_VULKAN := $(if $(filter vulkan,$(HYP_ASK_GPU)),1,0)
 ifeq (,$(filter vulkan none,$(HYP_ASK_GPU)))
 $(error HYP_ASK_GPU must be `vulkan` or `none`, not `$(HYP_ASK_GPU)`. There is \
@@ -395,7 +406,7 @@ SEMANTIC_SRCS = src/semantic/semantic.c src/semantic/ast_profile.c src/semantic/
 # module and its own subcommand — nothing here runs during index_repository, so
 # the structural index keeps exactly the speed it has.
 ASK_SRCS = src/ask/ask_batch.c src/ask/ask_encoder.c src/ask/ask_vectors.c \
-           src/ask/ask_embed.c src/ask/ask_cmd.c src/ask/ask_llama.c src/ask/ask_rerank.c
+           src/ask/ask_embed.c src/ask/ask_cmd.c src/ask/ask_llama.c
 
 # nomic-embed-code pretrained vectors (assembler blob)
 UNIXCODER_BLOB_SRC = vendored/nomic/code_vectors_blob.S
@@ -823,8 +834,8 @@ TEST_SEMANTIC_SRCS = tests/test_semantic.c
 # Kept OUT of TEST_FOUNDATION_SUITE_SRCS on purpose: the foundation target is
 # the seconds-long loop for src/foundation and links no store.
 TEST_ASK_SRCS = tests/test_ask.c tests/test_ask_batch.c \
-                tests/test_ask_vectors.c tests/test_ask_embed.c \
-                tests/test_ask_rerank.c
+                tests/test_ask_vectors.c tests/test_ask_embed.c
+
 TEST_AST_PROFILE_SRCS = tests/test_ast_profile.c
 TEST_SLAB_ALLOC_SRCS = tests/test_slab_alloc.c
 
