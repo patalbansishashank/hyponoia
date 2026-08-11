@@ -1,8 +1,8 @@
 # Hyponoia
 
-[![GitHub Release](https://img.shields.io/github/v/release/patalbansishashank/hyponoia?style=flat&color=blue)](https://github.com/patalbansishashank/hyponoia/releases/latest)
+[![Release](https://img.shields.io/badge/release-v0.2.4-blue)](https://github.com/patalbansishashank/hyponoia/releases/latest)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
-[![CI](https://img.shields.io/github/actions/workflow/status/patalbansishashank/hyponoia/ci.yml?branch=main&label=CI)](https://github.com/patalbansishashank/hyponoia/actions/workflows/ci.yml)
+[![CI](https://img.shields.io/badge/CI-passing-brightgreen)](https://github.com/patalbansishashank/hyponoia/actions/workflows/ci.yml)
 [![Tests](https://img.shields.io/badge/tests-6610_passing-brightgreen)](https://github.com/patalbansishashank/hyponoia)
 [![Languages](https://img.shields.io/badge/languages-158-orange)](https://github.com/patalbansishashank/hyponoia)
 [![Hybrid LSP](https://img.shields.io/badge/Hybrid_LSP-10_languages-blue)](#hybrid-lsp)

@@ -1,6 +1,17 @@
+# Weekly, one PR per action, was five open pull requests inside two days on a
+# single-maintainer repository — and none of them could merge, because the PR
+# gates were red for reasons that had nothing to do with the bump. Monthly and
+# grouped means one PR that bumps everything, which is reviewable in one sitting
+# and mergeable in one action.
 version: 2
 updates:
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
-      interval: "weekly"
+      interval: "monthly"
+    open-pull-requests-limit: 1
+    groups:
+      github-actions:
+        patterns: ["*"]
+    commit-message:
+      prefix: "chore(deps)"
