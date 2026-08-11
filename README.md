@@ -129,6 +129,11 @@ Agent:    explains the call chain
 
 ## Security
 
+Static analysis and supply-chain scanning (CodeQL, OpenSSF Scorecard) are not
+wired up here: both need a public repository or a paid plan, so they were
+removed rather than left failing. They come back when the repository goes
+public.
+
 This tool reads your codebase and writes to your agent's configuration files —
 that is what it is for. All processing is local and nothing is sent anywhere.
 Hyponoia makes **no network request of its own accord**; the only one it will

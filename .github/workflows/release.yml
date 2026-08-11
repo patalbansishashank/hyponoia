@@ -1,6 +1,6 @@
 # Release pipeline: lint → test → build → smoke/soak → draft → verify → publish
 #
-# Security (security-static + codeql-gate) starts immediately and runs in
+# Security (security-static + license-gate) starts immediately and runs in
 # parallel with lint/test/build/smoke/soak. It only blocks the final verify
 # step — everything else proceeds independently.
 name: Release

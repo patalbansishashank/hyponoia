@@ -2,7 +2,7 @@
 # Each step can be skipped for faster iteration.
 #
 # Pipeline:  lint → test → build → smoke/soak → virustotal   (sequential chain)
-# Security:  security-static + codeql-gate                    (independent island)
+# Security:  security-static + license-gate                   (independent island)
 #
 # Security does NOT block lint/test/build/smoke/soak. All jobs must pass
 # for the overall workflow to be green.
