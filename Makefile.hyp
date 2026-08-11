@@ -395,7 +395,7 @@ SEMANTIC_SRCS = src/semantic/semantic.c src/semantic/ast_profile.c src/semantic/
 # module and its own subcommand — nothing here runs during index_repository, so
 # the structural index keeps exactly the speed it has.
 ASK_SRCS = src/ask/ask_batch.c src/ask/ask_encoder.c src/ask/ask_vectors.c \
-           src/ask/ask_embed.c src/ask/ask_cmd.c src/ask/ask_llama.c src/ask/ask_rerank.c
+           src/ask/ask_embed.c src/ask/ask_cmd.c src/ask/ask_llama.c
 
 # nomic-embed-code pretrained vectors (assembler blob)
 UNIXCODER_BLOB_SRC = vendored/nomic/code_vectors_blob.S
@@ -823,8 +823,8 @@ TEST_SEMANTIC_SRCS = tests/test_semantic.c
 # Kept OUT of TEST_FOUNDATION_SUITE_SRCS on purpose: the foundation target is
 # the seconds-long loop for src/foundation and links no store.
 TEST_ASK_SRCS = tests/test_ask.c tests/test_ask_batch.c \
-                tests/test_ask_vectors.c tests/test_ask_embed.c \
-                tests/test_ask_rerank.c
+                tests/test_ask_vectors.c tests/test_ask_embed.c
+
 TEST_AST_PROFILE_SRCS = tests/test_ast_profile.c
 TEST_SLAB_ALLOC_SRCS = tests/test_slab_alloc.c
 

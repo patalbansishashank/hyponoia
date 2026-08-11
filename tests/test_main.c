@@ -732,7 +732,6 @@ extern void suite_ask(void);
 extern void suite_ask_batch(void);
 extern void suite_ask_vectors(void);
 extern void suite_ask_embed(void);
-extern void suite_ask_rerank(void);
 extern void suite_ast_profile(void);
 extern void suite_slab_alloc(void);
 extern void suite_simhash(void);
@@ -1026,7 +1025,6 @@ int main(int argc, char **argv) {
     RUN_SELECTED_SUITE(ask_batch);
     RUN_SELECTED_SUITE(ask_vectors);
     RUN_SELECTED_SUITE(ask_embed);
-    RUN_SELECTED_SUITE(ask_rerank);
     RUN_SELECTED_SUITE(simhash);
 
     /* Stack overflow regression (GitHub #199) — split a/b/c so no single

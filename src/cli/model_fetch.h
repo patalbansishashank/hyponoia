@@ -58,14 +58,7 @@
  * The digest is the one T2 actually measured against (min cosine 0.999276 vs
  * sentence-transformers fp32 over 45 texts) and is byte-identical to the LFS
  * sha256 Hugging Face publishes for the same file. Both were checked.
- *
- * THERE ARE NOW TWO MODELS AND THEY ARE INDEPENDENT. The embedding weights are
- * what makes `ask` work at all; the reranker weights only make its ordering
- * better (NEXT-STEPS.md §2.2 lever 2). A machine can hold either, both or
- * neither, and the four combinations produce four different sentences —
- * see hyp_model_unavailable_text_spec and the `rerank` disclosure `ask` emits
- * on every answer. Collapsing them into one "the model is missing" would send
- * somebody who has a working `ask` to re-download 639 MB they already have. */
+ */
 #define HYP_MODEL_ASK_MODEL "Qwen3-Embedding-0.6B"
 #define HYP_MODEL_ASK_QUANT "Q8_0"
 #define HYP_MODEL_ASK_FILE HYP_MODEL_ASK_MODEL "-" HYP_MODEL_ASK_QUANT ".gguf"
@@ -87,39 +80,6 @@
 
 /* The exact command the unavailable answer names. One spelling, one place. */
 #define HYP_MODEL_ASK_COMMAND "hyponoia fetch-model"
-
-/* ── The reranker (NEXT-STEPS.md §2.2 lever 2) ───────────────────────
- *
- * A SECOND model, same family and same size class, fetched by the same
- * machinery under a different name.
- *
- * WHY THIS REPO AND NOT Qwen's own. Qwen publishes no GGUF of the reranker.
- * Every public conversion is a plain causal-LM conversion — none of the six
- * examined carries `cls.output` or a RANK pooling type, so llama.cpp's
- * dedicated reranker path (LLAMA_POOLING_TYPE_RANK, which the pinned tree DOES
- * implement for LLM_ARCH_QWEN3) cannot be reached from any artifact that
- * exists. That is not a blocker: the reference implementation scores a pair by
- * reading the next-token logits for "yes" and "no" and taking the softmax over
- * exactly those two, and llama.cpp's own RANK graph does the SAME arithmetic
- * with two rows lifted out of the lm_head. So the causal path is not a
- * workaround, it is the same function computed from the full head — and it runs
- * on weights anyone can download rather than on a conversion we would have to
- * host. See src/ask/ask_rerank.c.
- *
- * The digest below was checked twice: computed locally over the downloaded file
- * and compared against the LFS sha256 Hugging Face publishes for it. */
-#define HYP_MODEL_RERANK_MODEL "Qwen3-Reranker-0.6B"
-#define HYP_MODEL_RERANK_QUANT "Q8_0"
-#define HYP_MODEL_RERANK_FILE "Qwen3-Reranker-0.6B-q8_0.gguf"
-#define HYP_MODEL_RERANK_REPO "Mungert/Qwen3-Reranker-0.6B-GGUF"
-#define HYP_MODEL_RERANK_REVISION "041387f8ed7ead711b9496b153b682c5b2f5d158"
-#define HYP_MODEL_RERANK_SHA256 "8b5337e5baadf83fdd6f7a865dde4b3627fc53a1c8e56cc2f83260dfdd089c49"
-#define HYP_MODEL_RERANK_URL                                                              \
-    "https://huggingface.co/" HYP_MODEL_RERANK_REPO "/resolve/" HYP_MODEL_RERANK_REVISION \
-    "/" HYP_MODEL_RERANK_FILE
-#define HYP_MODEL_RERANK_BYTES INT64_C(639150432)
-#define HYP_MODEL_RERANK_SIZE_TEXT "639 MB"
-#define HYP_MODEL_RERANK_COMMAND "hyponoia fetch-model --rerank"
 
 /* Cache layout: <cache>/models/<file>, where <cache> is HYP_CACHE_DIR or
  * ~/.cache/hyponoia (hyp_resolve_cache_dir). Under the existing convention
@@ -157,19 +117,15 @@ typedef struct {
     const char *size_text; /* "639 MB", the number a human is shown */
     const char *url;       /* pinned revision, never "main" */
     const char *command;   /* the exact command an unavailable answer names */
-    /* "the ask lane's embedding weights" / "the ask lane's reranker weights" —
-     * used mid-sentence, so it carries no leading capital and no full stop. */
+    /* "the ask lane's embedding weights" — used mid-sentence, so it carries
+     * no leading capital and no full stop. */
     const char *what;
-    /* What is lost while it is missing. The embedding model's absence means
-     * NOTHING was searched; the reranker's means the answer is the dense
-     * ordering, which is a real answer. Those are different claims and the two
-     * strings are why a caller is never told the wrong one. */
+    /* What is lost while it is missing: NOTHING was searched. */
     const char *without_it;
 } hyp_model_spec_t;
 
-/* The two pinned artifacts. Never NULL. */
+/* The pinned artifact. Never NULL. */
 const hyp_model_spec_t *hyp_model_ask_spec(void);
-const hyp_model_spec_t *hyp_model_rerank_spec(void);
 
 /* ── What is on disk ─────────────────────────────────────────────── */
 
@@ -216,9 +172,6 @@ void hyp_model_probe_spec(const hyp_model_spec_t *spec, hyp_model_probe_t *out);
 bool hyp_model_spec_present(const hyp_model_spec_t *spec);
 const char *hyp_model_spec_path(const hyp_model_spec_t *spec, char *out, size_t out_sz);
 
-/* The reranker's two, spelled out for the same reason. */
-bool hyp_model_rerank_present(void);
-const char *hyp_model_rerank_path(char *out, size_t out_sz);
 
 /* ── Verification ────────────────────────────────────────────────── */
 
@@ -247,9 +200,7 @@ int hyp_model_verify_file(const char *path, const char *expect_hex, bool remove_
 void hyp_model_unavailable_text(const char *project, char *detail, size_t detail_sz, char *remedy,
                                 size_t remedy_sz);
 
-/* The same, for any spec. The reranker's version of this never says NOTHING was
- * searched, because with the reranker missing the dense ordering IS returned —
- * a rerank that could not run degrades the answer, it does not withhold it. */
+/* The same, for any spec. */
 void hyp_model_unavailable_text_spec(const hyp_model_spec_t *spec, const char *project,
                                      char *detail, size_t detail_sz, char *remedy,
                                      size_t remedy_sz);
