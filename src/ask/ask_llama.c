@@ -223,6 +223,20 @@ static bool ask_llama_make_ctx(ask_llama_t *s, int n_seq, int seq_len, char *err
                                 ? s->ceiling_mib - plan.kv_mib - HYP_ASK_WEIGHTS_RESIDENT_MIB
                                 : 1e9;
     cp.n_ubatch = (uint32_t)hyp_ask_ubatch_for(n_batch, compute_budget);
+    /* NON-CAUSAL ATTENTION CANNOT BE SPLIT ACROSS MICRO-BATCHES. Every token
+     * attends to every other, so llama.cpp requires the whole batch to be
+     * resident in one ubatch and asserts otherwise:
+     *
+     *   GGML_ASSERT((cparams.causal_attn || cparams.n_ubatch >= n_tokens_all))
+     *
+     * The ubatch sizing above is a compute-buffer economy inherited from the
+     * causal model, where splitting is free. Here it is not a tuning knob at
+     * all: it must cover n_batch, and the memory that costs is the price of the
+     * model being an encoder. Found by running the embed pass, not by reading —
+     * the plan looked admissible and aborted on the first decode. */
+    if (cp.n_ubatch < (uint32_t)n_batch) {
+        cp.n_ubatch = (uint32_t)n_batch;
+    }
     cp.n_threads = ASK_CPU_THREADS;
     cp.n_threads_batch = ASK_CPU_THREADS;
 
