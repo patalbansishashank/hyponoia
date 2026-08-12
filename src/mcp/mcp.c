@@ -523,7 +523,16 @@ static const tool_def_t TOOLS[] = {
      "Capped at 500. There is no offset — raise limit rather than page a ranking.\"},"
      "\"format\":{\"type\":\"string\",\"enum\":[\"tree\",\"json\"],\"default\":\"tree\","
      "\"description\":\"Response encoding. tree (default): compact text rows. json: cols + "
-     "column-ordered row arrays (the SAME model, structured).\"}},"
+     "column-ordered row arrays (the SAME model, structured).\"},"
+     "\"escalate\":{\"type\":\"boolean\",\"default\":false,\"description\":\"Answer "
+     "from the OPTIONAL escalation index — a stronger hosted model — instead of the local "
+     "one. Off by default and NEVER chosen for you: the engine cannot tell whether you need "
+     "to be right, and every score threshold this project has set has died on a corpus "
+     "change. It costs tokens against a configured account and requires that index to have "
+     "been built (`hyponoia embed --escalation`). If it is unconfigured, unbuilt or built by "
+     "a different model, this RETURNS AN ERROR SAYING SO and does not quietly answer from "
+     "the local index — you would otherwise get the cheap answer while believing you had "
+     "the expensive one. The two indexes are separate and go stale independently.\"}},"
      "\"required\":[\"question\",\"project\"]}"},
 
     {"query_graph", "Query graph",
@@ -4190,7 +4199,11 @@ static char *handle_ask(hyp_mcp_server_t *srv, const char *args) {
     }
 
     hyp_ask_status_t st;
-    hyp_ask_index_status_lane(store, project, lane, &st);
+    /* Hold the index to the identity of the encoder that will QUERY it, which
+     * for the escalation lane is the hosted model and not the linked one. */
+    hyp_ask_index_status_lane(store, project, lane,
+                              escalate ? hyp_ask_encoder_model_id(esc_enc) : NULL,
+                              escalate ? hyp_ask_encoder_prefix_contract(esc_enc) : NULL, &st);
     /* THE WEIGHTS, BEFORE THE INDEX. hyp_ask_index_status answers about the
      * store and the linked encoder; whether that encoder's 639 MB of weights
      * are on disk is the fetcher's question and is asked here, where the CLI

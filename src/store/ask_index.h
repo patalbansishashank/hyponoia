@@ -134,6 +134,7 @@ void hyp_ask_index_status(hyp_store_t *s, const char *project, hyp_ask_status_t 
  * the other — which is the point: they are built by different models at
  * different times and drift apart by design. */
 void hyp_ask_index_status_lane(hyp_store_t *s, const char *project, hyp_ask_lane_t lane,
+                               const char *want_model, const char *want_contract,
                                hyp_ask_status_t *out);
 
 /* Exact top-`limit` by cosine against `qvec` (HYP_ASK_DIM unit-normalised
