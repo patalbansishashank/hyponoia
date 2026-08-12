@@ -15,6 +15,9 @@
 #include "semantic/ask_embed.h" /* HYP_ASK_MODEL_ID_MAX */
 #include "cli/model_fetch.h"
 #include "ask/ask_vectors.h"
+#include "ask/ask_provider.h"
+#include "cli/cli.h"
+#include "foundation/platform.h"
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -219,6 +222,7 @@ int hyp_cmd_embed(int argc, char **argv) {
     bool status_only = false;
     bool use_stub = false;
     bool stub_reports_truncation = true;
+    bool escalation = false;
 
     /* The environment is read FIRST so an explicit flag always wins. An
      * unrecognised value is refused rather than ignored: a typo that silently
@@ -251,6 +255,11 @@ int hyp_cmd_embed(int argc, char **argv) {
             opts.force = true;
         } else if (strcmp(a, "--allow-model-change") == 0) {
             opts.allow_model_change = true;
+        } else if (strcmp(a, "--escalation") == 0) {
+            /* EXPLICIT, ALWAYS. This pass spends tokens against somebody's
+             * account, so it is a flag and never a fallback, an inference, or
+             * something the local build turns on when it feels uncertain. */
+            escalation = true;
         } else if (strcmp(a, "--limit") == 0 && has_next) {
             opts.limit = (int)strtol(argv[++i], NULL, 10);
         } else if (strcmp(a, "--budget") == 0 && has_next) {
@@ -300,7 +309,64 @@ int hyp_cmd_embed(int argc, char **argv) {
      * is fixed by a different binary; "the weights are not on this machine" is
      * fixed by one command. They have different remedies and must not share a
      * sentence. */
-    if (!use_stub && !hyp_ask_llama_compiled_in()) {
+    /* The escalation lane needs no local weights at all, so it is decided
+     * before every check that is about them. It also writes to ITS OWN file:
+     * the two indexes are built by different models at different times and are
+     * expected to drift apart, so they must never share a table. */
+    char esc_db[HYP_SZ_4K];
+    hyp_ask_encoder_t *esc_enc = NULL;
+    if (escalation) {
+        if (opts.vectors_db_path) {
+            (void)fprintf(stderr,
+                          "embed: --escalation writes the escalation lane's own index; pass one "
+                          "of --escalation or --vectors-db, not both\n");
+            return 2;
+        }
+        if (!hyp_ask_vectors_path_lane(opts.project, HYP_ASK_LANE_ESCALATION, esc_db,
+                                       sizeof(esc_db))) {
+            (void)fprintf(stderr, "embed: could not resolve the escalation index path\n");
+            return 1;
+        }
+        opts.vectors_db_path = esc_db;
+
+        /* The same cache directory `config set` writes to — hyp_config_open
+         * takes the directory and returns NULL for a NULL one, so resolving it
+         * here is what makes the two halves talk to the same database. */
+        const char *cache_dir = hyp_resolve_cache_dir();
+        hyp_config_t *cfg = cache_dir ? hyp_config_open(cache_dir) : NULL;
+        char provider[64];
+        char model[128];
+        char key_env[128];
+        (void)snprintf(provider, sizeof(provider), "%s",
+                       cfg ? hyp_config_get(cfg, HYP_CONFIG_ASK_ESC_PROVIDER, "") : "");
+        (void)snprintf(model, sizeof(model), "%s",
+                       cfg ? hyp_config_get(cfg, HYP_CONFIG_ASK_ESC_MODEL, "") : "");
+        (void)snprintf(key_env, sizeof(key_env), "%s",
+                       cfg ? hyp_config_get(cfg, HYP_CONFIG_ASK_ESC_KEY_ENV, "") : "");
+        if (cfg) {
+            hyp_config_close(cfg);
+        }
+        char err[512];
+        esc_enc = hyp_ask_provider_encoder_create(provider, model, key_env, err, sizeof(err));
+        if (!esc_enc) {
+            /* Never fall back to the local model. A caller who asked for the
+             * expensive index and quietly got the cheap one has been told
+             * something false about what it can search. */
+            (void)fprintf(stderr,
+                          "embed --escalation: %s\n\n"
+                          "  Configure the lane first:\n"
+                          "    hyponoia config set %s <provider>\n"
+                          "    hyponoia config set %s <model>\n"
+                          "    hyponoia config set %s <ENV_VAR_NAME>\n",
+                          err, HYP_CONFIG_ASK_ESC_PROVIDER, HYP_CONFIG_ASK_ESC_MODEL,
+                          HYP_CONFIG_ASK_ESC_KEY_ENV);
+            return 3;
+        }
+        printf("embed --escalation: provider=%s model=%s key from $%s\n", provider, model,
+               key_env);
+        printf("  This pass SPENDS TOKENS against that account.\n");
+    }
+    if (!escalation && !use_stub && !hyp_ask_llama_compiled_in()) {
         (void)fprintf(stderr,
                       "embed: no inference backend is compiled in (%s).\n"
                       "  The only encoder this binary has is the deterministic stub — pass\n"
@@ -309,18 +375,33 @@ int hyp_cmd_embed(int argc, char **argv) {
                       hyp_ask_llama_build_note());
         return 3;
     }
-    if (!use_stub && !hyp_model_ask_present()) {
+    if (!escalation && !use_stub && !hyp_model_ask_present()) {
         char detail[HYP_MODEL_MSG_MAX];
         char remedy[HYP_MODEL_MSG_MAX];
         hyp_model_unavailable_text(opts.project, detail, sizeof(detail), remedy, sizeof(remedy));
         (void)fprintf(stderr, "embed: %s\n\n  %s\n", detail, remedy);
         return 3;
     }
+    /* The projection is the SECOND required artifact and its absence is its own
+     * sentence: the GGUF alone would emit a pre-projection vector that looks
+     * perfectly well-formed. */
+    if (!escalation && !use_stub && !hyp_model_spec_present(hyp_model_ask_proj_spec())) {
+        (void)fprintf(stderr,
+                      "embed: %s is missing — the weights and the projection head are both "
+                      "required, and without it every vector would be in the wrong space.\n\n"
+                      "  %s\n",
+                      hyp_model_ask_proj_spec()->file, HYP_MODEL_ASK_COMMAND);
+        return 3;
+    }
 
-    ask_report_device_plan(opts.device_pref);
+    if (!escalation) {
+        ask_report_device_plan(opts.device_pref);
+    }
 
     hyp_ask_encoder_t *enc = NULL;
-    if (use_stub) {
+    if (escalation) {
+        enc = esc_enc;
+    } else if (use_stub) {
         enc = hyp_ask_encoder_stub_create(HYP_ASK_DIM_DEFAULT, HYP_ASK_MODEL_WINDOW,
                                           stub_reports_truncation);
         if (!enc) {

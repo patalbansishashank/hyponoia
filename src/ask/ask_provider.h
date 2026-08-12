@@ -122,4 +122,21 @@ int hyp_ask_provider_embed_documents(const hyp_ask_provider_t *p, const char *mo
 int hyp_ask_provider_embed_query(const hyp_ask_provider_t *p, const char *model, const char *key,
                                  const char *text, int dim, float *out, char *err, size_t errlen);
 
+/* Wrap a provider as an ordinary encoder, so the escalation build runs through
+ * the SAME embed pass as the local one — same batching, same reuse-by-hash,
+ * same truncation disclosure, same provenance stamping. The only thing that
+ * differs is where the vectors come from.
+ *
+ * `key_env` is the NAME of an environment variable; the key is read once here
+ * and held for the life of the encoder, never copied into config or a log.
+ * Returns NULL with a sentence in `err` if the provider is unknown or unwired,
+ * or the variable is unset.
+ *
+ * Declared here rather than in ask_encoder.h to keep the encoder interface free
+ * of any provider concept; this is an adapter, not a second kind of encoder. */
+struct hyp_ask_encoder;
+struct hyp_ask_encoder *hyp_ask_provider_encoder_create(const char *provider_name,
+                                                        const char *model, const char *key_env,
+                                                        char *err, size_t errlen);
+
 #endif /* HYP_ASK_PROVIDER_H */

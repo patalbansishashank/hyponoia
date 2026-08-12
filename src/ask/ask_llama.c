@@ -68,6 +68,12 @@ typedef struct {
 
     llama_token *toks;
     int toks_cap;
+
+    /* The projection head GGUF cannot carry: 2048 x 1024 float32, row-major.
+     * Owned here, loaded once at open, never NULL after a successful open —
+     * an encoder without it would emit the pre-projection hidden state. */
+    float *proj;
+    float *proj_scratch; /* HYP_MODEL_ASK_PROJ_OUT floats, one row at a time */
 } ask_llama_t;
 
 /* ── Logging: ggml is chatty, and its chatter is not ours ────────── */
@@ -173,12 +179,22 @@ static bool ask_llama_make_ctx(ask_llama_t *s, int n_seq, int seq_len, char *err
 
     struct llama_context_params cp = llama_context_default_params();
     cp.embeddings = true;
-    /* FORCED, not inherited. The official GGUF carries pooling_type and
-     * llama.cpp resolves it to LAST without being asked — but the fallback
-     * when the key is absent is POOLING_TYPE_NONE, which returns no pooled
-     * output at all, and mean pooling (§2's expensive mistake) measures
-     * 0.5384-0.8484 against correct. Asking is free; assuming is not. */
-    cp.pooling_type = LLAMA_POOLING_TYPE_LAST;
+    /* FORCED, not inherited. The GGUF does carry qwen3.pooling_type = 1 and
+     * llama.cpp resolves it to MEAN without being asked — but the fallback when
+     * the key is absent is POOLING_TYPE_NONE, which returns no pooled output at
+     * all. Asking is free; assuming is not.
+     *
+     * MEAN, not LAST: voyage-4-nano is mean-pooled where Qwen3-Embedding was
+     * last-token pooled. Getting this backwards does not fail — it returns
+     * vectors of the right shape and unit length that are simply wrong, which
+     * is the §2 mistake that measured 0.5384-0.8484 against correct. */
+    cp.pooling_type = LLAMA_POOLING_TYPE_MEAN;
+    /* BIDIRECTIONAL. nano is an encoder: every token attends to every other.
+     * Left as the default, llama.cpp applies a causal mask and each token sees
+     * only its predecessors — the pplx failure mode, which also returns
+     * plausible unit vectors and ranks badly. §2.5 could not use this model at
+     * all because llama.cpp had no such flag; it does now. */
+    cp.attention_type = LLAMA_ATTENTION_TYPE_NON_CAUSAL;
 
     /* n_ctx is TOTAL KV capacity and llama.cpp DIVIDES it by n_seq_max.
      * n_ctx = n_batch * n_seq_max is the line that looks right and asked for
@@ -229,14 +245,14 @@ static bool ask_llama_make_ctx(ask_llama_t *s, int n_seq, int seq_len, char *err
                        (long long)plan.n_ctx, n_seq, seq_len, cp.n_ubatch);
         return false;
     }
-    if (llama_pooling_type(ctx) != LLAMA_POOLING_TYPE_LAST) {
-        /* A model that will not last-token pool is not the model any number
-         * here was measured with, and mean-pooled vectors are the right shape,
-         * unit length, and wrong. Refuse rather than index. */
+    if (llama_pooling_type(ctx) != LLAMA_POOLING_TYPE_MEAN) {
+        /* A model that will not mean-pool is not the model any number here was
+         * measured with, and the wrong pooling gives vectors of the right
+         * shape, unit length, and wrong. Refuse rather than index. */
         (void)snprintf(err, errlen,
-                       "the model resolved pooling type %d, not LAST (%d). Qwen3-Embedding is "
-                       "last-token pooled and mean pooling measures 0.54-0.85 against correct",
-                       (int)llama_pooling_type(ctx), (int)LLAMA_POOLING_TYPE_LAST);
+                       "the model resolved pooling type %d, not MEAN (%d). voyage-4-nano is "
+                       "mean pooled, and the wrong pooling measures 0.54-0.85 against correct",
+                       (int)llama_pooling_type(ctx), (int)LLAMA_POOLING_TYPE_MEAN);
         llama_free(ctx);
         return false;
     }
@@ -315,6 +331,36 @@ static void ask_l2_normalise(float *v, int dim) {
     for (int i = 0; i < dim; i++) {
         v[i] = (float)((double)v[i] / norm);
     }
+}
+
+/* Pooled 1024 -> projected 2048 -> normalise -> Matryoshka-truncate to
+ * HYP_ASK_DIM -> renormalise.
+ *
+ * THE ORDER IS THE MEASUREMENT. §2.8 and §2.9 scored nano at dim 1024 by
+ * truncating the NORMALISED 2048 vector and renormalising, and that is the
+ * number the index is built to reproduce. Truncating before the first
+ * normalisation, or skipping the second, gives a different vector that still
+ * looks perfectly well-formed.
+ *
+ * The projection runs HERE, after pooling, rather than per token before it —
+ * which is where the model applies it. That is exact and not a shortcut: a
+ * bias-free linear map commutes with a mean, so W.mean(h) == mean(W.h).
+ * Verified against the reference pipeline at cosine 1.0000000. */
+static void ask_llama_project(ask_llama_t *s, const float *pooled, float *dst) {
+    const int in_dim = s->n_embd;
+    const int out_dim = HYP_MODEL_ASK_PROJ_OUT;
+    float *wide = s->proj_scratch;
+    for (int r = 0; r < out_dim; r++) {
+        const float *row = s->proj + (size_t)r * (size_t)in_dim;
+        double acc = 0.0;
+        for (int c = 0; c < in_dim; c++) {
+            acc += (double)row[c] * (double)pooled[c];
+        }
+        wide[r] = (float)acc;
+    }
+    ask_l2_normalise(wide, out_dim);
+    memcpy(dst, wide, sizeof(float) * (size_t)HYP_ASK_DIM);
+    ask_l2_normalise(dst, HYP_ASK_DIM);
 }
 
 /* `prefix` is already rendered. The document path passes "" and has no way to
@@ -505,8 +551,7 @@ static int ask_llama_encode(ask_llama_t *s, const char *const *texts, const char
                         break;
                     }
                     float *dst = out + (size_t)i * (size_t)s->n_embd;
-                    memcpy(dst, emb, sizeof(float) * (size_t)s->n_embd);
-                    ask_l2_normalise(dst, s->n_embd);
+                    ask_llama_project(s, emb, dst);
                 }
             }
             llama_batch_free(batch);
@@ -522,6 +567,50 @@ static int ask_llama_encode(ask_llama_t *s, const char *const *texts, const char
 }
 
 /* ── Construction ───────────────────────────────────────────────── */
+
+/* Read the pinned 2048 x 1024 float32 matrix into `s->proj`.
+ *
+ * The size is checked against the artifact's declared byte count rather than
+ * "whatever the file happens to hold": a truncated or substituted matrix would
+ * still multiply, and would still produce unit vectors. The digest is the
+ * fetch path's job; this is the shape gate that catches a file which passed the
+ * digest of some OTHER artifact. */
+static bool ask_llama_load_projection(ask_llama_t *s, char *err, size_t errlen) {
+    const hyp_model_spec_t *spec = hyp_model_ask_proj_spec();
+    char path[HYP_MODEL_PATH_MAX];
+    if (!hyp_model_spec_path(spec, path, sizeof(path)) || path[0] == '\0') {
+        (void)snprintf(err, errlen, "could not resolve where %s should live", spec->file);
+        return false;
+    }
+    const size_t want = (size_t)HYP_MODEL_ASK_PROJ_OUT * (size_t)HYP_ASK_DIM;
+    FILE *f = fopen(path, "rb");
+    if (!f) {
+        (void)snprintf(err, errlen,
+                       "%s is missing — nano's projection head is a separate artifact from the "
+                       "GGUF and both are required; run `%s`",
+                       spec->file, spec->command);
+        return false;
+    }
+    s->proj = (float *)malloc(want * sizeof(float));
+    s->proj_scratch = (float *)malloc((size_t)HYP_MODEL_ASK_PROJ_OUT * sizeof(float));
+    if (!s->proj || !s->proj_scratch) {
+        (void)fclose(f);
+        (void)snprintf(err, errlen, "out of memory for the projection head");
+        return false;
+    }
+    size_t got = fread(s->proj, sizeof(float), want, f);
+    /* A trailing byte means this is not the matrix, whatever its prefix says. */
+    int extra = fgetc(f);
+    (void)fclose(f);
+    if (got != want || extra != EOF) {
+        (void)snprintf(err, errlen,
+                       "%s is %zu floats, expected exactly %zu (%d x %d) — refusing rather than "
+                       "projecting through a matrix of the wrong shape",
+                       spec->file, got, want, HYP_MODEL_ASK_PROJ_OUT, HYP_ASK_DIM);
+        return false;
+    }
+    return true;
+}
 
 static ask_llama_t *ask_llama_open(hyp_ask_device_pref_t pref, char *err, size_t errlen) {
     char path[HYP_MODEL_PATH_MAX];
@@ -624,6 +713,16 @@ static ask_llama_t *ask_llama_open(hyp_ask_device_pref_t pref, char *err, size_t
         return NULL;
     }
 
+    /* THE SECOND ARTIFACT. Without it this encoder would emit nano's
+     * pre-projection hidden state: same width, unit length, different space,
+     * and nothing downstream could tell. So a missing or wrong-sized
+     * projection is fatal at open, never a degraded mode. */
+    if (!ask_llama_load_projection(s, err, errlen)) {
+        llama_model_free(s->model);
+        free(s);
+        return NULL;
+    }
+
     if (use_gpu) {
         (void)snprintf(s->device_note, sizeof(s->device_note),
                        "GPU (%s, Vulkan) — %.0f MiB free of %.0f MiB, ceiling %.0f MiB", gpu_name,
@@ -656,6 +755,8 @@ static void ask_llama_close(ask_llama_t *s) {
     if (s->model) {
         llama_model_free(s->model);
     }
+    free(s->proj);
+    free(s->proj_scratch);
     free(s->toks);
     free(s);
 }
@@ -706,7 +807,10 @@ static int enc_full_token_length(void *self, const char *text) {
 static int enc_encode_documents(void *self, const char *const *texts, int count, float *out) {
     char err[256];
     err[0] = '\0';
-    int rc = ask_llama_encode((ask_llama_t *)self, texts, "", count, out, err, sizeof(err));
+    /* NOT BARE ANY MORE. Qwen3's contract left documents unprefixed; nano marks
+     * both sides, and bare it scores below the model it replaces. */
+    int rc = ask_llama_encode((ask_llama_t *)self, texts, HYP_ASK_NANO_DOCUMENT_PROMPT, count, out,
+                              err, sizeof(err));
     if (rc != 0 && err[0]) {
         hyp_log_error("ask.llama.encode_documents", "err", err);
     }
@@ -715,32 +819,18 @@ static int enc_encode_documents(void *self, const char *const *texts, int count,
 
 static int enc_encode_query(void *self, const char *text, const char *language_display,
                             float *out) {
-    char prefix[HYP_ASK_PREFIX_MAX];
-    /* Rendering is the CALLEE's job, which is how "the prefix is applied to
-     * queries only" stops being a convention every call site has to remember.
-     * A NULL display name is a refusal, not a default: a prefix built with a
-     * grammar id still encodes, still ranks and is not the prefix any number
-     * was measured against. */
-    if (!language_display || !language_display[0]) {
-        /* ask_encoder.h documents NULL as "the backend uses its own default".
-         * The default is the ONE language the recall numbers were measured on,
-         * and it is logged rather than assumed silently. */
-        language_display = hyp_ask_language_display(HYP_LANG_CPP);
-        hyp_log_debug("ask.llama.encode_query", "language", "defaulted to C++");
-        if (!language_display) {
-            return -1;
-        }
-    }
-    int n = snprintf(prefix, sizeof(prefix), HYP_ASK_INSTRUCT_TEMPLATE, language_display);
-    if (n < 0 || (size_t)n >= sizeof(prefix)) {
-        hyp_log_error("ask.llama.encode_query", "err", "the instruct prefix would not fit");
-        return -1;
-    }
+    /* nano's query prompt carries NO {language} slot, so the display name is no
+     * longer read here. Under Qwen3 a language with no display name was a hard
+     * refusal — the prefix could not be rendered and a wrong one still ranks.
+     * That failure mode is simply gone with this model, rather than being
+     * silently defaulted away. */
+    (void)language_display;
     char err[256];
     err[0] = '\0';
     const char *one[1];
     one[0] = text;
-    int rc = ask_llama_encode((ask_llama_t *)self, one, prefix, 1, out, err, sizeof(err));
+    int rc = ask_llama_encode((ask_llama_t *)self, one, HYP_ASK_NANO_QUERY_PROMPT, 1, out, err,
+                              sizeof(err));
     if (rc != 0 && err[0]) {
         hyp_log_error("ask.llama.encode_query", "err", err);
     }
@@ -815,18 +905,11 @@ static int backend_encode_query(HYPLanguage lang, const char *text, float *out, 
     if (!s) {
         return -1;
     }
-    char prefix[HYP_ASK_PREFIX_MAX];
-    int n = hyp_ask_render_instruct_prefix(lang, prefix, sizeof(prefix));
-    if (n <= 0) {
-        (void)snprintf(err, errlen,
-                       "no display name for this language, so the instruct prefix cannot be "
-                       "rendered — refusing rather than sending a prefix no number was measured "
-                       "against");
-        return -1;
-    }
+    /* nano's prompts carry no language slot — see enc_encode_query. */
+    (void)lang;
     const char *one[1];
     one[0] = text;
-    return ask_llama_encode(s, one, prefix, 1, out, err, errlen);
+    return ask_llama_encode(s, one, HYP_ASK_NANO_QUERY_PROMPT, 1, out, err, errlen);
 }
 
 static int backend_encode_documents(const char *const *texts, int n, float *out, char *err,
@@ -835,7 +918,7 @@ static int backend_encode_documents(const char *const *texts, int n, float *out,
     if (!s) {
         return -1;
     }
-    return ask_llama_encode(s, texts, "", n, out, err, errlen);
+    return ask_llama_encode(s, texts, HYP_ASK_NANO_DOCUMENT_PROMPT, n, out, err, errlen);
 }
 
 static int backend_truncates(const char *text, bool *outv, char *err, size_t errlen) {
@@ -853,7 +936,10 @@ static int backend_truncates(const char *text, bool *outv, char *err, size_t err
 }
 
 static const hyp_ask_backend_t ASK_LLAMA_BACKEND = {
-    .model_id = HYP_MODEL_ASK_MODEL "-" HYP_MODEL_ASK_QUANT "@370f27d7550e",
+    /* Kept in step with enc_model_id, which builds the same string from the
+     * same three constants — a literal revision here was how the two last
+     * drifted. */
+    .model_id = HYP_MODEL_ASK_MODEL "-" HYP_MODEL_ASK_QUANT "@75e62c7dba5e",
     .prefix_contract = HYP_ASK_PREFIX_CONTRACT,
     .dim = HYP_ASK_DIM,
     .window_tokens = HYP_ASK_MODEL_WINDOW,

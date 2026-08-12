@@ -12,6 +12,8 @@
 
 #include <sys/stat.h>
 
+#include "ask/ask_encoder.h"
+#include "semantic/ask_embed.h"
 #include "foundation/compat.h"
 #include "foundation/compat_fs.h"
 #include "foundation/log.h"
@@ -518,4 +520,136 @@ int hyp_ask_provider_embed_query(const hyp_ask_provider_t *p, const char *model,
                                  const char *text, int dim, float *out, char *err, size_t errlen) {
     const char *one[1] = {text};
     return ap_embed(p, model, key, one, 1, dim, p ? p->asym_query : NULL, out, err, errlen);
+}
+
+/* ── The encoder adapter ───────────────────────────────────────────
+ *
+ * The escalation index is built by the ordinary embed pass. That is deliberate:
+ * batching, reuse-by-content-hash, truncation disclosure and provenance
+ * stamping are all things the escalation lane needs exactly as much as the
+ * local one, and a parallel implementation would drift from them.
+ */
+typedef struct {
+    const hyp_ask_provider_t *p;
+    char model[128];
+    char model_id[HYP_ASK_MODEL_ID_MAX];
+    char contract[128];
+    const char *key; /* points into the environment; never freed, never logged */
+} ap_encoder_t;
+
+static const char *ape_model_id(void *self) {
+    return ((ap_encoder_t *)self)->model_id;
+}
+static const char *ape_prefix_contract(void *self) {
+    return ((ap_encoder_t *)self)->contract;
+}
+static const char *ape_device_note(void *self) {
+    (void)self;
+    /* Not a device at all, and saying so is the honest answer — "GPU" or "CPU"
+     * would both be lies, and this string is what the index records about who
+     * built it. */
+    return "remote API (no local inference)";
+}
+static bool ape_device_is_gpu(void *self) {
+    (void)self;
+    return false;
+}
+static int ape_dim(void *self) {
+    (void)self;
+    return HYP_ASK_DIM;
+}
+static int ape_window(void *self) {
+    /* The provider's per-request token cap is the effective window: a document
+     * over it cannot be sent at all, which is a harder limit than truncation. */
+    return ((ap_encoder_t *)self)->p->max_tokens_per_request;
+}
+
+static int ape_encode_documents(void *self, const char *const *texts, int count, float *out) {
+    ap_encoder_t *e = (ap_encoder_t *)self;
+    char err[512];
+    err[0] = '\0';
+    int rc = hyp_ask_provider_embed_documents(e->p, e->model, e->key, texts, count, HYP_ASK_DIM,
+                                              out, err, sizeof(err));
+    if (rc != 0 && err[0]) {
+        hyp_log_error("ask.provider.encode_documents", "err", err);
+    }
+    return rc;
+}
+
+static int ape_encode_query(void *self, const char *text, const char *language_display,
+                            float *out) {
+    ap_encoder_t *e = (ap_encoder_t *)self;
+    /* The provider's asymmetry is its input_type/task, not a language-bearing
+     * prefix, so the display name plays no part. */
+    (void)language_display;
+    char err[512];
+    err[0] = '\0';
+    int rc = hyp_ask_provider_embed_query(e->p, e->model, e->key, text, HYP_ASK_DIM, out, err,
+                                         sizeof(err));
+    if (rc != 0 && err[0]) {
+        hyp_log_error("ask.provider.encode_query", "err", err);
+    }
+    return rc;
+}
+
+static void ape_destroy(void *self) {
+    free(self);
+}
+
+static const hyp_ask_encoder_vt_t AP_ENCODER_VT = {
+    .model_id = ape_model_id,
+    .prefix_contract = ape_prefix_contract,
+    .device_note = ape_device_note,
+    .device_is_gpu = ape_device_is_gpu,
+    .dim = ape_dim,
+    .window_tokens = ape_window,
+    .encode_documents = ape_encode_documents,
+    .encode_query = ape_encode_query,
+    .destroy = ape_destroy,
+};
+
+struct hyp_ask_encoder *hyp_ask_provider_encoder_create(const char *provider_name,
+                                                        const char *model, const char *key_env,
+                                                        char *err, size_t errlen) {
+    if (err && errlen) {
+        err[0] = '\0';
+    }
+    const hyp_ask_provider_t *p = hyp_ask_provider_by_name(provider_name);
+    if (!p) {
+        snprintf(err, errlen,
+                 "no escalation provider configured, or '%s' is not one this build knows — set "
+                 "ask.escalation.provider",
+                 provider_name ? provider_name : "");
+        return NULL;
+    }
+    if (!p->implemented) {
+        snprintf(err, errlen, "provider '%s' is declared but not wired in this build", p->name);
+        return NULL;
+    }
+    if (!model || !model[0]) {
+        snprintf(err, errlen, "no escalation model configured — set ask.escalation.model");
+        return NULL;
+    }
+    const char *key = hyp_ask_provider_key(key_env, err, errlen);
+    if (!key) {
+        return NULL;
+    }
+    ap_encoder_t *e = (ap_encoder_t *)calloc(1, sizeof(*e));
+    hyp_ask_encoder_t *enc = (hyp_ask_encoder_t *)calloc(1, sizeof(*enc));
+    if (!e || !enc) {
+        free(e);
+        free(enc);
+        snprintf(err, errlen, "out of memory");
+        return NULL;
+    }
+    e->p = p;
+    e->key = key;
+    (void)snprintf(e->model, sizeof(e->model), "%s", model);
+    /* The provider is part of the identity: two providers could plausibly serve
+     * the same model name and would not be the same vectors. */
+    (void)snprintf(e->model_id, sizeof(e->model_id), "%s/%s", p->name, model);
+    (void)hyp_ask_provider_contract(p, e->contract, sizeof(e->contract));
+    enc->vt = &AP_ENCODER_VT;
+    enc->self = e;
+    return enc;
 }
