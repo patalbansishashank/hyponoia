@@ -31,6 +31,22 @@
     "Instruct: Given a natural-language description of %s code, retrieve the declaration it " \
     "describes.\nQuery: "
 
+/* The name of the contract above, stamped on every index built under it and
+ * gated on at read (NEXT-STEPS.md §2.10 step 3).
+ *
+ * It exists because the model id does not identify the vector space on its own.
+ * The same weights fed differently produce incomparable vectors, and this is
+ * measured, not hypothetical: the template above is worth +0.206 MRR@10 on the
+ * frozen 60, pplx is DESTROYED by it, and §2.9 found the very same Qwen3
+ * weights wanting it on one corpus and losing 2.7-3.3 NDCG@10 to it on another.
+ *
+ * CHANGE THIS TOKEN WHENEVER THE TEMPLATE OR THE DOCUMENT SIDE CHANGES. That is
+ * the whole mechanism: a stale index is then refused by name instead of being
+ * silently searched with queries it was never built to answer. The "-bare-doc"
+ * half records the other half of the asymmetry — documents get no prefix — so
+ * that a future decision to prefix documents also lands as a new token. */
+#define HYP_ASK_PREFIX_CONTRACT "qwen3-instruct-v1-bare-doc"
+
 /* Comfortably above template length (103 bytes with the %s removed; 106
  * rendered with "C++") plus the longest display name;
  * hyp_ask_render_instruct_prefix() refuses on truncation regardless, so

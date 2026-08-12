@@ -17,6 +17,13 @@ const char *hyp_ask_encoder_model_id(const hyp_ask_encoder_t *e) {
     return (e && e->vt && e->vt->model_id) ? e->vt->model_id(e->self) : NULL;
 }
 
+const char *hyp_ask_encoder_prefix_contract(const hyp_ask_encoder_t *e) {
+    /* NULL propagates deliberately: an encoder that does not implement this
+     * cannot say what contract it applies, and "cannot say" must not be
+     * compared as though it were a match. */
+    return (e && e->vt && e->vt->prefix_contract) ? e->vt->prefix_contract(e->self) : NULL;
+}
+
 const char *hyp_ask_encoder_device_note(const hyp_ask_encoder_t *e) {
     if (e && e->vt && e->vt->device_note) {
         const char *n = e->vt->device_note(e->self);
@@ -131,6 +138,14 @@ static const char *stub_model_id(void *self) {
 static const char *stub_device_note(void *self) {
     (void)self;
     return HYP_ASK_STUB_DEVICE_NOTE;
+}
+
+static const char *stub_prefix_contract(void *self) {
+    (void)self;
+    /* The stub hashes text and applies no prefix at all. Naming that rather
+     * than returning NULL keeps a stub index from ever being mistaken for a
+     * real one whose contract merely went unrecorded. */
+    return "stub/none";
 }
 
 static bool stub_device_is_gpu(void *self) {
@@ -252,6 +267,7 @@ static void stub_destroy(void *self) {
 
 static const hyp_ask_encoder_vt_t STUB_VT = {
     .model_id = stub_model_id,
+    .prefix_contract = stub_prefix_contract,
     .device_note = stub_device_note,
     .device_is_gpu = stub_device_is_gpu,
     .dim = stub_dim,

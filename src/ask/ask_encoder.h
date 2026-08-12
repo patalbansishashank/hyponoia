@@ -69,6 +69,18 @@ typedef struct {
      * the gate that stops a mixed index from existing. */
     const char *(*model_id)(void *self);
 
+    /* Names the TEXT TRANSFORM this encoder applies before the weights see it —
+     * the document-side prefix, the query-side instruct template, the provider's
+     * `input_type`, or their absence. Stamped on the index and gated on, because
+     * the model id does not identify the space on its own: §2.9 measured the
+     * same weights wanting OPPOSITE contracts on two corpora, and five encoders
+     * across §2.5–§2.9 each wanted a different one.
+     *
+     * A short stable token, not the prefix text: it goes in an error message and
+     * a prefix can be a paragraph. May return NULL for "cannot say", which is
+     * never compared rather than treated as a match. */
+    const char *(*prefix_contract)(void *self);
+
     /* Which device this encoder is ACTUALLY running on, as a line a user can
      * read: "GPU (AMD Radeon RX 6900 XT, Vulkan)" or "CPU (16 threads)".
      *
@@ -137,6 +149,7 @@ struct hyp_ask_encoder {
 /* ── Thin forwarders, so call sites read as the two-entry-point API ── */
 
 const char *hyp_ask_encoder_model_id(const hyp_ask_encoder_t *e);
+const char *hyp_ask_encoder_prefix_contract(const hyp_ask_encoder_t *e);
 const char *hyp_ask_encoder_device_note(const hyp_ask_encoder_t *e);
 bool hyp_ask_encoder_device_is_gpu(const hyp_ask_encoder_t *e);
 int hyp_ask_encoder_dim(const hyp_ask_encoder_t *e);

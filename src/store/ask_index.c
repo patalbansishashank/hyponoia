@@ -95,8 +95,15 @@ static bool ask_status_from_vector_file(const char *project, const hyp_ask_backe
     /* PROVENANCE IS A HARD GATE. Two models' vectors are not comparable and
      * nothing downstream can detect the mix, so a disagreement is REFUSED
      * rather than served with ordinary-looking scores. */
+    /* The contract joins the gate on the same terms as the model id, with one
+     * asymmetry: a stored contract of "" means an index written before the
+     * field existed and is NOT compared, because "unrecorded" is not the same
+     * claim as "different" and must not condemn an index that is actually fine. */
+    bool contract_conflict = backend->prefix_contract && backend->prefix_contract[0] &&
+                             meta.prefix_contract && meta.prefix_contract[0] &&
+                             strcmp(meta.prefix_contract, backend->prefix_contract) != 0;
     if (!backend->model_id || strcmp(meta.model_id ? meta.model_id : "", backend->model_id) != 0 ||
-        meta.dim != backend->dim) {
+        meta.dim != backend->dim || contract_conflict) {
         out->avail = HYP_ASK_MODEL_MISMATCH;
         hyp_ask_vec_meta_free(&meta);
         hyp_ask_vectors_close(v);

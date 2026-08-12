@@ -63,7 +63,7 @@ TEST(ask_vectors_roundtrip_and_meta) {
     ASSERT_NOT_NULL(dir);
     hyp_ask_vectors_t *v = hyp_ask_vectors_open_path("p", TH_PATH(dir, "v.db"));
     ASSERT_NOT_NULL(v);
-    ASSERT_EQ(hyp_ask_vectors_begin_build(v, "m1", AV_TEST_DIM, 32768, "gen7", "CPU (test)", false),
+    ASSERT_EQ(hyp_ask_vectors_begin_build(v, "m1", "c1", AV_TEST_DIM, 32768, "gen7", "CPU (test)", false),
               HYP_ASK_VEC_OK);
     float a[AV_TEST_DIM];
     float b[AV_TEST_DIM];
@@ -102,7 +102,7 @@ TEST(ask_vectors_refuses_a_row_that_is_not_unit_normalised) {
     ASSERT_NOT_NULL(dir);
     hyp_ask_vectors_t *v = hyp_ask_vectors_open_path("p", TH_PATH(dir, "v.db"));
     ASSERT_NOT_NULL(v);
-    ASSERT_EQ(hyp_ask_vectors_begin_build(v, "m1", AV_TEST_DIM, 32768, "g", "CPU (test)", false),
+    ASSERT_EQ(hyp_ask_vectors_begin_build(v, "m1", "c1", AV_TEST_DIM, 32768, "g", "CPU (test)", false),
               HYP_ASK_VEC_OK);
     float bad[AV_TEST_DIM];
     for (int i = 0; i < AV_TEST_DIM; i++) {
@@ -133,7 +133,7 @@ TEST(ask_vectors_refuses_a_different_model_unless_told_to_wipe) {
 
     hyp_ask_vectors_t *v = hyp_ask_vectors_open_path("p", kept);
     ASSERT_NOT_NULL(v);
-    ASSERT_EQ(hyp_ask_vectors_begin_build(v, "m1", AV_TEST_DIM, 32768, "g", "CPU (test)", false),
+    ASSERT_EQ(hyp_ask_vectors_begin_build(v, "m1", "c1", AV_TEST_DIM, 32768, "g", "CPU (test)", false),
               HYP_ASK_VEC_OK);
     float a[AV_TEST_DIM];
     unit_axis(a, AV_TEST_DIM, 0);
@@ -143,25 +143,85 @@ TEST(ask_vectors_refuses_a_different_model_unless_told_to_wipe) {
 
     /* Same dim, different model: two models' vectors are not comparable and
      * nothing downstream can detect the mix, so this refuses. */
-    ASSERT_EQ(hyp_ask_vectors_begin_build(v, "m2", AV_TEST_DIM, 32768, "g", "CPU (test)", false),
+    ASSERT_EQ(hyp_ask_vectors_begin_build(v, "m2", "c1", AV_TEST_DIM, 32768, "g", "CPU (test)", false),
               HYP_ASK_VEC_INCOMPATIBLE);
     ASSERT_EQ(hyp_ask_vectors_count(v), 1);
 
     /* Same model, different dim: also refused. */
-    ASSERT_EQ(hyp_ask_vectors_begin_build(v, "m1", AV_TEST_DIM + 1, 32768, "g", "CPU (test)", false),
+    ASSERT_EQ(hyp_ask_vectors_begin_build(v, "m1", "c1", AV_TEST_DIM + 1, 32768, "g", "CPU (test)", false),
               HYP_ASK_VEC_INCOMPATIBLE);
 
     /* A different window changes what the truncation set is denominated in. */
-    ASSERT_EQ(hyp_ask_vectors_begin_build(v, "m1", AV_TEST_DIM, 4096, "g", "CPU (test)", false),
+    ASSERT_EQ(hyp_ask_vectors_begin_build(v, "m1", "c1", AV_TEST_DIM, 4096, "g", "CPU (test)", false),
               HYP_ASK_VEC_INCOMPATIBLE);
+
+    /* SAME MODEL, DIFFERENT PREFIX CONTRACT: refused. The weights are
+     * identical, so model_id cannot catch this — but the text fed to them
+     * differs, so the vectors are in a different space. §2.9 measured exactly
+     * this case, one model wanting opposite contracts on two corpora. */
+    ASSERT_EQ(hyp_ask_vectors_begin_build(v, "m1", "c2", AV_TEST_DIM, 32768, "g", "CPU (test)", false),
+              HYP_ASK_VEC_INCOMPATIBLE);
+    ASSERT_EQ(hyp_ask_vectors_count(v), 1);
+
+    /* An UNRECORDED contract is not a mismatch. An index written before the
+     * field existed reads "", and refusing it would condemn a table that is
+     * actually fine — "cannot say" and "differs" are different claims. */
+    ASSERT_EQ(hyp_ask_vectors_begin_build(v, "m1", NULL, AV_TEST_DIM, 32768, "g", "CPU (test)", false),
+              HYP_ASK_VEC_OK);
 
     /* Explicitly asked to replace: the old rows go, because keeping them would
      * make the matrix a mixture. */
-    ASSERT_EQ(hyp_ask_vectors_begin_build(v, "m2", AV_TEST_DIM, 32768, "g", "CPU (test)", true),
+    ASSERT_EQ(hyp_ask_vectors_begin_build(v, "m2", "c1", AV_TEST_DIM, 32768, "g", "CPU (test)", true),
               HYP_ASK_VEC_OK);
     ASSERT_EQ(hyp_ask_vectors_count(v), 0);
     hyp_ask_vectors_close(v);
     th_cleanup(dir);
+    PASS();
+}
+
+/* The stamp has to survive a close and reopen, or the gate only works within
+ * the process that wrote it. */
+TEST(ask_vectors_prefix_contract_persists) {
+    char *dir = th_mktempdir("hyp-askvec");
+    ASSERT_NOT_NULL(dir);
+    char kept[512];
+    snprintf(kept, sizeof(kept), "%s", TH_PATH(dir, "v.db"));
+
+    hyp_ask_vectors_t *v = hyp_ask_vectors_open_path("p", kept);
+    ASSERT_NOT_NULL(v);
+    ASSERT_EQ(hyp_ask_vectors_begin_build(v, "m1", "qwen3-instruct-v1-bare-doc", AV_TEST_DIM, 32768,
+                                          "g", "CPU (test)", false),
+              HYP_ASK_VEC_OK);
+    hyp_ask_vectors_close(v);
+
+    v = hyp_ask_vectors_open_path("p", kept);
+    ASSERT_NOT_NULL(v);
+    hyp_ask_vec_meta_t m;
+    ASSERT_EQ(hyp_ask_vectors_get_meta(v, &m), HYP_ASK_VEC_OK);
+    ASSERT_NOT_NULL(m.prefix_contract);
+    ASSERT_STR_EQ(m.prefix_contract, "qwen3-instruct-v1-bare-doc");
+    hyp_ask_vec_meta_free(&m);
+    ASSERT_EQ(hyp_ask_vectors_check_compatible(v, "m1", "nano-prompted-v1", AV_TEST_DIM, 32768),
+              HYP_ASK_VEC_INCOMPATIBLE);
+    hyp_ask_vectors_close(v);
+    th_cleanup(dir);
+    PASS();
+}
+
+/* The two lanes are separate files. If they ever collided, an escalation build
+ * would silently overwrite the local index with vectors from another model. */
+TEST(ask_vectors_lanes_are_distinct_files) {
+    char local[512];
+    char esc[512];
+    ASSERT_TRUE(hyp_ask_vectors_path_lane("proj", HYP_ASK_LANE_LOCAL, local, sizeof(local)));
+    ASSERT_TRUE(hyp_ask_vectors_path_lane("proj", HYP_ASK_LANE_ESCALATION, esc, sizeof(esc)));
+    ASSERT_TRUE(strcmp(local, esc) != 0);
+
+    /* The local lane must keep the historical path, or every index built
+     * before lanes existed becomes invisible rather than reusable. */
+    char legacy[512];
+    ASSERT_TRUE(hyp_ask_vectors_path("proj", legacy, sizeof(legacy)));
+    ASSERT_STR_EQ(local, legacy);
     PASS();
 }
 
@@ -170,7 +230,7 @@ TEST(ask_vectors_search_is_exact_top_k) {
     ASSERT_NOT_NULL(dir);
     hyp_ask_vectors_t *v = hyp_ask_vectors_open_path("p", TH_PATH(dir, "v.db"));
     ASSERT_NOT_NULL(v);
-    ASSERT_EQ(hyp_ask_vectors_begin_build(v, "m1", AV_TEST_DIM, 32768, "g", "CPU (test)", false),
+    ASSERT_EQ(hyp_ask_vectors_begin_build(v, "m1", "c1", AV_TEST_DIM, 32768, "g", "CPU (test)", false),
               HYP_ASK_VEC_OK);
     /* One basis vector per axis: the top-k for axis j is exactly row j. */
     float vecs[AV_TEST_DIM][AV_TEST_DIM];
@@ -234,7 +294,7 @@ TEST(ask_vectors_truncation_has_three_states) {
     unit_axis(b, AV_TEST_DIM, 1);
 
     /* 1. UNKNOWN — the encoder could not say. Not the same claim as "none". */
-    ASSERT_EQ(hyp_ask_vectors_begin_build(v, "m1", AV_TEST_DIM, 32768, "g", "CPU (test)", false),
+    ASSERT_EQ(hyp_ask_vectors_begin_build(v, "m1", "c1", AV_TEST_DIM, 32768, "g", "CPU (test)", false),
               HYP_ASK_VEC_OK);
     hyp_ask_vec_row_t rows[2] = {make_row("p.A", a, "aaaa1111aaaa1111aaaa1111aaaa1111", true),
                                  make_row("p.B", b, "bbbb2222bbbb2222bbbb2222bbbb2222", false)};
@@ -289,7 +349,7 @@ TEST(ask_vectors_prune_removes_only_what_is_gone) {
     ASSERT_NOT_NULL(dir);
     hyp_ask_vectors_t *v = hyp_ask_vectors_open_path("p", TH_PATH(dir, "v.db"));
     ASSERT_NOT_NULL(v);
-    ASSERT_EQ(hyp_ask_vectors_begin_build(v, "m1", AV_TEST_DIM, 32768, "g", "CPU (test)", false),
+    ASSERT_EQ(hyp_ask_vectors_begin_build(v, "m1", "c1", AV_TEST_DIM, 32768, "g", "CPU (test)", false),
               HYP_ASK_VEC_OK);
     float a[AV_TEST_DIM];
     float b[AV_TEST_DIM];
@@ -316,7 +376,7 @@ TEST(ask_vectors_stored_hash_is_the_reuse_key) {
     ASSERT_NOT_NULL(dir);
     hyp_ask_vectors_t *v = hyp_ask_vectors_open_path("p", TH_PATH(dir, "v.db"));
     ASSERT_NOT_NULL(v);
-    ASSERT_EQ(hyp_ask_vectors_begin_build(v, "m1", AV_TEST_DIM, 32768, "g", "CPU (test)", false),
+    ASSERT_EQ(hyp_ask_vectors_begin_build(v, "m1", "c1", AV_TEST_DIM, 32768, "g", "CPU (test)", false),
               HYP_ASK_VEC_OK);
     float a[AV_TEST_DIM];
     unit_axis(a, AV_TEST_DIM, 0);
@@ -375,6 +435,8 @@ SUITE(ask_vectors) {
     RUN_TEST(ask_vectors_roundtrip_and_meta);
     RUN_TEST(ask_vectors_refuses_a_row_that_is_not_unit_normalised);
     RUN_TEST(ask_vectors_refuses_a_different_model_unless_told_to_wipe);
+    RUN_TEST(ask_vectors_prefix_contract_persists);
+    RUN_TEST(ask_vectors_lanes_are_distinct_files);
     RUN_TEST(ask_vectors_search_is_exact_top_k);
     RUN_TEST(ask_vectors_truncation_has_three_states);
     RUN_TEST(ask_vectors_prune_removes_only_what_is_gone);

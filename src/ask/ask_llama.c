@@ -665,6 +665,12 @@ static void ask_llama_close(ask_llama_t *s) {
 static const char *enc_model_id(void *self) {
     return ((ask_llama_t *)self)->model_id;
 }
+static const char *enc_prefix_contract(void *self) {
+    (void)self;
+    /* Compiled in rather than stored per instance: this encoder applies exactly
+     * one contract, and it is the one ask_prefix.h defines. */
+    return HYP_ASK_PREFIX_CONTRACT;
+}
 static const char *enc_device_note(void *self) {
     return ((ask_llama_t *)self)->device_note;
 }
@@ -747,6 +753,7 @@ static void enc_destroy(void *self) {
 
 static const hyp_ask_encoder_vt_t ASK_LLAMA_VT = {
     .model_id = enc_model_id,
+    .prefix_contract = enc_prefix_contract,
     .device_note = enc_device_note,
     .device_is_gpu = enc_device_is_gpu,
     .dim = enc_dim,
@@ -847,6 +854,7 @@ static int backend_truncates(const char *text, bool *outv, char *err, size_t err
 
 static const hyp_ask_backend_t ASK_LLAMA_BACKEND = {
     .model_id = HYP_MODEL_ASK_MODEL "-" HYP_MODEL_ASK_QUANT "@370f27d7550e",
+    .prefix_contract = HYP_ASK_PREFIX_CONTRACT,
     .dim = HYP_ASK_DIM,
     .window_tokens = HYP_ASK_MODEL_WINDOW,
     .encode_query = backend_encode_query,
