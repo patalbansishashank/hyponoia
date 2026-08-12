@@ -4,6 +4,7 @@
  * Port of Go cmd/hyponoia/ install/update logic.
  * All functions accept explicit paths for testability.
  */
+#include "ask/ask_provider.h"
 #include "cli/agent_clients.h"
 #include "cli/agent_profiles.h"
 #include "cli/cli.h"
@@ -6432,6 +6433,91 @@ int hyp_config_get_int(hyp_config_t *cfg, const char *key, int default_val) {
     return (int)v;
 }
 
+/* Does `s` look like a secret rather than the NAME of a variable holding one?
+ *
+ * Environment variable names are [A-Za-z_][A-Za-z0-9_]* by convention and never
+ * contain the punctuation that API keys are full of. That alone catches most of
+ * it; the known vendor prefixes are checked too, because `pa-...` and `sk-...`
+ * are exactly what someone pastes when they skim the flag name. This is a
+ * guard-rail, not a proof — an all-uppercase key would still pass — so it is
+ * paired with the documentation rather than replacing it. */
+static bool config_looks_like_a_secret(const char *s) {
+    static const char *const VENDOR_PREFIXES[] = {"sk-", "pa-", "jina_", "AIza", "sk_", "voy-"};
+    for (size_t i = 0; i < sizeof(VENDOR_PREFIXES) / sizeof(VENDOR_PREFIXES[0]); i++) {
+        if (strncmp(s, VENDOR_PREFIXES[i], strlen(VENDOR_PREFIXES[i])) == 0) {
+            return true;
+        }
+    }
+    if (!((s[0] >= 'A' && s[0] <= 'Z') || (s[0] >= 'a' && s[0] <= 'z') || s[0] == '_')) {
+        return true;
+    }
+    for (const char *p = s; *p; p++) {
+        bool ok = (*p >= 'A' && *p <= 'Z') || (*p >= 'a' && *p <= 'z') ||
+                  (*p >= '0' && *p <= '9') || *p == '_';
+        if (!ok) {
+            return true;
+        }
+    }
+    return false;
+}
+
+int hyp_config_validate(const char *key, const char *value, char *err, size_t errlen) {
+    if (err && errlen) {
+        err[0] = '\0';
+    }
+    if (!key || !value) {
+        return CLI_ERR;
+    }
+    if (strcmp(key, HYP_CONFIG_ASK_ESC_KEY_ENV) == 0) {
+        if (!value[0]) {
+            snprintf(err, errlen, "%s needs the NAME of an environment variable", key);
+            return CLI_ERR;
+        }
+        if (config_looks_like_a_secret(value)) {
+            /* Never echo the value back — an error message is the other place
+             * a secret leaks, and this one would land in a terminal scrollback
+             * and very likely a bug report. */
+            snprintf(err, errlen,
+                     "%s stores the NAME of an environment variable, not a key — the value given "
+                     "does not look like a variable name, and this config database is backed up "
+                     "and lives beside the graph that gets shared with teammates. Use for "
+                     "example:  hyponoia config set %s VOYAGE_API_KEY",
+                     key, key);
+            return CLI_ERR;
+        }
+        return 0;
+    }
+    if (strcmp(key, HYP_CONFIG_ASK_ESC_PROVIDER) == 0) {
+        if (hyp_ask_provider_by_name(value)) {
+            return 0;
+        }
+        /* Name the ones that exist. A rejected typo with no list is a second
+         * round-trip for something the binary already knows. */
+        size_t n = 0;
+        const hyp_ask_provider_t *t = hyp_ask_provider_table(&n);
+        char names[256];
+        size_t used = 0;
+        for (size_t i = 0; i < n && used + 1 < sizeof(names); i++) {
+            int w = snprintf(names + used, sizeof(names) - used, "%s%s%s", used ? ", " : "",
+                             t[i].name, t[i].implemented ? "" : " (declared, not wired)");
+            if (w <= 0) {
+                break;
+            }
+            used += (size_t)w;
+        }
+        snprintf(err, errlen, "unknown provider '%s' — this build knows: %s", value, names);
+        return CLI_ERR;
+    }
+    if (strcmp(key, HYP_CONFIG_ASK_ESC_MODEL) == 0 || strcmp(key, HYP_CONFIG_ASK_MODEL) == 0) {
+        if (!value[0]) {
+            snprintf(err, errlen, "%s needs a model name", key);
+            return CLI_ERR;
+        }
+        return 0;
+    }
+    return 0;
+}
+
 int hyp_config_set(hyp_config_t *cfg, const char *key, const char *value) {
     if (!cfg || !key || !value) {
         return CLI_ERR;
@@ -6489,6 +6575,16 @@ int hyp_cmd_config(int argc, char **argv) {
                "Register background git watcher on session connect");
         printf("  %-25s  default=%-10s  %s\n", HYP_CONFIG_UI_LANG, "auto",
                "Pin graph UI language: en, zh, or auto");
+        printf("  %-25s  default=%-10s  %s\n", HYP_CONFIG_ASK_MODEL, "built-in",
+               "Local embedding model for `ask` (always used)");
+        printf("  %-25s  default=%-10s  %s\n", HYP_CONFIG_ASK_ESC_PROVIDER, "none",
+               "Optional escalation provider: voyage, jina");
+        printf("  %-25s  default=%-10s  %s\n", HYP_CONFIG_ASK_ESC_MODEL, "none",
+               "Model to call on that provider, e.g. voyage-4-large");
+        printf("  %-25s  default=%-10s  %s\n", HYP_CONFIG_ASK_ESC_KEY_ENV, "none",
+               "NAME of the env var holding the API key — never the key");
+        printf("\nEscalation is opt-in and never automatic. Build its index with\n"
+               "`hyponoia embed --escalation`, then ask for it per query.\n");
         return 0;
     }
 
@@ -6530,7 +6626,12 @@ int hyp_cmd_config(int argc, char **argv) {
             (void)fprintf(stderr, "Usage: config set <key> <value>\n");
             rc = CLI_TRUE;
         } else {
-            if (hyp_config_set(cfg, argv[CLI_SKIP_ONE], argv[CLI_PAIR_LEN]) == 0) {
+            char verr[512];
+            if (hyp_config_validate(argv[CLI_SKIP_ONE], argv[CLI_PAIR_LEN], verr, sizeof(verr)) !=
+                0) {
+                (void)fprintf(stderr, "error: %s\n", verr);
+                rc = CLI_TRUE;
+            } else if (hyp_config_set(cfg, argv[CLI_SKIP_ONE], argv[CLI_PAIR_LEN]) == 0) {
                 printf("%s = %s\n", argv[CLI_SKIP_ONE], argv[CLI_PAIR_LEN]);
             } else {
                 (void)fprintf(stderr, "error: failed to set %s\n", argv[CLI_SKIP_ONE]);

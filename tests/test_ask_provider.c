@@ -11,6 +11,7 @@
 
 #include <string.h>
 
+#include "cli/cli.h"
 #include "foundation/compat.h"
 #include "test_framework.h"
 
@@ -102,10 +103,56 @@ TEST(ask_provider_declared_but_unwired_refuses_instead_of_guessing) {
     PASS();
 }
 
+/* §2.10 step 5. The config DB is backed up and sits beside a graph.db.zst that
+ * gets shared, so a key pasted into key_env is a key handed out. The docs
+ * saying "name, not key" is not a mechanism; this is. */
+TEST(ask_provider_config_refuses_a_key_pasted_where_a_variable_name_goes) {
+    char err[512];
+
+    /* The two shapes actually handled during §2.6 and §2.7, plus OpenAI's. */
+    ASSERT_TRUE(hyp_config_validate(HYP_CONFIG_ASK_ESC_KEY_ENV,
+                                    "pa-l6UcAL1X0ElP5oTcr59zZF963FJVcERSVNfQEfT1T4Y", err,
+                                    sizeof(err)) != 0);
+    ASSERT_TRUE(hyp_config_validate(HYP_CONFIG_ASK_ESC_KEY_ENV, "jina_f73a9f2753b141e8", err,
+                                    sizeof(err)) != 0);
+    ASSERT_TRUE(hyp_config_validate(HYP_CONFIG_ASK_ESC_KEY_ENV, "sk-abc123", err, sizeof(err)) !=
+                0);
+    /* THE ERROR MUST NOT ECHO THE VALUE — a refusal that prints the secret
+     * into a terminal scrollback and then a bug report has leaked it anyway. */
+    ASSERT_TRUE(strstr(err, "sk-abc123") == NULL);
+
+    /* Anything with punctuation an environment variable name cannot hold. */
+    ASSERT_TRUE(hyp_config_validate(HYP_CONFIG_ASK_ESC_KEY_ENV, "my key", err, sizeof(err)) != 0);
+    ASSERT_TRUE(hyp_config_validate(HYP_CONFIG_ASK_ESC_KEY_ENV, "", err, sizeof(err)) != 0);
+
+    /* Real variable names pass. */
+    ASSERT_EQ(hyp_config_validate(HYP_CONFIG_ASK_ESC_KEY_ENV, "VOYAGE_API_KEY", err, sizeof(err)),
+              0);
+    ASSERT_EQ(hyp_config_validate(HYP_CONFIG_ASK_ESC_KEY_ENV, "_private_key_var", err,
+                                  sizeof(err)),
+              0);
+    PASS();
+}
+
+TEST(ask_provider_config_refuses_an_unknown_provider_and_names_the_known_ones) {
+    char err[512];
+    ASSERT_TRUE(hyp_config_validate(HYP_CONFIG_ASK_ESC_PROVIDER, "voyag", err, sizeof(err)) != 0);
+    ASSERT_TRUE(strstr(err, "voyage") != NULL);
+    ASSERT_TRUE(strstr(err, "jina") != NULL);
+    ASSERT_EQ(hyp_config_validate(HYP_CONFIG_ASK_ESC_PROVIDER, "voyage", err, sizeof(err)), 0);
+
+    /* A key this validator does not know is stored unchanged — it validates
+     * what it knows rather than being an allow-list of every key. */
+    ASSERT_EQ(hyp_config_validate("some.unrelated.key", "whatever", err, sizeof(err)), 0);
+    PASS();
+}
+
 SUITE(ask_provider) {
     RUN_TEST(ask_provider_table_rows_are_complete_and_asymmetric);
     RUN_TEST(ask_provider_lookup_refuses_unknown_names);
     RUN_TEST(ask_provider_contract_names_both_sides_of_the_asymmetry);
     RUN_TEST(ask_provider_key_is_read_from_the_environment_and_never_echoed);
     RUN_TEST(ask_provider_declared_but_unwired_refuses_instead_of_guessing);
+    RUN_TEST(ask_provider_config_refuses_a_key_pasted_where_a_variable_name_goes);
+    RUN_TEST(ask_provider_config_refuses_an_unknown_provider_and_names_the_known_ones);
 }

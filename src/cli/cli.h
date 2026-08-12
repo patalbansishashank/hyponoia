@@ -396,6 +396,22 @@ int hyp_config_delete(hyp_config_t *cfg, const char *key);
 #define HYP_CONFIG_AUTO_WATCH "auto_watch"
 #define HYP_CONFIG_UI_LANG "ui-lang"
 
+/* The `ask` model and its optional escalation lane (NEXT-STEPS.md §2.10). */
+#define HYP_CONFIG_ASK_MODEL "ask.model"
+#define HYP_CONFIG_ASK_ESC_PROVIDER "ask.escalation.provider"
+#define HYP_CONFIG_ASK_ESC_MODEL "ask.escalation.model"
+/* THE NAME OF AN ENVIRONMENT VARIABLE, NEVER A KEY. This config DB is backed
+ * up and sits beside a graph.db.zst that gets shared with teammates, so a key
+ * written here is a key handed out. hyp_config_validate refuses values that
+ * look like secrets rather than trusting the documentation to be read. */
+#define HYP_CONFIG_ASK_ESC_KEY_ENV "ask.escalation.key_env"
+
+/* Check a key/value pair before it is stored. Returns 0 when the value is
+ * acceptable, non-zero otherwise with a caller-facing sentence in `err`.
+ * Unknown keys are allowed through unchanged — this validates the keys it
+ * knows, it is not an allow-list of every key the product may ever have. */
+int hyp_config_validate(const char *key, const char *value, char *err, size_t errlen);
+
 /* ── Binary activation safety ─────────────────────────────────── */
 
 typedef void *hyp_cli_activation_lock_t;
