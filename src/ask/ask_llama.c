@@ -715,6 +715,22 @@ static ask_llama_t *ask_llama_open(hyp_ask_device_pref_t pref, char *err, size_t
             s->model_window = trained;
         }
     }
+    /* THE NON-CAUSAL CEILING. A bidirectional model cannot have its sequence
+     * split across micro-batches, so the longest document this lane can encode
+     * is bounded by the largest ubatch its compute buffer can afford — not by
+     * what the weights support. Measured on this card: a 8,192 ubatch prices
+     * the compute buffer at 5,284 MiB and fits; 32,768 asks for 21,135 MiB
+     * against a 9,490 MiB ceiling and aborts, on the GPU AND on CPU.
+     *
+     * So the effective window is clamped HERE, at the one place that already
+     * feeds the truncation counter — `model_window` is what the counter is
+     * denominated in, so every declaration cut by this ceiling is DISCLOSED on
+     * every answer rather than silently shortened. It is also the window §2.9
+     * measured nano at, which is why the number below is 8,192 and not a
+     * rounder guess. */
+    if (s->model_window > HYP_ASK_NONCAUSAL_MAX_SEQ) {
+        s->model_window = HYP_ASK_NONCAUSAL_MAX_SEQ;
+    }
     s->on_gpu = use_gpu;
 
     if (s->n_embd != HYP_ASK_DIM) {
