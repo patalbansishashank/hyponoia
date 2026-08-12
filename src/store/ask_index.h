@@ -52,6 +52,7 @@
 #include <stdint.h>
 
 #include "foundation/constants.h"
+#include "ask/ask_vectors.h" /* hyp_ask_lane_t */
 #include "semantic/ask_embed.h" /* HYP_ASK_DIM, HYP_ASK_MODEL_ID_MAX */
 #include "store/store.h"
 
@@ -128,6 +129,13 @@ typedef struct {
  * remedy is identical. `out` is fully populated in every case. */
 void hyp_ask_index_status(hyp_store_t *s, const char *project, hyp_ask_status_t *out);
 
+/* The same, for a named lane. The escalation index is a separate file with its
+ * own provenance and its own staleness, so asking about one says NOTHING about
+ * the other — which is the point: they are built by different models at
+ * different times and drift apart by design. */
+void hyp_ask_index_status_lane(hyp_store_t *s, const char *project, hyp_ask_lane_t lane,
+                               hyp_ask_status_t *out);
+
 /* Exact top-`limit` by cosine against `qvec` (HYP_ASK_DIM unit-normalised
  * float32s). Brute force, no approximation: measured at 40.4 ms over 300k
  * vectors and 0.09 ms over 3k, and every ANN index would trade recall — the
@@ -138,6 +146,8 @@ void hyp_ask_index_status(hyp_store_t *s, const char *project, hyp_ask_status_t 
  * returned uncitable. Caller frees with hyp_ask_free_hits. */
 int hyp_ask_index_search(hyp_store_t *s, const char *project, const float *qvec, int limit,
                          hyp_ask_hit_t **out, int *out_count);
+int hyp_ask_index_search_lane(hyp_store_t *s, const char *project, hyp_ask_lane_t lane,
+                              const float *qvec, int limit, hyp_ask_hit_t **out, int *out_count);
 
 void hyp_ask_free_hits(hyp_ask_hit_t *hits, int count);
 

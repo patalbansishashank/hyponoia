@@ -48,26 +48,9 @@ enum {
      * anyone "optimises" this number. */
     HYP_ASK_MAX_DOCS = 8,
 
-    /* voyage-4-nano's context window. The encoder reports its own; this is the
-     * default the truncation counter is denominated in when it cannot. */
+    /* Qwen3-Embedding-0.6B's context window. The encoder reports its own; this
+     * is the default the truncation counter is denominated in when it cannot. */
     HYP_ASK_MODEL_WINDOW = 32768,
-
-    /* What a BIDIRECTIONAL model can actually be given in one go.
-     *
-     * Non-causal attention cannot be split across micro-batches — every token
-     * attends to every other, so llama.cpp requires n_ubatch >= the whole
-     * sequence. That turns the compute buffer from a tunable into a function of
-     * the longest document: 8,192 tokens prices it at 5,284 MiB and fits inside
-     * this card's 9,490 MiB ceiling; 32,768 asks for 21,135 MiB and aborts, on
-     * the GPU and on CPU alike.
-     *
-     * So the weights support 32,768 and this lane can spend 8,192, and the
-     * difference is DISCLOSED rather than hidden: model_window is clamped to
-     * this, and the truncation counter is denominated in model_window. It is
-     * also the window §2.9 measured nano at, so the shipped ceiling and the
-     * measured one are the same number rather than two that happen to be
-     * close. */
-    HYP_ASK_NONCAUSAL_MAX_SEQ = 8192,
 
     /* Floor and ceiling for a device-derived budget. */
     HYP_ASK_MIN_BUDGET = 1024,
