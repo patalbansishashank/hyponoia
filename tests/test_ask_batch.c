@@ -175,16 +175,30 @@ TEST(ask_batch_over_budget_document_lands_alone_and_is_not_refused) {
 }
 
 TEST(ask_batch_the_document_cap_is_the_measured_one) {
-    /* PIN. The cap is 8 because the backend was measured at 17.18 docs/s with
-     * one sequence, 24.09 with eight and 16.37 with sixteen — sixteen is slower
-     * than one. §2.1 asks for "hundreds" and §2's Track F found saturation at
-     * 512, but Track F was encoding SINGLE TOKENS, where a pass is launch-bound
-     * and needs hundreds to fill the card. A declaration is hundreds of tokens
-     * and already fills a launch.
+    /* PIN. §2.1 asks for "hundreds" and §2's Track F found saturation at 512,
+     * but Track F was encoding SINGLE TOKENS, where a pass is launch-bound and
+     * needs hundreds to fill the card. A declaration is hundreds of tokens and
+     * already fills a launch, so the answer is single digits either way.
+     *
+     * The cap was 8 under Qwen3-Embedding-0.6B, measured at 17.18 docs/s with
+     * one sequence, 24.09 with eight and 16.37 with sixteen — sixteen slower
+     * than one. That comment always said the number was corpus- and
+     * model-shaped rather than a law, and that re-measuring was the only way to
+     * move it. The model moved, so it was re-measured on the same 4,072
+     * declarations of lld/ELF and the same card, with voyage-4-nano:
+     *
+     *     max_docs   docs/s   forward passes
+     *            8     29.3              520
+     *           16     36.7              275
+     *           24        —   ggml_can_mul_mat assert (ragged non-causal)
+     *
+     * nano is 12 layers against 28 and half the KV per token, so a wider batch
+     * fits where it did not before, and 24 is not a memory ceiling but the
+     * non-causal batching limit.
      *
      * If this assertion is being changed, the thing that licenses the change is
      * a new docs/s measurement on the real backend, not an argument. */
-    ASSERT_EQ(HYP_ASK_MAX_DOCS, 8);
+    ASSERT_EQ(HYP_ASK_MAX_DOCS, 16);
     ASSERT_EQ(HYP_ASK_TOKEN_BUDGET, 8192);
     PASS();
 }
@@ -230,7 +244,7 @@ TEST(ask_batch_the_cap_governs_only_the_short_end) {
     }
     hyp_ask_batches_t b;
     ASSERT_EQ(hyp_ask_group_by_token_budget(shortdocs, 800, 8192, HYP_ASK_MAX_DOCS, &b), 0);
-    ASSERT_EQ(b.group_count, 100); /* 800 / 8 — the cap, not the budget */
+    ASSERT_EQ(b.group_count, 800 / HYP_ASK_MAX_DOCS); /* the cap, not the budget */
     for (int g = 0; g < b.group_count; g++) {
         ASSERT_EQ(b.group_start[g + 1] - b.group_start[g], HYP_ASK_MAX_DOCS);
     }

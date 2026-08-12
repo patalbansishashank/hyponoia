@@ -46,7 +46,23 @@ enum {
      * 24.09 at eight, and 16.37 at sixteen. Sixteen is slower than one. The
      * arithmetic and the reason are in ask_batch.c and are worth reading before
      * anyone "optimises" this number. */
-    HYP_ASK_MAX_DOCS = 8,
+    /* RE-MEASURED FOR voyage-4-nano, 2026-08-12. The 8 above it was
+     * Qwen3-Embedding-0.6B's peak and the note said so — "a corpus-shaped
+     * number rather than a law ... re-measuring is the only way to move it".
+     * The model moved, so it was re-measured, on the same 4,072 declarations of
+     * lld/ELF and the same card:
+     *
+     *     max_docs   docs/s   forward passes
+     *            8     29.3              520
+     *           16     36.7              275     <- +25%
+     *           24        —   ggml_can_mul_mat assert
+     *
+     * Qwen3's optimum was 8 because 16 cost it throughput (24.09 -> 16.37).
+     * nano is 12 layers against 28 and half the KV per token, so a wider batch
+     * fits where it did not before. 24 is not a memory ceiling but the ragged
+     * non-causal assert — see the equal-length note in ask_llama.c — so 16 is
+     * both the measured peak and the last value that runs. */
+    HYP_ASK_MAX_DOCS = 16,
 
     /* voyage-4-nano's context window. The encoder reports its own; this is the
      * default the truncation counter is denominated in when it cannot. */
