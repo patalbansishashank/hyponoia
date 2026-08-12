@@ -803,6 +803,15 @@ static ask_llama_t *ask_llama_open(hyp_ask_device_pref_t pref, char *err, size_t
     }
     s->on_gpu = use_gpu;
 
+    /* SIZE THE PLANNER FOR THE MODEL THAT ACTUALLY LOADED, not for the one its
+     * constants were measured against. ask_batch.h's KV and weight figures are
+     * Qwen3-Embedding-0.6B's — exact for it, and for anything else an
+     * over-charge that quietly narrows every batch. */
+    hyp_ask_kv_set_model_shape(llama_model_n_layer(s->model),
+                               (double)llama_model_size(s->model) / 1048576.0);
+    hyp_log_debug("ask.llama.shape", "plan",
+                  "sized from the loaded model, not from the Qwen3 constants");
+
     if (s->n_embd != HYP_ASK_DIM) {
         (void)snprintf(err, errlen,
                        "the GGUF emits %d dimensions, not the %d every measured number here is "

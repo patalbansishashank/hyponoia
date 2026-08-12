@@ -274,6 +274,22 @@ double hyp_ask_compute_mib_for_ubatch(int n_ubatch);
  * A pre-flight check that costs one multiplication is the difference. */
 bool hyp_ask_kv_plan(int n_seq_max, int seq_len, double ceiling_mib, hyp_ask_kv_plan_t *out);
 
+/* Tell the planner which model it is sizing for.
+ *
+ * THE CONSTANTS ABOVE ARE QWEN3-EMBEDDING-0.6B'S. They were measured exactly,
+ * for that model, and they are silently wrong for any other — not as a crash
+ * but as a slowdown: the planner over-charges every batch, refuses shapes the
+ * device can hold, and narrows n_seq until documents stop sharing a forward
+ * pass. On voyage-4-nano (12 layers against 28, ~355 MB against 639) the
+ * shipped defaults over-reserve KV by 2.33x and weights by 425 MiB, and cost
+ * 1.46 documents per llama_decode where the grouping intended up to 8.
+ *
+ * Call it once, after the model loads. Not calling it leaves the Qwen3
+ * defaults, which is exactly the previous behaviour. */
+void hyp_ask_kv_set_model_shape(int n_layer, double weights_mib);
+double hyp_ask_kv_mib_per_token(void);
+double hyp_ask_weights_mib(void);
+
 /* The largest per-sequence length that fits `ceiling_mib` at `n_seq_max`.
  * 0 when even one token does not fit, which is the caller's cue to fall back to
  * the CPU rather than to try a smaller batch. */
