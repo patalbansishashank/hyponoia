@@ -81,8 +81,31 @@ static const hyp_model_spec_t MODEL_ASK = {
                   "searched",
 };
 
+/* The projection head. A separate artifact because GGUF cannot carry it, not
+ * because it is optional — without it the encoder emits the pre-projection
+ * hidden state, which is a different space and would be searched happily. */
+static const hyp_model_spec_t MODEL_ASK_PROJ = {
+    .model = HYP_MODEL_ASK_MODEL,
+    .quant = "f32",
+    .file = HYP_MODEL_ASK_PROJ_FILE,
+    .repo = HYP_MODEL_ASK_REPO,
+    .revision = HYP_MODEL_ASK_REVISION,
+    .sha256 = HYP_MODEL_ASK_PROJ_SHA256,
+    .bytes = HYP_MODEL_ASK_PROJ_BYTES,
+    .size_text = HYP_MODEL_ASK_PROJ_SIZE_TEXT,
+    .url = HYP_MODEL_ASK_PROJ_URL,
+    .command = HYP_MODEL_ASK_COMMAND,
+    .what = "the ask lane's projection head",
+    .without_it = "The weights would emit their pre-projection hidden state — right shape, unit "
+                  "length, WRONG SPACE — so nothing would be scored correctly",
+};
+
 const hyp_model_spec_t *hyp_model_ask_spec(void) {
     return &MODEL_ASK;
+}
+
+const hyp_model_spec_t *hyp_model_ask_proj_spec(void) {
+    return &MODEL_ASK_PROJ;
 }
 
 /* ── Paths ───────────────────────────────────────────────────────── */

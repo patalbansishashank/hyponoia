@@ -375,6 +375,18 @@ int hyp_cmd_embed(int argc, char **argv) {
                       hyp_ask_llama_build_note());
         return 3;
     }
+    /* The projection head is the SECOND required artifact, and its absence is
+     * its own sentence: the GGUF alone emits a pre-projection vector that looks
+     * perfectly well-formed and is in the wrong space. */
+    if (!escalation && !use_stub && hyp_ask_llama_compiled_in() &&
+        !hyp_model_spec_present(hyp_model_ask_proj_spec())) {
+        (void)fprintf(stderr,
+                      "embed: %s is missing — the weights and the projection head are both "
+                      "required, and without it every vector would be in the wrong space.\n\n"
+                      "  %s\n",
+                      hyp_model_ask_proj_spec()->file, HYP_MODEL_ASK_COMMAND);
+        return 3;
+    }
     if (!escalation && !use_stub && !hyp_model_ask_present()) {
         char detail[HYP_MODEL_MSG_MAX];
         char remedy[HYP_MODEL_MSG_MAX];

@@ -45,7 +45,26 @@
  * silently searched with queries it was never built to answer. The "-bare-doc"
  * half records the other half of the asymmetry — documents get no prefix — so
  * that a future decision to prefix documents also lands as a new token. */
-#define HYP_ASK_PREFIX_CONTRACT "qwen3-instruct-v1-bare-doc"
+#define HYP_ASK_PREFIX_CONTRACT "nano-card-prompts-v1"
+
+/* voyage-4-nano's own two prompt strings, verbatim from its model card, and the
+ * contract §2.8 and §2.9 measured it under (NEXT-STEPS.md §2.10 step 1).
+ *
+ * TWO DIFFERENCES FROM THE QWEN3 CONTRACT ABOVE, and both matter:
+ *
+ *  1. DOCUMENTS ARE PREFIXED TOO. Under Qwen3 the document side was bare and
+ *     the asymmetry lived entirely in the query. nano wants both sides marked,
+ *     so an index built by one contract cannot be searched by the other — which
+ *     is exactly what HYP_ASK_PREFIX_CONTRACT is stamped for.
+ *  2. THERE IS NO {language} SLOT. Qwen3's template names the language;
+ *     nano's prompts do not, so the query prefix no longer depends on the
+ *     language of the question and cannot fail to render for a language with
+ *     no display name.
+ *
+ * Bare, nano scores BELOW the model it replaces (-11.69% RR on the frozen 60).
+ * These strings are not decoration; they are worth more than the model change. */
+#define HYP_ASK_NANO_DOCUMENT_PROMPT "Represent the document for retrieval: "
+#define HYP_ASK_NANO_QUERY_PROMPT "Represent the query for retrieving supporting documents: "
 
 /* Comfortably above template length (103 bytes with the %s removed; 106
  * rendered with "C++") plus the longest display name;

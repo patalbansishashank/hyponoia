@@ -59,24 +59,57 @@
  * sentence-transformers fp32 over 45 texts) and is byte-identical to the LFS
  * sha256 Hugging Face publishes for the same file. Both were checked.
  */
-#define HYP_MODEL_ASK_MODEL "Qwen3-Embedding-0.6B"
+/* voyage-4-nano, replacing Qwen3-Embedding-0.6B (NEXT-STEPS.md §2.10 step 1).
+ * Smaller (346M against 596M), Apache 2.0, and better on public C/C++: it beats
+ * Qwen3 on 7 of 8 CLARC splits, significantly on all seven. */
+#define HYP_MODEL_ASK_MODEL "voyage-4-nano"
 #define HYP_MODEL_ASK_QUANT "Q8_0"
-#define HYP_MODEL_ASK_FILE HYP_MODEL_ASK_MODEL "-" HYP_MODEL_ASK_QUANT ".gguf"
-#define HYP_MODEL_ASK_REPO "Qwen/Qwen3-Embedding-0.6B-GGUF"
-#define HYP_MODEL_ASK_REVISION "370f27d7550e0def9b39c1f16d3fbaa13aa67728"
-#define HYP_MODEL_ASK_SHA256 "06507c7b42688469c4e7298b0a1e16deff06caf291cf0a5b278c308249c3e439"
+#define HYP_MODEL_ASK_FILE HYP_MODEL_ASK_MODEL "-q8_0.gguf"
+/* UNOFFICIAL. Voyage publishes the weights but no GGUF, and this conversion is
+ * a third party's. It is pinned by revision AND digest like every other
+ * artifact here, which makes the supply chain auditable, NOT absent — a
+ * first-party conversion should replace it before any public release. */
+#define HYP_MODEL_ASK_REPO "jsonMartin/voyage-4-nano-gguf"
+#define HYP_MODEL_ASK_REVISION "75e62c7dba5ee8156717a56920976ab128b8c693"
+#define HYP_MODEL_ASK_SHA256 "d0e430fe24faba10f5bc6dd4f896e1efd0e6d65d7f0cf686a500d48cac274a4a"
 #define HYP_MODEL_ASK_URL                                                           \
     "https://huggingface.co/" HYP_MODEL_ASK_REPO "/resolve/" HYP_MODEL_ASK_REVISION \
     "/" HYP_MODEL_ASK_FILE
 
 /* Exact byte count, so a short download is caught before the digest is even
  * computed and a truncated file never reaches the hasher as a surprise. */
-#define HYP_MODEL_ASK_BYTES INT64_C(639150592)
+#define HYP_MODEL_ASK_BYTES INT64_C(371900384)
 
-/* What a human is told the download costs. Deliberately a string: "639 MB"
+/* What a human is told the download costs. Deliberately a string: "355 MB"
  * beside a progress bar is the number that matters, and rendering it from
  * HYP_MODEL_ASK_BYTES at every call site invites three spellings of it. */
-#define HYP_MODEL_ASK_SIZE_TEXT "639 MB"
+#define HYP_MODEL_ASK_SIZE_TEXT "355 MB"
+
+/* ── The second artifact: the projection head ─────────────────────
+ *
+ * nano's hidden size is 1024 but it emits 2048, because a per-token
+ * nn.Linear(1024, 2048, bias=False) sits between the encoder and the pooler.
+ * GGUF HAS NO REPRESENTATION FOR IT, so the conversion drops it and the file
+ * emits 1024 — and that raw 1024 is NOT our space, it is the pre-projection
+ * hidden state. Scoring with it would be wrong and silent.
+ *
+ * It is applied AFTER llama.cpp pools instead, which is exact rather than
+ * approximate: the head is a bias-free linear map and the pooler is a mean, so
+ * they commute — mean(W.h_i) = W.mean(h_i). Verified against the reference
+ * pipeline at cosine 1.0000000.
+ *
+ * 2048 x 1024 float32, row-major (out-major, as PyTorch stores nn.Linear
+ * weights). Checked bit-identical to voyageai/voyage-4-nano's own
+ * `linear.weight`: max|diff| = 0.0. */
+#define HYP_MODEL_ASK_PROJ_FILE "voyage-4-nano-linear.bin"
+#define HYP_MODEL_ASK_PROJ_SHA256 "6ee040fad75c000b21f8beef7584e8962ec76913639f2f46ae84b9c4c1fd7dbf"
+#define HYP_MODEL_ASK_PROJ_BYTES INT64_C(8388608)
+#define HYP_MODEL_ASK_PROJ_SIZE_TEXT "8 MB"
+#define HYP_MODEL_ASK_PROJ_URL                                                      \
+    "https://huggingface.co/" HYP_MODEL_ASK_REPO "/resolve/" HYP_MODEL_ASK_REVISION \
+    "/" HYP_MODEL_ASK_PROJ_FILE
+/* Rows of the projection: the width nano emits before Matryoshka truncation. */
+#define HYP_MODEL_ASK_PROJ_OUT 2048
 
 /* The exact command the unavailable answer names. One spelling, one place. */
 #define HYP_MODEL_ASK_COMMAND "hyponoia fetch-model"
@@ -124,8 +157,12 @@ typedef struct {
     const char *without_it;
 } hyp_model_spec_t;
 
-/* The pinned artifact. Never NULL. */
+/* The pinned artifacts. Never NULL.
+ *
+ * TWO of them, and both are required: the GGUF alone emits pre-projection
+ * vectors that are the right shape, unit length and in the wrong space. */
 const hyp_model_spec_t *hyp_model_ask_spec(void);
+const hyp_model_spec_t *hyp_model_ask_proj_spec(void);
 
 /* ── What is on disk ─────────────────────────────────────────────── */
 
