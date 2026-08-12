@@ -900,9 +900,15 @@ int hyp_cmd_fetch_model(int argc, char **argv) {
         }
     }
 
-    const hyp_model_spec_t *chosen[1];
+    /* BOTH artifacts, always. The weights alone are not a working encoder:
+     * voyage-4-nano emits its pre-projection hidden state without the head,
+     * which is the right width and unit length and the wrong space. Fetching
+     * one and not the other would leave a lane that loads and ranks badly —
+     * the failure mode with no downstream signal. */
+    const hyp_model_spec_t *chosen[2];
     int n_chosen = 0;
     chosen[n_chosen++] = &MODEL_ASK;
+    chosen[n_chosen++] = &MODEL_ASK_PROJ;
 
     if (want_path) {
         int rc = 0;
