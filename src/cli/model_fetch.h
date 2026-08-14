@@ -209,7 +209,6 @@ void hyp_model_probe_spec(const hyp_model_spec_t *spec, hyp_model_probe_t *out);
 bool hyp_model_spec_present(const hyp_model_spec_t *spec);
 const char *hyp_model_spec_path(const hyp_model_spec_t *spec, char *out, size_t out_sz);
 
-
 /* ── Verification ────────────────────────────────────────────────── */
 
 /* Streaming SHA-256 of a whole file to lowercase hex. `out` needs

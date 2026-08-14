@@ -985,10 +985,9 @@ static int main_run_allow_root(int argc, char **argv) {
                    "always-refused roots (see docs/CONFIGURATION.md)\n");
         }
         if (!path && !list_only) {
-            (void)fprintf(stderr,
-                          "usage: hyponoia allow-root [--approve-sensitive] <path>\n"
-                          "       hyponoia allow-root --approve-manifest <project>\n"
-                          "       hyponoia allow-root --list\n");
+            (void)fprintf(stderr, "usage: hyponoia allow-root [--approve-sensitive] <path>\n"
+                                  "       hyponoia allow-root --approve-manifest <project>\n"
+                                  "       hyponoia allow-root --list\n");
             return EXIT_FAILURE;
         }
         return 0;
@@ -1050,8 +1049,7 @@ static int handle_subcommand(int argc, char **argv, hyp_project_lock_manager_t *
     for (int i = SKIP_ONE; i < argc; i++) {
         if (strcmp(argv[i], "--verify-runtime-assets") == 0) {
             if (i != SKIP_ONE || argc != MAIN_CLI_ARGC) {
-                (void)fprintf(
-                    stderr, "hyponoia: --verify-runtime-assets accepts no arguments\n");
+                (void)fprintf(stderr, "hyponoia: --verify-runtime-assets accepts no arguments\n");
                 return 2;
             }
             return hyp_cmd_verify_runtime_assets();
@@ -2482,9 +2480,8 @@ int main(int argc, char **argv) {
             coordination_failure = main_build_identity_status_name(local_identity_status);
         }
         if (coordination_failure) {
-            (void)fprintf(
-                stderr, "hyponoia: secure CLI coordination could not be created (%s)\n",
-                coordination_failure);
+            (void)fprintf(stderr, "hyponoia: secure CLI coordination could not be created (%s)\n",
+                          coordination_failure);
             goto local_cli_cleanup;
         }
         hyp_http_server_set_binary_path(local_executable);
@@ -2511,8 +2508,7 @@ int main(int argc, char **argv) {
             hyp_daemon_maintenance_monitor_start(cohort_manager, main_local_command_cancel,
                                                  &maintenance_context, EXIT_FAILURE, "CLI command");
         if (!maintenance_monitor) {
-            (void)fprintf(stderr,
-                          "hyponoia: CLI maintenance observer could not start safely\n");
+            (void)fprintf(stderr, "hyponoia: CLI maintenance observer could not start safely\n");
             goto local_cli_cleanup;
         }
 
@@ -2584,9 +2580,8 @@ int main(int argc, char **argv) {
     char executable_path[MAIN_PATH_CAP];
     hyp_daemon_build_identity_t identity;
     if (!main_resolve_executable(argv[0], executable_path)) {
-        (void)fprintf(stderr,
-                      "hyponoia: exact executable identity could not be verified "
-                      "(executable-path)\n");
+        (void)fprintf(stderr, "hyponoia: exact executable identity could not be verified "
+                              "(executable-path)\n");
         return role == HYP_DAEMON_PROCESS_HOOK_CLIENT ? EXIT_SUCCESS : EXIT_FAILURE;
     }
     main_build_identity_status_t identity_status = main_build_identity(&identity);

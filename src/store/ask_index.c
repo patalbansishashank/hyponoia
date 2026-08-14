@@ -60,9 +60,8 @@ static void ask_copy(char *dst, size_t dstlen, const char *src) {
  * does not exist or holds no rows for this project, which is the caller's cue
  * to try the in-graph tables the tests build by hand. */
 static bool ask_status_from_vector_file(const char *project, hyp_ask_lane_t lane,
-                                        const hyp_ask_backend_t *backend,
-                                        const char *want_model, const char *want_contract,
-                                        hyp_ask_status_t *out) {
+                                        const hyp_ask_backend_t *backend, const char *want_model,
+                                        const char *want_contract, hyp_ask_status_t *out) {
     if (!project || !project[0]) {
         return false;
     }
@@ -338,8 +337,7 @@ static char *ask_dup(const unsigned char *s) {
 }
 
 int hyp_ask_index_search_lane(hyp_store_t *s, const char *project, hyp_ask_lane_t lane,
-                              const float *qvec, int limit, hyp_ask_hit_t **out,
-                              int *out_count) {
+                              const float *qvec, int limit, hyp_ask_hit_t **out, int *out_count) {
     if (!out || !out_count) {
         return HYP_STORE_ERR;
     }

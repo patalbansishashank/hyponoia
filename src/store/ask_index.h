@@ -52,7 +52,7 @@
 #include <stdint.h>
 
 #include "foundation/constants.h"
-#include "ask/ask_vectors.h" /* hyp_ask_lane_t */
+#include "ask/ask_vectors.h"    /* hyp_ask_lane_t */
 #include "semantic/ask_embed.h" /* HYP_ASK_DIM, HYP_ASK_MODEL_ID_MAX */
 #include "store/store.h"
 
@@ -92,8 +92,8 @@ typedef enum {
 typedef struct {
     hyp_ask_avail_t avail;
     hyp_ask_trunc_state_t trunc;
-    int trunc_count;                       /* meaningful only when trunc == HYP_ASK_TRUNC_SOME */
-    int n_vectors;                         /* rows for this project; 0 unless AVAILABLE */
+    int trunc_count; /* meaningful only when trunc == HYP_ASK_TRUNC_SOME */
+    int n_vectors;   /* rows for this project; 0 unless AVAILABLE */
     /* Whether spans covering a whole file were embedded (NEXT-STEPS §2.2
      * lever 3). Read from the index, never assumed, and disclosed beside
      * `population` on every answer for the same reason the truncation state
