@@ -8,14 +8,18 @@
 # class), all arm64 variants + windows-11-arm (arch portability), multiple macOS
 # and Windows versions. A FAIL on any platform is a binary users would receive.
 #
-# NON-GATING: workflow_dispatch + push to qa/smoke-** only (the full ~10-platform
-# build is heavy, so it is opt-in rather than on every qa push).
+# NON-GATING: workflow_dispatch only (NEXT-STEPS.md §2.12 removed the qa/smoke-**
+# push trigger). The full ~10-platform build is heavy, so it is asked for rather
+# than triggered.
 name: Smoke (all platforms)
 
 on:
+  # NEXT-STEPS.md §2.12 removed `push: branches: ['qa/smoke-**']`. This is the
+  # widest matrix in the repository — roughly ten runners including several
+  # macOS at 10x and Windows at 2x on a private plan — and it was reachable by
+  # pushing a branch pattern inherited from upstream that we have never used.
+  # Dispatch-only, so it costs nothing until a maintainer asks for it.
   workflow_dispatch:
-  push:
-    branches: ['qa/smoke-**']
 
 permissions:
   contents: read

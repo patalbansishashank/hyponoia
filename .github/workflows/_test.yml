@@ -16,6 +16,18 @@ on:
         description: 'Split each C-suite leg across parallel shard jobs (ubuntu x3, windows x2); off = one job per leg, byte-identical to the pre-shard topology'
         type: boolean
         default: false
+      linux_only:
+        # NEXT-STEPS.md §2.12. On a PRIVATE repository Linux bills 1x, Windows
+        # 2x and macOS 10x. A single pull request to main used to bill four
+        # distinct non-Linux runner labels — macos-14 (twice), macos-15-intel,
+        # macos-latest and windows-latest (four jobs, one with a 240-minute
+        # timeout) — for a project whose only shipping platform claim is made
+        # by release.yml. Cross-platform proof belongs where it is attached to
+        # something that ships, so pr.yml passes this and release.yml and
+        # dry-run.yml do not. DEFAULT false: the release path is unchanged.
+        description: 'Restrict every leg to Linux runners (PR-time cost control; release and dry run keep the full matrix)'
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -30,12 +42,14 @@ jobs:
     outputs:
       unix: ${{ steps.set.outputs.unix }}
       windows: ${{ steps.set.outputs.windows }}
+      tsan: ${{ steps.set.outputs.tsan }}
     steps:
       - name: Compute matrices
         id: set
         env:
           BROAD: ${{ inputs.broad_platforms }}
           SHARDS: ${{ inputs.shard_suites }}
+          LINUX_ONLY: ${{ inputs.linux_only }}
         run: |
           CORE_UNIX='[
             {"os":"ubuntu-latest","cc":"gcc","cxx":"g++"},
@@ -61,12 +75,27 @@ jobs:
           # is a real (non-optional) gate, not a tolerated emulated-flake.
           CORE_WIN='[{"os":"windows-latest","msystem":"CLANG64","pkg":"x86_64"}]'
           BROAD_WIN='[{"os":"windows-2025","msystem":"CLANG64","pkg":"x86_64"},{"os":"windows-11-arm","msystem":"CLANGARM64","pkg":"aarch64"}]'
+          TSAN='[
+            {"os":"ubuntu-latest","cc":"clang","cxx":"clang++"},
+            {"os":"ubuntu-24.04-arm","cc":"clang","cxx":"clang++"},
+            {"os":"macos-14","cc":"cc","cxx":"c++"}
+          ]'
           if [ "$BROAD" = "true" ]; then
             UNIX=$(jq -cn --argjson a "$CORE_UNIX" --argjson b "$BROAD_UNIX" '$a + $b')
             WIN=$(jq -cn --argjson a "$CORE_WIN" --argjson b "$BROAD_WIN" '$a + $b')
           else
             UNIX=$(jq -cn --argjson a "$CORE_UNIX" '$a')
             WIN=$(jq -cn --argjson a "$CORE_WIN" '$a')
+          fi
+          # §2.12: drop every non-Linux leg. Applied AFTER the broad/core
+          # choice so the two inputs compose rather than one silently
+          # overriding the other. The Windows matrix is emptied here for
+          # completeness, but test-windows is also gated off by job-level `if`
+          # so a zero-entry matrix is never actually expanded.
+          if [ "$LINUX_ONLY" = "true" ]; then
+            UNIX=$(jq -c '[.[] | select(.os | startswith("ubuntu"))]' <<< "$UNIX")
+            TSAN=$(jq -c '[.[] | select(.os | startswith("ubuntu"))]' <<< "$TSAN")
+            WIN='[]'
           fi
           # Suite sharding (opt-in via the shard_suites input): each platform's
           # C-suite run is split across N runner jobs. HYP_TEST_SHARD="i/N"
@@ -89,6 +118,7 @@ jobs:
           fi
           echo "unix={\"include\":$UNIX}" >> "$GITHUB_OUTPUT"
           echo "windows={\"include\":$WIN}" >> "$GITHUB_OUTPUT"
+          echo "tsan={\"include\":$TSAN}" >> "$GITHUB_OUTPUT"
 
   test-unix:
     needs: setup-matrix
@@ -182,7 +212,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        # §2.12: Windows bills 2x and is dropped at PR time only.
+        os: ${{ inputs.linux_only && fromJSON('["ubuntu-latest"]') || fromJSON('["ubuntu-latest","windows-latest"]') }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     steps:
@@ -306,6 +337,7 @@ jobs:
   # so this leg is the ordinary ASan suite built with that toolchain and run
   # with detect_leaks=1. Mirrors the local `make -f Makefile.hyp test-lsan`.
   test-lsan-macos:
+    if: ${{ !inputs.linux_only }}   # §2.12: macOS bills 10x; release and dry run still run it
     runs-on: macos-latest
     timeout-minutes: 120
     steps:
@@ -338,13 +370,12 @@ jobs:
           key: ccache-lsan-${{ github.ref }}-${{ github.sha }}
 
   test-tsan:
+    # Matrix moved into setup-matrix so §2.12's linux_only can filter its
+    # macos-14 leg; the entries are otherwise unchanged.
+    needs: setup-matrix
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - { os: ubuntu-latest, cc: clang, cxx: clang++ }
-          - { os: ubuntu-24.04-arm, cc: clang, cxx: clang++ }
-          - { os: macos-14, cc: cc, cxx: c++ }
+      matrix: ${{ fromJSON(needs.setup-matrix.outputs.tsan) }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 120
     steps:
@@ -396,6 +427,7 @@ jobs:
           CCACHE_DIR: ${{ github.workspace }}/.ccache
 
   test-windows:
+    if: ${{ !inputs.linux_only }}   # §2.12: gated here so the emptied matrix is never expanded
     needs: setup-matrix
     strategy:
       fail-fast: false
@@ -542,6 +574,7 @@ jobs:
   # CLI arguments being mangled by the narrow-argv main() (#423/#20, fixed by the
   # wide-argv entrypoint that reads GetCommandLineW).
   test-windows-guards:
+    if: ${{ !inputs.linux_only }}   # §2.12: Windows bills 2x; release and dry run still run it
     runs-on: windows-latest
     timeout-minutes: 60
     steps:

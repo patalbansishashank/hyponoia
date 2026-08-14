@@ -11,11 +11,20 @@
 # which is where a cross-platform claim belongs.
 name: CI
 
+# NEXT-STEPS.md §2.12 added `feat/**`, and it closed a real hole rather than
+# widening the net for its own sake. This workflow used to trigger on
+# [main, dev] only. `feat/nano-local-and-escalation` is neither, so §2.10's five
+# pushes produced five DCO runs and ZERO CI runs — the entire shipped nano lane
+# was never built or tested by a runner, and would not have been even with the
+# account in credit. That gap was ours, not inherited, and it was only visible
+# by enumerating triggers against the branch names actually in use. This job is
+# Linux-only and roughly two minutes warm, so covering feature branches is the
+# cheapest gate in the repository.
 on:
   push:
-    branches: [main, dev]
+    branches: [main, dev, 'feat/**']
   pull_request:
-    branches: [main, dev]
+    branches: [main, dev, 'feat/**']
   workflow_dispatch:
 
 permissions:

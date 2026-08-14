@@ -1,7 +1,11 @@
 # PR validation: security gates + lint + full test suite. Builds, smoke and
-# soak stay maintainer-driven via the dry-run workflow_dispatch. Branch
-# protection requires `dco` + `ci-ok` — a single stable summary context that
-# fails unless every PR stage succeeded.
+# soak stay maintainer-driven via the dry-run workflow_dispatch. `ci-ok` is the
+# single stable summary context that fails unless every PR stage succeeded, and
+# is what branch protection would require if this plan allowed it.
+# NEXT-STEPS.md §2.12 deleted the `dco` workflow that used to sit beside it:
+# the sign-off is still enforced locally by scripts/git-hooks/commit-msg and
+# scripts/check-dco.sh, and the server-side check existed for outside
+# contributors, of whom this repository has none.
 name: PR
 
 on:
@@ -39,6 +43,15 @@ jobs:
       # (ubuntu x3, windows x2; coverage re-proven every run by the
       # shard-completeness job). Dry runs and releases shard identically.
       shard_suites: true
+      # NEXT-STEPS.md §2.12. This is a private repository: Linux bills 1x,
+      # Windows 2x, macOS 10x. Before this line a single pull request to main
+      # billed macos-14 twice, macos-15-intel, macos-latest and windows-latest
+      # four times — one of them with a 240-minute timeout. The only
+      # cross-platform claim this project makes is the one release.yml
+      # attaches to a published artifact, and release.yml and dry-run.yml both
+      # still run the full matrix. Proof of portability belongs there, not on
+      # every Dependabot bump.
+      linux_only: true
 
   # ── Which files changed? Gate the (heavier) build+smoke on product code so
   #    docs / CI / test-only PRs stay fast. ──
@@ -65,20 +78,29 @@ jobs:
             echo "product=false" >> "$GITHUB_OUTPUT"
           fi
 
-  # ── Light smoke: build the PRODUCTION binary and run the core smoke on the
-  #    three RELIABLE NATIVE platforms. Catches built-binary regressions at PR
-  #    time (e.g. the Windows CreateProcess argv-quoting class that previously
-  #    only surfaced in the release dry run). The full broad/emulated smoke stays
-  #    in the dry run. Only product-code PRs pay this; every leg gates.
+  # ── Light smoke: build the PRODUCTION binary and run the core smoke. Catches
+  #    built-binary regressions at PR time (e.g. the Windows CreateProcess
+  #    argv-quoting class that previously only surfaced in the release dry run).
+  #    The full broad/emulated smoke stays in the dry run. Only product-code PRs
+  #    pay this; every leg gates.
   #    The maintained local wrappers add a race-free release fixture so the
-  #    download/checksum/install/update phases run here as well. ──
+  #    download/checksum/install/update phases run here as well.
+  #
+  #    NEXT-STEPS.md §2.12 cut this from [ubuntu-latest, macos-14,
+  #    windows-latest] to Linux alone. The macOS and Windows steps below are
+  #    KEPT, not deleted: they are what dry-run.yml and release.yml exercise,
+  #    and re-adding a label here is a one-line change if a Windows-shaped bug
+  #    ever needs to gate at PR time again. What is given up is real — the
+  #    argv-quoting class named above would now surface at dry-run rather than
+  #    at PR — and that is the trade this section accepts on a private plan
+  #    where macOS bills 10x. ──
   pr-smoke:
     needs: [changes]
     if: ${{ !cancelled() && needs.changes.outputs.product == 'true' }}
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-14, windows-latest]
+        os: [ubuntu-latest]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     steps:
@@ -148,7 +170,7 @@ jobs:
           CCACHE_MAXSIZE: 1000M
 
   ci-ok:
-    # The one required context (besides dco) — fails unless every PR stage
+    # The one required context — fails unless every PR stage
     # succeeded, so matrix renames can never silently deadlock merges. `skipped`
     # is OK: pr-smoke skips on docs/CI/test-only PRs (changes.product == false).
     needs: [security, lint, test, changes, pr-smoke]
