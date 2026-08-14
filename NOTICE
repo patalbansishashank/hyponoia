@@ -1,0 +1,29 @@
+Hyponoia
+========
+
+Copyright (c) 2026 Creative Desi
+Licensed under the MIT License — see LICENSE.
+
+Derived work
+------------
+
+Portions of this Software are derived from codebase-memory-mcp,
+Copyright (c) 2025 DeusData, licensed under the MIT License. That copyright
+notice is retained here as those terms require.
+
+This notice lives here rather than appended to LICENSE so that LICENSE is the
+canonical MIT text and nothing else. That is not cosmetic: with the paragraph
+above inside it, GitHub's licensee classified this repository as
+"Other / NOASSERTION" rather than MIT, which is what every downstream tool —
+the README badge, OpenSSF Scorecard's License check, and anyone assessing
+whether they may use this — reads. The obligation to retain the notice is
+unchanged and is met here, in docs/THIRD_PARTY.md, and in the
+THIRD_PARTY_NOTICES.md that ships inside every release archive.
+
+Third-party components
+----------------------
+
+Vendored dependencies, tree-sitter grammars, model weights fetched at runtime
+and the licences of each are documented in docs/THIRD_PARTY.md, and their full
+licence texts are generated into THIRD_PARTY_NOTICES.md by
+scripts/gen-third-party-notices.sh.
