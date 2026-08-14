@@ -50,6 +50,11 @@ outside this repository, under `engine/hyponoia/runs/`:
   measured and declined.
 - `MODEL-SURVEY/` — 31 candidate encoders against the MTEB data, and what each
   would cost.
+- `VOYAGE/`, `VOYAGE-NANO/`, `CLARC/`, `UEMBED/` — the encoders measured after
+  that survey: one accepted through an API, one taken as the open-weights
+  model, one declined, and a public C/C++ coordinate for all of them.
+- `RERANK-NANO/` — the cross-encoder re-measured against a stronger retriever,
+  and why its gain was never a property of the reranker.
 - `ASK/` — how the semantic lane was built, and the four levers tried on it.
 - `EMBED-SWAP/` — the Qwen3 static-table swap that was measured and rejected.
 
