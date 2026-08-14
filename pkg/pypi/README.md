@@ -27,9 +27,15 @@ hyponoia --help
 
 | OS      | Architecture |
 |---------|-------------|
-| macOS   | arm64, amd64 |
 | Linux   | arm64, amd64 |
-| Windows | arm64, amd64 |
+| Windows | amd64 |
+
+No binaries are published for macOS or for ARM64 Windows. macOS users can build
+from source; ARM64 Windows runs the amd64 build under emulation.
+
+<!-- RETIRED-PLATFORM(macos), RETIRED-PLATFORM(windows-arm64): the macOS row and
+     the Windows arm64 entry were removed here. See docs/MAINTAINERS.md
+     "Retired platforms". -->
 
 ## Full documentation
 

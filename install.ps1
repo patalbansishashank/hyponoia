@@ -163,6 +163,17 @@ if ($env:HYP_ARCH) {
             $Arch = "amd64"
         }
     }
+
+    # RETIRED-PLATFORM(windows-arm64): no native ARM64 Windows asset is
+    # published, so fall back to the x86-64 build under emulation rather than
+    # 404 -- which is what these users got before a native build existed. This
+    # sits inside the auto-detection branch on purpose: an explicit
+    # $env:HYP_ARCH above still wins, because CI/tests force an architecture
+    # through it. See docs/MAINTAINERS.md "Retired platforms".
+    if ($Arch -eq "arm64") {
+        Write-Host "note: no native ARM64 Windows build is published; using the x64 build under emulation."
+        $Arch = "amd64"
+    }
 }
 
 Write-Host "hyponoia installer (Windows)"

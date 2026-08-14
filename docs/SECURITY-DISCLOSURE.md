@@ -32,7 +32,7 @@ We follow **coordinated disclosure**:
 |------|------------|----------------------|
 | 1. **Acknowledge** | Confirm we received your report and are looking at it. | within **7 days** (usually much sooner) |
 | 2. **Triage & severity** | Reproduce the issue and assign a severity (CVSS). | within **14 days** |
-| 3. **Fix privately** | Develop the fix in a private environment, with a regression guard, and validate it across all supported platforms (Linux, macOS, Windows) under full CI. | severity-dependent |
+| 3. **Fix privately** | Develop the fix in a private environment, with a regression guard, and validate it across all supported platforms (Linux, Windows) under full CI. | severity-dependent |
 | 4. **You verify** | We invite you (read-only) to confirm the fix resolves the issue and that the guard prevents regression. Your sign-off is welcomed; an unresponsive reporter will not indefinitely block a release. | — |
 | 5. **Release** | Merge the fix and cut a patched release promptly. | as fast as severity warrants |
 | 6. **Disclose** | Publish a [GitHub Security Advisory](https://github.com/patalbansishashank/hyponoia/security/advisories), request a **CVE** (GitHub is a CNA), and credit you. | after a short upgrade window |

@@ -117,7 +117,8 @@ This project implements multiple layers of security verification. Every release 
 - **Native antivirus scanning** on every platform (any detection fails the build):
   - **Windows**: Windows Defender with ML heuristics — the same engine end users run
   - **Linux**: ClamAV with daily signature updates
-  - **macOS**: ClamAV with daily signature updates
+  <!-- RETIRED-PLATFORM(macos): the macOS ClamAV line was removed with the macOS
+       CI legs. See docs/MAINTAINERS.md "Retired platforms". -->
 
 ### Release-Time (draft → verify → publish)
 

@@ -1,9 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# hyponoia setup script (macOS + Linux)
+# hyponoia setup script (Linux: binary or source; macOS: source only)
 # Default: download pre-built binary from GitHub Release
 # --from-source: build from source (requires Go + C compiler)
+#
+# RETIRED-PLATFORM(macos): no darwin binary is published, so the default
+# download path refuses on macOS; --from-source is unaffected and still
+# supported there. See docs/MAINTAINERS.md "Retired platforms".
 
 REPO="patalbansishashank/hyponoia"
 INSTALL_DIR="$HOME/.local/bin"
@@ -59,6 +63,9 @@ detect_platform() {
     arch=$(uname -m)
 
     case "$os" in
+        # RETIRED-PLATFORM(macos): unreachable — the caller refuses on Darwin
+        # before this runs, because die() prints on stdout and would be
+        # swallowed by this function's command substitution.
         Darwin) os="darwin" ;;
         Linux)  os="linux" ;;
         *)      die "Unsupported OS: $os. Use WSL2 on Windows." ;;
@@ -69,6 +76,7 @@ detect_platform() {
         x86_64|amd64)
             # On macOS, uname -m returns x86_64 under Rosetta even on Apple Silicon.
             # Check the actual hardware to pick the right binary.
+            # RETIRED-PLATFORM(macos): unreachable with the Darwin case above.
             if [ "$os" = "darwin" ] && sysctl -n hw.optional.arm64 2>/dev/null | grep -q '1'; then
                 arch="arm64"
             else
@@ -313,6 +321,18 @@ echo ""
 if [ "$FROM_SOURCE" = true ]; then
     build_from_source
 else
+    # RETIRED-PLATFORM(macos): refuse before composing a darwin asset name that
+    # 404s. Deliberately here rather than in detect_platform(), whose output is
+    # captured by command substitution — a message printed there is invisible.
+    # See docs/MAINTAINERS.md "Retired platforms".
+    if [ "$(uname -s)" = "Darwin" ]; then
+        fail "No macOS binaries are published for this release."
+        info "Building from source on macOS still works — re-run with --from-source:"
+        info "  curl -fsSL https://raw.githubusercontent.com/${REPO}/main/scripts/setup.sh | bash -s -- --from-source"
+        info "See docs/INSTALL.md: https://github.com/${REPO}/blob/main/docs/INSTALL.md"
+        exit 1
+    fi
+
     platform=$(detect_platform)
     ok "Platform: ${platform}"
     tool=$(check_download_tool)

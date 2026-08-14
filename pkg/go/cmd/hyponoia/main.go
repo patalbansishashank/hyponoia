@@ -317,6 +317,9 @@ func cacheDir() string {
 			return filepath.Join(d, "hyponoia")
 		}
 	case "darwin":
+		// RETIRED-PLATFORM(macos): dead in practice — download() refuses on
+		// darwin, so nothing is ever cached here. Kept so restoring darwin is
+		// one edit. See docs/MAINTAINERS.md "Retired platforms".
 		if home, err := os.UserHomeDir(); err == nil {
 			return filepath.Join(home, "Library", "Caches", "hyponoia")
 		}
@@ -330,6 +333,9 @@ func cacheDir() string {
 	return filepath.Join(os.TempDir(), "hyponoia")
 }
 
+// goos and goarch name the release target. They stay pure mappings; the two
+// retired-platform decisions are applied in download(), where both values are
+// known together. RETIRED-PLATFORM(macos), RETIRED-PLATFORM(windows-arm64).
 func goos() string {
 	switch runtime.GOOS {
 	case "darwin":
@@ -371,6 +377,31 @@ func archiveNamesForOS(platform, binaryName string) []string {
 func download(dest string) error {
 	platform := goos()
 	arch := goarch()
+
+	// RETIRED-PLATFORM(macos): refuse here rather than compose a darwin asset
+	// name that 404s. See docs/MAINTAINERS.md "Retired platforms".
+	if platform == "darwin" {
+		return fmt.Errorf(
+			"no macOS binaries are published for this release.\n"+
+				"  Building hyponoia from source on macOS still works.\n"+
+				"  See docs/INSTALL.md:\n"+
+				"  https://github.com/%s/blob/main/docs/INSTALL.md",
+			repo,
+		)
+	}
+
+	// RETIRED-PLATFORM(windows-arm64): no native ARM64 Windows asset is
+	// published, so fall back to the x86-64 build under emulation rather than
+	// 404 — what these users got before a native build existed. arm64 remains a
+	// real target on Linux. See docs/MAINTAINERS.md "Retired platforms".
+	if platform == "windows" && arch == "arm64" {
+		fmt.Fprintln(
+			os.Stderr,
+			"hyponoia: no native ARM64 Windows build is published; using the x64 build under emulation.",
+		)
+		arch = "amd64"
+	}
+
 	selectedVariant := runtimeVariant()
 	ext := "tar.gz"
 	if platform == "windows" {

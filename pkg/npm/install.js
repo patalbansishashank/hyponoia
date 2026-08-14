@@ -51,7 +51,15 @@ const SLEEP_WORD = new Int32Array(new SharedArrayBuffer(4));
 function getPlatform() {
   switch (process.platform) {
     case 'linux':  return 'linux';
-    case 'darwin': return 'darwin';
+    // RETIRED-PLATFORM(macos): refuse here rather than compose a darwin asset
+    // name that 404s. package.json's `os` list already turns most installs away
+    // before postinstall runs; this catches --force and direct `node install.js`.
+    // See docs/MAINTAINERS.md "Retired platforms".
+    case 'darwin': throw new Error(
+      'no macOS binaries are published for this release.\n'
+      + 'Building hyponoia from source on macOS still works — see docs/INSTALL.md:\n'
+      + `https://github.com/${REPO}/blob/main/docs/INSTALL.md`,
+    );
     case 'win32':  return 'windows';
     default: throw new Error(`Unsupported platform: ${process.platform}`);
   }
@@ -59,6 +67,8 @@ function getPlatform() {
 
 function getArch() {
   switch (process.arch) {
+    // RETIRED-PLATFORM(windows-arm64): arm64 is still a real target on Linux,
+    // so the Windows-only fallback lives in main() where the platform is known.
     case 'arm64': return 'arm64';
     case 'x64':   return 'amd64';
     default: throw new Error(`Unsupported architecture: ${process.arch}`);
@@ -1031,7 +1041,19 @@ async function verifyChecksum(archivePath, archiveName) {
 
 async function main() {
   const platform = getPlatform();
-  const arch = getArch();
+  let arch = getArch();
+  // RETIRED-PLATFORM(windows-arm64): no native ARM64 Windows asset is published,
+  // so fall back to the x86-64 build under emulation rather than 404 — what
+  // these users got before a native build existed. npm's `cpu` list cannot
+  // express "win32 only on x64" (os/cpu are independent arrays and arm64 must
+  // stay for linux-arm64), so the case is handled here at runtime.
+  // See docs/MAINTAINERS.md "Retired platforms".
+  if (platform === 'windows' && arch === 'arm64') {
+    process.stdout.write(
+      'hyponoia: no native ARM64 Windows build is published; using the x64 build under emulation.\n',
+    );
+    arch = 'amd64';
+  }
   const ext = platform === 'windows' ? 'zip' : 'tar.gz';
   const selectedVariant = runtimeVariant();
   const cacheDir = cacheDirForVariant(selectedVariant);
@@ -1050,8 +1072,9 @@ async function main() {
   fs.mkdirSync(cacheDir, { recursive: true });
 
   // Linux ships a fully-static "-portable" build; the standard linux binary
-  // dynamically links glibc 2.38+ and fails on older distros. macOS/Windows
-  // have no such variant. Keep in sync with install.sh / pypi _cli.py / cli.c.
+  // dynamically links glibc 2.38+ and fails on older distros. Windows has no
+  // such variant. Keep in sync with install.sh / pypi _cli.py / cli.c.
+  // RETIRED-PLATFORM(macos): this used to read "macOS/Windows".
   const variant = platform === 'linux' ? '-portable' : '';
   // Opt into the UI build, whose verified asset pack is published beside the
   // binary, with HYP_VARIANT=ui. Default is the standard (headless) build.

@@ -32,7 +32,8 @@
   "engines": {
     "node": ">=18"
   },
-  "os": ["linux", "darwin", "win32"],
+  "_comment_os_cpu": "RETIRED-PLATFORM(macos): darwin dropped — no macOS asset is published. RETIRED-PLATFORM(windows-arm64): arm64 stays for linux-arm64; npm's os/cpu are independent arrays and cannot express 'win32 only on x64', so install.js falls back to the x64 build under emulation at runtime. See docs/MAINTAINERS.md 'Retired platforms'.",
+  "os": ["linux", "win32"],
   "cpu": ["x64", "arm64"],
   "files": [
     "bin.js",

@@ -368,7 +368,14 @@ def _os_name() -> str:
     if p == "linux":
         return "linux"
     if p == "darwin":
-        return "darwin"
+        # RETIRED-PLATFORM(macos): refuse here rather than compose a darwin
+        # asset name that 404s. See docs/MAINTAINERS.md "Retired platforms".
+        sys.exit(
+            "hyponoia: no macOS binaries are published for this release.\n"
+            "  Building hyponoia from source on macOS still works.\n"
+            "  See docs/INSTALL.md:\n"
+            f"  https://github.com/{REPO}/blob/main/docs/INSTALL.md"
+        )
     if p == "win32":
         return "windows"
     sys.exit(f"hyponoia: unsupported platform: {p}")
@@ -377,6 +384,18 @@ def _os_name() -> str:
 def _arch() -> str:
     m = platform.machine().lower()
     if m in ("arm64", "aarch64"):
+        # RETIRED-PLATFORM(windows-arm64): no native ARM64 Windows asset is
+        # published, so fall back to the x86-64 build under emulation rather
+        # than 404 — what these users got before a native build existed. arm64
+        # remains a real target on Linux. See docs/MAINTAINERS.md
+        # "Retired platforms".
+        if sys.platform == "win32":
+            print(
+                "hyponoia: no native ARM64 Windows build is published; "
+                "using the x64 build under emulation.",
+                file=sys.stderr,
+            )
+            return "amd64"
         return "arm64"
     if m in ("x86_64", "amd64"):
         return "amd64"
@@ -387,6 +406,8 @@ def _cache_dir() -> Path:
     if sys.platform == "win32":
         base = Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local"))
     elif sys.platform == "darwin":
+        # RETIRED-PLATFORM(macos): dead in practice — _os_name() exits on darwin
+        # before anything is cached. Kept so restoring darwin is one edit.
         base = Path.home() / "Library" / "Caches"
     else:
         base = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache"))
@@ -1273,8 +1294,9 @@ def _download(version: str) -> Path:
     ext = "zip" if os_name == "windows" else "tar.gz"
     selected_variant = _variant()
     # Linux ships a fully-static "-portable" build; the standard linux binary
-    # dynamically links glibc 2.38+ and fails on older distros. macOS/Windows
-    # have no such variant. Keep in sync with install.sh / install.js / cli.c.
+    # dynamically links glibc 2.38+ and fails on older distros. Windows has no
+    # such variant. Keep in sync with install.sh / install.js / cli.c.
+    # RETIRED-PLATFORM(macos): this used to read "macOS/Windows".
     portable = "-portable" if os_name == "linux" else ""
     # Opt into the UI build, whose verified asset pack is published beside the
     # binary, with HYP_VARIANT=ui. Default is the standard (headless) build.

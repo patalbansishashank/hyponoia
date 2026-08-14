@@ -31,6 +31,9 @@
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%230d1117'/%3E%3Cg stroke='%2358a6ff' stroke-width='2'%3E%3Cline x1='9' y1='9' x2='23' y2='16'/%3E%3Cline x1='23' y1='16' x2='10' y2='24'/%3E%3Cline x1='9' y1='9' x2='10' y2='24'/%3E%3C/g%3E%3Cg fill='%2358a6ff'%3E%3Ccircle cx='9' cy='9' r='3.5'/%3E%3Ccircle cx='23' cy='16' r='3.5'/%3E%3Ccircle cx='10' cy='24' r='3.5'/%3E%3C/g%3E%3C/svg%3E">
 
     <!-- Structured data: SoftwareApplication (the tool) -->
+    <!-- RETIRED-PLATFORM(macos): "operatingSystem" below dropped macOS. This is
+         indexed by search engines, so it must match the published assets.
+         See docs/MAINTAINERS.md "Retired platforms". -->
     <script type="application/ld+json">
     {
       "@context": "https://schema.org",
@@ -38,7 +41,7 @@
       "name": "Hyponoia",
       "applicationCategory": "DeveloperApplication",
       "applicationSubCategory": "Model Context Protocol (MCP) server",
-      "operatingSystem": "macOS, Linux, Windows",
+      "operatingSystem": "Linux, Windows",
       "softwareVersion": "0.8.1",
       "description": "An open-source MCP server that indexes a codebase into a persistent knowledge graph of functions, classes, call chains, HTTP routes, and cross-service links, so AI coding agents answer structural questions with roughly 120x fewer tokens than file-by-file search. Parses 158 languages via tree-sitter with Hybrid LSP semantic type resolution for 9 language families. Ships as a native executable with authenticated release-owned assets; the native install needs no language runtime.",
       "url": "https://patalbansishashank.github.io/hyponoia/",
@@ -468,10 +471,11 @@
         <h2>How do I install Hyponoia?</h2>
         <p class="lead">
             Install with a single command, then tell your agent to index the project. The native runtime set contains
-            an executable with verified assets for macOS, Linux, and Windows — no Docker, language runtime, or API key.
+            an executable with verified assets for Linux and Windows — no Docker, language runtime, or API key.
+            On macOS, build from source.
         </p>
         <div class="install-block">
-            <span class="comment"># 1. One-line install (macOS / Linux). Add --ui for the 3D graph UI.</span><br>
+            <span class="comment"># 1. One-line install (Linux). Add --ui for the 3D graph UI.</span><br>
             <span class="cmd">curl -fsSL https://raw.githubusercontent.com/patalbansishashank/hyponoia/main/install.sh | bash</span><br><br>
             <span class="comment"># 2. The installer configures detected clients; explicit flags cover conditional clients.</span><br><br>
             <span class="comment"># 3. Restart your agent, then say:</span><br>
@@ -654,7 +658,7 @@
             </div>
             <div class="feature">
                 <h3>Pure C, no language runtime</h3>
-                <p>A native executable with authenticated release-owned assets for macOS, Linux, and Windows. The native install needs no Docker, language runtime, or API keys; fully static Linux builds are available in the <code>-portable</code> archives.</p>
+                <p>A native executable with authenticated release-owned assets for Linux and Windows. The native install needs no Docker, language runtime, or API keys; fully static Linux builds are available in the <code>-portable</code> archives.</p>
             </div>
             <div class="feature">
                 <h3>Call-graph tracing</h3>
@@ -750,8 +754,8 @@
 
         <h3>Do I need Docker or a runtime?</h3>
         <p>The native install needs no language runtime. It is a native executable with authenticated release-owned
-           assets for macOS (arm64/amd64), Linux (arm64/amd64), and Windows (amd64); npm, PyPI, and Go wrapper
-           installations naturally use their package runtime.</p>
+           assets for Linux (arm64/amd64) and Windows (amd64); npm, PyPI, and Go wrapper
+           installations naturally use their package runtime. macOS has no published binary — build from source.</p>
 
         <h3>How does it stay up to date as I edit code?</h3>
         <p>A background watcher detects file changes and re-indexes incrementally — typically a sub-millisecond

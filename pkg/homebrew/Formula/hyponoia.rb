@@ -4,16 +4,12 @@ class Hyponoia < Formula
   version "0.8.1"
   license "MIT"
 
-  on_macos do
-    on_arm do
-      url "https://github.com/patalbansishashank/hyponoia/releases/download/v#{version}/hyponoia-darwin-arm64.tar.gz"
-      sha256 "fbd047509852021b5446a11141bcb0a3d1dcaebf6e5112460960f29f052c1c58"
-    end
-    on_intel do
-      url "https://github.com/patalbansishashank/hyponoia/releases/download/v#{version}/hyponoia-darwin-amd64.tar.gz"
-      sha256 "fb62da3016ea12b948351208759b5c083fb1446cf6e78d6db8b7cd28fe86fd54"
-    end
-  end
+  # RETIRED-PLATFORM(macos): the on_macos block and its two darwin URLs were
+  # removed — both assets stopped being published. A formula cannot print a
+  # custom error, so `depends_on :linux` is how brew says it on macOS ("Linux is
+  # required for this software.") before any download is attempted.
+  # See docs/MAINTAINERS.md "Retired platforms".
+  depends_on :linux
 
   on_linux do
     on_arm do

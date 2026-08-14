@@ -45,13 +45,20 @@ releases are published.*
 
 ## Pre-built Binaries
 
+<!-- RETIRED-PLATFORM(macos): the darwin-arm64 and darwin-amd64 rows were removed
+     here. See docs/MAINTAINERS.md "Retired platforms". -->
+
 | Platform | Standard | With Graph UI |
 |----------|----------|---------------|
-| macOS (Apple Silicon) | `hyponoia-darwin-arm64.tar.gz` | `hyponoia-ui-darwin-arm64.tar.gz` |
-| macOS (Intel) | `hyponoia-darwin-amd64.tar.gz` | `hyponoia-ui-darwin-amd64.tar.gz` |
 | Linux (x86_64) | `hyponoia-linux-amd64.tar.gz` | `hyponoia-ui-linux-amd64.tar.gz` |
 | Linux (ARM64) | `hyponoia-linux-arm64.tar.gz` | `hyponoia-ui-linux-arm64.tar.gz` |
 | Windows (x86_64) | `hyponoia-windows-amd64.zip` | `hyponoia-ui-windows-amd64.zip` |
+
+Published binaries cover Linux (amd64 and arm64, including the fully static
+`-portable` archives) and Windows (amd64). There is no macOS download and no
+ARM64 Windows download. On macOS, [build from source](#build-from-source) —
+that path is fully supported. On ARM64 Windows, use the amd64 archive under
+emulation.
 
 Every release includes `checksums.txt` with SHA-256 hashes. Keep the native executable together with the authenticated `hyp-integrations.json` asset and, for the UI variant, its single content-addressed `hyp-ui-<sha256>.pack`. Linux `-portable` archives contain the fully static builds; ordinary platform archives use their native system ABI.
 
@@ -62,7 +69,11 @@ Every release includes `checksums.txt` with SHA-256 hashes. Keep the native exec
 <details>
 <summary>Automated download + install</summary>
 
-**macOS / Linux:**
+<!-- RETIRED-PLATFORM(macos): this heading used to read "macOS / Linux". No macOS
+     binary is published, so there is nothing for the script to download.
+     See docs/MAINTAINERS.md "Retired platforms". -->
+
+**Linux:**
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/patalbansishashank/hyponoia/main/scripts/setup.sh | bash
@@ -72,6 +83,13 @@ curl -fsSL https://raw.githubusercontent.com/patalbansishashank/hyponoia/main/sc
 
 ```powershell
 irm https://raw.githubusercontent.com/patalbansishashank/hyponoia/main/scripts/setup-windows.ps1 | iex
+```
+
+On macOS the download path refuses — there is no binary to fetch. Building from
+source still works, and `setup.sh` will do it:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/patalbansishashank/hyponoia/main/scripts/setup.sh | bash -s -- --from-source
 ```
 
 </details>
@@ -95,6 +113,9 @@ You: "Install this MCP server: https://github.com/patalbansishashank/hyponoia"
 ```
 
 ## Build from Source
+
+Works on Linux, macOS and Windows. This is the only path on macOS, where no
+binary is published.
 
 <details>
 <summary>Prerequisites: C compiler + zlib</summary>
@@ -129,8 +150,12 @@ build/c/test-runner --list-suites   # what is available
 `scripts/test.sh` is the same entry the CI gates run, so a local pass means the same thing a CI pass does. Packaging a release archive locally uses the same canonical script the release pipeline calls:
 
 ```bash
-scripts/package-release.sh <linux|darwin|windows> <amd64|arm64>
+scripts/package-release.sh <linux|windows> <amd64|arm64>   # windows: amd64 only
 ```
+
+<!-- RETIRED-PLATFORM(macos): the script still accepts `darwin`, but no darwin
+     archive is published, so it is no longer documented here.
+     See docs/MAINTAINERS.md "Retired platforms". -->
 
 ## Manual MCP Configuration
 

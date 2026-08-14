@@ -13,6 +13,10 @@
 - **Platform**: Apple M3 Pro, macOS Darwin 25.3.0
 - **Date**: 2026-03-01
 
+macOS is no longer a published target (see docs/MAINTAINERS.md, "Retired
+platforms"), so the platform these figures were measured on is not one the
+project ships. The numbers below have not been re-measured on Linux.
+
 ### The 12 Questions
 
 | # | Category | Question | Primary MCP Tool |

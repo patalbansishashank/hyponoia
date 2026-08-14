@@ -3,7 +3,7 @@
 [![npm](https://img.shields.io/npm/v/hyponoia?style=flat&color=blue)](https://www.npmjs.com/package/hyponoia)
 [![GitHub Release](https://img.shields.io/github/v/release/patalbansishashank/hyponoia?style=flat&color=blue)](https://github.com/patalbansishashank/hyponoia/releases/latest)
 [![License](https://img.shields.io/badge/license-MIT-green)](https://github.com/patalbansishashank/hyponoia/blob/main/LICENSE)
-[![Platform](https://img.shields.io/badge/macOS_%7C_Linux_%7C_Windows-supported-lightgrey)](https://github.com/patalbansishashank/hyponoia/releases/latest)
+[![Platform](https://img.shields.io/badge/Linux_%7C_Windows-supported-lightgrey)](https://github.com/patalbansishashank/hyponoia/releases/latest)
 
 **The fastest and most efficient code intelligence engine for AI coding agents.** Full-indexes an average repository in milliseconds, the Linux kernel (28M LOC, 75K files) in 3 minutes. Answers structural queries in under 1ms. This npm wrapper downloads, verifies, and caches the selected native runtime set: the executable, its authenticated integration asset, and—when requested—the content-addressed UI pack.
 
@@ -32,7 +32,7 @@ Restart your agent. Say **"Index this project"** — done.
 ## Why hyponoia
 
 - **Extreme indexing speed** — Linux kernel (28M LOC, 75K files) in 3 minutes. RAM-first pipeline with LZ4 compression and in-memory SQLite.
-- **Plug and play** — verified native runtime sets for macOS (arm64/amd64), Linux (arm64/amd64), and Windows (arm64/amd64). No Docker or API keys; Node.js owns package download, cache repair, and launch.
+- **Plug and play** — verified native runtime sets for Linux (arm64/amd64) and Windows (amd64). No Docker or API keys; Node.js owns package download, cache repair, and launch.
 - **158 languages** — vendored tree-sitter grammars compiled into the binary. Nothing to install, nothing that breaks.
 - **120x fewer tokens** — 5 structural queries: ~3,400 tokens vs ~412,000 via file-by-file search.
 - **43 supported automatic/conditional client surfaces** — `install` configures the appropriate MCP, durable-context, and documented hook surfaces without widening client permissions.
@@ -48,9 +48,15 @@ Restart your agent. Say **"Index this project"** — done.
 
 | OS      | Architecture |
 |---------|-------------|
-| macOS   | arm64, amd64 |
 | Linux   | arm64, amd64 |
-| Windows | arm64, amd64 |
+| Windows | amd64 |
+
+No binaries are published for macOS or for ARM64 Windows. macOS users can build
+from source; ARM64 Windows runs the amd64 build under emulation.
+
+<!-- RETIRED-PLATFORM(macos), RETIRED-PLATFORM(windows-arm64): the macOS row and
+     the Windows arm64 entry were removed here. See docs/MAINTAINERS.md
+     "Retired platforms". -->
 
 ## Usage
 

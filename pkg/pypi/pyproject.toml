@@ -15,7 +15,9 @@ classifiers = [
   "Environment :: Console",
   "Intended Audience :: Developers",
   "License :: OSI Approved :: MIT License",
-  "Operating System :: MacOS",
+  # RETIRED-PLATFORM(macos): the "Operating System :: MacOS" classifier was
+  # dropped — the wheel downloads a published binary and none exists for
+  # darwin. See docs/MAINTAINERS.md "Retired platforms".
   "Operating System :: POSIX :: Linux",
   "Operating System :: Microsoft :: Windows",
   "Programming Language :: Python :: 3",

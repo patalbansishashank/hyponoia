@@ -108,7 +108,15 @@ done
 
 detect_os() {
     case "$(uname -s)" in
-        Darwin)               echo "darwin" ;;
+        # RETIRED-PLATFORM(macos): refuse here rather than compose a darwin
+        # asset name that 404s. See docs/MAINTAINERS.md "Retired platforms".
+        Darwin)
+            echo "error: no macOS binaries are published for this release." >&2
+            echo "  Building hyponoia from source on macOS still works." >&2
+            echo "  See docs/INSTALL.md:" >&2
+            echo "  https://github.com/${REPO}/blob/main/docs/INSTALL.md" >&2
+            exit 1
+            ;;
         Linux)                echo "linux" ;;
         MINGW*|MSYS*|CYGWIN*) echo "windows" ;;
         *) echo "error: unsupported OS: $(uname -s)" >&2; exit 1 ;;
@@ -122,6 +130,8 @@ detect_arch() {
         arm64|aarch64) echo "arm64" ;;
         x86_64|amd64)
             # Rosetta detection: shell reports x86_64 but hardware is Apple Silicon
+            # RETIRED-PLATFORM(macos): unreachable — detect_os exits on Darwin
+            # before this runs. Kept so restoring darwin is one edit, not two.
             if [ "$(uname -s)" = "Darwin" ] && sysctl -n machdep.cpu.brand_string 2>/dev/null | grep -qi apple; then
                 echo "arm64"
             else
@@ -134,6 +144,15 @@ detect_arch() {
 
 OS=$(detect_os)
 ARCH=$(detect_arch)
+
+# RETIRED-PLATFORM(windows-arm64): no native ARM64 Windows asset is published,
+# so auto-detected arm64 falls back to the x86-64 build under emulation — what
+# these users got before a native build existed. This is deliberately placed
+# after auto-detection only. See docs/MAINTAINERS.md "Retired platforms".
+if [ "$OS" = "windows" ] && [ "$ARCH" = "arm64" ]; then
+    echo "note: no native ARM64 Windows build is published; using the x64 build under emulation."
+    ARCH="amd64"
+fi
 
 echo "hyponoia installer"
 echo "  os:      $OS"
@@ -151,7 +170,9 @@ fi
 
 # Linux ships a fully-static "-portable" build; the standard linux binary
 # dynamically links glibc 2.38+ and fails on older distros (Debian 11, RHEL 8,
-# Ubuntu 20.04). macOS/Windows have no such variant.
+# Ubuntu 20.04). Windows has no such variant.
+# RETIRED-PLATFORM(macos): this used to read "macOS/Windows"; darwin no longer
+# reaches here. See docs/MAINTAINERS.md "Retired platforms".
 PORTABLE=""
 [ "$OS" = "linux" ] && PORTABLE="-portable"
 
@@ -340,6 +361,8 @@ if [ "$VARIANT" = "ui" ]; then
 fi
 
 # macOS: fix signing
+# RETIRED-PLATFORM(macos): unreachable — detect_os exits on Darwin. Kept, not
+# deleted, so restoring darwin is one edit. docs/MAINTAINERS.md "Retired platforms".
 if [ "$OS" = "darwin" ]; then
     echo "Fixing macOS code signing..."
     xattr -d com.apple.quarantine "$DLBIN" 2>/dev/null || true
@@ -407,6 +430,7 @@ fi
 # Verify
 VERSION=$("$DEST" --version 2>&1) || {
     echo "error: installed binary failed to run" >&2
+    # RETIRED-PLATFORM(macos): unreachable — detect_os exits on Darwin.
     if [ "$OS" = "darwin" ]; then
         echo "  try: xattr -cr $DEST && codesign --force --sign - $DEST" >&2
     fi
