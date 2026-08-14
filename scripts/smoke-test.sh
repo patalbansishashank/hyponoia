@@ -2377,7 +2377,7 @@ if ! path_match "$CMD" "$SELF_PATH" || [ "$CODEBUDDY_KEEP" != "codebuddy" ] ||
    ! grep -q 'mcp__hyponoia__check_index_coverage' "$CODEBUDDY_AGENT" 2>/dev/null ||
    grep -qE 'mcp__hyponoia__(index_repository|delete_project|manage_adr|ingest_traces)' "$CODEBUDDY_AGENT" 2>/dev/null ||
    grep -q '^tools:$' "$CODEBUDDY_AGENT" 2>/dev/null ||
-   grep -q 'mcp__hyponoia__search_graph' "$CODEBUDDY_AGENT" 2>/dev/null ||
+   ! grep -q 'mcp__hyponoia__search_graph' "$CODEBUDDY_AGENT" 2>/dev/null ||
    ! grep -q '^skills: hyponoia$' "$CODEBUDDY_AGENT" 2>/dev/null ||
    [ -e "$CODEBUDDY_SETTINGS" ]; then
   echo "FAIL 8ar: CodeBuddy current MCP, durable context, or read-only agent missing"
