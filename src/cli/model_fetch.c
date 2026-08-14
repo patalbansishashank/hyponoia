@@ -7,7 +7,7 @@
  *     probe → consent → space → transfer(.part) → size → DIGEST → rename
  *
  * with the digest as the only door into the final name. Every arrow that fails
- * says what to do next, because the failures are the product: a 639 MB
+ * says what to do next, because the failures are the product: a 355 MB
  * download over a slow link WILL be interrupted, and a fetcher that only works
  * on the happy path is a fetcher that does not work.
  */
@@ -32,13 +32,14 @@
 #endif
 
 enum {
-    MODEL_HASH_CHUNK = HYP_SZ_64K, /* 64 KiB reads: 639 MB in ~10k syscalls */
+    MODEL_HASH_CHUNK = HYP_SZ_64K, /* 64 KiB reads: 355 MB in ~5.4k syscalls */
     MODEL_DIR_MODE = 0700,         /* the cache is the user's, nobody else's */
     MODEL_ANSWER_MAX = HYP_SZ_16,  /* enough for "yes\n" and any typo of it */
-    /* DECIMAL megabytes, deliberately: HYP_MODEL_ASK_SIZE_TEXT says "639 MB"
-     * because that is what Hugging Face publishes and what T2 recorded, and
-     * 639150592 / 1024^2 is 609. Mixing the two units prints "273 of 609 MB"
-     * under a banner that promised 639, which reads as a bug in the count. */
+    /* DECIMAL megabytes, deliberately: HYP_MODEL_ASK_SIZE_TEXT says "355 MB"
+     * because that is what Hugging Face publishes, and 371900384 / 1024^2 is
+     * 355 too — but the two units diverge as sizes grow, and mixing them
+     * prints a progress count that disagrees with the banner above it, which
+     * reads as a bug in the count rather than a unit choice. */
     MODEL_MB = 1000 * 1000,
     MODEL_SPACE_SLACK_MB = 64, /* headroom demanded above the artifact */
     MODEL_HEX_PER_BYTE = 2,    /* two hex characters per digest byte */
@@ -467,7 +468,7 @@ static bool model_space_ok(const char *dir, int64_t need_bytes, int64_t *free_mb
 /* Consent. Typing the command is the decision; this is the confirmation that
  * the decision was informed — the size, the source and the destination are on
  * screen before a byte moves. Unattended (no TTY) without --yes is a REFUSAL,
- * not a silent yes: 639 MB must never be the default answer to a question. */
+ * not a silent yes: a 355 MB download must never be the default answer to a question. */
 static bool model_confirm(const hyp_model_spec_t *spec, const hyp_model_fetch_opts_t *opts,
                           const char *dest, int64_t resume_mb) {
     printf("Fetch %s?\n\n", spec->what);
@@ -688,7 +689,7 @@ static hyp_model_fetch_result_t model_verify_only(const hyp_model_spec_t *spec,
     printf("Verifying %s\n", probe->path);
     char err[HYP_MODEL_MSG_MAX];
     /* Do NOT delete on a --verify mismatch: the user asked a question, not for
-     * a repair, and unlinking 639 MB they may want to inspect is not an answer
+     * a repair, and unlinking 355 MB they may want to inspect is not an answer
      * to it. The fetch path deletes because it owns the bytes it just wrote. */
     if (hyp_model_verify_file(probe->path, spec->sha256, false, err, sizeof(err)) != 0) {
         (void)fprintf(stderr, "%s\n", err);
@@ -893,7 +894,7 @@ int hyp_cmd_fetch_model(int argc, char **argv) {
         } else {
             /* An ignored unknown flag is how `install --help` once performed a
              * real installation (NEXT-STEPS.md §1). Not again, and especially
-             * not on a command whose accident costs 639 MB. */
+             * not on a command whose accident costs 363 MB. */
             (void)fprintf(stderr, "hyponoia fetch-model: unknown option '%s'\n", arg);
             model_fetch_help();
             return 2;
@@ -905,30 +906,30 @@ int hyp_cmd_fetch_model(int argc, char **argv) {
      * which is the right width and unit length and the wrong space. Fetching
      * one and not the other would leave a lane that loads and ranks badly —
      * the failure mode with no downstream signal. */
-    const hyp_model_spec_t *chosen[2];
-    int n_chosen = 0;
-    chosen[n_chosen++] = &MODEL_ASK;
-    chosen[n_chosen++] = &MODEL_ASK_PROJ;
+    /* A fixed list rather than a counter that only ever counts to two. The
+     * runtime `n_chosen` this replaces made `n_chosen > 1` a condition cppcheck
+     * could prove always true, which is the compiler telling you the
+     * indirection is vestigial. */
+    static const hyp_model_spec_t *const CHOSEN[] = {&MODEL_ASK, &MODEL_ASK_PROJ};
+    enum { N_CHOSEN = (int)(sizeof(CHOSEN) / sizeof(CHOSEN[0])) };
 
     if (want_path) {
         int rc = 0;
-        for (int i = 0; i < n_chosen; i++) {
-            if (model_print_path(chosen[i]) != 0) {
+        for (int i = 0; i < N_CHOSEN; i++) {
+            if (model_print_path(CHOSEN[i]) != 0) {
                 rc = 1;
             }
         }
         return rc;
     }
 
-    /* Each model is fetched, verified and reported on its own. A failure on the
-     * second does not undo the first — 639 MB that arrived intact stay on disk
-     * and the exit code says something went wrong. */
+    /* Each artifact is fetched, verified and reported on its own. A failure on
+     * the second does not undo the first — the 355 MB of weights that arrived
+     * intact stay on disk and the exit code says something went wrong. */
     int rc = 0;
-    for (int i = 0; i < n_chosen; i++) {
-        if (n_chosen > 1) {
-            printf("%s[%d/%d] %s\n", i ? "\n" : "", i + 1, n_chosen, chosen[i]->model);
-        }
-        hyp_model_fetch_result_t result = hyp_model_fetch_spec(chosen[i], &opts);
+    for (int i = 0; i < N_CHOSEN; i++) {
+        printf("%s[%d/%d] %s\n", i ? "\n" : "", i + 1, N_CHOSEN, CHOSEN[i]->model);
+        hyp_model_fetch_result_t result = hyp_model_fetch_spec(CHOSEN[i], &opts);
         switch (result) {
         case HYP_MODEL_FETCH_OK:
         case HYP_MODEL_FETCH_ALREADY_PRESENT:

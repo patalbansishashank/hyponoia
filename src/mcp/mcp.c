@@ -4165,8 +4165,10 @@ static char *handle_ask(hyp_mcp_server_t *srv, const char *args) {
     hyp_ask_lane_t lane = escalate ? HYP_ASK_LANE_ESCALATION : HYP_ASK_LANE_LOCAL;
     hyp_ask_encoder_t *esc_enc = NULL;
     if (escalate) {
-        const char *cache_dir = hyp_resolve_cache_dir();
-        hyp_config_t *cfg = cache_dir ? hyp_config_open(cache_dir) : NULL;
+        /* Not `cache_dir`: this file already has a static cache_dir(char *,
+         * size_t) at line 1948, and shadowing it reads as a call site. */
+        const char *cache_root = hyp_resolve_cache_dir();
+        hyp_config_t *cfg = cache_root ? hyp_config_open(cache_root) : NULL;
         char provider[64];
         char model[128];
         char key_env[128];
