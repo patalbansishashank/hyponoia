@@ -299,9 +299,23 @@ static unsigned char *ui_test_pack(size_t *length_out, bool malformed_index) {
     if (!pack) {
         return NULL;
     }
-    pack[0] = 'C';
-    pack[1] = 'B';
-    pack[2] = 'M';
+    /* The pack magic, written a byte at a time, mirroring how ui_parse_pack
+     * reads it. (The parser has a hard reason for that shape —
+     * check-binary-composition.sh forbids a contiguous "HYPUIPK" in a SHIPPED
+     * artifact — which does not apply to this test binary; the shape is kept
+     * here so the two sides stay recognisably the same construct.)
+     *
+     * These seven bytes spelled CBMUIPK until now, and that is why this suite
+     * PASSED while the product was broken: f95d6841 could not see either
+     * decomposed constant, so the reader and this helper stayed wrong
+     * together and agreed with each other. The real writer,
+     * scripts/pack-ui-assets.mjs, holds "HYPUIPK" as a string and was renamed
+     * correctly — so the only test that could catch the mismatch was
+     * test_cli.c:1829, whose helper also uses the string form. A test that
+     * shares the product's mistake reports green. */
+    pack[0] = 'H';
+    pack[1] = 'Y';
+    pack[2] = 'P';
     pack[3] = 'U';
     pack[4] = 'I';
     pack[5] = 'P';
@@ -373,8 +387,16 @@ static void ui_test_restore_assets_env(char *old_value) {
     }
 }
 
+/* Every hyp_mkdtemp template in this file is a 256-byte buffer, not a `char[]`
+ * sized to its literal. That is hyp_mkdtemp's documented contract — "callers
+ * must provide buffers >= HYP_SZ_256 bytes" — because on Windows it rewrites a
+ * /tmp/ template to %TEMP%\... and strcpy()s the EXPANDED path back into the
+ * caller's buffer. A `char[] = "/tmp/hyp_ui_pack_XXXXXX"` is 24 bytes; the
+ * expanded path under CI's protected temp root is around 90, so the copy ran
+ * off the end of the array. This file was the only violator in the suite —
+ * every other test already used char[256]. */
 TEST(ui_asset_pack_validates_before_publication) {
-    char directory[] = "/tmp/hyp_ui_pack_XXXXXX";
+    char directory[256] = "/tmp/hyp_ui_pack_XXXXXX";
     ASSERT_NOT_NULL(hyp_mkdtemp(directory));
     size_t length = 0U;
     unsigned char *pack = ui_test_pack(&length, false);
@@ -406,7 +428,7 @@ TEST(ui_asset_pack_validates_before_publication) {
 }
 
 TEST(ui_asset_pack_wrong_hash_fails_closed) {
-    char directory[] = "/tmp/hyp_ui_hash_XXXXXX";
+    char directory[256] = "/tmp/hyp_ui_hash_XXXXXX";
     ASSERT_NOT_NULL(hyp_mkdtemp(directory));
     size_t length = 0U;
     unsigned char *pack = ui_test_pack(&length, false);
@@ -436,7 +458,7 @@ TEST(ui_asset_pack_wrong_hash_fails_closed) {
 }
 
 TEST(ui_asset_pack_structural_corruption_fails_after_valid_hash) {
-    char directory[] = "/tmp/hyp_ui_format_XXXXXX";
+    char directory[256] = "/tmp/hyp_ui_format_XXXXXX";
     ASSERT_NOT_NULL(hyp_mkdtemp(directory));
     size_t length = 0U;
     unsigned char *pack = ui_test_pack(&length, true);
@@ -464,7 +486,7 @@ TEST(ui_asset_pack_structural_corruption_fails_after_valid_hash) {
  * before that worker enters hyp_ui_assets_warm(). The cancellation must latch
  * across that scheduling window instead of being cleared by worker startup. */
 TEST(ui_asset_pack_prestart_cancellation_is_not_lost) {
-    char directory[] = "/tmp/hyp_ui_cancel_XXXXXX";
+    char directory[256] = "/tmp/hyp_ui_cancel_XXXXXX";
     ASSERT_NOT_NULL(hyp_mkdtemp(directory));
     size_t length = 0U;
     unsigned char *pack = ui_test_pack(&length, false);
@@ -497,8 +519,8 @@ TEST(ui_asset_pack_install_never_follows_a_predictable_temp_symlink) {
         "Windows reparse-point creation requires privileges; installer contracts cover it");
 #else
     static const char sentinel_content[] = "foreign sentinel must survive\n";
-    char source_directory[] = "/tmp/hyp_ui_install_source_XXXXXX";
-    char install_directory[] = "/tmp/hyp_ui_install_target_XXXXXX";
+    char source_directory[256] = "/tmp/hyp_ui_install_source_XXXXXX";
+    char install_directory[256] = "/tmp/hyp_ui_install_target_XXXXXX";
     ASSERT_NOT_NULL(hyp_mkdtemp(source_directory));
     ASSERT_NOT_NULL(hyp_mkdtemp(install_directory));
 
@@ -565,8 +587,8 @@ TEST(ui_asset_pack_install_never_follows_a_predictable_temp_symlink) {
 }
 
 TEST(ui_asset_pack_install_remove_is_hash_bound_and_dry_run_safe) {
-    char source_directory[] = "/tmp/hyp_ui_lifecycle_source_XXXXXX";
-    char install_directory[] = "/tmp/hyp_ui_lifecycle_target_XXXXXX";
+    char source_directory[256] = "/tmp/hyp_ui_lifecycle_source_XXXXXX";
+    char install_directory[256] = "/tmp/hyp_ui_lifecycle_target_XXXXXX";
     ASSERT_NOT_NULL(hyp_mkdtemp(source_directory));
     ASSERT_NOT_NULL(hyp_mkdtemp(install_directory));
 
@@ -647,8 +669,8 @@ TEST(ui_asset_pack_install_remove_is_hash_bound_and_dry_run_safe) {
 }
 
 TEST(ui_asset_pack_staged_removal_is_owned_and_transactional) {
-    char source_directory[] = "/tmp/hyp_ui_staged_remove_source_XXXXXX";
-    char install_directory[] = "/tmp/hyp_ui_staged_remove_target_XXXXXX";
+    char source_directory[256] = "/tmp/hyp_ui_staged_remove_source_XXXXXX";
+    char install_directory[256] = "/tmp/hyp_ui_staged_remove_target_XXXXXX";
     ASSERT_NOT_NULL(hyp_mkdtemp(source_directory));
     ASSERT_NOT_NULL(hyp_mkdtemp(install_directory));
     size_t pack_length = 0U;
@@ -720,8 +742,8 @@ TEST(ui_asset_pack_staged_removal_is_owned_and_transactional) {
  * and removal must validate the exact object after moving it to the private
  * retained name. Both mutations below preserve the inode on POSIX. */
 TEST(ui_asset_pack_commit_rejects_in_place_rewrite_after_stage) {
-    char source_directory[] = "/tmp/hyp_ui_commit_source_XXXXXX";
-    char install_directory[] = "/tmp/hyp_ui_commit_target_XXXXXX";
+    char source_directory[256] = "/tmp/hyp_ui_commit_source_XXXXXX";
+    char install_directory[256] = "/tmp/hyp_ui_commit_target_XXXXXX";
     ASSERT_NOT_NULL(hyp_mkdtemp(source_directory));
     ASSERT_NOT_NULL(hyp_mkdtemp(install_directory));
     size_t pack_length = 0U;
