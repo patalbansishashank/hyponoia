@@ -331,7 +331,17 @@ make -j"$NPROC" -f Makefile.hyp hyp-with-ui TEST_SEAMS=1 \
     UI_ASSET_PREBUILT=1 UI_ASSET_DIST="$ROOT/tests/fixtures/ui-readiness" \
     UI_ASSET_MANIFEST="$BUILD_DIR/generated/ui_asset_readiness_manifest.c" \
     ${MAKE_ARGS[@]+"${MAKE_ARGS[@]}"}
-python3 "$ROOT/tests/test_daemon_open_readiness.py" "$ROOT/$BUILD_DIR/hyponoia"
+# The product binary carries .exe on Windows — mingw's linker appends it when
+# the -o name has no suffix — and test_daemon_open_readiness.py takes an exact
+# path and fails setup if it is not a file. Passing the suffix-less name made
+# this step abort with "SETUP FAIL: binary not found" on every Windows leg.
+# Nothing noticed because the step is only REACHED once the suites before it
+# pass, and on Windows they never had.
+HYP_READINESS_BIN="$ROOT/$BUILD_DIR/hyponoia"
+if [ "${OS:-}" = "windows" ]; then
+    HYP_READINESS_BIN="$HYP_READINESS_BIN.exe"
+fi
+python3 "$ROOT/tests/test_daemon_open_readiness.py" "$HYP_READINESS_BIN"
 
 # Step 6: security-strings URL allow-list regression. The MSYS2 CLANG64 toolchain
 # bakes its package-tracker URL into the static Windows .exe; the binary string
