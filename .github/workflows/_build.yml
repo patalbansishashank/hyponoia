@@ -33,23 +33,20 @@ jobs:
             goarch: arm64
             cc: gcc
             cxx: g++
-          - os: macos-14
-            goos: darwin
-            goarch: arm64
-            cc: cc
-            cxx: c++
-          - os: macos-15-intel
-            goos: darwin
-            goarch: amd64
-            cc: cc
-            cxx: c++
+          # RETIRED-PLATFORM(macos): the darwin-arm64 (macos-14) and darwin-amd64
+          # (macos-15-intel) legs were removed. They do not merely fail their
+          # tests — the product does not COMPILE on the macos-latest images any
+          # more (vendored llama.cpp against MacOSX26.sdk under -std=c11 hides
+          # u_int; it wants _DARWIN_C_SOURCE), so these legs could not have
+          # produced an artifact to ship even with every test passing.
+          # macos-15-intel was GitHub's supported Intel image through Aug 2027;
+          # that deadline still applies if the platform comes back.
+          # See docs/MAINTAINERS.md "Retired platforms".
     runs-on: ${{ matrix.os }}
-    # Every leg is BLOCKING — no continue-on-error. The darwin-amd64 binary
-    # built on macos-15-intel must ship with every release; if that runner is
-    # unavailable the build fails loudly rather than silently publishing a
-    # release with no Intel macOS binary (a user-reported gap). macos-15-intel
-    # is GitHub's supported Intel image through Aug 2027 (the last x86_64 macOS
-    # runner); revisit the Intel leg before that retirement.
+    # Every leg is BLOCKING — no continue-on-error. A missing artifact fails the
+    # build loudly rather than silently publishing a release short one platform
+    # (that is a user-reported gap, and it is how the Intel macOS binary went
+    # missing once before).
     timeout-minutes: 240
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -151,6 +148,15 @@ jobs:
     # windows-11-arm runner (the same toolchain the test suite already
     # exercises). Without it, ARM-Windows users fall back to the x86_64
     # binary under emulation, and npm/pip on native-ARM Node/Python 404.
+    #
+    # RETIRED-PLATFORM(windows-arm64): held with `if: false` rather than
+    # deleted, because the leg is a working recipe for a target that currently
+    # cannot LINK — ggml's aarch64 GEMM kernels are not compiled into the
+    # CLANGARM64 build (undefined symbol: ggml_gemm_q4_0_4x4_q8_0). Fix the
+    # link and flip this back on; the consequence named above is exactly what
+    # ARM-Windows users get until then, and the installers were changed to say
+    # so instead of 404ing. See docs/MAINTAINERS.md "Retired platforms".
+    if: false
     runs-on: windows-11-arm
     timeout-minutes: 240
     steps:

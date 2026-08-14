@@ -15,6 +15,12 @@ on:
         type: choice
         options: ['all', 'linux', 'macos', 'windows']
         default: 'all'
+  # RETIRED-PLATFORM(macos): the macos-14 / macos-15-intel legs and the `macos`
+  # dispatch option are LEFT IN PLACE for the same reason as smoke.yml — this
+  # board is dispatch-only, non-gating and already red by design, so a platform
+  # we no longer ship costs nothing until someone asks for it. See
+  # docs/MAINTAINERS.md "Retired platforms".
+  #
   # DISPATCH-ONLY by decision (2026-08-02): the board's primary venue is the
   # LOCAL multi-leg CI (scripts/repro.sh on macOS/Linux/Windows), which can hold
   # the real-repo corpus tier that GitHub runners never can -- the old qa/**

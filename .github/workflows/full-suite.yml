@@ -2,9 +2,12 @@
 #
 # NEXT-STEPS.md §2.14. This workflow exists because of a measured gap, not a
 # preference. `ci.yml` runs `test-foundation` — 301 tests, one runner, on every
-# push. The full suite is roughly 6,610 tests across ten platforms, and until
-# now it ran ONLY inside `dry-run.yml` or `release.yml`, both of which are
-# `workflow_dispatch`-only. Nothing ran it unless a human asked.
+# push. The full suite is roughly 6,610 tests, and until now it ran ONLY inside
+# `dry-run.yml` or `release.yml`, both of which are `workflow_dispatch`-only.
+# Nothing ran it unless a human asked. (It spanned ten platforms when this was
+# written; macOS and ARM64 Windows have since been retired — see
+# docs/MAINTAINERS.md "Retired platforms" — which changes the width of the
+# matrix, not the argument for giving it a venue.)
 #
 # What that cost: the suite was failing for five months and nobody could have
 # known. When §2.13 finally ran it, every surviving failure dated to

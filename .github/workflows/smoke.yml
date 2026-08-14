@@ -11,6 +11,13 @@
 # NON-GATING: workflow_dispatch only (NEXT-STEPS.md §2.12 removed the qa/smoke-**
 # push trigger). The full ~10-platform build is heavy, so it is asked for rather
 # than triggered.
+#
+# RETIRED-PLATFORM(macos) / RETIRED-PLATFORM(windows-arm64): the macOS and
+# windows-11-arm legs below are LEFT IN PLACE. This board is dispatch-only and
+# already tolerates red — and "does it still build on a platform we stopped
+# shipping?" is precisely the question you would dispatch it to answer. It is
+# not a gate, so it cannot block anything. See docs/MAINTAINERS.md
+# "Retired platforms" for what those legs currently fail on.
 name: Smoke (all platforms)
 
 on:

@@ -63,15 +63,18 @@ PACK_ENTRY_BYTES = 24
 PACK_MAX_FILES = 1024
 PACK_MAX_PATH_BYTES = 255
 
+# These two tuples ARE the exact-set gate below: an archive namespace that is
+# not exactly CANONICAL_ARCHIVES is a hard failure, so a target listed here that
+# no longer builds fails the release AFTER the draft exists.
+# RETIRED-PLATFORM(macos): darwin-amd64/darwin-arm64 dropped — see docs/MAINTAINERS.md "Retired platforms".
 UNIX_TARGETS = (
     "linux-amd64",
     "linux-arm64",
-    "darwin-amd64",
-    "darwin-arm64",
     "linux-amd64-portable",
     "linux-arm64-portable",
 )
-WINDOWS_TARGETS = ("windows-amd64", "windows-arm64")
+# RETIRED-PLATFORM(windows-arm64): windows-arm64 dropped — see docs/MAINTAINERS.md "Retired platforms".
+WINDOWS_TARGETS = ("windows-amd64",)
 UI_ARCHIVES = frozenset(
     [
         f"hyponoia-ui-{target}.tar.gz"

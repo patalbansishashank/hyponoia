@@ -25,6 +25,10 @@ on:
         # by release.yml. Cross-platform proof belongs where it is attached to
         # something that ships, so pr.yml passes this and release.yml and
         # dry-run.yml do not. DEFAULT false: the release path is unchanged.
+        # RETIRED-PLATFORM(macos) has since removed every macOS leg outright, so
+        # what this input now filters is windows-latest and windows-2025. The
+        # input stays: it is the switch that becomes load-bearing again the day
+        # macOS comes back, and it still saves the 2x Windows bill on every PR.
         description: 'Restrict every leg to Linux runners (PR-time cost control; release and dry run keep the full matrix)'
         type: boolean
         default: false
@@ -51,30 +55,30 @@ jobs:
           SHARDS: ${{ inputs.shard_suites }}
           LINUX_ONLY: ${{ inputs.linux_only }}
         run: |
+          # RETIRED-PLATFORM(macos): macos-14, macos-15 and macos-15-intel were
+          # removed here. See docs/MAINTAINERS.md "Retired platforms" for the
+          # decision and the one-line test that says when to bring them back.
+          # `grep -rn RETIRED-PLATFORM` finds every site in one pass.
           CORE_UNIX='[
             {"os":"ubuntu-latest","cc":"gcc","cxx":"g++"},
-            {"os":"ubuntu-24.04-arm","cc":"gcc","cxx":"g++"},
-            {"os":"macos-14","cc":"cc","cxx":"c++"},
-            {"os":"macos-15-intel","cc":"cc","cxx":"c++"}
+            {"os":"ubuntu-24.04-arm","cc":"gcc","cxx":"g++"}
           ]'
           # Broad matrix legs are REQUIRED gates (no optional/continue-on-error
           # escape hatches): the release dry run must be all-green, every platform.
           BROAD_UNIX='[
             {"os":"ubuntu-22.04","cc":"gcc","cxx":"g++"},
-            {"os":"ubuntu-22.04-arm","cc":"gcc","cxx":"g++"},
-            {"os":"macos-15","cc":"cc","cxx":"c++"}
+            {"os":"ubuntu-22.04-arm","cc":"gcc","cxx":"g++"}
           ]'
           # Each Windows leg pins the msys2 environment + package arch to the
           # RUNNER architecture so the build is native, never emulated:
           #   x86-64 runners -> CLANG64 (mingw-w64-clang-x86_64-*)
-          #   ARM64  runner  -> CLANGARM64 (mingw-w64-clang-aarch64-*)
-          # windows-11-arm previously used the x86-64 CLANG64 toolchain, so its
-          # binary ran under Windows-on-ARM x86-64 emulation and ASan's function
-          # interception crashed (interception_win: unhandled instruction). With
-          # the native ARM64 toolchain ASan instruments native ARM64 code, so it
-          # is a real (non-optional) gate, not a tolerated emulated-flake.
+          # RETIRED-PLATFORM(windows-arm64): the windows-11-arm / CLANGARM64 leg
+          # was removed. It is the one leg whose product LINK fails — ggml's
+          # aarch64 GEMM kernels are never compiled into the CLANGARM64 target
+          # (undefined symbol: ggml_gemm_q4_0_4x4_q8_0) — so it cannot go green
+          # by fixing a test. See docs/MAINTAINERS.md "Retired platforms".
           CORE_WIN='[{"os":"windows-latest","msystem":"CLANG64","pkg":"x86_64"}]'
-          BROAD_WIN='[{"os":"windows-2025","msystem":"CLANG64","pkg":"x86_64"},{"os":"windows-11-arm","msystem":"CLANGARM64","pkg":"aarch64"}]'
+          BROAD_WIN='[{"os":"windows-2025","msystem":"CLANG64","pkg":"x86_64"}]'
           # COMPACTED UNCONDITIONALLY, and that is the whole point of the `jq
           # -c` rather than a bare literal. $GITHUB_OUTPUT takes one line per
           # value unless you use a heredoc delimiter, and every other matrix
@@ -84,10 +88,10 @@ jobs:
           # the path that does NOT set that input — the release. Every pull
           # request passed (pr.yml sets linux_only: true) and the first release
           # after the change failed in setup-matrix.
+          # RETIRED-PLATFORM(macos): the macos-14 TSan leg was removed with the rest.
           TSAN=$(jq -cn '[
             {"os":"ubuntu-latest","cc":"clang","cxx":"clang++"},
-            {"os":"ubuntu-24.04-arm","cc":"clang","cxx":"clang++"},
-            {"os":"macos-14","cc":"cc","cxx":"c++"}
+            {"os":"ubuntu-24.04-arm","cc":"clang","cxx":"clang++"}
           ]')
           if [ "$BROAD" = "true" ]; then
             UNIX=$(jq -cn --argjson a "$CORE_UNIX" --argjson b "$BROAD_UNIX" '$a + $b')
@@ -357,8 +361,14 @@ jobs:
   # zero leak detection. Upstream (Homebrew) LLVM supports LSan on darwin/arm64,
   # so this leg is the ordinary ASan suite built with that toolchain and run
   # with detect_leaks=1. Mirrors the local `make -f Makefile.hyp test-lsan`.
+  #
+  # RETIRED-PLATFORM(macos): held here rather than deleted, because this job is
+  # the only description anywhere of HOW to get LeakSanitizer on darwin, and
+  # that knowledge is what would have to be rediscovered. `if: false` is the
+  # whole retirement: flip it back to `!inputs.linux_only` to restore the leg.
+  # See docs/MAINTAINERS.md "Retired platforms".
   test-lsan-macos:
-    if: ${{ !inputs.linux_only }}   # §2.12: macOS bills 10x; release and dry run still run it
+    if: false
     runs-on: macos-latest
     timeout-minutes: 120
     steps:
@@ -391,8 +401,10 @@ jobs:
           key: ccache-lsan-${{ github.ref }}-${{ github.sha }}
 
   test-tsan:
-    # Matrix moved into setup-matrix so §2.12's linux_only can filter its
-    # macos-14 leg; the entries are otherwise unchanged.
+    # Matrix moved into setup-matrix so §2.12's linux_only can filter it. Its
+    # macos-14 leg is gone with RETIRED-PLATFORM(macos), which leaves the matrix
+    # all-Linux and linux_only a no-op for this job — kept anyway, because the
+    # filter is what makes restoring the leg a one-line change.
     needs: setup-matrix
     strategy:
       fail-fast: false

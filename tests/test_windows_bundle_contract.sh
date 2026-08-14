@@ -150,15 +150,38 @@ require(
 # The single shipped Windows runtime is UI-enabled and is produced through the
 # ONE canonical packaging entry, so the six-file layout above governs it.
 build_workflow = read(".github/workflows/_build.yml")
-for archive, call in (
-    ("hyponoia-ui-windows-amd64.zip",
-     "scripts/package-release.sh windows amd64 --variant ui"),
-    ("hyponoia-ui-windows-arm64.zip",
-     "scripts/package-release.sh windows arm64 --variant ui"),
-):
+require(
+    build_workflow.count("scripts/package-release.sh windows amd64 --variant ui") == 1,
+    "_build.yml must produce hyponoia-ui-windows-amd64.zip via the canonical packaging entry "
+    "('scripts/package-release.sh windows amd64 --variant ui')",
+)
+# RETIRED-PLATFORM(windows-arm64): hyponoia-ui-windows-arm64.zip is no longer a
+# shipped archive, but build-windows-arm64 was DISABLED (`if: false`), not
+# deleted — it is a working recipe for a target that currently cannot link. So a
+# bare text-match for its packaging call still matches and asserts nothing.
+# Re-scoped to the contract that is actually live: the recipe stays intact AND
+# stays gated off. That coupling matters — re-enabling this job without also
+# restoring windows-arm64 to extract-release-archives.sh's WINDOWS_TARGETS
+# publishes an archive the exact-set gate rejects, which fails the release only
+# AFTER the draft and tag exist. See docs/MAINTAINERS.md "Retired platforms".
+arm64_job = re.search(
+    r"(?ms)^  build-windows-arm64:\s*(?P<body>.*?)(?=^  [A-Za-z0-9_-]+:\s*$|\Z)",
+    build_workflow,
+)
+require(
+    arm64_job is not None,
+    "_build.yml must retain the build-windows-arm64 recipe for the retired target",
+)
+if arm64_job is not None:
+    arm64_body = arm64_job.group("body")
     require(
-        build_workflow.count(call) == 1,
-        f"_build.yml must produce {archive} via the canonical packaging entry ('{call}')",
+        re.search(r"^    if: false\s*$", arm64_body, re.M) is not None,
+        "build-windows-arm64 must stay disabled with `if: false` while windows-arm64 is retired "
+        "— re-enabling it also requires restoring the target in extract-release-archives.sh",
+    )
+    require(
+        arm64_body.count("scripts/package-release.sh windows arm64 --variant ui") == 1,
+        "the held build-windows-arm64 recipe must keep its canonical packaging entry intact",
     )
 require(
     re.search(r"scripts/package-release\.sh windows (?:amd64|arm64)(?!\s+--variant)", build_workflow) is None

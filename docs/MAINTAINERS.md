@@ -34,6 +34,55 @@ Release process is a checklist rather than an approval chain:
 - Benchmark logs, repository revisions, binary version, and machine details are
   kept with the release notes.
 
+## Retired platforms
+
+macOS (`darwin-arm64`, `darwin-amd64`) and ARM64 Windows (`windows-arm64`) are
+retired as of 2026-08-15. They are not tested, not built, and not published.
+Published assets are exactly five: `linux-amd64`, `linux-arm64`, the two Linux
+`-portable` static builds, and `windows-amd64`.
+
+This was not a preference. Both platforms were already failing before the
+compiler reached a test:
+
+- **macOS** — vendored llama.cpp does not compile against `MacOSX26.sdk` under
+  `-std=c11`, which hides `u_int` (it wants `_DARWIN_C_SOURCE`). No test result
+  was available on macOS, and no artifact could have been produced to ship.
+- **ARM64 Windows** — the product does not link: ggml's aarch64 GEMM kernels are
+  never compiled into the CLANGARM64 target
+  (`undefined symbol: ggml_gemm_q4_0_4x4_q8_0`).
+
+Neither is a test to repair, and neither could be repaired on the hardware this
+project is developed on. Retiring them is what makes the remaining matrix mean
+something: a red board that nobody can turn green teaches you to ignore red.
+
+**Every site is marked.** `grep -rn RETIRED-PLATFORM` finds all of them, tagged
+`RETIRED-PLATFORM(macos)` or `RETIRED-PLATFORM(windows-arm64)`. Where a job held
+a recipe worth keeping — `test-lsan-macos` is the only written description of how
+to get LeakSanitizer on darwin, and `build-windows-arm64` is a working CLANGARM64
+build — the job is disabled with `if: false` rather than deleted, so restoring it
+is one line.
+
+What users see, deliberately rather than by accident:
+
+- **macOS** — the installers refuse early and say that no macOS binaries are
+  published for this release. They do not proceed to a download that 404s.
+  Building from source on macOS is not removed; only the published binary is.
+- **Windows on ARM** — the installers fall back to the `amd64` binary under
+  emulation, which is what these users got before a native ARM64 build existed.
+  Explicit `HYP_ARCH`-style overrides still win; the fallback applies only to
+  auto-detection.
+- **Already-installed macOS users cannot be rescued.** `hyponoia update` builds
+  its download URL in the shipped binary, so it will 404 against every future
+  release. Say so in the release notes; there is no code change that reaches
+  binaries already on disk.
+
+**To bring one back:** flip the `if: false`, restore the matrix rows, and fix the
+count in `scripts/ci/extract-release-archives.sh` and the two contract tests that
+keep their own copies of the target list — the exact-set gate in the release's
+`verify` job will otherwise fail *after* the draft is created and the tag pushed.
+The one-line test for whether it is time: does the platform build and link from a
+clean checkout on a current runner image?
+
 ## Adding maintainers
 
 When someone else starts maintaining part of this project, add a row to the

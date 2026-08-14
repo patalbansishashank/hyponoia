@@ -156,8 +156,16 @@ test('nested update token is forwarded instead of treated as package update', ()
   assert.doesNotMatch(observed.stderr, /npm install hyponoia@latest/);
 });
 
+// RETIRED-PLATFORM(macos): these cases exercise bin.js's NON-WINDOWS branch,
+// which is the single inline `process.platform === 'win32'` test that picks
+// 'hyponoia' over 'hyponoia.exe'. They never reach install.js's getPlatform()
+// mapping — the sandbox above substitutes fakeLifecycle for './install.js', so
+// the real module is not even loaded. They therefore kept passing when darwin
+// became a hard error there. The stand-in is now 'linux' rather than 'darwin'
+// purely so no gating test names a platform this project no longer publishes.
+// See docs/MAINTAINERS.md "Retired platforms".
 test('non-Windows npm shim executes its cached binary directly', () => {
-  const observed = runShim('darwin', ['--version'], 0);
+  const observed = runShim('linux', ['--version'], 0);
 
   assert.equal(observed.exitCode, 0);
   assert.equal(observed.calls.length, 2);
@@ -166,7 +174,7 @@ test('non-Windows npm shim executes its cached binary directly', () => {
 });
 
 test('npm shim selects a separate UI runtime set', () => {
-  const observed = runShim('darwin', ['--version'], 0, { variant: 'ui' });
+  const observed = runShim('linux', ['--version'], 0, { variant: 'ui' });
 
   assert.equal(observed.exitCode, 0);
   assert.equal(path.basename(path.dirname(observed.calls[1].executable)), 'ui');
@@ -174,7 +182,7 @@ test('npm shim selects a separate UI runtime set', () => {
 
 test('npm shim repairs a cache whose integrations sidecar is missing', () => {
   const observed = runShim(
-    'darwin', ['--version'], 0, { missingSidecar: true },
+    'linux', ['--version'], 0, { missingSidecar: true },
   );
 
   assert.equal(observed.exitCode, 0);
@@ -186,7 +194,7 @@ test('npm shim repairs a cache whose integrations sidecar is missing', () => {
 
 test('npm shim repairs a UI cache whose pack digest does not match its name', () => {
   const observed = runShim(
-    'darwin', ['--version'], 0, { variant: 'ui', corruptPack: true },
+    'linux', ['--version'], 0, { variant: 'ui', corruptPack: true },
   );
 
   assert.equal(observed.exitCode, 0);

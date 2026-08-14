@@ -267,12 +267,14 @@ jobs:
           ARCHIVE_DIR="$RUNNER_TEMP/release-archives"
           mkdir -p "$ARCHIVE_DIR" binaries
           gh release download "$VERSION" --dir "$ARCHIVE_DIR" --repo "$GITHUB_REPOSITORY" --pattern '*.tar.gz' --pattern '*.zip'
+          # RETIRED-PLATFORM(macos)/RETIRED-PLATFORM(windows-arm64): 8 UI archives
+          # became 5 (4 runtime files each) — see docs/MAINTAINERS.md "Retired platforms".
           scripts/ci/extract-release-archives.sh "$ARCHIVE_DIR" binaries \
             --archive-scope=ui \
-            --expect-archives=8 \
-            --expect-binaries=8 \
-            --expect-packs=8 \
-            --expect-runtime-files=32
+            --expect-archives=5 \
+            --expect-binaries=5 \
+            --expect-packs=5 \
+            --expect-runtime-files=20
 
       - name: Security audits on all unique extracted release objects
         run: |

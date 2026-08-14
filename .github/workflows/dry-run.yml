@@ -93,9 +93,12 @@ jobs:
       attest: false
 
   # ── Smoke test every binary ────────────────────────────────────
-  # Run unless builds were skipped or a build leg FAILED. Every build leg
-  # (including the macos-15-intel darwin-amd64 binary) is blocking now, so a
-  # failed/missing platform binary correctly stops smoke — see _build.yml.
+  # Run unless builds were skipped or a build leg FAILED. Every build leg that
+  # still exists is blocking (no continue-on-error), so a failed/missing
+  # platform binary correctly stops smoke — see _build.yml.
+  # RETIRED-PLATFORM(macos)/RETIRED-PLATFORM(windows-arm64): the darwin legs and
+  # windows-arm64 no longer run, so they cannot block; the five shipped archives
+  # are the whole matrix — see docs/MAINTAINERS.md "Retired platforms".
   smoke:
     if: ${{ inputs.skip_builds != true && inputs.skip_smoke != true && !cancelled() && needs.build.result != 'failure' && needs.build.result != 'skipped' }}
     needs: [build]
@@ -150,12 +153,14 @@ jobs:
       # only extracted files and unpacked UI assets, never .tar.gz/.zip containers.
       - name: Extract archive artifacts
         run: |
+          # RETIRED-PLATFORM(macos)/RETIRED-PLATFORM(windows-arm64): 8 UI archives
+          # became 5 (4 runtime files each) — see docs/MAINTAINERS.md "Retired platforms".
           scripts/ci/extract-release-archives.sh "$RUNNER_TEMP/release-archives" binaries \
             --archive-scope=ui \
-            --expect-archives=8 \
-            --expect-binaries=8 \
-            --expect-packs=8 \
-            --expect-runtime-files=32
+            --expect-archives=5 \
+            --expect-binaries=5 \
+            --expect-packs=5 \
+            --expect-runtime-files=20
 
       - name: VirusTotal scan
         uses: crazy-max/ghaction-virustotal@936d8c5c00afe97d3d9a1af26d017cfdf26800a2 # v5.0.0

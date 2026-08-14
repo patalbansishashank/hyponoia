@@ -30,11 +30,12 @@ jobs:
         env:
           BROAD: ${{ inputs.broad_platforms }}
         run: |
+          # RETIRED-PLATFORM(macos): the darwin-arm64 and darwin-amd64 smoke legs
+          # went with their build legs — there is no darwin artifact to smoke.
+          # See docs/MAINTAINERS.md "Retired platforms".
           CORE_UNIX='[
             {"os":"ubuntu-latest","goos":"linux","goarch":"amd64"},
-            {"os":"ubuntu-24.04-arm","goos":"linux","goarch":"arm64"},
-            {"os":"macos-14","goos":"darwin","goarch":"arm64"},
-            {"os":"macos-15-intel","goos":"darwin","goarch":"amd64"}
+            {"os":"ubuntu-24.04-arm","goos":"linux","goarch":"arm64"}
           ]'
           # Broad legs reuse existing goos/goarch artifacts on additional OS
           # versions to widen the run-anywhere signal without building new targets.
@@ -45,15 +46,18 @@ jobs:
           # older distros by design — older-glibc coverage is the -portable (static)
           # binary's job, exercised green by the smoke-linux-portable broad legs
           # (ubuntu-22.04 / 22.04-arm). So the dynamic broad legs stay on
-          # forward-compatible OSes only (macOS); running the dynamic binary on
+          # forward-compatible OSes only; running the dynamic binary on
           # ubuntu-22.04 would fail Phase 1 (glibc too old), not a real regression.
-          BROAD_UNIX='[
-            {"os":"macos-15","goos":"darwin","goarch":"arm64"}
-          ]'
+          # RETIRED-PLATFORM(macos): macOS was the only such OS, so this list is
+          # now legitimately empty rather than accidentally empty. It is always
+          # unioned with CORE_UNIX below, so the matrix never expands to zero.
+          BROAD_UNIX='[]'
           CORE_WIN='[{"os":"windows-latest","arch":"amd64"}]'
-          # windows-11-arm now runs the NATIVE arm64 binary (build-windows-arm64),
-          # not the x86_64 binary under emulation — we smoke the artifact we ship.
-          BROAD_WIN='[{"os":"windows-2025","arch":"amd64"},{"os":"windows-11-arm","arch":"arm64"}]'
+          # RETIRED-PLATFORM(windows-arm64): windows-11-arm smoked the NATIVE
+          # arm64 binary (build-windows-arm64) rather than the x86_64 one under
+          # emulation — we smoke what we ship. That build no longer runs, so
+          # there is nothing to smoke.
+          BROAD_WIN='[{"os":"windows-2025","arch":"amd64"}]'
           CORE_PORTABLE='[
             {"arch":"amd64","runner":"ubuntu-latest"},
             {"arch":"arm64","runner":"ubuntu-24.04-arm"}
@@ -149,6 +153,10 @@ jobs:
           sudo freshclam --quiet
           clamscan --no-summary "$RUNNER_TEMP/hyp-artifact/hyponoia"
 
+      # RETIRED-PLATFORM(macos): dead — no macOS leg reaches this matrix any
+      # more. Kept because it is the only recipe here for getting ClamAV working
+      # from Homebrew, and .github/SECURITY.md's macOS antivirus claim was
+      # removed on the strength of this step being unreachable, not deleted.
       - name: ClamAV scan (macOS)
         if: startsWith(matrix.os, 'macos')
         run: |

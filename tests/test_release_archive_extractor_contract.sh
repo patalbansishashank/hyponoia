@@ -27,15 +27,16 @@ from typing import Dict, List, Optional, Tuple
 root = pathlib.Path(sys.argv[1])
 bash_executable = pathlib.Path(sys.argv[2])
 extractor = root / "scripts/ci/extract-release-archives.sh"
+# RETIRED-PLATFORM(macos)/RETIRED-PLATFORM(windows-arm64): these mirror the
+# extractor's UNIX_TARGETS/WINDOWS_TARGETS and must track it exactly — see
+# docs/MAINTAINERS.md "Retired platforms".
 unix_targets = (
     "linux-amd64",
     "linux-arm64",
-    "darwin-amd64",
-    "darwin-arm64",
     "linux-amd64-portable",
     "linux-arm64-portable",
 )
-windows_targets = ("windows-amd64", "windows-arm64")
+windows_targets = ("windows-amd64",)
 archive_names = tuple(
     sorted(
         [
@@ -51,21 +52,24 @@ archive_names = tuple(
     )
 )
 ui_archive_names = tuple(name for name in archive_names if name.startswith("hyponoia-ui-"))
+# RETIRED-PLATFORM: 5 standard + 5 ui archives, one binary each; only the 5 ui
+# archives carry a pack; every archive carries 4 runtime files (10 * 4 = 40).
 expected_base_counts = {
-    "archives": 16,
-    "binaries": 16,
-    "packs": 8,
-    "runtime_files": 64,
+    "archives": 10,
+    "binaries": 10,
+    "packs": 5,
+    "runtime_files": 40,
 }
 count_args = [
     f"--expect-{key.replace('_', '-')}={value}"
     for key, value in expected_base_counts.items()
 ]
+# RETIRED-PLATFORM: the 5 shipped ui archives (5 * 4 = 20 runtime files).
 ui_expected_base_counts = {
-    "archives": 8,
-    "binaries": 8,
-    "packs": 8,
-    "runtime_files": 32,
+    "archives": 5,
+    "binaries": 5,
+    "packs": 5,
+    "runtime_files": 20,
 }
 ui_count_args = [
     "--archive-scope=ui",
@@ -255,16 +259,23 @@ def build_matrix(
         "bad_hash": "hyponoia-ui-linux-amd64.tar.gz",
         "bad_pack_magic": "hyponoia-ui-linux-amd64.tar.gz",
         "bad_pack_bounds": "hyponoia-ui-linux-arm64.tar.gz",
-        "bad_pack_path": "hyponoia-ui-darwin-amd64.tar.gz",
-        "bad_pack_mime": "hyponoia-ui-darwin-arm64.tar.gz",
+        # RETIRED-PLATFORM: the darwin/windows-arm64 fixtures these four cases
+        # used to ride on no longer exist. Each is re-pointed at a SURVIVING
+        # archive of the same kind — a pack case needs a ui archive, and the zip
+        # cases must stay on the one shipped .zip so tar-vs-zip coverage holds.
+        # Only one mutation is ever applied per build_matrix() call, so two cases
+        # may name the same archive without interfering.
+        # See docs/MAINTAINERS.md "Retired platforms".
+        "bad_pack_path": "hyponoia-ui-linux-amd64-portable.tar.gz",
+        "bad_pack_mime": "hyponoia-ui-linux-arm64-portable.tar.gz",
         "directory": "hyponoia-linux-amd64.tar.gz",
         "extra_pack": "hyponoia-ui-linux-arm64-portable.tar.gz",
-        "missing_pack": "hyponoia-ui-windows-arm64.zip",
-        "nested_member": "hyponoia-darwin-amd64.tar.gz",
+        "missing_pack": "hyponoia-ui-windows-amd64.zip",
+        "nested_member": "hyponoia-linux-amd64-portable.tar.gz",
         "tar_symlink": "hyponoia-linux-arm64.tar.gz",
         "tar_duplicate": "hyponoia-ui-linux-amd64-portable.tar.gz",
         "zip_symlink": "hyponoia-windows-amd64.zip",
-        "zip_directory": "hyponoia-windows-arm64.zip",
+        "zip_directory": "hyponoia-windows-amd64.zip",
         "zip_duplicate": "hyponoia-ui-windows-amd64.zip",
     }
     target = targets.get(mutation)
@@ -364,8 +375,9 @@ def assert_clean_failure(case_root: pathlib.Path, mutation: str, message: str) -
         fail(f"{mutation}: rejected archives left a partial atomic scan bundle")
 
 
-if len(archive_names) != 16 or len(ui_archive_names) != 8:
-    fail("fixture matrix no longer describes 16 canonical archives / eight UI archives")
+# RETIRED-PLATFORM: 10 canonical archives, 5 of them UI.
+if len(archive_names) != 10 or len(ui_archive_names) != 5:
+    fail("fixture matrix no longer describes 10 canonical archives / five UI archives")
 
 with tempfile.TemporaryDirectory(prefix="hyp-release-scan-contract-") as temporary:
     work = pathlib.Path(temporary)
@@ -381,8 +393,10 @@ with tempfile.TemporaryDirectory(prefix="hyp-release-scan-contract-") as tempora
     association_metadata, rows = parse_manifest(
         output / "associations.tsv", "hyp-release-scan-associations-v3"
     )
-    expected_pack_assets = 8 * len(asset_payloads)
-    expected_associations = 88 + expected_pack_assets
+    # RETIRED-PLATFORM: one pack per ui archive (5), and member associations are
+    # 5 standard archives * 5 members + 5 ui archives * 6 members (the pack) = 55.
+    expected_pack_assets = 5 * len(asset_payloads)
+    expected_associations = 55 + expected_pack_assets
     expected_metadata = {
         **expected_base_counts,
         "pack_assets": expected_pack_assets,
@@ -422,13 +436,15 @@ with tempfile.TemporaryDirectory(prefix="hyp-release-scan-contract-") as tempora
     if len(object_bytes) != len(set(object_bytes)):
         fail("scan set contains duplicate byte sequences")
     license_rows = [row for row in rows if row["member"] == "LICENSE"]
-    if len(license_rows) != 16 or len({row["scan_path"] for row in license_rows}) != 1:
-        fail("shared LICENSE bytes must map 16 associations to one scan object")
+    # RETIRED-PLATFORM: LICENSE rides every one of the 10 archives; the pack and
+    # its assets ride only the 5 ui archives.
+    if len(license_rows) != 10 or len({row["scan_path"] for row in license_rows}) != 1:
+        fail("shared LICENSE bytes must map 10 associations to one scan object")
     pack_rows = [row for row in rows if row["kind"] == "pack"]
-    if len(pack_rows) != 8 or len({row["scan_path"] for row in pack_rows}) != 1:
-        fail("shared UI pack bytes must map eight associations to one scan object")
+    if len(pack_rows) != 5 or len({row["scan_path"] for row in pack_rows}) != 1:
+        fail("shared UI pack bytes must map five associations to one scan object")
     script_rows = [row for row in rows if row["asset_path"] == "/assets/app.js"]
-    if len(script_rows) != 8 or len({row["scan_path"] for row in script_rows}) != 1:
+    if len(script_rows) != 5 or len({row["scan_path"] for row in script_rows}) != 1:
         fail("each pack's JavaScript association must reach one exact deduplicated script object")
 
     scan_metadata, scan_rows = parse_manifest(output / "scan-set.tsv", "hyp-release-scan-set-v2")
@@ -459,7 +475,8 @@ with tempfile.TemporaryDirectory(prefix="hyp-release-scan-contract-") as tempora
     ui_metadata, ui_rows = parse_manifest(
         ui_output / "associations.tsv", "hyp-release-scan-associations-v3"
     )
-    ui_associations = 48 + expected_pack_assets
+    # RETIRED-PLATFORM: 5 ui archives * 6 members (5 shared + the pack) = 30.
+    ui_associations = 30 + expected_pack_assets
     if ui_metadata != {
         **ui_expected_base_counts,
         "pack_assets": expected_pack_assets,
@@ -468,12 +485,12 @@ with tempfile.TemporaryDirectory(prefix="hyp-release-scan-contract-") as tempora
     }:
         fail(f"UI-only association metadata mismatch: {ui_metadata!r}")
     if len(ui_rows) != ui_associations or {row["variant"] for row in ui_rows} != {"ui"}:
-        fail("UI-only scan scope does not cover exactly the eight UI archives")
+        fail("UI-only scan scope does not cover exactly the five UI archives")
     ui_as_all_output = ui_only / "scan-as-all"
     ui_as_all = invoke(ui_only / "archives", ui_as_all_output, count_args)
     if (
         ui_as_all.returncode == 0
-        or "expected exact canonical 16 (all)" not in ui_as_all.stdout
+        or "expected exact canonical 10 (all)" not in ui_as_all.stdout
         or ui_as_all_output.exists()
     ):
         fail("UI-only archives must require an explicit closed archive scope")
@@ -486,13 +503,13 @@ with tempfile.TemporaryDirectory(prefix="hyp-release-scan-contract-") as tempora
         "bad_pack_mime": "HYPUIPK MIME/path contract failed",
         "directory": "non-regular archive member",
         "extra_pack": "exactly one UI pack",
-        "missing_archive": "expected exact canonical 16 (all)",
+        "missing_archive": "expected exact canonical 10 (all)",
         "missing_pack": "exactly one UI pack",
         "nested_member": "unexpected archive member",
         "oversized_archive": "archive exceeds 536870912 byte ceiling",
         "tar_symlink": "non-regular archive member",
         "tar_duplicate": "duplicate archive member",
-        "unexpected_archive": "expected exact canonical 16 (all)",
+        "unexpected_archive": "expected exact canonical 10 (all)",
         "zip_directory": "non-regular archive member",
         "zip_duplicate": "duplicate archive member",
         "zip_symlink": "non-regular archive member",
@@ -509,7 +526,7 @@ with tempfile.TemporaryDirectory(prefix="hyp-release-scan-contract-") as tempora
     wrong_args.append("--expect-packs=9")
     wrong_output = wrong_count / "scan"
     wrong = invoke(wrong_count / "archives", wrong_output, wrong_args)
-    if wrong.returncode == 0 or "packs expected 9, got 8" not in wrong.stdout or wrong_output.exists():
+    if wrong.returncode == 0 or "packs expected 9, got 5" not in wrong.stdout or wrong_output.exists():
         fail(f"explicit expected-count mismatch did not fail atomically: {wrong.stdout.strip()}")
 
 source = extractor.read_text(encoding="utf-8")
@@ -527,8 +544,13 @@ build = (root / ".github/workflows/_build.yml").read_text(encoding="utf-8")
 smoke = (root / ".github/workflows/_smoke.yml").read_text(encoding="utf-8")
 if "ui_only" in build or "Build standard binary" in build:
     fail("canonical build workflow must not retain a non-UI release path")
+# RETIRED-PLATFORM(windows-arm64): this counts TEXT occurrences, and the
+# build-windows-arm64 job was disabled with `if: false` rather than deleted, so
+# its packaging call is still in the file and the count is still 4 — only 3 of
+# the 4 families actually run. Drop this to 3 when that job body is deleted.
+# See docs/MAINTAINERS.md "Retired platforms".
 if build.count("--variant ui") != 4:
-    fail("canonical build workflow must package exactly its four UI-enabled build families")
+    fail("canonical build workflow must package exactly its four UI-enabled build families (one held disabled)")
 if "ui_only" in smoke or "VARIANTS='[\"ui\"]'" not in smoke or "standard" in smoke.split("VARIANTS=", 1)[1].split("\n", 1)[0]:
     fail("release smoke matrix must expose only the UI-enabled runtime")
 if "ui_only" in dry_run or "--archive-scope=ui" not in dry_run:

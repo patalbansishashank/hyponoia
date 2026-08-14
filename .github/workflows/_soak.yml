@@ -40,16 +40,9 @@ jobs:
             goarch: arm64
             cc: gcc
             cxx: g++
-          - os: macos-14
-            goos: darwin
-            goarch: arm64
-            cc: cc
-            cxx: c++
-          - os: macos-15-intel
-            goos: darwin
-            goarch: amd64
-            cc: cc
-            cxx: c++
+          # RETIRED-PLATFORM(macos): darwin soak legs removed — the product does
+          # not build on the current macOS images, so there is nothing to soak.
+          # See docs/MAINTAINERS.md "Retired platforms".
     runs-on: ${{ matrix.os }}
     # Budget doctrine (this line has been silently violated TWICE): the job
     # timeout must exceed the WORST-CASE run length, and duration_minutes is
@@ -144,6 +137,11 @@ jobs:
   soak-quick-windows-arm64:
     # Native ARM64 Windows soak (CLANGARM64, no sanitizer — ASan is unavailable
     # on native ARM64 Windows). Builds from source like soak-quick-windows.
+    #
+    # RETIRED-PLATFORM(windows-arm64): held with `if: false`. It builds from
+    # source, so it fails at the same ggml aarch64 link as everything else on
+    # this target. See docs/MAINTAINERS.md "Retired platforms".
+    if: false
     runs-on: windows-11-arm
     # Budget doctrine (see soak-quick): per-leg duration, two legs, 560.
     timeout-minutes: 560
@@ -214,16 +212,7 @@ jobs:
             goarch: arm64
             cc: gcc
             cxx: g++
-          - os: macos-14
-            goos: darwin
-            goarch: arm64
-            cc: cc
-            cxx: c++
-          - os: macos-15-intel
-            goos: darwin
-            goarch: amd64
-            cc: cc
-            cxx: c++
+          # RETIRED-PLATFORM(macos): darwin ASan soak legs removed with the rest.
     runs-on: ${{ matrix.os }}
     # ASan soak runs a FIXED 15-min soak (hard-coded below, NOT driven by
     # inputs.duration_minutes), but the ASan-instrumented build is slow and
