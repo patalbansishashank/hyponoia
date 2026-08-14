@@ -75,3 +75,15 @@ URL:http://127.0.0.1:UI server binding (localhost only)
 URL:https://www.sqlite.org/c3ref/c_checkpoint_full.html:sqlite WAL checkpoint API doc reference (comment only, not a network call)
 URL:https://github.com/patalbansishashank/hyponoia:project repository self-reference in update/star notice (src/mcp/mcp.c)
 URL:https://%s:GitHub blob-URL construction in src/ui/http_server.c hyp_ui_git_web_base — https-forces the repo web base for frontend deep-links (not a network call)
+
+# ── ask: the optional escalation lane's provider endpoints ─────────────────
+# NEXT-STEPS.md §2.10 step 2, src/ask/ask_provider.c. One entry per provider in
+# the table. A request is made ONLY from `hyponoia embed --escalation` or
+# `ask(escalate=true)`; escalation REFUSES rather than falling back, so a
+# missing key or a mismatched index cannot cause a quiet call. The key is never
+# in the binary, never in the config DB and never in argv: `key_env` stores the
+# NAME of an environment variable, and the value reaches curl through a 0600
+# --config file that is scrubbed after use.
+URL:https://api.voyageai.com/v1/embeddings:escalation lane, Voyage provider (input_type document|query, re-embeds)
+URL:https://api.jina.ai/v1/embeddings:escalation lane, Jina provider (task retrieval.passage|retrieval.query, truncates)
+URL:https://generativelanguage.googleapis.com/v1beta/models:escalation lane, Gemini provider — DECLARED BUT NOT WIRED, refuses at call time; the string is linked in, so it is listed rather than left to surprise a release

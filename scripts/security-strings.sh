@@ -74,16 +74,50 @@ ALLOWED_URLS=(
     "https://github.com/patalbansishashank/hyponoia"
     "http://127.0.0.1"
     "http://localhost"
-    # The `ask` lane's embedding weights (NEXT-STEPS.md 2.1, runs/ASK/T2).
-    # Qwen3-Embedding-0.6B Q8_0 GGUF is 639 MB, so it is fetched on first use
-    # of that lane instead of shipped. REVIEWED: the URL is pinned to one repo
-    # revision and one filename, its SHA-256 is a compile-time constant, and
-    # the only caller is `hyponoia fetch-model` -- a command a person types,
-    # which still refuses to run unattended without --yes. No index, tool call
-    # or daemon session can reach it, so the binary keeps the "no network
-    # request by default" property scripts/security-network.sh checks.
+    # The `ask` lane's embedding weights (NEXT-STEPS.md 2.1 and 2.10,
+    # runs/ASK/T2 and runs/ESCALATION/). voyage-4-nano ships as TWO artifacts:
+    # a 355 MB Q8_0 GGUF and an 8 MB projection head that GGUF cannot represent
+    # (a bias-free nn.Linear(1024, 2048) applied after pooling). Both are
+    # fetched on first use of that lane instead of shipped.
+    # REVIEWED: both URLs are pinned to ONE repo revision and one filename
+    # each, both SHA-256 digests are compile-time constants, and the only
+    # caller is `hyponoia fetch-model` -- a command a person types, which still
+    # refuses to run unattended without --yes. No index, tool call or daemon
+    # session can reach them, so the binary keeps the "no network request by
+    # default" property scripts/security-network.sh checks.
     # See src/cli/model_fetch.h.
-    "https://huggingface.co/Qwen/Qwen3-Embedding-0.6B-GGUF"
+    "https://huggingface.co/jsonMartin/voyage-4-nano-gguf"
+
+    # The optional ESCALATION lane's provider endpoints (NEXT-STEPS.md 2.10
+    # step 2, src/ask/ask_provider.c). One entry per provider in the table,
+    # matching the `.endpoint` field exactly.
+    # REVIEWED, and the reachability argument is the whole point:
+    #   * a request is made ONLY from `hyponoia embed --escalation` or from
+    #     `ask(escalate=true)` -- both explicit, neither reachable by default;
+    #   * escalation REFUSES rather than silently falling back, so a missing
+    #     key or a mismatched index cannot cause a quiet network call;
+    #   * the API key is never in the binary, never in the config DB and never
+    #     in a flag. `key_env` stores the NAME of an environment variable, and
+    #     hyp_config_validate() refuses a value that looks like a key
+    #     (sk-, pa-, jina_, AIza, sk_, voy-) WITHOUT echoing it;
+    #   * the key reaches curl through a 0600 --config file with a
+    #     hyp_secure_random name, scrubbed with hyp_secure_zero afterwards, so
+    #     it never appears in argv or in the process table.
+    # The Gemini entry is DECLARED BUT NOT WIRED: its task_type asymmetry is
+    # unimplemented and the provider refuses at call time. Its endpoint string
+    # is still linked in, so it is still listed here rather than left to
+    # surprise a future release.
+    "https://api.voyageai.com/v1/embeddings"
+    "https://api.jina.ai/v1/embeddings"
+    "https://generativelanguage.googleapis.com/v1beta/models"
+
+    # Vendored llama.cpp documentation links, compiled in as parts of its own
+    # log and assertion message strings (vendored/llama.cpp/src/
+    # llama-kv-cache-iswa.cpp and src/models/phi3.cpp). REVIEWED: these are
+    # inert text in diagnostics -- nothing dereferences them, and they are
+    # upstream's, not ours. They surfaced when 2.10 linked more of llama.cpp
+    # for non-causal encoding.
+    "https://github.com/ggml-org/llama.cpp"
     # SQLite internal URLs (part of vendored sqlite3 strings)
     "https://sqlite.org"
     "https://www.sqlite.org"

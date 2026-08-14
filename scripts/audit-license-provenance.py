@@ -30,6 +30,27 @@ SPECIAL_NOTICE = {
     "assembly": "RETAINED-MIT (upstream RubixDev/tree-sitter-assembly deleted from GitHub)",
     "pine": "PROVENANCE-NOTICE (upstream kvarenzn/tree-sitter-pine declares ISC, ships no license file)",
 }
+
+# Grammars written by the project this repository was forked from. Their
+# LICENSE is MIT — same terms as the root LICENSE — but carries "Copyright (c)
+# 2025 DeusData" rather than this repository's holder, so the byte comparison
+# against the root LICENSE reports FIRST-PARTY-VAR and the audit fails.
+#
+# THE COPYRIGHT LINE IS CORRECT AND IS DELIBERATELY NOT REWRITTEN. DeusData
+# authored these six grammars; changing the holder to match our root LICENSE
+# would be misattribution, not tidiness. What was missing was the explanation,
+# and this is it. Same licence, different holder, inherited with the fork —
+# which is exactly what MANUAL-VERIFIED is for.
+#
+# This has been failing since the fork; it is not caused by anything recent. It
+# only became visible when the release gates were run by hand, because no
+# runner has executed since 2026-08-11 (NEXT-STEPS.md §2.12).
+FORKED_FIRST_PARTY = {
+    g: ("FORK-INHERITED-MIT (first-party grammar of the upstream project "
+        "DeusData/codebase-memory-mcp; MIT, same terms as the root LICENSE, "
+        "copyright retained by its author)")
+    for g in ("cobol", "form", "janet", "magma", "protobuf", "wolfram")
+}
 DISAGREEMENT = {
     "jinja2": "dbt-labs/tree-sitter-jinja2",
     "just": "casey/tree-sitter-just",
@@ -191,6 +212,11 @@ def main():
             fname, ours = local_license(d)
             if ours == root_license:
                 results[key] = ("FIRST-PARTY-OK", "== project root LICENSE")
+            elif g in FORKED_FIRST_PARTY:
+                # Same MIT terms, upstream's copyright holder. Checked here
+                # rather than through SPECIAL_NOTICE because this branch
+                # short-circuits before that one.
+                results[key] = ("MANUAL-VERIFIED", FORKED_FIRST_PARTY[g])
             else:
                 results[key] = ("FIRST-PARTY-VAR", f"{fname}: differs from root LICENSE")
             continue
