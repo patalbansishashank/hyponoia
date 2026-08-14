@@ -1211,12 +1211,30 @@ int hyp_store_prepare_for_publish(hyp_store_t *s) {
     return prepare_sqlite_for_publish(s->db);
 }
 
+/* EVERY SQLite path must go through hyp_path_for_file_api. On Windows an
+ * absolute path past the legacy 260-character limit opens only with the
+ * extended-length \\?\ prefix, and SQLite hands the UTF-8 path it is given to
+ * CreateFileW unchanged (see the contract on the declaration in compat.h).
+ * store_open_internal has always done this; the publish-path helpers below did
+ * not — and they handle the LONGEST paths in the system, because the staging
+ * copy appends ".stage.XXXXXX" to a name that already contains a hex-expanded
+ * non-ASCII repository path. Two bytes of Cyrillic become four hex characters,
+ * so the same fixture that fits under an ASCII or Latin-1 path crosses 260 in
+ * Cyrillic and fails at the open. */
+static bool store_sqlite_path(const char *path, char *out, size_t out_size) {
+    return path && hyp_path_for_file_api(path, out, out_size);
+}
+
 int hyp_store_prepare_path_for_replace(const char *path) {
     if (!path) {
         return HYP_STORE_ERR;
     }
+    char open_path[HYP_SZ_4K];
+    if (!store_sqlite_path(path, open_path, sizeof(open_path))) {
+        return HYP_STORE_ERR;
+    }
     sqlite3 *db = NULL;
-    int rc = sqlite3_open_v2(path, &db, SQLITE_OPEN_READWRITE, NULL);
+    int rc = sqlite3_open_v2(open_path, &db, SQLITE_OPEN_READWRITE, NULL);
     if (rc != SQLITE_OK) {
         sqlite3_close(db);
         return HYP_STORE_ERR;
@@ -1237,15 +1255,24 @@ int hyp_store_backup_path(const char *source_path, const char *staging_path) {
         return HYP_STORE_ERR;
     }
 
+    /* The staging path is the longest path this code ever opens — see the
+     * contract above store_sqlite_path. */
+    char source_open[HYP_SZ_4K];
+    char staging_open[HYP_SZ_4K];
+    if (!store_sqlite_path(source_path, source_open, sizeof(source_open)) ||
+        !store_sqlite_path(staging_path, staging_open, sizeof(staging_open))) {
+        return HYP_STORE_ERR;
+    }
+
     sqlite3 *source = NULL;
     sqlite3 *dest = NULL;
-    int rc = sqlite3_open_v2(source_path, &source, SQLITE_OPEN_READONLY, NULL);
+    int rc = sqlite3_open_v2(source_open, &source, SQLITE_OPEN_READONLY, NULL);
     if (rc != SQLITE_OK) {
         sqlite3_close(source);
         return HYP_STORE_ERR;
     }
     sqlite3_busy_timeout(source, 10000);
-    rc = sqlite3_open_v2(staging_path, &dest, SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE, NULL);
+    rc = sqlite3_open_v2(staging_open, &dest, SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE, NULL);
     if (rc != SQLITE_OK) {
         sqlite3_close(dest);
         sqlite3_close(source);
@@ -1354,8 +1381,13 @@ int hyp_store_seal_existing_path_for_replace(const char *db_path) {
         return HYP_STORE_ERR;
     }
 
+    char open_path[HYP_SZ_4K];
+    if (!store_sqlite_path(db_path, open_path, sizeof(open_path))) {
+        return HYP_STORE_ERR;
+    }
+
     hyp_store_t maintenance = {0};
-    int rc = sqlite3_open_v2(db_path, &maintenance.db, SQLITE_OPEN_READWRITE, NULL);
+    int rc = sqlite3_open_v2(open_path, &maintenance.db, SQLITE_OPEN_READWRITE, NULL);
     if (rc != SQLITE_OK) {
         int primary = rc & 0xff;
         sqlite3_close(maintenance.db);
@@ -1427,8 +1459,13 @@ int hyp_store_dump_to_file(hyp_store_t *s, const char *dest_path) {
     snprintf(tmp_path, sizeof(tmp_path), "%s.tmp", dest_path);
     (void)unlink(tmp_path);
 
+    char tmp_open[HYP_SZ_4K];
+    if (!store_sqlite_path(tmp_path, tmp_open, sizeof(tmp_open))) {
+        store_set_error(s, "dump: cannot resolve temp file path");
+        return HYP_STORE_ERR;
+    }
     sqlite3 *dest_db = NULL;
-    int rc = sqlite3_open(tmp_path, &dest_db);
+    int rc = sqlite3_open(tmp_open, &dest_db);
     if (rc != SQLITE_OK) {
         store_set_error(s, "dump: cannot open temp file");
         return HYP_STORE_ERR;

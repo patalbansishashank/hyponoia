@@ -11729,9 +11729,15 @@ static void build_update_url(char *url, int url_sz, const char *os, const char *
         base_url = "https://github.com/patalbansishashank/hyponoia/releases/latest/download";
     }
     /* Linux ships a fully-static "-portable" build; the standard linux binary
-     * dynamically links glibc 2.38+ and fails on older distros. macOS/Windows
-     * have no such variant. Keep in sync with install.sh / install.js / pypi
-     * _cli.py. */
+     * dynamically links glibc 2.38+ and fails on older distros. Windows has no
+     * such variant. Keep in sync with install.sh / install.js / pypi _cli.py.
+     *
+     * RETIRED-PLATFORM(macos): this is the one place the retirement cannot
+     * reach. The URL is composed INSIDE the shipped binary, so every macOS
+     * install already on disk will build a darwin URL and 404 on `update`
+     * forever, whatever this file says next. Changing the composition here
+     * would only affect a binary that, by construction, no macOS user has.
+     * See docs/MAINTAINERS.md "Retired platforms". */
     const char *portable = (strcmp(os, "linux") == 0) ? "-portable" : "";
     snprintf(url, url_sz, "%s/hyponoia-%s%s-%s%s.%s", base_url, want_ui ? "ui-" : "", os, arch,
              portable, ext);

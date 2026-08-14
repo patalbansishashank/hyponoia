@@ -355,6 +355,15 @@ def main():
                    got.get("definition_nodes"), base["nodes"], base["edges"],
                    base["definition_nodes"], got.get("name")))
             if not ok:
+                # index_and_count reports a refusal as {"error": ...} — a dict
+                # with none of the keys printed above, so every field renders as
+                # None and the line says only "something went wrong". Print the
+                # error itself and the derived path length: this guard's failing
+                # variant is the one whose hex-expanded name is LONGEST (two
+                # bytes of Cyrillic become four hex characters), and the length
+                # is what separates a real Windows path-limit defect from a
+                # parse regression.
+                print("       error=%r repo_path_len=%d" % (got.get("error"), len(repo)))
                 failures.append(key)
     finally:
         shutil.rmtree(work, ignore_errors=True)
