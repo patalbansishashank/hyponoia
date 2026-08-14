@@ -270,9 +270,21 @@ static void ui_snapshot_free(ui_asset_snapshot_t *snapshot) {
 static bool ui_parse_pack(unsigned char *bytes, size_t length, ui_asset_snapshot_t *out) {
     /* Keep the seven format bytes as separate comparisons. A contiguous
      * native-binary copy would make the composition gate unable to
-     * distinguish this parser constant from an accidentally embedded pack. */
-    bool valid_magic = bytes && length >= 8U && bytes[0] == 'C' && bytes[1] == 'B' &&
-                       bytes[2] == 'M' && bytes[3] == 'U' && bytes[4] == 'I' && bytes[5] == 'P' &&
+     * distinguish this parser constant from an accidentally embedded pack.
+     *
+     * That decomposition is also why these seven characters still spelled
+     * CBMUIPK after f95d6841: a rename can find "HYPUIPK" in a string literal,
+     * and cannot see a string that has been taken apart into character
+     * literals. The defence that makes the constant invisible to one scanner
+     * made it invisible to the rename too.
+     *
+     * Every other place agrees the magic is HYPUIPK — scripts/pack-ui-assets.mjs
+     * WRITES it, scripts/ci/check-binary-composition.sh scans for it, and three
+     * contract tests assert it. Only this reader disagreed, so the binary could
+     * not load any pack it shipped with and the UI was dead in every build from
+     * 2026-08-09 onward. */
+    bool valid_magic = bytes && length >= 8U && bytes[0] == 'H' && bytes[1] == 'Y' &&
+                       bytes[2] == 'P' && bytes[3] == 'U' && bytes[4] == 'I' && bytes[5] == 'P' &&
                        bytes[6] == 'K' && bytes[7] == 0U;
     if (!bytes || !out || length < UI_PACK_HEADER_BYTES || !valid_magic ||
         ui_read_u16(bytes + 8U) != UI_PACK_VERSION ||
