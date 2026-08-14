@@ -250,9 +250,8 @@ hyp_daemon_ipc_endpoint_t *hyp_daemon_bootstrap_endpoint_new(const char *runtime
      * was. */
     char seam_parent[HYP_SZ_1K];
     if (!runtime_parent) {
-        runtime_parent =
-            hyp_safe_getenv("HYP_TEST_DAEMON_RUNTIME_PARENT", seam_parent, sizeof(seam_parent),
-                            NULL);
+        runtime_parent = hyp_safe_getenv("HYP_TEST_DAEMON_RUNTIME_PARENT", seam_parent,
+                                         sizeof(seam_parent), NULL);
     }
 #endif
     return hyp_daemon_ipc_endpoint_new(key, runtime_parent);

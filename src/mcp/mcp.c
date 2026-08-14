@@ -57,7 +57,7 @@ enum {
 #include "pipeline/pass_cross_repo.h"
 #include "git/git_context.h"
 #include "cli/cli.h"
-#include "ask/ask_embed.h"    /* hyp_ask_read_span */
+#include "ask/ask_embed.h" /* hyp_ask_read_span */
 #include "ask/ask_llama.h"
 #include "ask/ask_provider.h" /* the escalation lane's encoder */
 #include "cli/model_fetch.h"
@@ -4288,8 +4288,7 @@ static char *handle_ask(hyp_mcp_server_t *srv, const char *args) {
 
     hyp_ask_hit_t *hits = NULL;
     int hit_count = 0;
-    int rc = hyp_ask_index_search_lane(store, project, lane, qvec, search_limit, &hits,
-                                       &hit_count);
+    int rc = hyp_ask_index_search_lane(store, project, lane, qvec, search_limit, &hits, &hit_count);
     free(qvec);
     hyp_ask_encoder_destroy(esc_enc);
     if (rc != HYP_STORE_OK) {

@@ -327,8 +327,8 @@ static bool assets_resolve(const char *home) {
         }
         /* System package layout: <prefix>/bin/<binary> with the immutable
          * runtime asset under <prefix>/share/hyponoia/. */
-        written = snprintf(candidate, sizeof(candidate), "%s/../share/hyponoia/%s",
-                           exe_dir, HYP_INTEGRATIONS_ASSET_NAME);
+        written = snprintf(candidate, sizeof(candidate), "%s/../share/hyponoia/%s", exe_dir,
+                           HYP_INTEGRATIONS_ASSET_NAME);
         if (written > 0 && (size_t)written < sizeof(candidate) && assets_try_candidate(candidate)) {
             return true;
         }

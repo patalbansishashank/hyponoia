@@ -158,8 +158,8 @@ int hyp_ask_encoder_token_length(const hyp_ask_encoder_t *e, const char *text);
 int hyp_ask_encoder_full_token_length(const hyp_ask_encoder_t *e, const char *text);
 int hyp_ask_encode_documents(const hyp_ask_encoder_t *e, const char *const *texts, int count,
                              float *out);
-int hyp_ask_encode_query(const hyp_ask_encoder_t *e, const char *text,
-                         const char *language_display, float *out);
+int hyp_ask_encode_query(const hyp_ask_encoder_t *e, const char *text, const char *language_display,
+                         float *out);
 void hyp_ask_encoder_destroy(hyp_ask_encoder_t *e);
 
 /* True when every row of `vecs` (count x dim, float32) is unit-normalised to

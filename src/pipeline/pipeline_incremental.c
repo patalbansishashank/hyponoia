@@ -376,9 +376,8 @@ static int semantic_manifest_walk_controls(semantic_manifest_builder_t *builder,
                                                  excluded_dirs, excluded_count);
             continue;
         }
-        bool root_control =
-            (!rel_dir || !rel_dir[0]) &&
-            (strcmp(name, ".hypignore") == 0 || strcmp(name, ".hyponoia.json") == 0);
+        bool root_control = (!rel_dir || !rel_dir[0]) && (strcmp(name, ".hypignore") == 0 ||
+                                                          strcmp(name, ".hyponoia.json") == 0);
         if (path_info.is_regular && (strcmp(name, ".gitignore") == 0 || root_control ||
                                      semantic_manifest_package_control(name))) {
             rc = semantic_manifest_add(builder, project, rel_path, abs_path);

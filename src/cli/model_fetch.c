@@ -822,8 +822,8 @@ hyp_model_fetch_result_t hyp_model_fetch(const hyp_model_fetch_opts_t *opts) {
 static void model_fetch_help(void) {
     printf("Usage: hyponoia fetch-model [--yes] [--force] [--verify] [--path]\n\n");
     printf("Download the model the `ask` lane uses:\n\n");
-    printf("  " HYP_MODEL_ASK_MODEL " (" HYP_MODEL_ASK_QUANT
-           " GGUF), " HYP_MODEL_ASK_SIZE_TEXT "\n");
+    printf("  " HYP_MODEL_ASK_MODEL " (" HYP_MODEL_ASK_QUANT " GGUF), " HYP_MODEL_ASK_SIZE_TEXT
+           "\n");
     printf("  Without it `ask` cannot turn a question into a vector and answers\n");
     printf("  available=false.\n\n");
     printf("Fetched once and kept in the Hyponoia cache. Nothing else downloads it:\n");

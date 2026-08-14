@@ -507,8 +507,7 @@ static bool render_profile_text(profile_buffer_t *buffer, hyp_graph_profile_dial
             !profile_buffer_append(buffer, "tools:\n  - Read\n  - Grep\n  - Glob\n") ||
             (direct && !append_yaml_mcp_tools(buffer, dialect, tier)) ||
             (direct && !profile_buffer_append(buffer, "mcpServers: [hyponoia]\n")) ||
-            !profile_buffer_append(buffer,
-                                   "permissionMode: plan\nskills: [hyponoia]\n---\n") ||
+            !profile_buffer_append(buffer, "permissionMode: plan\nskills: [hyponoia]\n---\n") ||
             !profile_buffer_append(buffer, prompt)) {
             return false;
         }

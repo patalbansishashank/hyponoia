@@ -1116,8 +1116,8 @@ static const char *ha_active_tier(yyjson_val *root, const char *event) {
         (strcmp(agent_type, "scout") == 0 || strcmp(agent_type, "hyponoia-scout") == 0)) {
         return "Tier 1 quick scout";
     }
-    if (agent_type && (strcmp(agent_type, "auditor") == 0 ||
-                       strcmp(agent_type, "hyponoia-auditor") == 0)) {
+    if (agent_type &&
+        (strcmp(agent_type, "auditor") == 0 || strcmp(agent_type, "hyponoia-auditor") == 0)) {
         return "Tier 3 full graph verification";
     }
     return "Tier 2 verification";

@@ -429,10 +429,10 @@ static _Atomic int g_pretrained_mtx_init = 0;
  * from bytes because the extractor writes '<ii' regardless of host order. */
 static bool pretrained_blob_matches_header(void) {
     const unsigned char *b = PRETRAINED_VECTOR_BLOB;
-    uint32_t count = (uint32_t)b[0] | ((uint32_t)b[1] << 8) | ((uint32_t)b[2] << 16) |
-                     ((uint32_t)b[3] << 24);
-    uint32_t dim = (uint32_t)b[4] | ((uint32_t)b[5] << 8) | ((uint32_t)b[6] << 16) |
-                   ((uint32_t)b[7] << 24);
+    uint32_t count =
+        (uint32_t)b[0] | ((uint32_t)b[1] << 8) | ((uint32_t)b[2] << 16) | ((uint32_t)b[3] << 24);
+    uint32_t dim =
+        (uint32_t)b[4] | ((uint32_t)b[5] << 8) | ((uint32_t)b[6] << 16) | ((uint32_t)b[7] << 24);
     size_t expect_len = (size_t)PRETRAINED_BLOB_HEADER_BYTES +
                         ((size_t)PRETRAINED_TOKEN_COUNT * (size_t)PRETRAINED_DIM);
     if (count == (uint32_t)PRETRAINED_TOKEN_COUNT && dim == (uint32_t)PRETRAINED_DIM &&
@@ -440,9 +440,9 @@ static bool pretrained_blob_matches_header(void) {
         return true;
     }
     hyp_log_error("semantic.pretrained_blob_mismatch", "detail",
-                  "code_vectors.bin disagrees with code_vectors.h",
-                  "action", "pretrained vectors disabled; every token falls back to "
-                            "the hashed random-index vector");
+                  "code_vectors.bin disagrees with code_vectors.h", "action",
+                  "pretrained vectors disabled; every token falls back to "
+                  "the hashed random-index vector");
     return false;
 }
 
