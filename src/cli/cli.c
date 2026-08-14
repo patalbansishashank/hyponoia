@@ -754,7 +754,14 @@ static int cli_activation_guard(hyp_daemon_runtime_activation_action_t action,
 #define TAR_SIZE_LEN 13     /* octal size field: bytes 124-135 + NUL */
 #define TAR_TYPE_OFFSET 156 /* type flag byte */
 #define TAR_BINARY_NAME "hyponoia"
-#define TAR_BINARY_NAME_LEN 19
+/* Derived, never written out. This was the literal 19 — strlen of the old name
+ * "codebase-memory-mcp" — and f95d6841 changed the string to an 8-character one
+ * without changing the number. The tar match is a PREFIX test, so comparing 19
+ * bytes against an 8-character name silently narrowed it to an exact match:
+ * an entry named "hyponoia-linux-amd64" stopped being found. Production kept
+ * working only by coincidence, because the archives happen to store the binary
+ * as exactly "hyponoia" and both strings reach NUL at byte 8. */
+#define TAR_BINARY_NAME_LEN (sizeof(TAR_BINARY_NAME) - 1U)
 #define TAR_BLOCK_SIZE HYP_SZ_512 /* tar record alignment */
 #define TAR_BLOCK_MASK 511        /* TAR_BLOCK_SIZE - 1 */
 
@@ -1508,8 +1515,20 @@ bool hyp_remove_old_monolithic_skill(const char *skills_dir, bool dry_run) {
         return false;
     }
 
+    /* The LEGACY identity, deliberately not renamed. This function exists to
+     * clean up a directory written by the OLD product, so the one string in it
+     * that must never track our current name is this one.
+     *
+     * f95d6841 renamed it anyway. Before that commit two DISTINCT names were in
+     * play — the installed skill was "codebase-memory" and the stale monolithic
+     * directory was "codebase-memory-mcp" — and the rename mapped both onto
+     * "hyponoia". That collapsed them into one path, so this function pointed
+     * at the directory hyp_install_skills had just created: install removing
+     * its own skill. Only hyp_remove_empty_directory's empty-only check kept it
+     * from doing damage, and cli_legacy_skill_cleanup_rejects_links_and_user_content
+     * is what caught it. */
     char old_path[CLI_BUF_1K];
-    snprintf(old_path, sizeof(old_path), "%s/hyponoia", skills_dir);
+    snprintf(old_path, sizeof(old_path), "%s/codebase-memory-mcp", skills_dir);
     return hyp_remove_empty_directory(old_path, dry_run);
 }
 

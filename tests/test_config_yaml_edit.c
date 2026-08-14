@@ -617,9 +617,24 @@ TEST(config_yaml_edit_absent_target_requires_safe_root_mapping) {
 }
 
 TEST(config_yaml_edit_rejects_semantic_target_key_aliases) {
+    /* Each case spells a key the editor is about to touch using an escape, so
+     * the refusal is only correct if the key is DECODED before it is compared
+     * (config_yaml_edit.c: `semantic_match = strcmp(decoded, key) == 0`).
+     *
+     * The middle case is the third artifact of f95d6841's rename, after the
+     * two §2.13 repaired in test_config_toml_edit.c and test_agent_clients.c.
+     * It read "codebase\x2dmemory" — the old identity with its hyphen escaped
+     * — and the rename rewrote bare occurrences of the old name but could not
+     * see inside the escape. So it decoded to a name that is not ours at all,
+     * stopped aliasing the target, and the editor correctly ACCEPTED it: the
+     * case asserted refusal while testing a key nobody owns. Broken since
+     * 2026-08-09 and invisible until the full suite ran again.
+     *
+     * The other two cases survived the rename because their keys are generic
+     * ("mcp_servers", "read") and never carried the product name. */
     const char *cases[] = {
         "\"mcp\\x5fservers\":\n  other:\n    command: other\n",
-        "mcp_servers:\n  \"codebase\\x2dmemory\":\n    command: other\n",
+        "mcp_servers:\n  \"hyponoi\\x61\":\n    command: other\n",
         "\"r\\x65ad\":\n  - docs.md\n",
     };
     const char *block = "    command: hyponoia\n";

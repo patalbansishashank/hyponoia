@@ -79,6 +79,10 @@ VENUE_WORKFLOWS = [
     "pr.yml", "dry-run.yml", "release.yml", "nightly-soak.yml",
     "_test.yml", "_smoke.yml", "_soak.yml", "_build.yml", "_lint.yml",
     "smoke.yml",
+    # §2.14's scheduled venue. It is `uses:`-only today, so the whitelist walk
+    # is trivially satisfied — which is exactly why it is listed now rather
+    # than the first time someone adds a run-block to it.
+    "full-suite.yml",
 ]
 
 # Provisioning / plumbing commands a venue may run (first word of a line).
@@ -380,10 +384,17 @@ test-infrastructure/vm/vm-smoke.sh
 test-infrastructure/vm/vm-run-tests.sh
 test-infrastructure/vm/win.sh
 "
+    # Pick the interpreter, never run both. The bash probe used to run
+    # unconditionally and the *.py case then re-ran and overwrote its result,
+    # so every Python entry was ALSO executed as a shell script. `bash
+    # generate-sbom.py` reads `import datetime` as ImageMagick's import(1),
+    # which blocks on an X display forever — invisible on a runner (no
+    # DISPLAY, so it errors instantly and the overwrite hides it), a
+    # permanent hang on any developer machine with ImageMagick installed.
     for entry in $HELP_ENTRIES; do
-        out=$(cd "$ROOT" && bash "$entry" --help 2>&1) && rc=0 || rc=$?
         case "$entry" in
         *.py) out=$(cd "$ROOT" && python3 "$entry" --help 2>&1) && rc=0 || rc=$? ;;
+        *)    out=$(cd "$ROOT" && bash "$entry" --help 2>&1) && rc=0 || rc=$? ;;
         esac
         if [ "$rc" -ne 0 ] || ! printf '%s' "$out" | grep -q "Usage:"; then
             echo "INTERFACE CONTRACT: $entry --help must exit 0 and print a Usage: block (rc=$rc)" >&2

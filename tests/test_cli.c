@@ -2899,8 +2899,13 @@ TEST(cli_legacy_skill_cleanup_rejects_links_and_user_content) {
         after_directory_cleanup && strcmp(after_directory_cleanup, sentinel) == 0;
     free(after_directory_cleanup);
 
+    /* The legacy monolithic directory, which keeps the OLD product's name on
+     * purpose — see hyp_remove_old_monolithic_skill. f95d6841 renamed it to
+     * "hyponoia", which is the path hyp_install_skills creates above, so this
+     * symlink() started failing with EEXIST before the assertion it sets up
+     * could run. */
     char monolithic_link[640];
-    snprintf(monolithic_link, sizeof(monolithic_link), "%s/hyponoia", skills_dir);
+    snprintf(monolithic_link, sizeof(monolithic_link), "%s/codebase-memory-mcp", skills_dir);
     ASSERT_EQ(symlink(target_dir, monolithic_link), 0);
     bool reported_removed = hyp_remove_old_monolithic_skill(skills_dir, false);
     char *after_remove = read_test_file_alloc(target_file);
@@ -2952,9 +2957,10 @@ TEST(cli_remove_old_monolithic_skill) {
     char skills_dir[512];
     snprintf(skills_dir, sizeof(skills_dir), "%s/.claude/skills", tmpdir);
 
-    /* Only an empty legacy directory is safe to remove automatically. */
+    /* Only an empty legacy directory is safe to remove automatically. The name
+     * is the OLD product's, not ours — that is what makes it legacy. */
     char old_dir[1024];
-    snprintf(old_dir, sizeof(old_dir), "%s/hyponoia", skills_dir);
+    snprintf(old_dir, sizeof(old_dir), "%s/codebase-memory-mcp", skills_dir);
     test_mkdirp(old_dir);
 
     bool removed = hyp_remove_old_monolithic_skill(skills_dir, false);
@@ -4982,17 +4988,23 @@ TEST(cli_supported_agent_surfaces_match_installers) {
         "Sourcegraph Cody",
     };
     ASSERT_EQ(sizeof(required_agents) / sizeof(required_agents[0]), 43U);
-    char *data = read_test_file_alloc("README.md");
+    /* The client matrix lives in docs/AGENTS.md, not README.md. e636cd24 moved
+     * it there on purpose when the README went from 815 lines to 143, and this
+     * assertion (a3903caa, 2026-07-12) predates that move by a month. Pointing
+     * it back at README.md would be asking the product to undo a deliberate
+     * decision; the contract itself is still worth keeping, because it is the
+     * only thing tying the shipped docs to the real installer surface. */
+    char *data = read_test_file_alloc("docs/AGENTS.md");
     if (!data)
-        FAIL("could not read README.md for supported-agent contract");
-    if (!strstr(data, "43 supported automatic/conditional client surfaces")) {
+        FAIL("could not read docs/AGENTS.md for supported-agent contract");
+    if (!strstr(data, "configures 43 client surfaces")) {
         free(data);
-        FAIL("README must describe all 43 automatic/conditional client surfaces accurately");
+        FAIL("docs/AGENTS.md must describe all 43 automatic/conditional client surfaces");
     }
     for (size_t i = 0; i < sizeof(required_agents) / sizeof(required_agents[0]); i++) {
         if (!strstr(data, required_agents[i])) {
             free(data);
-            FAIL("README Multi-Agent Support table must include every installed agent");
+            FAIL("docs/AGENTS.md client matrix must include every installed agent");
         }
     }
     free(data);
@@ -5012,9 +5024,13 @@ TEST(cli_supported_agent_surfaces_match_installers) {
     }
     free(data);
 
-    data = read_test_file_alloc("docs/index.html");
+    /* 8e704abe moved the landing page to docs/site/. Same assertion, same
+     * page, new path — the read used to fail before it ever reached the
+     * content check below, so this line was masking whatever that check
+     * had to say. */
+    data = read_test_file_alloc("docs/site/index.html");
     if (!data)
-        FAIL("could not read docs/index.html for supported-agent contract");
+        FAIL("could not read docs/site/index.html for supported-agent contract");
     if (!strstr(data, "configures 43 automatic/conditional client surfaces")) {
         free(data);
         FAIL("landing page must describe all 43 automatic/conditional client surfaces accurately");
@@ -5772,8 +5788,18 @@ TEST(cli_durable_profiles_follow_current_vendor_paths) {
                                       "search_graph"};
     files_ok = files_ok && test_file_contains_all(path, qwen_terms, 8U);
     profile = read_test_file_alloc(path);
+    /* The negative guards against a WRONG server name reaching a generated
+     * profile. It read `mcp__codebase-memory__` — deliberately distinct from
+     * the `mcp__codebase-memory-mcp__` the check above REQUIRES, i.e. the
+     * correct name minus its suffix. f95d6841 renamed both the correct name
+     * and that truncated variant to "hyponoia", collapsing two different
+     * strings into one and making the pair impossible to satisfy. Same
+     * collapse as the skills directory in hyp_remove_old_monolithic_skill.
+     * Post-rename the meaningful wrong name is the legacy one, so that is what
+     * is forbidden — and unlike the collapsed version it is a check a
+     * regression could actually fail. */
     files_ok = files_ok && profile && !strstr(profile, "permissionMode:") &&
-               !strstr(profile, "mcp__hyponoia__");
+               !strstr(profile, "mcp__codebase-memory");
     free(profile);
     profile = read_test_file_alloc(qwen_settings);
     files_ok = files_ok && profile && strstr(profile, "\"disableAllHooks\":true") &&
@@ -7663,9 +7689,18 @@ TEST(cli_registry_installs_codebuddy_bob_and_pochi_durable_context) {
                                   "mcp__hyponoia__check_index_coverage",
                                   "skills: hyponoia"},
             4U) &&
+        /* Both negatives forbid the YAML BLOCK form: CodeBuddy's dialect is the
+         * CSV one (`tools: a,b,c`), so neither the block header nor a block
+         * list item may appear. The second used to forbid the bare tool name,
+         * which the CSV line four lines above REQUIRES — so the conjunction
+         * could never be true and this test has not passed since a3903caa
+         * (2026-07-12). Qoder, the other CSV dialect, checks the same string
+         * positively (see cli_qoder_* below), which is what settles the
+         * direction: the tool name belongs in the file, the block form does
+         * not. */
         !test_file_contains_all(codebuddy_agent, (const char *const[]){"tools:\n"}, 1U) &&
         !test_file_contains_all(codebuddy_agent,
-                                (const char *const[]){"mcp__hyponoia__search_graph"}, 1U) &&
+                                (const char *const[]){"\n  - mcp__hyponoia__search_graph"}, 1U) &&
         stat(codebuddy_settings, &state) != 0;
     bool bob_ide_mcp_installed = test_file_contains_all(
         bob_ide_mcp, (const char *const[]){"bob-ide", "hyponoia", binary_path}, 3U);

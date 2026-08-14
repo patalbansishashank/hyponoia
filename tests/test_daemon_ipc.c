@@ -590,9 +590,24 @@ TEST(daemon_ipc_windows_generation_address_binds_account_key_and_nonce) {
     ASSERT_TRUE(strcmp(address_a, address_b) != 0);
     ASSERT_TRUE(strcmp(address_a, address_other_key) != 0);
     ASSERT_TRUE(strcmp(address_a, address_other_nonce) != 0);
+    /* Golden vector. The digest is SHA-256 over
+     *   domain || sid || instance_key[0:16] || nonce
+     * with domain = "hyp-daemon-win-pipe-v1" (src/daemon/ipc.c).
+     *
+     * f95d6841 renamed that domain from "cbm-daemon-win-pipe-v1", which changes
+     * the hash input, and mechanically rewrote the PREFIX of the string below
+     * from "cbm-daemon-" to "hyp-daemon-" — but a rename cannot recompute a
+     * digest, so the hex stayed on the old domain and the vector has been wrong
+     * since 2026-08-09.
+     *
+     * The replacement was derived independently (SHA-256 of the documented
+     * input, computed outside this codebase) rather than copied from what the
+     * implementation prints — a vector taken from the code it checks proves
+     * only that the code equals itself. The old domain reproduces the OLD hex
+     * exactly, which is what confirms the input layout above is right. */
     ASSERT_STR_EQ(address_a, "\\\\.\\pipe\\hyp-daemon-"
-                             "e861648d9f8bc786dce31bbb16eda2ab"
-                             "ffa330a770752832ab5f2e4feaa506f1");
+                             "4a668a2ce36d73e8d730e6c729516ab8"
+                             "9f3d7eaf61a18952158df197577997f2");
     ASSERT_TRUE(strstr(address_a, "S-1-") == NULL);
     ASSERT_TRUE(strstr(address_a, key) == NULL);
     PASS();

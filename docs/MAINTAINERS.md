@@ -19,7 +19,13 @@ Conduct reports go to the address above — see
 
 Release process is a checklist rather than an approval chain:
 
-- `dry-run.yml` completes successfully on the release-candidate commit.
+- `dry-run.yml` completes successfully on the release-candidate commit. Let it
+  finish: a cancelled job is not a passing job, and a run stopped early reports
+  the first failure rather than the count.
+- `full-suite.yml` runs the same full matrix every Monday without being asked.
+  It is the standing check between releases — `ci.yml` covers only 301 of the
+  ~6,610 tests, and that gap is how five months of drift once accumulated
+  unseen. A red weekly run is a release blocker discovered early, not noise.
 - Indexing benchmarks are run with the candidate binary on real repositories,
   not test-only shortcuts, and compared against the previous release on the
   same machine class and same repository revisions.

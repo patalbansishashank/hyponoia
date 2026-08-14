@@ -20,11 +20,19 @@ name: CI
 # by enumerating triggers against the branch names actually in use. This job is
 # Linux-only and roughly two minutes warm, so covering feature branches is the
 # cheapest gate in the repository.
+#
+# §2.14 re-ran that enumeration and found the hole was only two-thirds closed.
+# The repository uses three prefixes, not one: `feat/**`, `chore/**` and
+# `fix/**`. §2.13's own work landed on chore/ci-hygiene, chore/public-prep and
+# chore/release-path-fixes — three branches that pushed repeatedly and got no
+# CI run each time, for exactly the reason `feat/**` had been added. Listing the
+# prefix you happen to be using fixes today's branch and leaves the next one
+# uncovered; all three are listed now.
 on:
   push:
-    branches: [main, dev, 'feat/**']
+    branches: [main, dev, 'feat/**', 'fix/**', 'chore/**']
   pull_request:
-    branches: [main, dev, 'feat/**']
+    branches: [main, dev, 'feat/**', 'fix/**', 'chore/**']
   workflow_dispatch:
 
 permissions:
