@@ -189,8 +189,11 @@ license.)
 
 Enforcement is strict and automated:
 
-- CI rejects every push and pull request containing an unsigned commit
-  (`scripts/check-dco.sh`).
+- The local hook below is now the enforcement point. NEXT-STEPS.md §2.12
+  deleted the server-side `dco` workflow: it fired on every push to every
+  branch to guard a contributor population of zero, and it is the one check
+  that cannot help the person it is checking. `scripts/check-dco.sh` is
+  unchanged and can be run by hand or from a hook at any time.
 - Install the local hook so unsigned commits are rejected at commit time:
 
 ```bash

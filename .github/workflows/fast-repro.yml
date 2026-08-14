@@ -3,7 +3,8 @@
 # 5-platform ASan board. The full bug-repro.yml board remains the comprehensive
 # all-platform check; this is just the fast inner loop.
 #
-# Trigger: workflow_dispatch, or push to a qa/fast-** branch. Non-gating.
+# Trigger: workflow_dispatch only (NEXT-STEPS.md §2.12 removed the qa/fast-**
+# push trigger). Non-gating.
 name: Fast Repro
 
 on:
@@ -13,8 +14,11 @@ on:
         description: 'Comma list of suite-name substrings to run (empty = all)'
         type: string
         default: ''
-  push:
-    branches: ['qa/fast-**']
+  # NEXT-STEPS.md §2.12 removed `push: branches: ['qa/fast-**']`. That branch
+  # pattern is upstream's and has never been pushed in this repository, so the
+  # trigger was a standing automatic cost against a convention we do not use.
+  # The workflow itself is kept: dispatch-only costs nothing until called, and
+  # this is the fast inner loop when a repro board is actually needed.
 
 permissions:
   contents: read

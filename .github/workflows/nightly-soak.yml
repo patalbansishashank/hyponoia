@@ -1,4 +1,5 @@
-# Soak dispatcher — the weekly scheduled soak AND every on-demand soak run.
+# Soak dispatcher — every on-demand soak run. NEXT-STEPS.md §2.12 removed the
+# weekly schedule; this is dispatch-only now.
 #
 # Absorbs the retired soak.yml (the standalone "multi-hour #581" workflow): its
 # reasons to exist — a job budget that actually covers a 4h run, and the
@@ -9,8 +10,13 @@
 name: Nightly Soak
 
 on:
-  schedule:
-    - cron: '0 2 * * 0' # Every Sunday at 2am UTC
+  # NEXT-STEPS.md §2.12 removed BOTH automatic triggers: the Sunday cron
+  # (`0 2 * * 0`) and `push: branches: ['qa/soak-**']`. The cron defaults to
+  # 240 minutes PER LEG across two legs, which is the single largest standing
+  # commitment in the repository, scheduled against a soak nobody was reading;
+  # the push pattern is upstream's and has never been used here. Kept as
+  # dispatch-only — a soak is worth running deliberately, before a release,
+  # not every Sunday whether or not anything changed.
   workflow_dispatch:
     inputs:
       duration_minutes:
@@ -26,10 +32,6 @@ on:
         description: 'Also run the 15-min ASan soak legs'
         type: boolean
         default: true
-  # Iteration convenience carried over from soak.yml: pushing a qa/soak-**
-  # branch starts a real run from that branch's own copy of the workflows.
-  push:
-    branches: ['qa/soak-**']
 
 permissions:
   contents: read
