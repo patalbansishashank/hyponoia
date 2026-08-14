@@ -2,6 +2,15 @@
 
 [← README](../README.md)
 
+> **A note on `#NNN` in code comments.** Hyponoia is a fork of
+> [DeusData/codebase-memory-mcp](https://github.com/DeusData/codebase-memory-mcp),
+> and roughly 458 comments across 77 files cite issue numbers from **that**
+> project's tracker — `#513`, `#581`, `#636` and so on. They are not issues in
+> this repository, which does not use an issue tracker at all. They are left
+> exactly as written because each one records *why* the code around it exists,
+> and renumbering or deleting them would throw that away to fix a cosmetic
+> problem. Read them as upstream history.
+
 ## Start here
 
 | | |
