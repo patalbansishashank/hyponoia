@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+# Refuse to push a commit carrying a vendor API key. NEXT-STEPS.md §2.13.
+#
+# pre-push, not pre-commit, deliberately: a key in a local commit is a mistake,
+# a key in a pushed commit is an incident. This is the last point at which it is
+# still only the former.
+#
+# stdin carries "<local ref> <local sha> <remote ref> <remote sha>" per ref, so
+# the scan sees exactly the commits this push would publish. It walks those
+# COMMITS, not the worktree — the key that made this necessary had already been
+# removed from the worktree and was still in every clone.
+set -euo pipefail
+
+ROOT="$(git rev-parse --show-toplevel)"
+SCAN="$ROOT/scripts/check-secret-history.sh"
+
+if [ ! -x "$SCAN" ]; then
+    echo "pre-push: $SCAN missing or not executable — cannot verify, refusing." >&2
+    exit 1
+fi
+
+exec "$SCAN"

@@ -35,6 +35,31 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # NEXT-STEPS.md §2.13. The control, as opposed to the pre-push hook, which is
+  # only fast local feedback — hooks do not survive cloning and a fresh clone
+  # has none. Runs in PARALLEL with build-and-test, so it costs no wall clock.
+  #
+  # It exists because the obvious version did not work: a live Voyage key sat in
+  # tests/test_ask_provider.c from c2c5d065 until §2.13, and a scan of the
+  # checked-out tree for `key = "..."` came back clean twice — the key was a
+  # bare function argument, and the worktree is the wrong place to look anyway.
+  secret-history:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0   # the whole point is history; a shallow clone sees none of it
+
+      # Proves DETECTION before proving cleanliness. A scanner nobody has
+      # watched fail is indistinguishable from `exit 0`, and this one has a
+      # real leak in its own history to prove itself against.
+      - name: The scanner must still catch the key it was written for
+        run: scripts/check-secret-history.sh --selftest
+
+      - name: No unexplained vendor key anywhere in history
+        run: scripts/check-secret-history.sh --all
+
   build-and-test:
     runs-on: ubuntu-latest
     timeout-minutes: 60
