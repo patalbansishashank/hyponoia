@@ -66,7 +66,7 @@ restart it, and say **"Index this project."**
 For the semantic lane, one extra opt-in pass:
 
 ```bash
-hyponoia fetch-model                    # 639 MB, pinned and SHA-256 verified
+hyponoia fetch-model                    # 363 MB, pinned and SHA-256 verified
 hyponoia embed --project my-project
 ```
 
@@ -137,9 +137,17 @@ public.
 
 This tool reads your codebase and writes to your agent's configuration files —
 that is what it is for. All processing is local and nothing is sent anywhere.
-Hyponoia makes **no network request of its own accord**; the only one it will
-ever make is the model download you ask for by running `fetch-model`, from a
-pinned revision verified against a SHA-256 compiled into the binary.
+Hyponoia makes **no network request of its own accord**. There are exactly two
+it can make, and you ask for both by name:
+
+- `fetch-model` downloads the encoder from a pinned revision, verified against a
+  SHA-256 compiled into the binary.
+- The **escalation lane** sends declaration text to a hosted embedding API — and
+  only if you have configured a provider AND asked for it explicitly with
+  `embed --escalation` or `ask(escalate=true)`. It is off by default, it
+  **refuses rather than falling back** when it is not configured or the index
+  does not match, and your API key is never stored in the binary or the config
+  database: `key_env` holds the NAME of an environment variable.
 
 Found a security issue? See [SECURITY.md](.github/SECURITY.md).
 
