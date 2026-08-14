@@ -46,11 +46,44 @@ enum {
      * 24.09 at eight, and 16.37 at sixteen. Sixteen is slower than one. The
      * arithmetic and the reason are in ask_batch.c and are worth reading before
      * anyone "optimises" this number. */
-    HYP_ASK_MAX_DOCS = 8,
+    /* RE-MEASURED FOR voyage-4-nano, 2026-08-12. The 8 above it was
+     * Qwen3-Embedding-0.6B's peak and the note said so — "a corpus-shaped
+     * number rather than a law ... re-measuring is the only way to move it".
+     * The model moved, so it was re-measured, on the same 4,072 declarations of
+     * lld/ELF and the same card:
+     *
+     *     max_docs   docs/s   forward passes
+     *            8     29.3              520
+     *           16     36.7              275     <- +25%
+     *           24        —   ggml_can_mul_mat assert
+     *
+     * Qwen3's optimum was 8 because 16 cost it throughput (24.09 -> 16.37).
+     * nano is 12 layers against 28 and half the KV per token, so a wider batch
+     * fits where it did not before. 24 is not a memory ceiling but the ragged
+     * non-causal assert — see the equal-length note in ask_llama.c — so 16 is
+     * both the measured peak and the last value that runs. */
+    HYP_ASK_MAX_DOCS = 16,
 
-    /* Qwen3-Embedding-0.6B's context window. The encoder reports its own; this
-     * is the default the truncation counter is denominated in when it cannot. */
+    /* voyage-4-nano's context window. The encoder reports its own; this is the
+     * default the truncation counter is denominated in when it cannot. */
     HYP_ASK_MODEL_WINDOW = 32768,
+
+    /* What a BIDIRECTIONAL model can actually be given in one go.
+     *
+     * Non-causal attention cannot be split across micro-batches — every token
+     * attends to every other, so llama.cpp requires n_ubatch >= the whole
+     * sequence. That turns the compute buffer from a tunable into a function of
+     * the longest document: 8,192 tokens prices it at 5,284 MiB and fits inside
+     * this card's 9,490 MiB ceiling; 32,768 asks for 21,135 MiB and aborts, on
+     * the GPU and on CPU alike.
+     *
+     * So the weights support 32,768 and this lane can spend 8,192, and the
+     * difference is DISCLOSED rather than hidden: model_window is clamped to
+     * this, and the truncation counter is denominated in model_window. It is
+     * also the window §2.9 measured nano at, so the shipped ceiling and the
+     * measured one are the same number rather than two that happen to be
+     * close. */
+    HYP_ASK_NONCAUSAL_MAX_SEQ = 8192,
 
     /* Floor and ceiling for a device-derived budget. */
     HYP_ASK_MIN_BUDGET = 1024,
@@ -256,6 +289,22 @@ double hyp_ask_compute_mib_for_ubatch(int n_ubatch);
  * over-allocation is not an OOM error, it is the user losing their session.
  * A pre-flight check that costs one multiplication is the difference. */
 bool hyp_ask_kv_plan(int n_seq_max, int seq_len, double ceiling_mib, hyp_ask_kv_plan_t *out);
+
+/* Tell the planner which model it is sizing for.
+ *
+ * THE CONSTANTS ABOVE ARE QWEN3-EMBEDDING-0.6B'S. They were measured exactly,
+ * for that model, and they are silently wrong for any other — not as a crash
+ * but as a slowdown: the planner over-charges every batch, refuses shapes the
+ * device can hold, and narrows n_seq until documents stop sharing a forward
+ * pass. On voyage-4-nano (12 layers against 28, ~355 MB against 639) the
+ * shipped defaults over-reserve KV by 2.33x and weights by 425 MiB, and cost
+ * 1.46 documents per llama_decode where the grouping intended up to 8.
+ *
+ * Call it once, after the model loads. Not calling it leaves the Qwen3
+ * defaults, which is exactly the previous behaviour. */
+void hyp_ask_kv_set_model_shape(int n_layer, double weights_mib);
+double hyp_ask_kv_mib_per_token(void);
+double hyp_ask_weights_mib(void);
 
 /* The largest per-sequence length that fits `ceiling_mib` at `n_seq_max`.
  * 0 when even one token does not fit, which is the caller's cue to fall back to

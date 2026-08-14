@@ -59,6 +59,7 @@ enum {
 #include "cli/cli.h"
 #include "ask/ask_embed.h"    /* hyp_ask_read_span */
 #include "ask/ask_llama.h"
+#include "ask/ask_provider.h" /* the escalation lane's encoder */
 #include "cli/model_fetch.h"
 #include "watcher/watcher.h"
 #include "foundation/mem.h"
@@ -522,7 +523,16 @@ static const tool_def_t TOOLS[] = {
      "Capped at 500. There is no offset — raise limit rather than page a ranking.\"},"
      "\"format\":{\"type\":\"string\",\"enum\":[\"tree\",\"json\"],\"default\":\"tree\","
      "\"description\":\"Response encoding. tree (default): compact text rows. json: cols + "
-     "column-ordered row arrays (the SAME model, structured).\"}},"
+     "column-ordered row arrays (the SAME model, structured).\"},"
+     "\"escalate\":{\"type\":\"boolean\",\"default\":false,\"description\":\"Answer "
+     "from the OPTIONAL escalation index — a stronger hosted model — instead of the local "
+     "one. Off by default and NEVER chosen for you: the engine cannot tell whether you need "
+     "to be right, and every score threshold this project has set has died on a corpus "
+     "change. It costs tokens against a configured account and requires that index to have "
+     "been built (`hyponoia embed --escalation`). If it is unconfigured, unbuilt or built by "
+     "a different model, this RETURNS AN ERROR SAYING SO and does not quietly answer from "
+     "the local index — you would otherwise get the cheap answer while believing you had "
+     "the expensive one. The two indexes are separate and go stale independently.\"}},"
      "\"required\":[\"question\",\"project\"]}"},
 
     {"query_graph", "Query graph",
@@ -4146,19 +4156,81 @@ static char *handle_ask(hyp_mcp_server_t *srv, const char *args) {
 
     int search_limit = limit;
 
+    /* ESCALATION IS PER QUERY AND NEVER INFERRED. §2.4 closed the door on the
+     * engine deciding this for itself: every absolute score threshold this
+     * project has set has died on a corpus change, and two corpora disagreed 3x
+     * on band width. The caller knows whether it needs to be right; the engine
+     * cannot. */
+    bool escalate = hyp_mcp_get_bool_arg(args, "escalate");
+    hyp_ask_lane_t lane = escalate ? HYP_ASK_LANE_ESCALATION : HYP_ASK_LANE_LOCAL;
+    hyp_ask_encoder_t *esc_enc = NULL;
+    if (escalate) {
+        const char *cache_dir = hyp_resolve_cache_dir();
+        hyp_config_t *cfg = cache_dir ? hyp_config_open(cache_dir) : NULL;
+        char provider[64];
+        char model[128];
+        char key_env[128];
+        snprintf(provider, sizeof(provider), "%s",
+                 cfg ? hyp_config_get(cfg, HYP_CONFIG_ASK_ESC_PROVIDER, "") : "");
+        snprintf(model, sizeof(model), "%s",
+                 cfg ? hyp_config_get(cfg, HYP_CONFIG_ASK_ESC_MODEL, "") : "");
+        snprintf(key_env, sizeof(key_env), "%s",
+                 cfg ? hyp_config_get(cfg, HYP_CONFIG_ASK_ESC_KEY_ENV, "") : "");
+        if (cfg) {
+            hyp_config_close(cfg);
+        }
+        char eerr[ASK_MSG] = "";
+        esc_enc = hyp_ask_provider_encoder_create(provider, model, key_env, eerr, sizeof(eerr));
+        if (!esc_enc) {
+            /* NEVER A SILENT FALLBACK. Answering from the local index here
+             * would hand back the cheap answer to someone who asked for the
+             * expensive one and say nothing — the ambiguous-empty-result
+             * failure in new clothes. */
+            char msg[ASK_MSG + HYP_SZ_256];
+            snprintf(msg, sizeof(msg),
+                     "escalate=true was asked for and the escalation lane is not usable: %s. "
+                     "This did NOT fall back to the local index — you asked for the escalation "
+                     "answer and would have received a different one without being told. "
+                     "Configure it with `hyponoia config set ask.escalation.provider|model|"
+                     "key_env`, then build the index with `hyponoia embed --escalation`.",
+                     eerr[0] ? eerr : "it is not configured");
+            return ask_error(msg, project, question);
+        }
+    }
+
     hyp_ask_status_t st;
-    hyp_ask_index_status(store, project, &st);
+    /* Hold the index to the identity of the encoder that will QUERY it, which
+     * for the escalation lane is the hosted model and not the linked one. */
+    hyp_ask_index_status_lane(store, project, lane,
+                              escalate ? hyp_ask_encoder_model_id(esc_enc) : NULL,
+                              escalate ? hyp_ask_encoder_prefix_contract(esc_enc) : NULL, &st);
     /* THE WEIGHTS, BEFORE THE INDEX. hyp_ask_index_status answers about the
      * store and the linked encoder; whether that encoder's 639 MB of weights
      * are on disk is the fetcher's question and is asked here, where the CLI
      * layer is already reachable. Order matters: someone with neither weights
      * nor index must be told to fetch the model, because the embed pass that
      * builds the index is the thing that needs it. */
-    if ((st.avail == HYP_ASK_NO_INDEX || st.avail == HYP_ASK_AVAILABLE) &&
+    if (!escalate && (st.avail == HYP_ASK_NO_INDEX || st.avail == HYP_ASK_AVAILABLE) &&
         hyp_ask_llama_backend_installed() && !hyp_model_ask_present()) {
         st.avail = HYP_ASK_NO_WEIGHTS;
     }
     if (st.avail != HYP_ASK_AVAILABLE) {
+        if (escalate) {
+            /* Same rule as above: an unbuilt or mismatched ESCALATION index is
+             * reported as itself, never served from the local one. */
+            char msg[ASK_MSG + HYP_SZ_256];
+            snprintf(msg, sizeof(msg),
+                     "escalate=true was asked for but the escalation index is %s. This did NOT "
+                     "fall back to the local index. Build it with `hyponoia embed --escalation "
+                     "--project %s`; it spends tokens against the configured account, which is "
+                     "why it is a separate, explicit pass.",
+                     st.avail == HYP_ASK_MODEL_MISMATCH
+                         ? "from a different model or contract than the configured one"
+                         : "not built for this project",
+                     project);
+            hyp_ask_encoder_destroy(esc_enc);
+            return ask_error(msg, project, question);
+        }
         char *result = ask_emit_unavailable(&st, project, json);
         free(project);
         free(question);
@@ -4197,10 +4269,16 @@ static char *handle_ask(hyp_mcp_server_t *srv, const char *args) {
     const hyp_ask_backend_t *backend = hyp_ask_backend();
     float *qvec = (float *)calloc(HYP_ASK_DIM, sizeof(float));
     if (!qvec) {
+        hyp_ask_encoder_destroy(esc_enc);
         return ask_error("out of memory encoding the question", project, question);
     }
     char encerr[ASK_MSG] = "";
-    if (backend->encode_query(lang, question, qvec, encerr, sizeof(encerr)) != 0) {
+    /* The QUESTION must be encoded by the same model that built the index it is
+     * about to be scored against — that is the whole reason the two lanes carry
+     * separate encoders rather than sharing one. */
+    int encrc = escalate ? hyp_ask_encode_query(esc_enc, question, lang_name, qvec)
+                         : backend->encode_query(lang, question, qvec, encerr, sizeof(encerr));
+    if (encrc != 0) {
         char msg[ASK_MSG + HYP_SZ_128];
         snprintf(msg, sizeof(msg), "could not encode the question: %s",
                  encerr[0] ? encerr : "the encoder failed without a reason");
@@ -4210,8 +4288,10 @@ static char *handle_ask(hyp_mcp_server_t *srv, const char *args) {
 
     hyp_ask_hit_t *hits = NULL;
     int hit_count = 0;
-    int rc = hyp_ask_index_search(store, project, qvec, search_limit, &hits, &hit_count);
+    int rc = hyp_ask_index_search_lane(store, project, lane, qvec, search_limit, &hits,
+                                       &hit_count);
     free(qvec);
+    hyp_ask_encoder_destroy(esc_enc);
     if (rc != HYP_STORE_OK) {
         return ask_error("the semantic index could not be read. Re-run index_status; if the "
                          "project is healthy the vector store needs rebuilding.",

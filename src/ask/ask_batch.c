@@ -260,6 +260,52 @@ int hyp_ask_token_budget_for_device(double device_total_mib, bool is_gpu) {
 
 /* ── The KV cache ──────────────────────────────────────────────── */
 
+/* ── The model the planner is sizing for ────────────────────────────
+ *
+ * Every memory constant in ask_batch.h was measured against
+ * Qwen3-Embedding-0.6B — 28 layers, 639 MB of Q8_0 weights — across §2's
+ * tracks 2, 4, 8 and 9. They are exact for THAT model and silently wrong for
+ * any other, and being wrong here is not a crash: the planner simply believes
+ * every batch costs more than it does, refuses shapes the card can hold, and
+ * narrows n_seq. The lane then works perfectly and slowly.
+ *
+ * voyage-4-nano is 12 layers and ~355 MB, so the shipped constants over-reserve
+ * KV by 2.33x and weights by 425 MiB. Measured cost of that: 1.46 documents per
+ * llama_decode where the grouping intended up to 8.
+ *
+ * So the two terms that MOVE with the model are read from the model. The
+ * defaults are the Qwen3 figures, so a caller that never sets them behaves
+ * exactly as before. */
+static double g_kv_mib_per_token = HYP_ASK_KV_MIB_PER_TOKEN;
+static double g_weights_mib = HYP_ASK_WEIGHTS_RESIDENT_MIB;
+
+void hyp_ask_kv_set_model_shape(int n_layer, double weights_mib) {
+    /* Per-layer KV width is n_head_kv * head_dim * 2 (K and V) and is 1024 for
+     * BOTH models measured so far — Qwen3-Embedding-0.6B and voyage-4-nano are
+     * each 8 KV heads of 128. It is held constant here rather than derived,
+     * because llama.cpp exposes n_head_kv but not head_dim, and n_embd/n_head
+     * gives 64 for nano against its true 128 — a derivation that would
+     * UNDER-reserve, which is the failure that reset the desktop twice in §2.
+     *
+     * CHECK IT when adding a model: the GGUF header's attention.head_count_kv
+     * times attention.key_length. If it is not 1024, this needs a real
+     * derivation and not a constant. */
+    if (n_layer > 0) {
+        g_kv_mib_per_token = (double)n_layer * 2.0 * 1024.0 * 2.0 / 1048576.0;
+    }
+    if (weights_mib > 0.0) {
+        g_weights_mib = weights_mib;
+    }
+}
+
+double hyp_ask_kv_mib_per_token(void) {
+    return g_kv_mib_per_token;
+}
+
+double hyp_ask_weights_mib(void) {
+    return g_weights_mib;
+}
+
 bool hyp_ask_kv_plan(int n_seq_max, int seq_len, double ceiling_mib, hyp_ask_kv_plan_t *out) {
     if (!out) {
         return false;
@@ -275,8 +321,12 @@ bool hyp_ask_kv_plan(int n_seq_max, int seq_len, double ceiling_mib, hyp_ask_kv_
      * in ask_batch.h. Computed in int64 because the wrong version of this
      * expression overflowed into a 57 GB request. */
     out->n_ctx = (int64_t)n_seq_max * (int64_t)seq_len;
-    out->kv_mib = (double)out->n_ctx * HYP_ASK_KV_MIB_PER_TOKEN;
-    out->total_mib = out->kv_mib + HYP_ASK_LLAMA_FIXED_MIB;
+    out->kv_mib = (double)out->n_ctx * g_kv_mib_per_token;
+    /* The fixed term is weights + llama.cpp's structures. Taking the weights
+     * from the loaded model rather than from a Qwen3-shaped constant is worth
+     * 425 MiB of ceiling on nano, which is 425 MiB of batch. */
+    out->total_mib = out->kv_mib + (HYP_ASK_LLAMA_FIXED_MIB - HYP_ASK_WEIGHTS_RESIDENT_MIB) +
+                     g_weights_mib;
     out->admissible = out->total_mib <= ceiling_mib;
     return out->admissible;
 }

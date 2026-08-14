@@ -59,19 +59,21 @@ static void ask_copy(char *dst, size_t dstlen, const char *src) {
 /* Fill `out` from <cache>/vectors/<project>.db. Returns false when that file
  * does not exist or holds no rows for this project, which is the caller's cue
  * to try the in-graph tables the tests build by hand. */
-static bool ask_status_from_vector_file(const char *project, const hyp_ask_backend_t *backend,
+static bool ask_status_from_vector_file(const char *project, hyp_ask_lane_t lane,
+                                        const hyp_ask_backend_t *backend,
+                                        const char *want_model, const char *want_contract,
                                         hyp_ask_status_t *out) {
     if (!project || !project[0]) {
         return false;
     }
     char path[HYP_SZ_4K];
-    if (!hyp_ask_vectors_path(project, path, sizeof(path))) {
+    if (!hyp_ask_vectors_path_lane(project, lane, path, sizeof(path))) {
         return false;
     }
     if (!hyp_file_exists(path)) {
         return false;
     }
-    hyp_ask_vectors_t *v = hyp_ask_vectors_open(project);
+    hyp_ask_vectors_t *v = hyp_ask_vectors_open_lane(project, lane);
     if (!v) {
         return false;
     }
@@ -95,8 +97,24 @@ static bool ask_status_from_vector_file(const char *project, const hyp_ask_backe
     /* PROVENANCE IS A HARD GATE. Two models' vectors are not comparable and
      * nothing downstream can detect the mix, so a disagreement is REFUSED
      * rather than served with ordinary-looking scores. */
-    if (!backend->model_id || strcmp(meta.model_id ? meta.model_id : "", backend->model_id) != 0 ||
-        meta.dim != backend->dim) {
+    /* The contract joins the gate on the same terms as the model id, with one
+     * asymmetry: a stored contract of "" means an index written before the
+     * field existed and is NOT compared, because "unrecorded" is not the same
+     * claim as "different" and must not condemn an index that is actually fine. */
+    /* WHICH identity to hold the index to. The process-wide backend is the
+     * right answer for the local lane and the WRONG one for the escalation
+     * lane, whose vectors were made by a hosted model this binary does not
+     * link — comparing those against the local encoder would condemn a
+     * perfectly good index on every query. The caller passes what it expects
+     * when it knows; NULL keeps the backend's. */
+    const char *exp_model = (want_model && want_model[0]) ? want_model : backend->model_id;
+    const char *exp_contract =
+        (want_contract && want_contract[0]) ? want_contract : backend->prefix_contract;
+    bool contract_conflict = exp_contract && exp_contract[0] && meta.prefix_contract &&
+                             meta.prefix_contract[0] &&
+                             strcmp(meta.prefix_contract, exp_contract) != 0;
+    if (!exp_model || strcmp(meta.model_id ? meta.model_id : "", exp_model) != 0 ||
+        meta.dim != backend->dim || contract_conflict) {
         out->avail = HYP_ASK_MODEL_MISMATCH;
         hyp_ask_vec_meta_free(&meta);
         hyp_ask_vectors_close(v);
@@ -128,13 +146,13 @@ static bool ask_status_from_vector_file(const char *project, const hyp_ask_backe
 
 /* Top-k out of the vector file, converted to this header's hit shape. Returns
  * false when there is no such file, so the caller can fall through. */
-static bool ask_search_vector_file(const char *project, const float *qvec, int limit,
-                                   hyp_ask_hit_t **out, int *out_count) {
+static bool ask_search_vector_file(const char *project, hyp_ask_lane_t lane, const float *qvec,
+                                   int limit, hyp_ask_hit_t **out, int *out_count) {
     char path[HYP_SZ_4K];
-    if (!hyp_ask_vectors_path(project, path, sizeof(path)) || !hyp_file_exists(path)) {
+    if (!hyp_ask_vectors_path_lane(project, lane, path, sizeof(path)) || !hyp_file_exists(path)) {
         return false;
     }
-    hyp_ask_vectors_t *v = hyp_ask_vectors_open(project);
+    hyp_ask_vectors_t *v = hyp_ask_vectors_open_lane(project, lane);
     if (!v) {
         return false;
     }
@@ -175,7 +193,9 @@ static bool ask_search_vector_file(const char *project, const float *qvec, int l
     return true;
 }
 
-void hyp_ask_index_status(hyp_store_t *s, const char *project, hyp_ask_status_t *out) {
+void hyp_ask_index_status_lane(hyp_store_t *s, const char *project, hyp_ask_lane_t lane,
+                               const char *want_model, const char *want_contract,
+                               hyp_ask_status_t *out) {
     if (!out) {
         return;
     }
@@ -214,7 +234,7 @@ void hyp_ask_index_status(hyp_store_t *s, const char *project, hyp_ask_status_t 
      * So: ask the real store, and fall back to the in-graph tables only when
      * it has nothing. The fallback is what the 25 response-shaping tests drive,
      * and it is deliberately SECOND — production data must win. */
-    if (ask_status_from_vector_file(project, backend, out)) {
+    if (ask_status_from_vector_file(project, lane, backend, want_model, want_contract, out)) {
         return;
     }
 
@@ -317,8 +337,9 @@ static char *ask_dup(const unsigned char *s) {
     return out;
 }
 
-int hyp_ask_index_search(hyp_store_t *s, const char *project, const float *qvec, int limit,
-                         hyp_ask_hit_t **out, int *out_count) {
+int hyp_ask_index_search_lane(hyp_store_t *s, const char *project, hyp_ask_lane_t lane,
+                              const float *qvec, int limit, hyp_ask_hit_t **out,
+                              int *out_count) {
     if (!out || !out_count) {
         return HYP_STORE_ERR;
     }
@@ -335,7 +356,7 @@ int hyp_ask_index_search(hyp_store_t *s, const char *project, const float *qvec,
     }
     /* The real store first, for the reason spelled out in
      * hyp_ask_index_status. The in-graph tables below are the fixture path. */
-    if (ask_search_vector_file(project, qvec, limit, out, out_count)) {
+    if (ask_search_vector_file(project, lane, qvec, limit, out, out_count)) {
         return HYP_STORE_OK;
     }
     sqlite3 *db = hyp_store_get_db(s);
@@ -470,4 +491,18 @@ void hyp_ask_free_hits(hyp_ask_hit_t *hits, int count) {
         free(hits[i].file_path);
     }
     free(hits);
+}
+
+/* ── The historical, local-lane entry points ───────────────────────
+ *
+ * Kept as thin forwarders rather than rewritten call sites: everything that
+ * existed before the escalation lane means the local one, and saying so once
+ * here is safer than editing dozens of callers to pass a constant. */
+void hyp_ask_index_status(hyp_store_t *s, const char *project, hyp_ask_status_t *out) {
+    hyp_ask_index_status_lane(s, project, HYP_ASK_LANE_LOCAL, NULL, NULL, out);
+}
+
+int hyp_ask_index_search(hyp_store_t *s, const char *project, const float *qvec, int limit,
+                         hyp_ask_hit_t **out, int *out_count) {
+    return hyp_ask_index_search_lane(s, project, HYP_ASK_LANE_LOCAL, qvec, limit, out, out_count);
 }

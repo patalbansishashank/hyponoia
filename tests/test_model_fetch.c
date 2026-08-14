@@ -196,7 +196,23 @@ TEST(model_pin_names_one_immutable_revision) {
         ASSERT((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'));
     }
     ASSERT_EQ(strlen(HYP_MODEL_ASK_REVISION), 40);
-    ASSERT_EQ((long long)HYP_MODEL_ASK_BYTES, 639150592LL);
+    ASSERT_EQ((long long)HYP_MODEL_ASK_BYTES, 371900384LL);
+
+    /* THE SECOND ARTIFACT IS PINNED ON THE SAME TERMS. voyage-4-nano emits
+     * 2048 through a projection head GGUF cannot represent, so the head ships
+     * beside the weights — and an unpinned one would be an unverified download
+     * sitting behind a verified one. Without it the encoder emits the
+     * pre-projection hidden state: same width, unit length, wrong space. */
+    const hyp_model_spec_t *proj = hyp_model_ask_proj_spec();
+    ASSERT_NOT_NULL(proj);
+    ASSERT_NOT_NULL(strstr(proj->url, "https://"));
+    ASSERT_NOT_NULL(strstr(proj->url, HYP_MODEL_ASK_REVISION));
+    ASSERT_NULL(strstr(proj->url, "/main/"));
+    ASSERT_EQ(strlen(proj->sha256), MF_HEX);
+    /* 2048 x 1024 float32, exactly. A file of any other size is not the
+     * matrix, and it would still multiply. */
+    ASSERT_EQ((long long)proj->bytes, 8388608LL);
+    ASSERT_TRUE(strcmp(proj->file, HYP_MODEL_ASK_FILE) != 0);
     PASS();
 }
 

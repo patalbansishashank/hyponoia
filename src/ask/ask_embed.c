@@ -466,6 +466,9 @@ int hyp_ask_embed_run(const hyp_ask_encoder_t *enc, const hyp_ask_embed_opts_t *
     hyp_clock_gettime(CLOCK_MONOTONIC, &t0);
 
     const char *model_id = hyp_ask_encoder_model_id(enc);
+    /* Stamped beside the model id and gated on with it. The model alone does not
+     * identify the space — see HYP_ASK_PREFIX_CONTRACT. */
+    const char *prefix_contract = hyp_ask_encoder_prefix_contract(enc);
     /* WHICH DEVICE ACTUALLY RAN — asked of the encoder, never inferred from
      * what the caller requested. A run that asked for a GPU and quietly got a
      * CPU takes 45 minutes instead of 3 and looks identical afterwards; the
@@ -548,8 +551,9 @@ int hyp_ask_embed_run(const hyp_ask_encoder_t *enc, const hyp_ask_embed_opts_t *
             hyp_ask_vec_meta_free(&prev);
         }
     }
-    int begin = hyp_ask_vectors_begin_build(store, model_id, dim, window, graph.generation,
-                                            device_note, opts->allow_model_change);
+    int begin =
+        hyp_ask_vectors_begin_build(store, model_id, prefix_contract, dim, window,
+                                    graph.generation, device_note, opts->allow_model_change);
     if (begin == HYP_ASK_VEC_INCOMPATIBLE) {
         hyp_log_error("ask.embed.incompatible", "err", hyp_ask_vectors_error(store), "hint",
                       "re-run with --allow-model-change to discard and rebuild");

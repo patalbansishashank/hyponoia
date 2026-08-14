@@ -81,8 +81,31 @@ static const hyp_model_spec_t MODEL_ASK = {
                   "searched",
 };
 
+/* The projection head. A separate artifact because GGUF cannot carry it, not
+ * because it is optional — without it the encoder emits the pre-projection
+ * hidden state, which is a different space and would be searched happily. */
+static const hyp_model_spec_t MODEL_ASK_PROJ = {
+    .model = HYP_MODEL_ASK_MODEL,
+    .quant = "f32",
+    .file = HYP_MODEL_ASK_PROJ_FILE,
+    .repo = HYP_MODEL_ASK_REPO,
+    .revision = HYP_MODEL_ASK_REVISION,
+    .sha256 = HYP_MODEL_ASK_PROJ_SHA256,
+    .bytes = HYP_MODEL_ASK_PROJ_BYTES,
+    .size_text = HYP_MODEL_ASK_PROJ_SIZE_TEXT,
+    .url = HYP_MODEL_ASK_PROJ_URL,
+    .command = HYP_MODEL_ASK_COMMAND,
+    .what = "the ask lane's projection head",
+    .without_it = "The weights would emit their pre-projection hidden state — right shape, unit "
+                  "length, WRONG SPACE — so nothing would be scored correctly",
+};
+
 const hyp_model_spec_t *hyp_model_ask_spec(void) {
     return &MODEL_ASK;
+}
+
+const hyp_model_spec_t *hyp_model_ask_proj_spec(void) {
+    return &MODEL_ASK_PROJ;
 }
 
 /* ── Paths ───────────────────────────────────────────────────────── */
@@ -877,9 +900,15 @@ int hyp_cmd_fetch_model(int argc, char **argv) {
         }
     }
 
-    const hyp_model_spec_t *chosen[1];
+    /* BOTH artifacts, always. The weights alone are not a working encoder:
+     * voyage-4-nano emits its pre-projection hidden state without the head,
+     * which is the right width and unit length and the wrong space. Fetching
+     * one and not the other would leave a lane that loads and ranks badly —
+     * the failure mode with no downstream signal. */
+    const hyp_model_spec_t *chosen[2];
     int n_chosen = 0;
     chosen[n_chosen++] = &MODEL_ASK;
+    chosen[n_chosen++] = &MODEL_ASK_PROJ;
 
     if (want_path) {
         int rc = 0;

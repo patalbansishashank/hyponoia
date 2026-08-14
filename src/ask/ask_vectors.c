@@ -102,7 +102,11 @@ static void av_iso_now(char *buf, size_t sz) {
 
 /* ── Paths ─────────────────────────────────────────────────────── */
 
-bool hyp_ask_vectors_path(const char *project, char *buf, size_t bufsz) {
+const char *hyp_ask_lane_name(hyp_ask_lane_t lane) {
+    return lane == HYP_ASK_LANE_ESCALATION ? "escalation" : "local";
+}
+
+bool hyp_ask_vectors_path_lane(const char *project, hyp_ask_lane_t lane, char *buf, size_t bufsz) {
     if (!project || !project[0] || !buf || bufsz == 0) {
         return false;
     }
@@ -113,8 +117,16 @@ bool hyp_ask_vectors_path(const char *project, char *buf, size_t bufsz) {
     if (!cache) {
         return false;
     }
-    int n = snprintf(buf, bufsz, "%s/vectors/%s.db", cache, project);
+    /* The local lane keeps the historical name so an index built before lanes
+     * existed is still found. Only the second lane is suffixed. */
+    int n = lane == HYP_ASK_LANE_ESCALATION
+                ? snprintf(buf, bufsz, "%s/vectors/%s.escalation.db", cache, project)
+                : snprintf(buf, bufsz, "%s/vectors/%s.db", cache, project);
     return n > 0 && (size_t)n < bufsz;
+}
+
+bool hyp_ask_vectors_path(const char *project, char *buf, size_t bufsz) {
+    return hyp_ask_vectors_path_lane(project, HYP_ASK_LANE_LOCAL, buf, bufsz);
 }
 
 static bool av_ensure_parent_dir(const char *path) {
@@ -225,8 +237,16 @@ static int av_init_schema(hyp_ask_vectors_t *v) {
     if (rc != HYP_ASK_VEC_OK) {
         return rc;
     }
-    return av_add_column_if_absent(v, "ask_index", "whole_file_spans",
-                                   "TEXT NOT NULL DEFAULT 'keep'");
+    rc = av_add_column_if_absent(v, "ask_index", "whole_file_spans",
+                                 "TEXT NOT NULL DEFAULT 'keep'");
+    if (rc != HYP_ASK_VEC_OK) {
+        return rc;
+    }
+    /* Defaults to "" — "not recorded" — because that is the honest reading of
+     * an index written before contracts were stamped. It must not default to
+     * the contract this binary happens to use, which would make an old index
+     * claim a space it was never encoded in. */
+    return av_add_column_if_absent(v, "ask_index", "prefix_contract", "TEXT NOT NULL DEFAULT ''");
 }
 
 static int av_configure(hyp_ask_vectors_t *v) {
@@ -278,12 +298,16 @@ hyp_ask_vectors_t *hyp_ask_vectors_open_path(const char *project, const char *db
     return v;
 }
 
-hyp_ask_vectors_t *hyp_ask_vectors_open(const char *project) {
+hyp_ask_vectors_t *hyp_ask_vectors_open_lane(const char *project, hyp_ask_lane_t lane) {
     char path[AV_PATHBUF];
-    if (!hyp_ask_vectors_path(project, path, sizeof(path))) {
+    if (!hyp_ask_vectors_path_lane(project, lane, path, sizeof(path))) {
         return NULL;
     }
     return hyp_ask_vectors_open_path(project, path);
+}
+
+hyp_ask_vectors_t *hyp_ask_vectors_open(const char *project) {
+    return hyp_ask_vectors_open_lane(project, HYP_ASK_LANE_LOCAL);
 }
 
 void hyp_ask_vectors_close(hyp_ask_vectors_t *v) {
@@ -333,7 +357,7 @@ int hyp_ask_vectors_get_meta(hyp_ask_vectors_t *v, hyp_ask_vec_meta_t *out) {
     sqlite3_stmt *st = NULL;
     const char *sql = "SELECT format, project, model_id, dim, window_tokens, graph_generation,"
                       "       built_at, row_count, truncation_known, truncated_count, device_note,"
-                      "       whole_file_spans"
+                      "       whole_file_spans, prefix_contract"
                       " FROM ask_index WHERE singleton = 1";
     if (sqlite3_prepare_v2(v->db, sql, -1, &st, NULL) != SQLITE_OK) {
         av_err_sqlite(v, "meta prepare");
@@ -353,6 +377,7 @@ int hyp_ask_vectors_get_meta(hyp_ask_vectors_t *v, hyp_ask_vec_meta_t *out) {
         out->truncated_count = sqlite3_column_int64(st, 9);
         out->device_note = av_strdup((const char *)sqlite3_column_text(st, 10));
         out->whole_file_spans = av_strdup((const char *)sqlite3_column_text(st, 11));
+        out->prefix_contract = av_strdup((const char *)sqlite3_column_text(st, 12));
         rc = HYP_ASK_VEC_OK;
     }
     sqlite3_finalize(st);
@@ -365,6 +390,7 @@ void hyp_ask_vec_meta_free(hyp_ask_vec_meta_t *m) {
     }
     free(m->project);
     free(m->model_id);
+    free(m->prefix_contract);
     free(m->graph_generation);
     free(m->device_note);
     free(m->whole_file_spans);
@@ -372,8 +398,8 @@ void hyp_ask_vec_meta_free(hyp_ask_vec_meta_t *m) {
     memset(m, 0, sizeof(*m));
 }
 
-int hyp_ask_vectors_check_compatible(hyp_ask_vectors_t *v, const char *model_id, int dim,
-                                     int window_tokens) {
+int hyp_ask_vectors_check_compatible(hyp_ask_vectors_t *v, const char *model_id,
+                                     const char *prefix_contract, int dim, int window_tokens) {
     hyp_ask_vec_meta_t m;
     int rc = hyp_ask_vectors_get_meta(v, &m);
     if (rc != HYP_ASK_VEC_OK) {
@@ -390,6 +416,17 @@ int hyp_ask_vectors_check_compatible(hyp_ask_vectors_t *v, const char *model_id,
                  "stored vectors are from model '%s', this run uses '%s' — two models' vectors "
                  "are not comparable and nothing downstream can tell them apart",
                  m.model_id, model_id);
+        verdict = HYP_ASK_VEC_INCOMPATIBLE;
+    } else if (prefix_contract && prefix_contract[0] && m.prefix_contract &&
+               m.prefix_contract[0] && strcmp(prefix_contract, m.prefix_contract) != 0) {
+        /* Same weights, different text going into them. §2.9 measured one model
+         * wanting opposite contracts on two corpora, so this is not a
+         * theoretical case and the model id would not have caught it. */
+        snprintf(v->errbuf, sizeof(v->errbuf),
+                 "stored vectors were encoded under prefix contract '%s', this run uses '%s' — "
+                 "same model '%s', but the text fed to it differs, so the two sets of vectors "
+                 "are not in the same space",
+                 m.prefix_contract, prefix_contract, m.model_id ? m.model_id : "?");
         verdict = HYP_ASK_VEC_INCOMPATIBLE;
     } else if (dim > 0 && m.dim != dim) {
         snprintf(v->errbuf, sizeof(v->errbuf), "stored dim %d against encoder dim %d", m.dim, dim);
@@ -410,14 +447,16 @@ int hyp_ask_vectors_check_compatible(hyp_ask_vectors_t *v, const char *model_id,
 
 /* ── Writing ───────────────────────────────────────────────────── */
 
-int hyp_ask_vectors_begin_build(hyp_ask_vectors_t *v, const char *model_id, int dim,
-                                int window_tokens, const char *graph_generation,
-                                const char *device_note, bool wipe_incompatible) {
+int hyp_ask_vectors_begin_build(hyp_ask_vectors_t *v, const char *model_id,
+                                const char *prefix_contract, int dim, int window_tokens,
+                                const char *graph_generation, const char *device_note,
+                                bool wipe_incompatible) {
     if (!v || !model_id || dim <= 0 || window_tokens <= 0) {
         av_err(v, "begin_build: bad arguments");
         return HYP_ASK_VEC_ERR;
     }
-    int compat = hyp_ask_vectors_check_compatible(v, model_id, dim, window_tokens);
+    int compat =
+        hyp_ask_vectors_check_compatible(v, model_id, prefix_contract, dim, window_tokens);
     if (compat == HYP_ASK_VEC_INCOMPATIBLE) {
         if (!wipe_incompatible) {
             return HYP_ASK_VEC_INCOMPATIBLE;
@@ -433,15 +472,16 @@ int hyp_ask_vectors_begin_build(hyp_ask_vectors_t *v, const char *model_id, int 
     sqlite3_stmt *st = NULL;
     const char *sql =
         "INSERT INTO ask_index (singleton, format, project, model_id, dim, window_tokens,"
-        "                       graph_generation, device_note, built_at, row_count,"
-        "                       truncation_known, truncated_count)"
-        " VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, ?7, '', 0, 0, 0)"
+        "                       graph_generation, device_note, prefix_contract, built_at,"
+        "                       row_count, truncation_known, truncated_count)"
+        " VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, '', 0, 0, 0)"
         " ON CONFLICT(singleton) DO UPDATE SET"
         "   format = excluded.format, project = excluded.project,"
         "   model_id = excluded.model_id, dim = excluded.dim,"
         "   window_tokens = excluded.window_tokens,"
         "   graph_generation = excluded.graph_generation,"
-        "   device_note = excluded.device_note";
+        "   device_note = excluded.device_note,"
+        "   prefix_contract = excluded.prefix_contract";
     if (sqlite3_prepare_v2(v->db, sql, -1, &st, NULL) != SQLITE_OK) {
         av_err_sqlite(v, "begin_build prepare");
         return HYP_ASK_VEC_ERR;
@@ -453,6 +493,7 @@ int hyp_ask_vectors_begin_build(hyp_ask_vectors_t *v, const char *model_id, int 
     sqlite3_bind_int(st, 5, window_tokens);
     sqlite3_bind_text(st, 6, graph_generation ? graph_generation : "", -1, AV_TRANSIENT);
     sqlite3_bind_text(st, 7, device_note ? device_note : "", -1, AV_TRANSIENT);
+    sqlite3_bind_text(st, 8, prefix_contract ? prefix_contract : "", -1, AV_TRANSIENT);
     int step = sqlite3_step(st);
     sqlite3_finalize(st);
     if (step != SQLITE_DONE) {

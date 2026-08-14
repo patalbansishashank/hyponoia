@@ -116,6 +116,13 @@ typedef struct {
      * so this string is what `ask` refuses on. Must not be NULL. */
     const char *model_id;
 
+    /* Which text transform produced the vectors this backend can search —
+     * HYP_ASK_PREFIX_CONTRACT for the shipped encoder. Refused on alongside
+     * model_id, because identical weights fed different text produce
+     * incomparable vectors and no downstream check can see the difference.
+     * NULL means "cannot say", which is never compared as a match. */
+    const char *prefix_contract;
+
     /* Emitted dimension. Must equal HYP_ASK_DIM; `hyp_ask_backend_install`
      * rejects anything else rather than let a 768-dim table be searched with
      * a 1024-dim question. */

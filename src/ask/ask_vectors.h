@@ -132,6 +132,20 @@
 
 typedef struct hyp_ask_vectors hyp_ask_vectors_t;
 
+/* Which index. The two are SEPARATE FILES with separate provenance and separate
+ * staleness, because they are built by different models at different times and
+ * are expected to drift apart — indexing daily and re-embedding the escalation
+ * lane weekly is the normal case, not an error (NEXT-STEPS §2.10 step 4).
+ *
+ * The local lane keeps the historical path so an index built before lanes
+ * existed is still found; only the escalation lane gets a suffix. */
+typedef enum {
+    HYP_ASK_LANE_LOCAL = 0,
+    HYP_ASK_LANE_ESCALATION = 1,
+} hyp_ask_lane_t;
+
+const char *hyp_ask_lane_name(hyp_ask_lane_t lane);
+
 /* Provenance recorded beside the matrix. A vector whose provenance is unknown
  * may not be reused, and two models' vectors are not comparable while nothing
  * downstream can detect the mix — so these are gates, not decoration. */
@@ -139,6 +153,23 @@ typedef struct {
     int format;
     char *project;
     char *model_id;
+    /* WHICH PREFIX CONTRACT PRODUCED THESE DOCUMENT VECTORS, and therefore what
+     * a query must be encoded with to be in the same space (NEXT-STEPS §2.10
+     * step 3). A gate, not a disclosure: the contract is applied to the text
+     * BEFORE encoding, so changing it changes every vector in the table.
+     *
+     * Five encoders have now been measured on this corpus and all five wanted a
+     * different one — Qwen3 an instruct prefix worth +0.206 MRR@10, pplx
+     * destroyed by that same prefix, Jina its own LoRA adapter, Voyage an
+     * `input_type`, nano two literal strings from its model card. §2.9 then
+     * showed the same model wanting OPPOSITE contracts on two corpora. So the
+     * model id alone does not identify the space, and that is why this field
+     * exists rather than being inferred from model_id.
+     *
+     * An index written before this column existed reads "" — meaning "not
+     * recorded", which is NOT the same claim as "no contract" and so is never
+     * compared. See hyp_ask_vectors_check_compatible. */
+    char *prefix_contract;
     int dim;
     int window_tokens;
     /* The graph generation this pass read. Versioned SEPARATELY from the
@@ -217,6 +248,13 @@ typedef struct {
  * one. A subdirectory is invisible to all three. */
 bool hyp_ask_vectors_path(const char *project, char *buf, size_t bufsz);
 
+/* The same, for a named lane. HYP_ASK_LANE_LOCAL is byte-identical to the call
+ * above; the escalation lane lands beside it under a distinct name so the two
+ * can be built, disclosed and invalidated independently. */
+bool hyp_ask_vectors_path_lane(const char *project, hyp_ask_lane_t lane, char *buf, size_t bufsz);
+
+hyp_ask_vectors_t *hyp_ask_vectors_open_lane(const char *project, hyp_ask_lane_t lane);
+
 /* Open (creating if needed) the vector database for `project`. */
 hyp_ask_vectors_t *hyp_ask_vectors_open(const char *project);
 
@@ -242,12 +280,18 @@ int hyp_ask_vectors_drop(const char *project);
 int hyp_ask_vectors_get_meta(hyp_ask_vectors_t *v, hyp_ask_vec_meta_t *out);
 void hyp_ask_vec_meta_free(hyp_ask_vec_meta_t *m);
 
-/* Refuse to serve or extend an index built by a different model, at a different
- * dimension or window, or in an unknown format. Returns HYP_ASK_VEC_OK when the
- * stored index is compatible, HYP_ASK_VEC_NOT_FOUND when there is none yet,
- * HYP_ASK_VEC_INCOMPATIBLE otherwise. */
-int hyp_ask_vectors_check_compatible(hyp_ask_vectors_t *v, const char *model_id, int dim,
-                                     int window_tokens);
+/* Refuse to serve or extend an index built by a different model, under a
+ * different prefix contract, at a different dimension or window, or in an
+ * unknown format. Returns HYP_ASK_VEC_OK when the stored index is compatible,
+ * HYP_ASK_VEC_NOT_FOUND when there is none yet, HYP_ASK_VEC_INCOMPATIBLE
+ * otherwise, and writes an error naming BOTH sides.
+ *
+ * `prefix_contract` may be NULL or "" to mean "this caller cannot say", in
+ * which case it is not compared — an unknown contract must not be allowed to
+ * masquerade as a matching one, but neither may it refuse every index written
+ * before the field existed. */
+int hyp_ask_vectors_check_compatible(hyp_ask_vectors_t *v, const char *model_id,
+                                     const char *prefix_contract, int dim, int window_tokens);
 
 /* ── Writing ───────────────────────────────────────────────────── */
 
@@ -256,9 +300,10 @@ int hyp_ask_vectors_check_compatible(hyp_ask_vectors_t *v, const char *model_id,
  * because mixed vectors are undetectable downstream. Returns
  * HYP_ASK_VEC_INCOMPATIBLE (and changes nothing) when it does not match and
  * `wipe_incompatible` is false. */
-int hyp_ask_vectors_begin_build(hyp_ask_vectors_t *v, const char *model_id, int dim,
-                                int window_tokens, const char *graph_generation,
-                                const char *device_note, bool wipe_incompatible);
+int hyp_ask_vectors_begin_build(hyp_ask_vectors_t *v, const char *model_id,
+                                const char *prefix_contract, int dim, int window_tokens,
+                                const char *graph_generation, const char *device_note,
+                                bool wipe_incompatible);
 
 /* Record which whole-file-span policy this build ran under: "drop" or "keep".
  * Separate from begin_build rather than an argument to it because it is a
