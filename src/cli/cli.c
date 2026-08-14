@@ -11430,15 +11430,22 @@ int hyp_cmd_uninstall(int argc, char **argv) {
             directory_length =
                 snprintf(bin_dir_storage, sizeof(bin_dir_storage), "%s", requested_bin_dir);
         } else {
-#ifdef _WIN32
-            const char *local = hyp_app_local_dir();
-            directory_length = local ? snprintf(bin_dir_storage, sizeof(bin_dir_storage),
-                                                "%s/Programs/hyponoia", local)
-                                     : -1;
-#else
+            /* Uninstall must look where install WRITES, and install writes to
+             * ~/.local/bin on every platform — see the install path above, the
+             * update path, hyp_detect_self_path's fallback, and this command's
+             * own --help ("Uninstall from <path> instead of ~/.local/bin").
+             *
+             * This branch used to resolve %LOCALAPPDATA%/Programs/hyponoia on
+             * Windows, a directory nothing in this file ever installs into: it
+             * was the only occurrence of that path in the whole file. So a
+             * Windows uninstall searched a location that is always empty and
+             * silently left the real binary behind. Introduced 2026-08-08 by
+             * 8018561c, invisible ever since because the Windows suite could
+             * not run at all — a compile error stopped those jobs before a
+             * single test, and this section's census is the first time they
+             * executed. */
             directory_length =
                 snprintf(bin_dir_storage, sizeof(bin_dir_storage), "%s/.local/bin", home);
-#endif
         }
         if (directory_length <= 0 || (size_t)directory_length >= sizeof(bin_dir_storage)) {
             (void)fprintf(stderr, "error: uninstall directory path is unavailable or too long\n");
