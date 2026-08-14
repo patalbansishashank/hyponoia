@@ -1654,6 +1654,70 @@ static bool cli_test_write_ui_pack(const char *directory, char path_out[1024], c
     return written;
 }
 
+/* Interlock budgets, NOT performance budgets — and the reason they were wrong is
+ * a design decision in the product, not a slow machine.
+ *
+ * hyp_cmd_install stages the install candidate OUT OF LINE, before it takes the
+ * activation guard: see src/cli/cli.c ("The target transaction must not snapshot
+ * or reserve anything in the install directory until the activation guard is
+ * held"). That is correct — it keeps a 570 MB copy out of the critical section —
+ * but it means everything this test waits for happens BEHIND a full copy of the
+ * running executable, which under sanitizers is the ~570 MB test runner, plus a
+ * SHA-256 over it, and the test does it in two children at once.
+ *
+ * So the parent's wait for the lease marker was never waiting on a lock. It was
+ * waiting on 570 MB of I/O it had budgeted 10 seconds for. On a workstation that
+ * fits; dry run 31822234298 failed it on EVERY Linux leg at once (ubuntu-latest,
+ * ubuntu-22.04, ubuntu-22.04-arm, ubuntu-24.04-arm and test-diag) — all-at-once
+ * is the signature of a budget, not of a race.
+ *
+ * What these numbers must do is catch a genuine deadlock; what they must not do
+ * is decide how fast a runner's disk is. So they sit far above the slowest
+ * legitimate leg and far below the job timeout, and every wait reports how long
+ * it actually took — a budget you cannot see is one the next person also has to
+ * guess at. */
+#define CLI_INSTALL_ORDER_LEASE_TIMEOUT_MS 180000U
+#define CLI_INSTALL_ORDER_REAP_TIMEOUT_MS 300000U
+#define CLI_INSTALL_ORDER_POLL_INTERVAL_US 1000U
+/* Report anything slower than this; on a healthy leg nothing prints. */
+#define CLI_INSTALL_ORDER_NOTE_MS 1000U
+
+static void cli_budget_note(const char *what, uint64_t elapsed_ms) {
+    static int trace = -1;
+    if (trace < 0) {
+        trace = getenv("HYP_TEST_BUDGET_TRACE") != NULL ? 1 : 0;
+    }
+    if (trace || elapsed_ms > CLI_INSTALL_ORDER_NOTE_MS) {
+        (void)fprintf(stderr, "note: %s took %llu ms\n", what, (unsigned long long)elapsed_ms);
+    }
+}
+
+/* Wait for `path` to appear. Returns the elapsed milliseconds through
+ * elapsed_out whether it succeeds or times out, so the caller can say the
+ * number instead of only that the budget was exceeded. */
+static bool cli_wait_for_marker(const char *path, const char *what, uint64_t timeout_ms,
+                                uint64_t *elapsed_out) {
+    uint64_t started_ms = hyp_now_ms();
+    for (;;) {
+        struct stat status;
+        uint64_t elapsed_ms = hyp_now_ms() - started_ms;
+        if (stat(path, &status) == 0) {
+            if (elapsed_out) {
+                *elapsed_out = elapsed_ms;
+            }
+            cli_budget_note(what, elapsed_ms);
+            return true;
+        }
+        if (elapsed_ms >= timeout_ms) {
+            if (elapsed_out) {
+                *elapsed_out = elapsed_ms;
+            }
+            return false;
+        }
+        hyp_usleep(CLI_INSTALL_ORDER_POLL_INTERVAL_US);
+    }
+}
+
 typedef struct {
     const char *lock_path;
     const char *first_locked_path;
@@ -1681,15 +1745,11 @@ static int cli_install_order_reserve(void *opaque, hyp_cli_activation_lock_t *le
     }
     if (lock->first) {
         (void)write_test_file(lock->first_locked_path, "locked\n");
-        bool second_waiting = false;
-        for (int attempt = 0; attempt < 10000; attempt++) {
-            struct stat status;
-            if (stat(lock->second_waiting_path, &status) == 0) {
-                second_waiting = true;
-                break;
-            }
-            hyp_usleep(1000);
-        }
+        /* The second child reaches this marker only after its own install has
+         * done everything that precedes the lease, so this wait is the same
+         * size as the parent's. */
+        bool second_waiting = cli_wait_for_marker(lock->second_waiting_path, "standard-waiting",
+                                                  CLI_INSTALL_ORDER_LEASE_TIMEOUT_MS, NULL);
         if (!second_waiting) {
             (void)flock(lock->descriptor, LOCK_UN);
             (void)close(lock->descriptor);
@@ -1722,15 +1782,20 @@ static void cli_install_order_diagnostic(void *opaque, const char *message) {
 }
 
 static bool cli_wait_child_bounded(pid_t child, int *status_out) {
-    for (int attempt = 0; attempt < 30000; attempt++) {
+    uint64_t started_ms = hyp_now_ms();
+    for (;;) {
         pid_t waited = waitpid(child, status_out, WNOHANG);
         if (waited == child) {
+            cli_budget_note("install child reap", hyp_now_ms() - started_ms);
             return true;
         }
         if (waited < 0 && errno != EINTR) {
             return false;
         }
-        hyp_usleep(1000);
+        if (hyp_now_ms() - started_ms >= CLI_INSTALL_ORDER_REAP_TIMEOUT_MS) {
+            break;
+        }
+        hyp_usleep(CLI_INSTALL_ORDER_POLL_INTERVAL_US);
     }
     (void)kill(child, SIGKILL);
     while (waitpid(child, status_out, 0) < 0 && errno == EINTR) {}
@@ -1813,20 +1878,53 @@ TEST(cli_concurrent_ui_then_standard_install_leaves_coherent_standard_set) {
         test_rmdir_r(tmpdir);
         FAIL("could not fork the UI installer child");
     }
+    /* Wait for the lease marker, but stop the moment the child dies: a child
+     * that exited without taking the lease is a DIFFERENT failure from a child
+     * that is still staging, and it is answerable instantly. Without this the
+     * generous budget above would be spent in full on an environment where the
+     * install refuses outright — which is exactly what happens on a workstation
+     * whose checkout has a world-writable ancestor. */
+    uint64_t lease_wait_ms = 0U;
     bool ui_locked = false;
-    for (int attempt = 0; attempt < 10000; attempt++) {
-        struct stat status;
-        if (stat(first_locked, &status) == 0) {
+    bool ui_died_early = false;
+    int ui_early_status = 0;
+    uint64_t lease_started_ms = hyp_now_ms();
+    for (;;) {
+        struct stat marker_status;
+        lease_wait_ms = hyp_now_ms() - lease_started_ms;
+        if (stat(first_locked, &marker_status) == 0) {
             ui_locked = true;
+            cli_budget_note("UI activation lease", lease_wait_ms);
             break;
         }
-        hyp_usleep(1000);
+        if (waitpid(ui_child, &ui_early_status, WNOHANG) == ui_child) {
+            ui_died_early = true;
+            break;
+        }
+        if (lease_wait_ms >= CLI_INSTALL_ORDER_LEASE_TIMEOUT_MS) {
+            break;
+        }
+        hyp_usleep(CLI_INSTALL_ORDER_POLL_INTERVAL_US);
     }
     if (!ui_locked) {
-        (void)kill(ui_child, SIGKILL);
-        (void)waitpid(ui_child, NULL, 0);
+        if (!ui_died_early) {
+            (void)kill(ui_child, SIGKILL);
+            (void)waitpid(ui_child, NULL, 0);
+        }
         test_rmdir_r(tmpdir);
-        FAIL("UI child did not acquire the deterministic activation lease");
+        char lease_failure[192];
+        if (ui_died_early) {
+            (void)snprintf(lease_failure, sizeof(lease_failure),
+                           "UI child exited (status %d) after %llu ms without acquiring the "
+                           "deterministic activation lease",
+                           ui_early_status, (unsigned long long)lease_wait_ms);
+        } else {
+            (void)snprintf(
+                lease_failure, sizeof(lease_failure),
+                "UI child did not acquire the deterministic activation lease within %llu ms",
+                (unsigned long long)lease_wait_ms);
+        }
+        FAIL(lease_failure);
     }
 
     cli_install_order_lock_t standard_lock = {
