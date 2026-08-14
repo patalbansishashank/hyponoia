@@ -901,8 +901,16 @@ TEST(agent_clients_refuse_foreign_and_preserve_modified_entries) {
     ASSERT_STR_EQ(after, foreign);
     free(after);
 
+    /* OUR name, spelled with a \u escape, carrying a FOREIGN command: the
+     * refusal is only correct if the key is decoded before it is compared.
+     * Before f95d6841 this was "codebase-memory-mcp" — the old identity
+     * with its hyphen escaped. The rename replaced bare occurrences of the old
+     * name but not the escaped one, so this decoded to a name that is not ours
+     * at all, and the case stopped testing decoding: an entry nobody owns is
+     * not refused, it is simply left alone beside a new one. Broken since
+     * 2026-08-09 and invisible until the full suite ran again. */
     const char *escaped_foreign =
-        "{mcpServers:{\"codebase\\u002dmemory-mcp\":{command:'foreign',args:[]}}}\n";
+        "{mcpServers:{\"hypono\\u0069a\":{command:'foreign',args:[]}}}\n";
     ASSERT_EQ(th_write_file(path, escaped_foreign), 0);
     ASSERT_EQ(hyp_agent_client_install_mcp(HYP_AGENT_CLIENT_QODER, path, "/usr/bin/hyp"),
               HYP_AGENT_EDIT_FOREIGN);
