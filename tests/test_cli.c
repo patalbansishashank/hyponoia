@@ -13072,7 +13072,7 @@ TEST(cli_print_tool_help_documents_array_forms) {
 }
 #else
 TEST(cli_print_tool_help_documents_array_forms) {
-    SKIP("stdout capture (dup2) not exercised on Windows");
+    SKIP_PLATFORM("stdout capture (dup2) not exercised on Windows");
 }
 #endif
 

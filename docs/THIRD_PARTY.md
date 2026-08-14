@@ -126,6 +126,34 @@ exists only to separate the model delta from the vocabulary delta in the swap
 measurement. It is expected to be deleted once that measurement is recorded —
 see `vendored/qwen3-oldvocab/NOTICE`.
 
+## Model weights fetched at runtime — not shipped
+
+Everything above is *vendored*: it is in this repository and inside the release
+artifact. The `ask` lane's encoder is not. `hyponoia fetch-model` downloads it
+on first use of that lane, so the release binary contains only two pinned URLs,
+two byte counts and two SHA-256 digests — never the weights themselves. It is
+listed here anyway, because a user who runs that command ends up with these
+files on their machine and is entitled to know what licence they carry.
+
+**`voyage-4-nano`** (NEXT-STEPS.md §2.10; it replaced Qwen3-Embedding-0.6B as
+the local model):
+
+- **Weights:** [voyageai/voyage-4-nano](https://huggingface.co/voyageai/voyage-4-nano)
+- **License:** Apache License 2.0
+- **Publisher:** Voyage AI
+- **Fetched artifacts:** a Q8_0 GGUF conversion (355 MB) and an 8 MB projection
+  head, both from
+  [jsonMartin/voyage-4-nano-gguf](https://huggingface.co/jsonMartin/voyage-4-nano-gguf)
+  at one pinned revision. That conversion is a **third-party, unofficial** one;
+  its header was parsed rather than trusted before it was pinned, and the
+  Apache-2.0 licence is inherited from the weights it converts. Producing a
+  first-party conversion before public release is recorded as owed in
+  `engine/hyponoia/runs/ESCALATION/`.
+
+The optional **escalation lane** sends text to a hosted API instead, and ships
+no weights at all. It is off by default, refuses rather than falling back, and
+is covered by whichever provider's terms the user has chosen to accept.
+
 ## Hybrid LSP — Reference Language Servers
 
 The Hybrid LSP layer (`internal/hyp/lsp/`) is an original C implementation

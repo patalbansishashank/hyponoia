@@ -41,6 +41,58 @@ permissions:
   contents: read
 
 jobs:
+  # ── 0. Which optional channels are actually configured? ─────────
+  # This repository has NO Actions secrets set (verified 2026-08-14:
+  # `gh secret list` returns nothing). Before this job existed, that meant a
+  # release could not finish: the VirusTotal scan, the npm publish and the
+  # PyPI publish each hard-fail on an empty token, and the un-draft step is
+  # gated on publish-registries succeeding — so the GitHub release would have
+  # been built, signed, attested and then left as a permanent draft.
+  #
+  # A missing OPTIONAL channel is a configuration fact, not a build failure.
+  # This job turns each one into a boolean, every dependent stage is gated on
+  # it, and the summary says loudly which channels were skipped and how to
+  # enable them. What is NOT optional stays mandatory: lint, tests, build,
+  # smoke, soak, the security gates, checksums, SBOM, cosign signing and
+  # provenance attestation all still have to pass.
+  preflight:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      has_npm: ${{ steps.s.outputs.has_npm }}
+      has_pypi: ${{ steps.s.outputs.has_pypi }}
+      has_vt: ${{ steps.s.outputs.has_vt }}
+    steps:
+      - name: Detect configured publishing secrets
+        id: s
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+          PYPI_TOKEN: ${{ secrets.PYPI_TOKEN }}
+          VT_API_KEY: ${{ secrets.VIRUS_TOTAL_SCANNER_API_KEY }}
+        run: |
+          set -euo pipefail
+          # Presence only. A secret is never printed, compared against a
+          # literal, or written to an output — just tested for emptiness.
+          for pair in "has_npm:NPM_TOKEN" "has_pypi:PYPI_TOKEN" "has_vt:VT_API_KEY"; do
+            out="${pair%%:*}"; var="${pair##*:}"
+            if [ -n "${!var:-}" ]; then v=true; else v=false; fi
+            echo "$out=$v" >> "$GITHUB_OUTPUT"
+            printf '%-9s %s\n' "$out" "$v"
+          done
+          {
+            echo "### Release channel preflight"
+            echo ""
+            echo "| channel | secret | configured |"
+            echo "|---|---|---|"
+            echo "| VirusTotal scan | \`VIRUS_TOTAL_SCANNER_API_KEY\` | ${VT_API_KEY:+yes}${VT_API_KEY:-**no — scan skipped**} |"
+            echo "| npm | \`NPM_TOKEN\` | ${NPM_TOKEN:+yes}${NPM_TOKEN:-**no — publish skipped**} |"
+            echo "| PyPI | \`PYPI_TOKEN\` | ${PYPI_TOKEN:+yes}${PYPI_TOKEN:-**no — publish skipped**} |"
+            echo ""
+            echo "Skipped channels do not fail the release. The GitHub release is still"
+            echo "built, signed, attested and un-drafted. Add a secret with"
+            echo "\`gh secret set <NAME>\` and re-run to enable its channel."
+          } >> "$GITHUB_STEP_SUMMARY"
+
   # ── Security (starts immediately, blocks only verify) ───────────
   security:
     uses: ./.github/workflows/_security.yml
@@ -195,7 +247,7 @@ jobs:
 
   # ── 7. Verify + Publish (requires security gate) ───────────────
   verify:
-    needs: [release-draft, security]
+    needs: [release-draft, security, preflight]
     # Explicit condition: a skipped ancestor (soak with soak_level=none) must
     # not skip the publish chain — only real failures/cancellations block it.
     if: ${{ !cancelled() && !failure() && needs.release-draft.result == 'success' }}
@@ -237,6 +289,7 @@ jobs:
           done
 
       - name: VirusTotal scan
+        if: ${{ needs.preflight.outputs.has_vt == 'true' }}
         uses: crazy-max/ghaction-virustotal@936d8c5c00afe97d3d9a1af26d017cfdf26800a2 # v5.0.0
         id: virustotal
         with:
@@ -247,6 +300,7 @@ jobs:
       # ZERO tolerance: every extracted object must arrive naturally clean. Any
       # malicious or suspicious verdict blocks the release with no exception.
       - name: Wait for VirusTotal results
+        if: ${{ needs.preflight.outputs.has_vt == 'true' }}
         env:
           VT_API_KEY: ${{ secrets.VIRUS_TOTAL_SCANNER_API_KEY }}
           VT_ANALYSIS: ${{ steps.virustotal.outputs.analysis }}
@@ -295,7 +349,7 @@ jobs:
   # Runs against the still-DRAFT GitHub release. If publish fails, the
   # release stays in draft so we can re-run without a half-shipped state.
   publish-registries:
-    needs: [verify]
+    needs: [verify, preflight]
     if: ${{ !cancelled() && !failure() && needs.verify.result == 'success' }}
     runs-on: ubuntu-latest
     permissions:
@@ -330,6 +384,7 @@ jobs:
           registry-url: 'https://registry.npmjs.org'
 
       - name: Publish to npm
+        if: ${{ needs.preflight.outputs.has_npm == 'true' }}
         working-directory: pkg/npm
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
@@ -360,6 +415,7 @@ jobs:
           python -m build
 
       - name: Publish to PyPI
+        if: ${{ needs.preflight.outputs.has_pypi == 'true' }}
         working-directory: pkg/pypi
         env:
           TWINE_USERNAME: __token__
@@ -378,10 +434,12 @@ jobs:
   # must never block shipping. Re-run this job alone to retry — it does
   # not touch npm/PyPI, so retries are safe.
   publish-mcp-registry:
-    needs: [publish-registries]
+    needs: [publish-registries, preflight]
     # Skipped for prereleases: the MCP Registry has no channel concept, so an
     # RC would present itself as the current version to every registry consumer.
-    if: ${{ !cancelled() && !failure() && needs.publish-registries.result == 'success' && !contains(inputs.version, '-') }}
+    # The registry verifies ownership through the npm package, so this can only
+    # run if npm was actually published.
+    if: ${{ !cancelled() && !failure() && needs.publish-registries.result == 'success' && needs.preflight.outputs.has_npm == 'true' && !contains(inputs.version, '-') }}
     runs-on: ubuntu-latest
     permissions:
       id-token: write   # GitHub OIDC auth to the MCP Registry

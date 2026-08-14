@@ -155,10 +155,25 @@ rank-fusion lever had already named as its prerequisite.
 
 | | |
 |---|---|
-| model | Qwen3-Embedding-0.6B, Q8_0 GGUF, 639 MB, fetched once |
-| embedding | ~77 declarations/s on a GPU, ~15× slower on CPU |
+| model | `voyage-4-nano`, Q8_0 GGUF (355 MB) **plus** an 8 MB projection head, fetched once |
+| embedding | 36.7 declarations/s on this GPU — measured, see below |
 | query | ~0.28 s warm, dominated by encoding the question |
 | index | float32, dim 1024, one row per declaration |
+
+The model changed in §2.10 and the throughput figure is the one that was
+measured rather than the one that was assumed. Both binaries were built from a
+single branch and run back to back over the same 4,072 declarations with §2.2's
+whole-file-span drop on: **Qwen3-Embedding-0.6B 17.0 declarations/s, nano 29.3
+at the inherited batch cap, 36.7 once that cap was re-measured** — nano is
+2.16× faster, not the 2.4× *slower* an earlier run reported by benchmarking one
+side with an optimisation switched off. `HYP_ASK_MAX_DOCS` was Qwen3's measured
+peak of 8 and had never been re-measured; nano peaks at 16.
+
+nano ships as **two** artifacts because GGUF cannot represent its output
+projection — a bias-free `nn.Linear(1024, 2048)` that the model applies after
+pooling. `fetch-model` takes both, each pinned to one revision and SHA-256
+verified. Applying that head after llama.cpp pools is exact rather than
+approximate: it is a linear map and the pooler is a mean, so the two commute.
 
 The GPU path is opt-in at build time (`make HYP_ASK_GPU=vulkan`) and needs a
 Vulkan SDK. The default build is CPU-only and portable. Only the `embed` pass
