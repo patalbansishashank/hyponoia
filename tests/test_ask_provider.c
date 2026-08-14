@@ -109,12 +109,15 @@ TEST(ask_provider_declared_but_unwired_refuses_instead_of_guessing) {
 TEST(ask_provider_config_refuses_a_key_pasted_where_a_variable_name_goes) {
     char err[512];
 
-    /* The two shapes actually handled during §2.6 and §2.7, plus OpenAI's. */
-    ASSERT_TRUE(hyp_config_validate(HYP_CONFIG_ASK_ESC_KEY_ENV,
-                                    "pa-l6UcAL1X0ElP5oTcr59zZF963FJVcERSVNfQEfT1T4Y", err,
-                                    sizeof(err)) != 0);
-    ASSERT_TRUE(hyp_config_validate(HYP_CONFIG_ASK_ESC_KEY_ENV, "jina_f73a9f2753b141e8", err,
-                                    sizeof(err)) != 0);
+    /* The two shapes actually handled during §2.6 and §2.7, plus OpenAI's.
+     * THE PREFIX IS WHAT IS UNDER TEST — the body is filler on purpose. These
+     * fixtures were first written with the live keys from §2.6 and §2.7, which
+     * put a working Voyage key in a file this test exists to prevent. A test
+     * for "does this look like a vendor key" never needs a real one. */
+    ASSERT_TRUE(hyp_config_validate(HYP_CONFIG_ASK_ESC_KEY_ENV, "pa-abc123", err, sizeof(err)) !=
+                0);
+    ASSERT_TRUE(hyp_config_validate(HYP_CONFIG_ASK_ESC_KEY_ENV, "jina_abc123", err, sizeof(err)) !=
+                0);
     ASSERT_TRUE(hyp_config_validate(HYP_CONFIG_ASK_ESC_KEY_ENV, "sk-abc123", err, sizeof(err)) !=
                 0);
     /* THE ERROR MUST NOT ECHO THE VALUE — a refusal that prints the secret
