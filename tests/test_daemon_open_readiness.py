@@ -66,11 +66,15 @@ def stop_daemon(binary, env, pid):
         subprocess.run([binary, "daemon", "stop"], capture_output=True, timeout=30, env=env)
     except (OSError, subprocess.TimeoutExpired):
         pass
-    deadline = time.monotonic() + 5
+    deadline = time.monotonic() + 15
     while time.monotonic() < deadline:
         try:
+            # Same arithmetic as wait_daemon_active: a probe budget under the
+            # product's own 3000 ms can never see "not running", which is the
+            # exact string this loop is waiting for. It would fall through to
+            # force_kill on every slow leg.
             status = subprocess.run([binary, "daemon", "status"], capture_output=True,
-                                    timeout=2, env=env)
+                                    timeout=5, env=env)
             if status.returncode != 0 and "not running" in output_text(status):
                 stopped = True
                 break
@@ -182,7 +186,28 @@ def collect(process, timeout=30):
     return result, output_text(result)
 
 
-def wait_daemon_active(binary, env, process, timeout=10):
+def wait_daemon_active(binary, env, process, timeout=60):
+    # BOTH numbers here are bounded by the product, not chosen for taste.
+    #
+    # PROBE_TIMEOUT must strictly exceed the product's own control-probe budget,
+    # MAIN_DAEMON_CTL_PROBE_TIMEOUT_MS = 3000 (src/main.c). On POSIX an absent
+    # daemon costs the FULL budget before `daemon status` can answer, because
+    # hyp_daemon_ipc_connect retries an ENOENT socket every 10 ms until the
+    # deadline rather than concluding absence (src/daemon/ipc.c). At the old 2 s
+    # every probe issued before the daemon was connectable was killed mid-answer,
+    # so this loop could never observe "not running" — only "timed out" with an
+    # EMPTY partial. That is why every failing log showed a bare
+    # "diagnostic: status timed out:" and no evidence at all.
+    #
+    # The window must not be tighter than the product's own start budget,
+    # MAIN_DAEMON_CTL_START_TIMEOUT_MS = 30000. A harness that gives up sooner
+    # than the product is allowed to take fails runs the product considers
+    # healthy. The old 10 s window was five 2 s probes, i.e. ~8 s of real
+    # waiting, and the ubuntu-24.04-arm runner pool — measured 10-80x slower on
+    # filesystem-heavy work than ubuntu-22.04-arm at equal CPU — needs about 15.
+    # This costs nothing on a healthy leg: the loop returns the moment status
+    # says active, or the moment the starter exits.
+    probe_timeout = 5
     deadline = time.monotonic() + timeout
     last_probe = "status probe was not attempted"
     while time.monotonic() < deadline:
@@ -190,14 +215,17 @@ def wait_daemon_active(binary, env, process, timeout=10):
             return False
         try:
             status = subprocess.run([binary, "daemon", "status"], capture_output=True,
-                                    timeout=2, env=env)
+                                    timeout=probe_timeout, env=env)
             last_probe = "status rc=%d: %s" % (status.returncode, output_text(status)[:600])
         except subprocess.TimeoutExpired as timeout_error:
             # The starter may still own the short bootstrap handoff. A timed
             # status probe is not evidence either way; retry within this
-            # function's independent bounded deadline.
+            # function's independent bounded deadline. Back off like every other
+            # path — the bare `continue` here spun the whole window into probe
+            # attempts with no pause between them.
             partial = (timeout_error.stdout or b"") + (timeout_error.stderr or b"")
             last_probe = "status timed out: %s" % partial.decode("utf-8", "replace")[:600]
+            time.sleep(0.1)
             continue
         if status.returncode == 0 and "daemon: active" in output_text(status):
             return True
@@ -210,7 +238,14 @@ def assert_delayed_success(binary, work):
     cache = os.path.join(work, "cache-delayed")
     marker = os.path.join(work, "browser-delayed.txt")
     blocker, port = occupied_loopback_port()
-    process, env = launch_start(binary, work, cache, marker, port, 10000)
+    # 30000 is the PRODUCTION default (MAIN_DAEMON_CTL_UI_READY_TIMEOUT_MS in
+    # src/main.c), and the seam clamps to it — so this asserts the behaviour a
+    # real user gets rather than a tightened test-only version of it. The old
+    # 10000 was below the daemon's own HTTP bind-retry schedule (1 s doubling to
+    # 30 s, src/daemon/host.c), so releasing the port mid-backoff meant the next
+    # attempt landed after the client had already given up. That is a budget
+    # losing a race with a backoff curve, not a readiness bug.
+    process, env = launch_start(binary, work, cache, marker, port, 30000)
     daemon_pid = 0
     try:
         if not wait_daemon_active(binary, env, process):
@@ -300,7 +335,7 @@ def assert_active_daemon_open(binary, work):
     probe, port = occupied_loopback_port()
     probe.close()
     os.makedirs(cache, exist_ok=True)
-    env = fixture_environment(work, cache, marker, 10000)
+    env = fixture_environment(work, cache, marker, 30000)  # production default; see above
     daemon_pid = 0
     try:
         first = subprocess.run([binary, "daemon", "start", "--port=%d" % port],
