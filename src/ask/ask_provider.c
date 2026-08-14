@@ -192,12 +192,24 @@ static bool ap_write_private(const char *path, const char *data, size_t len) {
     /* Narrow the mode BEFORE the secret is written, not after: a reader racing
      * between the open and the chmod would otherwise win. fchmod on the open
      * descriptor rather than chmod on the path, so the narrowing cannot be
-     * redirected by a symlink swapped in underneath. */
+     * redirected by a symlink swapped in underneath.
+     *
+     * POSIX ONLY, and guarded the same way src/cli/config_toml_edit.c and
+     * config_json_like.c guard theirs — MinGW has no fchmod, and §2.10 wrote
+     * this file without the guard because nothing had compiled it on Windows
+     * since it landed. WHAT WINDOWS GETS INSTEAD: the file is created inside
+     * the escalation directory, which is made under the user's own cache root,
+     * with a hyp_secure_random name, scrubbed with hyp_secure_zero and removed
+     * immediately after curl reads it. That is inherited-ACL protection rather
+     * than an explicit narrowing, and it is weaker; saying so here is better
+     * than an #ifdef that reads like parity. */
+#ifndef _WIN32
     if (fchmod(hyp_fileno(f), 0600) != 0) {
         (void)fclose(f);
         (void)remove(path);
         return false;
     }
+#endif
     size_t wrote = len ? fwrite(data, 1, len, f) : 0;
     bool ok = (wrote == len) && (fflush(f) == 0);
     if (fclose(f) != 0) {

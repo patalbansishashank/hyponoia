@@ -959,8 +959,16 @@ TEST(config_toml_vibe_literal_and_basic_identity) {
     ASSERT_EQ(cte_read(path, actual, sizeof(actual)), 0);
     ASSERT_STR_EQ(actual, "");
 
+    /* The identity spelled with a \u escape, so the comparison is only correct
+     * if the basic string is DECODED first. Before f95d6841 this read
+     * "codebase-memory-mcp" — the final 'm' of the old name escaped. The
+     * rename rewrote the literal mechanically to "hyponoia-mcp", which
+     * decodes to "hyponoia-mcp" and is therefore FOREIGN: the test stopped
+     * proving decoding and started asserting that a non-identity entry gets
+     * replaced, which is the opposite of the contract. Broken since
+     * 2026-08-09 and invisible until the full suite ran again. */
     ASSERT_EQ(th_write_file(path, "[[mcp_servers]]\n"
-                                  "name = \"hyponoia-\\u006dcp\" # basic\n"
+                                  "name = \"hyponoi\\u0061\" # basic\n"
                                   "command = \"old\"\n"),
               0);
     ASSERT_EQ(hyp_toml_upsert_named_array_table(path, CTE_TABLE, CTE_KEY, CTE_IDENTITY, CTE_BODY),
