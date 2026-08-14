@@ -5,6 +5,15 @@ maintainers of these projects for making their work freely available.
 Every vendored component directory carries the upstream `LICENSE`
 (or `COPYING` / `NOTICE`) file alongside the sources.
 
+
+## This project is a fork
+
+Hyponoia is derived from
+[DeusData/codebase-memory-mcp](https://github.com/DeusData/codebase-memory-mcp),
+MIT, Copyright (c) 2025 DeusData. That copyright notice is retained in the
+root `NOTICE` file, as the MIT terms require. `LICENSE` is the canonical MIT
+text and nothing else, so that automated licence detection resolves it.
+
 ## Tree-sitter Runtime
 
 The tree-sitter C runtime is vendored in `internal/hyp/vendored/ts_runtime/`.
