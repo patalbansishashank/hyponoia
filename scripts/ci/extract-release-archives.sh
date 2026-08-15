@@ -72,6 +72,11 @@ UNIX_TARGETS = (
     "linux-arm64",
     "linux-amd64-portable",
     "linux-arm64-portable",
+    # GPU (Vulkan) variant of the ui build — _build.yml build-linux-gpu.
+    # Same members as every other ui archive; the binary is HYP_ASK_GPU=vulkan
+    # STATIC=0, dynamically linked against libvulkan.so.1. It ships BESIDE the
+    # static -portable archive, never instead of it.
+    "linux-amd64-gpu",
 )
 # RETIRED-PLATFORM(windows-arm64): windows-arm64 dropped — see docs/MAINTAINERS.md "Retired platforms".
 WINDOWS_TARGETS = ("windows-amd64",)
