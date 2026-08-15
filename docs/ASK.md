@@ -92,6 +92,56 @@ them.
 Every answer discloses the model, the language whose prefix was rendered,
 whether any declaration was truncated, and the population searched.
 
+## Escalation: a stronger model for one question
+
+`ask(escalate=true)` brings a hosted embedding model into a single question.
+It is off by default and **never chosen for you** — every score threshold this
+project has set has died on a corpus change, so the engine does not decide
+when you need to be right. Configure a provider once (`ask.escalation.provider`,
+`.model`, `.key_env` — the *name* of the variable holding the key, never the
+key) and then choose per call.
+
+What an escalated question sends is `ask.escalation.mode`:
+
+| mode | what leaves the machine | index it scores | gate |
+|---|---|---|---|
+| **`query`** (default) | the question — ~30 tokens | the **local** index you already have | both sides must share a **measured** embedding space |
+| `index` | every declaration, once (`hyponoia embed --escalation`) | a second, API-built index | none needed: one model built and queries it |
+
+**Query mode** is the cheap side to buy — a question against a corpus of
+millions — and it keeps the code on the machine. It is licensed on quality:
+nano documents scored by `voyage-4-large` questions beat nano on both sides by
++0.2087 MRR@10 on the 60 vocabulary-gap questions and by +0.444% reciprocal
+rank (p = 5.5e-05) on 8,122 public CodeSearchNet-Go queries. Its case *over*
+index mode is operational, not a quality margin: index mode replicates at that
+scale too, and the two are statistically indistinguishable there (p = 0.62).
+So the default is the mode with no second index, no drift between two indexes,
+no corpus-sized bill, and nothing but the question sent anywhere.
+
+**The gate is a space identity, not the prefix contract.** A cosine between two
+models' vectors means something only if they live in the same embedding space,
+and cross-space failure is silent — score a Qwen3 index against a voyage query
+and nothing errors; the ranking comes back ordinary-looking and wrong, the worst
+failure available to a tool an agent trusts. So the index stamps the space its
+document encoder lives in, and query mode refuses unless that space and the
+hosted model's are **both known and identical**. The allowlist is measured, not
+copied from a vendor page: the voyage-4 family (`nano`, `lite`, `large`, `4`)
+shares one space — self-retrieval acc@1 0.985–0.995 in both directions —
+while eight negative controls (a random rotation, Qwen3, `voyage-code-3`) all
+correctly said no at the 0.005 chance floor. `voyage-code-3` — same vendor,
+one generation back — is *not* in the space; Jina and Gemini are unmeasured
+and therefore refused. The refusal names both model ids and both spaces.
+
+**Nothing falls back silently.** An unconfigured lane, an unset key variable,
+an unbuilt index or a space that cannot be proven shared is an error that says
+so — never a quiet answer from the local encoder that leaves you believing you
+had the expensive one. Every answer carries `lane` (`local`,
+`escalation-query` or `escalation-index`), `query_encoder` and
+`index_encoder`, so the agent holding it knows what it is holding.
+
+The record is `engine/hyponoia/runs/XMODEL/` (the frozen 60 and the space
+probe) and `engine/hyponoia/runs/XMODEL-PUBLIC/` (the 8,122-query replication).
+
 ## What it scores
 
 Measured on **CoIR's CosQA** — 500 public queries, 20,604 documents, scored

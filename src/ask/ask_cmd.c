@@ -65,6 +65,13 @@ static void ask_embed_usage(void) {
            "  --device auto|gpu|cpu  Which device to encode on. Default auto: GPU when\n"
            "                         one can be used safely, else CPU. `gpu` refuses\n"
            "                         rather than falling back silently.\n"
+           "  --escalation           Build the ESCALATION lane's own index (a second file)\n"
+           "                         through the configured hosted provider instead of the\n"
+           "                         local model. Sends every declaration to the provider\n"
+           "                         and spends tokens per declaration. Only ask.escalation\n"
+           "                         .mode=index searches it; the default mode (query) sends\n"
+           "                         only the question and scores the LOCAL index, so it\n"
+           "                         does not need this pass at all.\n"
            "  --stub                 Use the deterministic stub encoder.\n"
            "  --stub-no-truncation-report\n"
            "                         Stub that cannot report token counts, so the\n"
@@ -113,6 +120,19 @@ static int ask_cmd_status(const char *project) {
     printf("ask index for '%s':\n", project);
     printf("  format           %d\n", m.format);
     printf("  model            %s\n", m.model_id ? m.model_id : "?");
+    /* The embedding SPACE, as stamped; when the index predates the stamp, the
+     * same function over its model id — said as such, because ask(escalate=
+     * true) in query mode gates on exactly this and will say the same thing. */
+    const char *derived_space = hyp_ask_space_id_for_model(m.model_id);
+    if (m.space_id && m.space_id[0]) {
+        printf("  space            %s (stamped at build time)\n", m.space_id);
+    } else if (derived_space) {
+        printf("  space            %s (derived from the model id; the index predates the stamp)\n",
+               derived_space);
+    } else {
+        printf("  space            unmeasured — ask(escalate=true) in query mode will refuse "
+               "this index\n");
+    }
     printf("  dim              %d\n", m.dim);
     printf("  window           %d tokens\n", m.window_tokens);
     printf("  rows             %lld\n", (long long)m.row_count);
@@ -346,14 +366,31 @@ int hyp_cmd_embed(int argc, char **argv) {
         char provider[64];
         char model[128];
         char key_env[128];
+        char mode[HYP_SZ_32];
         (void)snprintf(provider, sizeof(provider), "%s",
                        cfg ? hyp_config_get(cfg, HYP_CONFIG_ASK_ESC_PROVIDER, "") : "");
         (void)snprintf(model, sizeof(model), "%s",
                        cfg ? hyp_config_get(cfg, HYP_CONFIG_ASK_ESC_MODEL, "") : "");
         (void)snprintf(key_env, sizeof(key_env), "%s",
                        cfg ? hyp_config_get(cfg, HYP_CONFIG_ASK_ESC_KEY_ENV, "") : "");
+        (void)snprintf(
+            mode, sizeof(mode), "%s",
+            cfg ? hyp_config_get(cfg, HYP_CONFIG_ASK_ESC_MODE, HYP_CONFIG_ASK_ESC_MODE_DEFAULT)
+                : HYP_CONFIG_ASK_ESC_MODE_DEFAULT);
         if (cfg) {
             hyp_config_close(cfg);
+        }
+        if (strcmp(mode, HYP_CONFIG_ASK_ESC_MODE_INDEX) != 0) {
+            /* Said once and then honoured: the pass is explicit, so it runs.
+             * But someone in the default mode who types this has very likely
+             * misread what escalation costs, and a corpus-sized bill is the
+             * wrong way to find out. */
+            printf("embed --escalation: NOTE — %s is '%s', and in that mode ask(escalate=true) "
+                   "sends only the question and scores it against the LOCAL index. The index "
+                   "this pass builds is searched only when %s=%s. Proceeding because you asked "
+                   "explicitly.\n",
+                   HYP_CONFIG_ASK_ESC_MODE, mode, HYP_CONFIG_ASK_ESC_MODE,
+                   HYP_CONFIG_ASK_ESC_MODE_INDEX);
         }
         char err[512];
         esc_enc = hyp_ask_provider_encoder_create(provider, model, key_env, err, sizeof(err));
