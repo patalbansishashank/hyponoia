@@ -32,8 +32,11 @@ went wrong.
 
 **What the prefix is worth**, measured on the 60-question C++ benchmark by
 encoding the same questions with and without it against the same documents.
-These are `Qwen3-Embedding-0.6B`'s numbers — the encoder described below, and
-the one every figure on this page is measured against:
+These are `Qwen3-Embedding-0.6B`'s numbers, measured before the `ask` lane
+swapped encoders. The lane now runs `voyage-4-nano` — the Cost table below is
+nano's — and a prefix's value does not survive a model swap: Qwen3's contract
+left documents bare, where nano marks documents as well as queries. The shape
+of the finding holds; the magnitudes here are Qwen3's and are not restated:
 
 | | median rank of the answer | recall@10 | MRR@10 |
 |---|---|---|---|
@@ -77,7 +80,7 @@ this section as belonging to these weights and not to the idea of a prefix.
 The vectors come from a second pass that you run deliberately:
 
 ```bash
-hyponoia fetch-model            # 639 MB, pinned revision, SHA-256 verified
+hyponoia fetch-model            # 363 MB, pinned revision, SHA-256 verified
 hyponoia embed --project my-project
 ```
 
@@ -99,18 +102,35 @@ with CoIR's own evaluator:
 | BM25 (lexical floor) | 13.96 |
 | Voyage-Code-002 (commercial) | 29.79 |
 | BGE-Base (best in the CoIR paper's table) | 32.76 |
-| **hyponoia `ask`** | **39.44** |
+| **hyponoia `ask` — `voyage-4-nano`, SHIPPING** | **33.69** |
+| hyponoia `ask` — `Qwen3-Embedding-0.6B`, retired 2026-08-12 | 39.44 |
 | CodeR-1.5B | 46.72 |
 | Gemini-embedding (current frontier) | 50.24 |
 
-A 0.6B open model beats every model in the paper's CosQA column, including two
-commercial ones. It does not lead the field.
+**Anchor each number to the encoder that produced it.** 39.44 is Qwen3's, run
+through the shipped binary (`runs/COIR/`). 33.69 is nano's, run through a
+PyTorch/ROCm lane (`runs/RERANK-NANO/`) — no binary-lane CosQA number exists for
+nano. The two lanes are not free to compare: re-running **Qwen3** through that
+same PyTorch path scores 37.24, so the harness accounts for −2.20 of the gap and
+the model for the rest.
+
+**The swap cost us this benchmark, and that is worth saying plainly.** Paired on
+the same lane, nano minus Qwen3 on CosQA is **−3.55 NDCG@10 (−9.53%), CI
+[−6.24, −0.87], p = 0.0154** — significant, and the first public corpus where the
+shipping model loses to the retired one. It did not reverse the swap, because
+nano wins the frozen 60-question set (recall@10 0.650 against 0.550), CLARC 7 of
+8, and both CodeSearchNet languages. A model that wins four evaluations and loses
+one is a trade, not an upgrade, and the losing one belongs on this page.
+
+Nano still clears every model in the paper's CosQA column, including two
+commercial ones — but by 0.93 rather than Qwen3's 6.68. It does not lead the
+field.
 
 **Read it against the ceiling, not against 100.** CosQA's corpus is 86%
 duplicate text — 20,604 documents are only 6,267 distinct strings, and 426 of
 the 500 golds have a byte-identical twin the qrels mark irrelevant. A *perfect*
-content-based retriever caps at **64.88**. So 39.44 is **61% of what is
-achievable**; BGE-Base is 50%, BM25 is 22%.
+content-based retriever caps at **64.88**. So nano's 33.69 is **52% of what is
+achievable** and Qwen3's 39.44 was 61%; BGE-Base is 50%, BM25 is 22%.
 
 ## Where it stops working
 
@@ -132,6 +152,14 @@ It **regressed** on CosQA — NDCG@10 0.394 → 0.352, recall@10 0.674 → 0.602
 89 queries better against 150 worse, sign test p=9.6e-05. Two obvious confounds
 were tested and cleared: not the duplicate text (the regression is *larger*,
 −0.054, on the 74 queries whose gold has no twin) and not query length.
+
+**Those numbers are Qwen3's, and the swap changed them.** Re-run with
+`voyage-4-nano` retrieving, the sign flips: **+4.80%, p = 0.288** — not a
+regression, and not a win either. Saying "the reranker no longer regresses on
+CosQA" without that second clause would be true and misleading, because what
+changed is the retriever it sits on top of: a reranker replaces the retriever's
+ranking with its own, so it rescues a weak one and drags a strong one down. The
+deletion stands on the grounds below, which the swap does not touch.
 
 Then the original win turned out to be explicable. The benefit on lld/ELF is
 significantly predicted by how much each question's vocabulary appears in the

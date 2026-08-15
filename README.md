@@ -44,10 +44,14 @@ ask("which pass folds together read-only sections holding identical contents?")
 → lld-elf.ICF.run    ICF.cpp:464-580
 ```
 
-`ask` scores **39.44 NDCG@10 on CoIR's CosQA**, ahead of every model in the
-CoIR paper's column for that task including two commercial ones — and behind
-the current frontier. It is opt-in, it tells you when its index isn't built
-instead of returning nothing, and it has a boundary it will admit to.
+`ask` scores **33.69 NDCG@10 on CoIR's CosQA** with the encoder that ships
+today, `voyage-4-nano` — narrowly ahead of the best model in the CoIR paper's
+column for that task (BGE-Base, 32.76) and well behind the current frontier.
+The **39.44** this project quoted until now is `Qwen3-Embedding-0.6B`'s, the
+encoder the lane ran until 2026-08-12: nano wins on C/C++, on CodeSearchNet and
+on the frozen 60-question set, and it **loses** on CosQA. `ask` is opt-in, it
+tells you when its index isn't built instead of returning nothing, and it has a
+boundary it will admit to.
 [The full measurement, and the reranker we deleted because it did not survive
 it →](docs/ASK.md)
 

@@ -12,7 +12,7 @@
       packages = forAllSystems (pkgs: {
         default = pkgs.stdenv.mkDerivation {
           pname = "hyponoia";
-          version = "0.6.0";
+          version = "0.3.0";
 
           src = ./.;
 

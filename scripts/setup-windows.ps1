@@ -257,7 +257,23 @@ if ($FromSource) {
     }
     Write-Ok "Latest release: $tag"
 
-    $asset = "hyponoia-windows-amd64.zip"
+    # The build publishes ONLY the UI variant: every package-release.sh call in
+    # _build.yml passes --variant ui, so `hyponoia-windows-amd64.zip` has never
+    # been published and this composed a 404 for every user of the documented
+    # Windows one-liner (docs/INSTALL.md). Same defect as install.ps1 and the
+    # five other installers; this site was missed because nothing compares what
+    # an installer REQUESTS against what the build EMITS.
+    #
+    # Expand-Archive below unpacks every member into $InstallDir, so the
+    # content-addressed hyp-ui-<sha256>.pack lands beside hyponoia.exe, which is
+    # where src/ui/asset_pack.c looks first (<bindir>/<pack>). Nothing here may
+    # name the pack literally.
+    #
+    # RETIRED-PLATFORM(windows-arm64): amd64 is hardcoded rather than detected,
+    # so an ARM64 host gets the x64 build under emulation -- which is what these
+    # users got before a native build existed, and there is no native ARM64
+    # asset to fall back to. See docs/MAINTAINERS.md "Retired platforms".
+    $asset = "hyponoia-ui-windows-amd64.zip"
     $downloadUrl = "https://github.com/$Repo/releases/download/$tag/$asset"
 
     Write-Host "Downloading $asset..." -ForegroundColor White

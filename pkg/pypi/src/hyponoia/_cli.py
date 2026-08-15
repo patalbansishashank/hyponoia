@@ -360,7 +360,10 @@ def _version() -> str:
         from importlib.metadata import version
         return version("hyponoia")
     except Exception:
-        return "0.8.1"
+        # Must track pyproject.toml's version: _download() composes the release
+        # URL from this, so a stale fallback 404s whenever importlib.metadata
+        # cannot see the installed distribution.
+        return "0.3.0"
 
 
 def _os_name() -> str:

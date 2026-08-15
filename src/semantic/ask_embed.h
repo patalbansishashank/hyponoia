@@ -9,14 +9,25 @@
  *
  * ── The asymmetry is the mechanism, so it is enforced structurally ──
  *
- * Qwen3-Embedding is asymmetric: a QUERY is encoded behind an instruct prefix
- * and a DOCUMENT is not. That asymmetry is what lets a question match code
- * sharing none of its words, and ctxengine's R@1 0.7833 is a number about it.
- * So there are exactly TWO entry points and no third one taking a flag:
+ * The encoder is asymmetric: a QUERY and a DOCUMENT are marked DIFFERENTLY.
+ * That asymmetry is what lets a question match code sharing none of its words,
+ * and ctxengine's R@1 0.7833 is a number about it.
  *
- *     encode_query(lang, text)  — renders the instruct prefix, then encodes
- *     encode_documents(texts)   — bare; takes NO language, so the prefix is
- *                                 not merely discouraged, it is UNSPELLABLE
+ * WHICH marking is model-specific, and it has already changed once. Qwen3 put
+ * an instruct prefix on the query and left the document BARE. voyage-4-nano —
+ * the encoder this lane now runs — marks BOTH sides
+ * (HYP_ASK_NANO_QUERY_PROMPT / HYP_ASK_NANO_DOCUMENT_PROMPT in ask_prefix.h)
+ * and scores BELOW the model it replaces if documents are left bare. The
+ * prefix is therefore a contract with one specific model, not a property of
+ * embedding; see enc_encode_documents in src/ask/ask_llama.c.
+ *
+ * What does not change is the SHAPE: exactly TWO entry points, no third one
+ * taking a flag:
+ *
+ *     encode_query(lang, text)  — renders the query marking, then encodes
+ *     encode_documents(texts)   — renders the document marking; takes NO
+ *                                 language, so a query prefix is not merely
+ *                                 discouraged here, it is UNSPELLABLE
  *
  * ctxengine's `semantic.py` says why: a single `encode()` "would make the
  * commonest way to lose recall the shortest thing to write, and it would lose
@@ -51,8 +62,13 @@
 /* Vector geometry. Both are copied from the measured configuration
  * (runs/ASK/T1-ctxengine-recipe.json §3) and neither is a tuning knob. */
 enum {
-    HYP_ASK_DIM = 1024,        /* Qwen3-Embedding-0.6B, no truncation */
-    HYP_ASK_MODEL_ID_MAX = 128 /* room for "Qwen3-Embedding-0.6B@<revision>" */
+    /* Under voyage-4-nano this IS a truncation: nano projects to
+     * HYP_MODEL_ASK_PROJ_OUT (2048) and the vector is normalised, Matryoshka-
+     * truncated to 1024, then renormalised. The ORDER is the measurement —
+     * see the comment above ask_llama.c's projection step. It was Qwen3's
+     * native width, which is why the constant did not move across the swap. */
+    HYP_ASK_DIM = 1024,
+    HYP_ASK_MODEL_ID_MAX = 128 /* room for "voyage-4-nano-Q8_0@<revision>" */
 };
 
 /* How far a stored row's L2 norm may sit from 1.0 before it is rejected.

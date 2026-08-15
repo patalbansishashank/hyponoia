@@ -35,8 +35,15 @@ import (
 )
 
 const (
-	repo                 = "patalbansishashank/hyponoia"
-	version              = "0.8.1"
+	repo = "patalbansishashank/hyponoia"
+	// 0.8.1 was upstream DeusData's version, inherited at the fork point. This
+	// fork never cut that release, so every `go install` composed a download
+	// URL for a tag that does not exist here -- see the fmt.Sprintf further
+	// down, which builds releases/download/v<version>/<archive> from this.
+	version = "0.3.0"
+
+	windowsBinaryName    = "hyponoia.exe"
+	integrationsFileName = "hyp-integrations.json"
 	windowsBinaryName    = "hyponoia.exe"
 	integrationsFileName = "hyp-integrations.json"
 

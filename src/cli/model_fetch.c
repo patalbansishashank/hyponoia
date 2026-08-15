@@ -822,14 +822,20 @@ hyp_model_fetch_result_t hyp_model_fetch(const hyp_model_fetch_opts_t *opts) {
 
 static void model_fetch_help(void) {
     printf("Usage: hyponoia fetch-model [--yes] [--force] [--verify] [--path]\n\n");
-    printf("Download the model the `ask` lane uses:\n\n");
+    /* BOTH artifacts, because that is what the command fetches (the CHOSEN
+     * list in hyp_cmd_fetch_model). Naming only the GGUF told a user a
+     * smaller number than the command charges them. */
+    printf("Download what the `ask` lane needs — both artifacts, always:\n\n");
     printf("  " HYP_MODEL_ASK_MODEL " (" HYP_MODEL_ASK_QUANT " GGUF), " HYP_MODEL_ASK_SIZE_TEXT
            "\n");
-    printf("  Without it `ask` cannot turn a question into a vector and answers\n");
-    printf("  available=false.\n\n");
-    printf("Fetched once and kept in the Hyponoia cache. Nothing else downloads it:\n");
-    printf("no index, no tool call and no daemon session ever fetches "
-           "" HYP_MODEL_ASK_SIZE_TEXT " on\n");
+    printf("  its projection head (" HYP_MODEL_ASK_PROJ_FILE "), " HYP_MODEL_ASK_PROJ_SIZE_TEXT
+           "\n");
+    printf("  Without them `ask` cannot turn a question into a vector and answers\n");
+    printf("  available=false. The head is not optional: without it the weights\n");
+    printf("  emit their pre-projection hidden state, which is the right width\n");
+    printf("  and unit length in the WRONG SPACE.\n\n");
+    printf("Fetched once and kept in the Hyponoia cache. Nothing else downloads them:\n");
+    printf("no index, no tool call and no daemon session ever fetches them on\n");
     printf("your behalf.\n\n");
     printf("Options:\n");
     printf("  --yes, -y   Consent up front (required when stdin is not a terminal)\n");

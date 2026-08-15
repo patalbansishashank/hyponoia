@@ -2,9 +2,11 @@
  * ask_encoder.h — the narrow seam between the `ask` lane and whatever runs the
  * transformer (NEXT-STEPS §2.1).
  *
- * TWO ENTRY POINTS, NO FLAG. Qwen3-Embedding is ASYMMETRIC: a query is encoded
- * behind an instruct prefix and a document is not. The measured retrieval
- * numbers are numbers about that asymmetry. A single `encode(text, bool
+ * TWO ENTRY POINTS, NO FLAG. The encoder is ASYMMETRIC: a query and a document
+ * are marked DIFFERENTLY. (Qwen3 prefixed the query and left the document bare;
+ * voyage-4-nano, which this lane now runs, marks both sides — the marking is a
+ * per-model contract, the asymmetry is not.) The measured retrieval numbers are
+ * numbers about that asymmetry. A single `encode(text, bool
  * is_query)` would make the commonest way to lose recall the shortest thing to
  * write, and it would lose it SILENTLY, because both mistakes still return unit
  * vectors of the right shape. The reference implementation enforces the split
@@ -21,7 +23,9 @@
  *   - vectors are float32, `dim` wide, L2-NORMALISED, and dim is 1024 for the
  *     model §2.1 names. NOT the int8/768 static-table format of §2 — that is a
  *     different store with a different model and the two must never mix.
- *   - a document is encoded from its VERBATIM SOURCE LINES, bare.
+ *   - a document is encoded from its VERBATIM SOURCE LINES, behind whatever
+ *     document marking the active model's contract requires (bare for Qwen3,
+ *     HYP_ASK_NANO_DOCUMENT_PROMPT for voyage-4-nano).
  *   - cosine == dot product, and only because both sides are unit vectors.
  */
 #ifndef HYP_ASK_ENCODER_H
