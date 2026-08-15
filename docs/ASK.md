@@ -105,6 +105,21 @@ they were, v0.3.0 shipped a server that permitted `ask` and profiles that never
 requested it. An unrestricted server (no `--tool-profile`, which is what
 `hyponoia install` registers for Claude Code's main session) always offers it.
 
+Being in the tools list is not the same as being used. Measured with sonnet-5
+on the frozen 60 questions over lld/ELF, 60 runs a column: with `ask` merely
+listed, the agent called it in 4 of 60 runs and tokens per correct answer moved
+−2.9% (CI [−507, +263] tokens/question — a null). With one sentence in the
+profile body saying when to use it, it called `ask` in 60 of 60, tokens per
+correct answer fell 25.5% (CI [−1,547, −657]), with the best accuracy of the
+columns and no capped runs. So the analysis-tier prompt now says: for a
+natural-language question about what code does, call `ask` first with the
+question as one string, read its top 2–3 rows and verify with
+`get_code_snippet`; `available: false` is a statement about the index, not the
+code. The same sentence states how the project name is derived (the indexed
+root's absolute path, leading slash dropped, other separators as `-`), because
+every measured run had been spending its first call on `list_projects` to
+learn it. Scout's prompt is unchanged.
+
 ## What it scores
 
 Measured on **CoIR's CosQA** — 500 public queries, 20,604 documents, scored

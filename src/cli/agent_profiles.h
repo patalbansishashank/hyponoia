@@ -56,15 +56,18 @@ char *hyp_render_graph_profile(hyp_graph_profile_dialect_t dialect, hyp_graph_ti
                                hyp_graph_access_t access, const char *binary_path);
 
 /* The tool set a direct tier requests comes from mcp/tool_tiers.h, the table
- * the MCP server enforces. Every change to that set is a new profile
- * generation, and the installer only replaces an agent file whose bytes equal
- * the current rendering or one it previously released — so each earlier
- * generation must still render exactly. hyp_render_graph_profile() renders the
- * current generation; this renders any generation up to it, NULL past it. */
+ * the MCP server enforces. Every change to a rendered profile — that set or
+ * the tier prompt text — is a new profile generation, and the installer only
+ * replaces an agent file whose bytes equal the current rendering or one it
+ * previously released — so each earlier generation must still render exactly.
+ * hyp_render_graph_profile() / hyp_render_graph_prompt() render the current
+ * generation; these render any generation up to it, NULL past it. */
 unsigned hyp_graph_profile_generation(void);
 char *hyp_render_graph_profile_generation(hyp_graph_profile_dialect_t dialect,
                                           hyp_graph_tier_t tier, hyp_graph_access_t access,
                                           const char *binary_path, unsigned generation);
+char *hyp_render_graph_prompt_generation(hyp_graph_tier_t tier, hyp_graph_access_t access,
+                                         unsigned generation);
 
 /* The wire name (no dialect prefix) of the index-th tool a direct profile of
  * `tier` requests at the current generation, in render order; NULL past the
