@@ -4,12 +4,12 @@ Getting the binary onto your machine and your agent talking to it.
 
 [← README](../README.md)
 
-> **Where the project actually is.** There are no published binaries yet, and
-> the repository is private — so the `curl … | bash` one-liners, the package
+> **Where the project actually is.** The repository is public. There are no
+> published binaries yet — so the `curl … | bash` one-liners, the package
 > managers and the release archives described below **do not work today**. They
-> are the shape of the distribution once releases are cut and the repository is
-> public. Until then, **[build from source](#build-from-source)** is the path
-> that works, and it is two commands.
+> are the shape of the distribution once releases are cut. Until then,
+> **[build from source](#build-from-source)** is the path that works, and it is
+> two commands.
 
 ## Build from source
 

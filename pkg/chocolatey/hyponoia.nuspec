@@ -20,7 +20,7 @@ set and exposes its executable through a PATH shim.
 Full indexes an average repository in milliseconds, the Linux kernel (28M LOC) in
 3 minutes. Answers structural queries in under 1ms. Supports 158 languages via
 vendored tree-sitter grammars. No hosted service or API key. Plug and play across
-11 coding agents including Claude Code, Codex CLI, Gemini CLI, and Zed.
+43 agent surfaces including Claude Code, Codex CLI, Gemini CLI, and Zed.
 
 After installation, run:
 
