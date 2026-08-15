@@ -1184,7 +1184,9 @@ static char *ha_lifecycle_json_from_root(hyp_mcp_server_t *srv, yyjson_val *root
                  "check_index_coverage for every file relied on; if incomplete, read the "
                  "reported missed lines directly and qualify conclusions. For structural "
                  "code discovery use search_graph, then trace_path, then get_code_snippet; "
-                 "use query_graph or get_architecture for broader structure. Use grep, glob, "
+                 "use query_graph or get_architecture for broader structure. Use ask for one "
+                 "natural-language question about where behaviour lives (analysis tiers; it "
+                 "reports unavailable until the semantic index is built). Use grep, glob, "
                  "and file reads for literals, configs, non-code files, and verification.",
                  scope, safe_project, tier);
     } else {
