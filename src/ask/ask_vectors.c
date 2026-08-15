@@ -297,7 +297,39 @@ static int av_init_schema(hyp_ask_vectors_t *v) {
      * the space from model_id through the same function — and saying so. No
      * format bump: what a vector MEANS did not change, only what the index says
      * about itself, exactly the distinction the comment above draws. */
-    return av_add_column_if_absent(v, "ask_index", "space_id", "TEXT NOT NULL DEFAULT ''");
+    rc = av_add_column_if_absent(v, "ask_index", "space_id", "TEXT NOT NULL DEFAULT ''");
+    if (rc != HYP_ASK_VEC_OK) {
+        return rc;
+    }
+    /* THE 3-D VIEW (ask_view.h). Three nullable REALs per row — NULL means "not
+     * projected", which is what every row written before the view existed is,
+     * and what a row becomes the moment its vector is rewritten — plus the
+     * persisted basis. Nullable and defaulted so an older index opens without
+     * a format bump: the view is a picture OF the index, not part of what the
+     * index means, and nothing that scores or ranks reads these columns. */
+    static const char *const view_cols[] = {"view_x", "view_y", "view_z"};
+    for (size_t i = 0; i < sizeof(view_cols) / sizeof(view_cols[0]); i++) {
+        rc = av_add_column_if_absent(v, "ask_vectors", view_cols[i], "REAL");
+        if (rc != HYP_ASK_VEC_OK) {
+            return rc;
+        }
+    }
+    return av_exec(v, "CREATE TABLE IF NOT EXISTS ask_view ("
+                      "  singleton      INTEGER PRIMARY KEY CHECK (singleton = 1),"
+                      "  method         TEXT NOT NULL,"
+                      "  dim            INTEGER NOT NULL,"
+                      "  rows           INTEGER NOT NULL DEFAULT 0,"
+                      "  mean           BLOB NOT NULL,"
+                      "  basis          BLOB NOT NULL,"
+                      "  eigen0         REAL NOT NULL DEFAULT 0,"
+                      "  eigen1         REAL NOT NULL DEFAULT 0,"
+                      "  eigen2         REAL NOT NULL DEFAULT 0,"
+                      "  total_var      REAL NOT NULL DEFAULT 0,"
+                      "  fitted_at      TEXT NOT NULL DEFAULT '',"
+                      "  fitted_against TEXT NOT NULL DEFAULT '',"
+                      "  fit_ms         REAL NOT NULL DEFAULT 0,"
+                      "  iterations     INTEGER NOT NULL DEFAULT 0"
+                      ");");
 }
 
 static int av_configure(hyp_ask_vectors_t *v) {
@@ -378,6 +410,14 @@ const char *hyp_ask_vectors_error(const hyp_ask_vectors_t *v) {
         return "no store";
     }
     return v->errbuf[0] ? v->errbuf : "ok";
+}
+
+void hyp_ask_vectors_set_error(hyp_ask_vectors_t *v, const char *msg) {
+    av_err(v, msg);
+}
+
+struct sqlite3 *hyp_ask_vectors_db(hyp_ask_vectors_t *v) {
+    return v ? v->db : NULL;
 }
 
 int hyp_ask_vectors_drop(const char *project) {
@@ -632,7 +672,13 @@ int hyp_ask_vectors_put(hyp_ask_vectors_t *v, const hyp_ask_vec_row_t *rows, int
                       "   file_path = excluded.file_path, start_line = excluded.start_line,"
                       "   end_line = excluded.end_line, lang = excluded.lang,"
                       "   content_hash = excluded.content_hash,"
-                      "   truncated = excluded.truncated, vector = excluded.vector";
+                      "   truncated = excluded.truncated, vector = excluded.vector,"
+                      /* A rewritten vector has MOVED; its old 3-D coordinates
+                       * (ask_view.h) would be a dot for a vector that is no
+                       * longer there. NULL is "not projected", which a reader
+                       * counts as a gap. The fit at the end of the pass fills
+                       * them back in over the whole table. */
+                      "   view_x = NULL, view_y = NULL, view_z = NULL";
     if (sqlite3_prepare_v2(v->db, sql, -1, &st, NULL) != SQLITE_OK) {
         av_err_sqlite(v, "put prepare");
         (void)av_exec(v, "ROLLBACK;");

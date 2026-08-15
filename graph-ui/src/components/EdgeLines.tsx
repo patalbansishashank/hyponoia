@@ -25,6 +25,9 @@ function getClusterKey(fp?: string): string {
 
 /* Edge type → color (matches the filter panel) */
 const EDGE_TYPE_COLORS: Record<string, string> = {
+  /* Embedding view (useEmbedView.ts): question → ranked neighbour. White,
+   * like the question marker — it is not a graph edge, it is a pointer. */
+  NEAREST: "#f8fafc",
   CALLS: "#1DA27E",
   IMPORTS: "#3b82f6",
   DEFINES: "#a855f7",

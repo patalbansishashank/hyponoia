@@ -315,6 +315,17 @@ void hyp_ask_vectors_close(hyp_ask_vectors_t *v);
 /* Last error text; never NULL. */
 const char *hyp_ask_vectors_error(const hyp_ask_vectors_t *v);
 
+/* Set the error text — for the sibling module in src/ask that keeps its own
+ * tables in this file (ask_view.c). Not a public API. */
+void hyp_ask_vectors_set_error(hyp_ask_vectors_t *v, const char *msg);
+
+/* The underlying connection, for the same sibling. The view module reads
+ * every vector in a fixed order and writes three columns beside them; it does
+ * so through this handle rather than by re-opening the file so the two halves
+ * cannot disagree about which database, which journal mode, or which
+ * transaction they are in. Not for callers outside src/ask. */
+struct sqlite3 *hyp_ask_vectors_db(hyp_ask_vectors_t *v);
+
 /* Delete the vector database for a project, files and all. Call this when a
  * PROJECT is deleted. Do NOT call it when a project is re-indexed — surviving a
  * re-index is the entire point of the separate file. */

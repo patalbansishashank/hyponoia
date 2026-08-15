@@ -8,6 +8,7 @@
 #include "ask/ask_embed.h"
 #include "ask/ask_batch.h"
 #include "ask/ask_vectors.h"
+#include "ask/ask_view.h"
 #include "discover/discover.h"
 #include "foundation/compat.h"
 #include "foundation/compat_fs.h"
@@ -904,6 +905,27 @@ int hyp_ask_embed_run(const hyp_ask_encoder_t *enc, const hyp_ask_embed_opts_t *
         if (hyp_ask_vectors_finish_build(store, truncation_known) != HYP_ASK_VEC_OK) {
             hyp_log_error("ask.embed.finish", "err", hyp_ask_vectors_error(store));
             rc = -1;
+        }
+    }
+    if (rc == 0) {
+        /* The 3-D view, AFTER the seal so it is fitted against the built_at it
+         * records, and over the whole table so nothing keeps a coordinate from
+         * an older basis. Gates nothing: the index is sealed whether or not the
+         * picture of it could be drawn. */
+        hyp_ask_view_t view;
+        int vrc = hyp_ask_view_fit(store, &view);
+        if (vrc == HYP_ASK_VEC_OK) {
+            rep.view_fitted = true;
+            rep.view_fit_ms = view.fit_ms;
+            rep.view_rows = view.rows;
+            rep.view_variance_kept =
+                view.total_var > 0.0
+                    ? (view.eigen[0] + view.eigen[1] + view.eigen[2]) / view.total_var
+                    : 0.0;
+            hyp_ask_view_free(&view);
+        } else if (vrc != HYP_ASK_VEC_NOT_FOUND) {
+            hyp_log_warn("ask.embed.view", "err", hyp_ask_vectors_error(store), "consequence",
+                         "the index is sealed and searchable; only the 3-D view is missing");
         }
     }
     if (rc == 0 && (rep.skipped_whole_file > 0 || rep.whole_file_kept_sole > 0)) {

@@ -216,6 +216,29 @@ char *hyp_mcp_server_handle(hyp_mcp_server_t *srv, const char *line);
 /* Handle a tools/call request. Returns MCP tool result JSON. */
 char *hyp_mcp_handle_tool(hyp_mcp_server_t *srv, const char *tool_name, const char *args_json);
 
+/* ── The 3-D view of the `ask` lane (NEXT-STEPS §3.1 step 5) ───────
+ *
+ * Both return heap JSON (caller frees) or NULL on bad arguments. Neither is an
+ * MCP tool: they are what the graph UI's /api/embed-view routes serve.
+ *
+ * hyp_mcp_ask_view_overlay runs the `ask` TOOL ITSELF on `args_json` (the same
+ * arguments the tool takes: project, question, limit, language, escalate) and
+ * returns its verbatim JSON result under "ask", plus the question and the
+ * ranked rows placed in the project's persisted 3-space — "query" and "hits"
+ * (rank, qualified_name, node_id, label, file, lines, score, x, y, z). The hits
+ * ARE the tool's rows in the tool's order; nothing is re-ranked. "lane" is the
+ * tool's own word (local | escalation-query | escalation-index) and the view
+ * is read from the vector file that lane searched — query mode scores the
+ * provider's question against the LOCAL table, so it is drawn in the local
+ * view. Every answer carries "caveat": the coordinates are a picture, not a
+ * metric.
+ *
+ * hyp_mcp_ask_view_points_json returns the cloud: every projected declaration
+ * of the project ("points": id, qn, label, file, lines, x, y, z), the basis's
+ * provenance under "view", and "unprojected" — rows with no coordinates yet. */
+char *hyp_mcp_ask_view_overlay(hyp_mcp_server_t *srv, const char *args_json);
+char *hyp_mcp_ask_view_points_json(const char *project, bool escalation);
+
 /* ── Supervised background index (RSS isolation, #832) ────────── */
 
 /* One shared policy gate for supervised-index callers. Only an explicitly safe
