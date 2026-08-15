@@ -2,6 +2,7 @@
 #include "test_framework.h"
 
 #include <cli/agent_profiles.h>
+#include <mcp/mcp.h>
 #include <yyjson/yyjson.h>
 
 #include <stdlib.h>
@@ -114,15 +115,18 @@ TEST(agent_profiles_tiers_encode_distinct_evidence_budgets) {
                 strstr(scout, "positive, provisional") && strstr(scout, "all/none claims") &&
                 !strstr(scout, "mcp__hyponoia__query_graph") &&
                 !strstr(scout, "mcp__hyponoia__detect_changes") &&
+                !strstr(scout, "mcp__hyponoia__ask") &&
                 strstr(verify, "default tier") && strstr(verify, "task-directed evidence") &&
                 strstr(verify, "scope coverage before negative claims") &&
                 strstr(verify, "mcp__hyponoia__query_graph") &&
                 strstr(verify, "mcp__hyponoia__detect_changes") &&
+                strstr(verify, "  - mcp__hyponoia__ask\n") &&
                 strstr(audit, "bounded scope") && strstr(audit, "current graph generation") &&
                 strstr(audit, "complete relevant pagination") && strstr(audit, "scope coverage") &&
                 strstr(audit, "source fallback") &&
                 strstr(audit, "mcp__hyponoia__query_graph") &&
-                strstr(audit, "mcp__hyponoia__detect_changes");
+                strstr(audit, "mcp__hyponoia__detect_changes") &&
+                strstr(audit, "  - mcp__hyponoia__ask\n");
     free(scout);
     free(verify);
     free(audit);
@@ -302,8 +306,182 @@ TEST(agent_profiles_render_deterministically_and_reject_invalid_inputs) {
     PASS();
 }
 
+/* The two ends of a restricted profile: what the MCP server advertises under
+ * `--tool-profile`, and what the generated agent definition requests. Both
+ * expand mcp/tool_tiers.h; this holds them to it FROM THE CLIENT'S SIDE — the
+ * server's tools/list response and the rendered profile file — rather than by
+ * reading either end's static list, because `ask` was permitted by one and
+ * never requested by the other while both ends' own tests passed. */
+static hyp_mcp_tool_profile_t server_profile_for_tier(hyp_graph_tier_t tier) {
+    return tier == HYP_GRAPH_TIER_SCOUT ? HYP_MCP_TOOL_PROFILE_SCOUT
+                                        : HYP_MCP_TOOL_PROFILE_ANALYSIS;
+}
+
+/* Names in a tools/list response, joined as "\nname\n" runs so a substring
+ * search cannot match a prefix. Returns malloc-owned text or NULL. */
+static char *tools_list_names(hyp_mcp_tool_profile_t profile, size_t *count_out) {
+    hyp_mcp_server_t *srv = hyp_mcp_server_new(NULL);
+    if (!srv) {
+        return NULL;
+    }
+    hyp_mcp_server_set_tool_profile(srv, profile);
+    char *resp =
+        hyp_mcp_server_handle(srv, "{\"jsonrpc\":\"2.0\",\"id\":7,\"method\":\"tools/list\"}");
+    hyp_mcp_server_free(srv);
+    if (!resp) {
+        return NULL;
+    }
+    yyjson_doc *doc = yyjson_read(resp, strlen(resp), 0);
+    yyjson_val *root = doc ? yyjson_doc_get_root(doc) : NULL;
+    yyjson_val *result = root ? yyjson_obj_get(root, "result") : NULL;
+    yyjson_val *tools = result ? yyjson_obj_get(result, "tools") : NULL;
+    char *names = (char *)calloc(1U, 4096U);
+    size_t used = 0U;
+    size_t count = 0U;
+    if (names && tools && yyjson_is_arr(tools)) {
+        names[used++] = '\n';
+        size_t index = 0U;
+        size_t max = 0U;
+        yyjson_val *tool = NULL;
+        yyjson_arr_foreach(tools, index, max, tool) {
+            yyjson_val *name = yyjson_obj_get(tool, "name");
+            const char *text = name && yyjson_is_str(name) ? yyjson_get_str(name) : NULL;
+            if (!text || used + strlen(text) + 2U >= 4096U) {
+                free(names);
+                names = NULL;
+                break;
+            }
+            used += (size_t)snprintf(names + used, 4096U - used, "%s\n", text);
+            count++;
+        }
+    }
+    yyjson_doc_free(doc);
+    free(resp);
+    if (count_out) {
+        *count_out = count;
+    }
+    return names;
+}
+
+TEST(agent_profiles_tiers_agree_with_the_server_profile_they_run_against) {
+    for (int value = 0; value < (int)HYP_GRAPH_TIER_COUNT; value++) {
+        hyp_graph_tier_t tier = (hyp_graph_tier_t)value;
+        hyp_mcp_tool_profile_t profile = server_profile_for_tier(tier);
+
+        /* Table end: every tool the profile requests, the server allows; every
+         * registered tool the server allows, the profile requests. */
+        size_t requested = 0U;
+        for (const char *name; (name = hyp_graph_tier_tool_name(tier, requested)) != NULL;
+             requested++) {
+            if (!hyp_mcp_tool_profile_allows(profile, name)) {
+                FAIL("a generated profile requests a tool its server profile refuses");
+            }
+        }
+        size_t allowed = 0U;
+        for (int i = 0; i < hyp_mcp_tool_count(); i++) {
+            const char *name = hyp_mcp_tool_name(i);
+            if (!hyp_mcp_tool_profile_allows(profile, name)) {
+                continue;
+            }
+            allowed++;
+            bool found = false;
+            for (size_t j = 0U; !found && hyp_graph_tier_tool_name(tier, j) != NULL; j++) {
+                found = strcmp(hyp_graph_tier_tool_name(tier, j), name) == 0;
+            }
+            if (!found) {
+                FAIL("the server profile offers a tool the generated profile never requests");
+            }
+        }
+        ASSERT_EQ(requested, allowed);
+
+        /* Client end: the names in tools/list against the mcp__hyponoia__ lines
+         * a Claude Code agent file asks for. */
+        size_t listed = 0U;
+        char *names = tools_list_names(profile, &listed);
+        char *rendered =
+            hyp_render_graph_profile(HYP_GRAPH_DIALECT_CLAUDE, tier, HYP_GRAPH_ACCESS_DIRECT, NULL);
+        ASSERT_NOT_NULL(names);
+        ASSERT_NOT_NULL(rendered);
+        ASSERT_EQ(listed, requested);
+        size_t seen = 0U;
+        for (const char *cursor = rendered; (cursor = strstr(cursor, "  - mcp__hyponoia__"));) {
+            cursor += strlen("  - mcp__hyponoia__");
+            const char *end = strchr(cursor, '\n');
+            char needle[128];
+            size_t len = end ? (size_t)(end - cursor) : strlen(cursor);
+            if (len + 3U > sizeof(needle)) {
+                FAIL("tool identifier longer than any registered tool");
+            }
+            snprintf(needle, sizeof(needle), "\n%.*s\n", (int)len, cursor);
+            if (!strstr(names, needle)) {
+                free(names);
+                free(rendered);
+                FAIL("the agent file requests a tool tools/list does not advertise");
+            }
+            seen++;
+        }
+        free(names);
+        free(rendered);
+        ASSERT_EQ(seen, listed);
+    }
+
+    /* And the specific tool this table exists for: analysis, never scout. */
+    ASSERT_TRUE(hyp_mcp_tool_profile_allows(HYP_MCP_TOOL_PROFILE_ANALYSIS, "ask"));
+    ASSERT_FALSE(hyp_mcp_tool_profile_allows(HYP_MCP_TOOL_PROFILE_SCOUT, "ask"));
+    ASSERT_TRUE(hyp_mcp_tool_profile_allows(HYP_MCP_TOOL_PROFILE_ALL, "ask"));
+    ASSERT_FALSE(hyp_mcp_tool_profile_allows(HYP_MCP_TOOL_PROFILE_ANALYSIS, "index_repository"));
+    ASSERT_FALSE(hyp_mcp_tool_profile_allows(HYP_MCP_TOOL_PROFILE_SCOUT, NULL));
+    ASSERT_NULL(hyp_graph_tier_tool_name(HYP_GRAPH_TIER_COUNT, 0U));
+    PASS();
+}
+
+/* An installer only replaces a profile whose bytes it can prove it wrote, so
+ * every generation it ever shipped must still render exactly. Generation 0 is
+ * the eleven-tool set; the current one adds `ask` to analysis. */
+TEST(agent_profiles_earlier_generations_still_render_for_migration) {
+    ASSERT_EQ(hyp_graph_profile_generation(), 1U);
+    for (size_t d = 0U; d < sizeof(direct_dialects) / sizeof(direct_dialects[0]); d++) {
+        hyp_graph_profile_dialect_t dialect = direct_dialects[d].dialect;
+        const char *binary = dialect == HYP_GRAPH_DIALECT_KIRO || dialect == HYP_GRAPH_DIALECT_CODEX
+                                 ? "/opt/hyponoia/hyp"
+                                 : NULL;
+        for (int value = 0; value < (int)HYP_GRAPH_TIER_COUNT; value++) {
+            hyp_graph_tier_t tier = (hyp_graph_tier_t)value;
+            char *current =
+                hyp_render_graph_profile(dialect, tier, HYP_GRAPH_ACCESS_DIRECT, binary);
+            char *latest = hyp_render_graph_profile_generation(dialect, tier,
+                                                               HYP_GRAPH_ACCESS_DIRECT, binary, 1U);
+            char *first = hyp_render_graph_profile_generation(dialect, tier,
+                                                              HYP_GRAPH_ACCESS_DIRECT, binary, 0U);
+            char *future = hyp_render_graph_profile_generation(dialect, tier,
+                                                               HYP_GRAPH_ACCESS_DIRECT, binary, 2U);
+            bool ok = current && latest && first && !future && strcmp(current, latest) == 0;
+            /* Junie names a server, not tools, so its bytes never moved; every
+             * other direct dialect changed on the analysis tiers and only there. */
+            if (ok) {
+                bool moved = dialect != HYP_GRAPH_DIALECT_JUNIE && tier != HYP_GRAPH_TIER_SCOUT;
+                ok = (strcmp(current, first) != 0) == moved;
+            }
+            free(current);
+            free(latest);
+            free(first);
+            free(future);
+            if (!ok) {
+                FAIL("every shipped generation must render, and differ only by ask on analysis");
+            }
+        }
+    }
+    char *rc1 = hyp_render_graph_profile_codex_rc1(HYP_GRAPH_TIER_VERIFY);
+    ASSERT_NOT_NULL(rc1);
+    ASSERT_NULL(strstr(rc1, "\"ask\""));
+    free(rc1);
+    PASS();
+}
+
 SUITE(agent_profiles) {
     RUN_TEST(agent_profiles_stable_tier_identity);
+    RUN_TEST(agent_profiles_tiers_agree_with_the_server_profile_they_run_against);
+    RUN_TEST(agent_profiles_earlier_generations_still_render_for_migration);
     RUN_TEST(agent_profiles_direct_dialects_are_coverage_aware_and_read_only);
     RUN_TEST(agent_profiles_tiers_encode_distinct_evidence_budgets);
     RUN_TEST(agent_profiles_handoff_requires_parent_evidence_without_child_mcp);

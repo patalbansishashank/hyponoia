@@ -46,6 +46,7 @@ enum {
 #define SLEN(s) (sizeof(s) - 1)
 #include "mcp/mcp.h"
 #include "mcp/mcp_internal.h"
+#include "mcp/tool_tiers.h"
 #include "store/store.h"
 #include <sqlite3.h>
 #include "cypher/cypher.h"
@@ -850,44 +851,42 @@ static void mcp_add_tool_def(yyjson_mut_doc *doc, yyjson_mut_val *tools, int i) 
     yyjson_mut_arr_add_val(tools, tool);
 }
 
+/* The restricted profiles' allowlists come from mcp/tool_tiers.h — the same
+ * table agent_profiles.c renders into every generated agent definition. The
+ * two ends used to keep separate lists; see that header for what it cost. */
+typedef struct {
+    const char *name;
+    bool analysis;
+    bool scout;
+} tool_tier_row_t;
+
+static const tool_tier_row_t TOOL_TIERS[] = {
+#define HYP_TOOL_TIER_ROW(name, analysis, scout, generation) {name, (analysis) != 0, (scout) != 0},
+    HYP_TOOL_TIERS(HYP_TOOL_TIER_ROW)
+#undef HYP_TOOL_TIER_ROW
+};
+
 static bool mcp_tool_allowed(hyp_mcp_tool_profile_t profile, const char *name) {
-    /* `ask` joins analysis but NOT scout. Scout's promise is a small surface
-     * whose every tool answers; a lane that can legitimately report
-     * unavailable belongs on the surface where an agent is already expected
-     * to reason about index state. */
-    static const char *const analysis_tools[] = {
-        "search_graph",         "ask",
-        "query_graph",          "trace_path",
-        "get_code_snippet",     "get_graph_schema",
-        "get_architecture",     "search_code",
-        "list_projects",        "index_status",
-        "check_index_coverage", "detect_changes",
-    };
-    static const char *const scout_tools[] = {
-        "search_graph",  "trace_path",   "get_code_snippet",     "get_architecture",
-        "list_projects", "index_status", "check_index_coverage",
-    };
     if (!name) {
         return false;
     }
     if (profile == HYP_MCP_TOOL_PROFILE_ALL) {
         return true;
     }
-    const char *const *allowed = NULL;
-    size_t allowed_count = 0U;
-    if (profile == HYP_MCP_TOOL_PROFILE_ANALYSIS) {
-        allowed = analysis_tools;
-        allowed_count = sizeof(analysis_tools) / sizeof(analysis_tools[0]);
-    } else if (profile == HYP_MCP_TOOL_PROFILE_SCOUT) {
-        allowed = scout_tools;
-        allowed_count = sizeof(scout_tools) / sizeof(scout_tools[0]);
+    if (profile != HYP_MCP_TOOL_PROFILE_ANALYSIS && profile != HYP_MCP_TOOL_PROFILE_SCOUT) {
+        return false;
     }
-    for (size_t i = 0U; i < allowed_count; i++) {
-        if (strcmp(name, allowed[i]) == 0) {
-            return true;
+    for (size_t i = 0U; i < sizeof(TOOL_TIERS) / sizeof(TOOL_TIERS[0]); i++) {
+        if (strcmp(name, TOOL_TIERS[i].name) == 0) {
+            return profile == HYP_MCP_TOOL_PROFILE_ANALYSIS ? TOOL_TIERS[i].analysis
+                                                            : TOOL_TIERS[i].scout;
         }
     }
     return false;
+}
+
+bool hyp_mcp_tool_profile_allows(hyp_mcp_tool_profile_t profile, const char *name) {
+    return mcp_tool_allowed(profile, name);
 }
 
 static const char *mcp_tool_profile_name(hyp_mcp_tool_profile_t profile) {
@@ -1334,7 +1333,10 @@ static const char MCP_ANALYSIS_SERVER_INSTRUCTIONS[] =
     "This is the analysis tool profile; graph and index mutation tools are unavailable. Use "
     "list_projects and index_status to select a current graph project, then use search_graph, "
     "trace_path, get_code_snippet, query_graph, get_architecture, and search_code for read-only "
-    "analysis. Call check_index_coverage for every cited path and for scopes behind negative or "
+    "analysis. Use ask for one natural-language question about where behaviour lives; it "
+    "returns ranked declarations with line ranges, and available:false with a remedy when the "
+    "semantic index has not been built, which is not the same as no matches. "
+    "Call check_index_coverage for every cited path and for scopes behind negative or "
     "exhaustive claims; read flagged ranges or skipped files directly. Coverage is best-effort, "
     "never proof of completeness. Check has_more or nextCursor and paginate when present. If the "
     "project is missing or stale, ask the parent agent to index or refresh it.";

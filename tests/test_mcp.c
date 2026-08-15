@@ -1302,6 +1302,7 @@ TEST(server_handle_analysis_profile_filters_and_rejects_mutators) {
     ASSERT_NOT_NULL(resp);
     ASSERT_NOT_NULL(strstr(resp, "analysis tool profile"));
     ASSERT_NOT_NULL(strstr(resp, "check_index_coverage"));
+    ASSERT_NOT_NULL(strstr(resp, "Use ask for one natural-language question"));
     ASSERT_NULL(strstr(resp, "index_repository"));
     free(resp);
 
@@ -1362,6 +1363,15 @@ TEST(server_handle_scout_profile_exposes_only_the_fast_tier) {
     ASSERT_FALSE(mcp_response_has_exact_tool(resp, "get_graph_schema"));
     ASSERT_FALSE(mcp_response_has_exact_tool(resp, "detect_changes"));
     ASSERT_FALSE(mcp_response_has_exact_tool(resp, "index_repository"));
+    /* `ask` can legitimately answer "unavailable"; scout promises a surface
+     * where every tool answers, so it stays on analysis only. */
+    ASSERT_FALSE(mcp_response_has_exact_tool(resp, "ask"));
+    free(resp);
+
+    resp = hyp_mcp_server_handle(srv, "{\"jsonrpc\":\"2.0\",\"id\":225,\"method\":\"tools/call\","
+                                      "\"params\":{\"name\":\"ask\",\"arguments\":{}}}");
+    ASSERT_NOT_NULL(resp);
+    ASSERT_NOT_NULL(strstr(resp, "not available in the scout tool profile"));
     free(resp);
 
     resp = hyp_mcp_server_handle(srv, "{\"jsonrpc\":\"2.0\",\"id\":224,\"method\":\"tools/call\","

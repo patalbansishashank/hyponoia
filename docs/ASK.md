@@ -92,6 +92,19 @@ them.
 Every answer discloses the model, the language whose prefix was rendered,
 whether any declaration was truncated, and the population searched.
 
+## Which agents can call it
+
+The generated agent profiles (`hyponoia`, `hyponoia-auditor`) and the
+`--tool-profile analysis` server both offer `ask`; `hyponoia-scout` and
+`--tool-profile scout` do not. Scout's promise is a small surface where every
+tool answers, and `ask` can legitimately answer `available: false`, so it lives
+on the tier where an agent is already expected to reason about index state. The
+two ends — what the server permits and what the profiles request — are rendered
+from one table, `src/mcp/tool_tiers.h`, so they cannot drift apart again; until
+they were, v0.3.0 shipped a server that permitted `ask` and profiles that never
+requested it. An unrestricted server (no `--tool-profile`, which is what
+`hyponoia install` registers for Claude Code's main session) always offers it.
+
 ## What it scores
 
 Measured on **CoIR's CosQA** — 500 public queries, 20,604 documents, scored

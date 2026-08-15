@@ -119,6 +119,12 @@ int hyp_mcp_parse_tool_profile_args(int argc, const char *const argv[const],
 /* Restricted servers must not start a second unrestricted HTTP/RPC surface. */
 bool hyp_mcp_tool_profile_allows_http(hyp_mcp_tool_profile_t profile);
 
+/* Whether `name` is advertised and callable under `profile`. ALL admits every
+ * registered tool; ANALYSIS and SCOUT admit exactly the rows mcp/tool_tiers.h
+ * marks for them — the same table the generated agent profiles request their
+ * tools from, so a test can hold both ends to one answer. */
+bool hyp_mcp_tool_profile_allows(hyp_mcp_tool_profile_t profile, const char *name);
+
 /* Optional daemon-owned physical index executor. repo_path is canonical and
  * already authorized against this session; args_json contains that canonical
  * path plus all caller options. The callback returns a complete malloc-owned

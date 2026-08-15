@@ -5838,15 +5838,22 @@ TEST(cli_durable_profiles_follow_current_vendor_paths) {
     const char *const graph_terms[] = {"hyponoia", "search_graph", "trace_path"};
     bool files_ok = install_rc == 0;
 
+    char *profile = NULL;
     snprintf(path, sizeof(path), "%s/.claude/agents/hyponoia.md", tmpdir);
     const char *const claude_terms[] = {"name: hyponoia",
                                         "mcpServers: [hyponoia]",
                                         "mcp__hyponoia__search_graph",
+                                        "  - mcp__hyponoia__ask\n",
                                         "mcp__hyponoia__check_index_coverage",
                                         "permissionMode: plan",
                                         "skills: [hyponoia]",
                                         "search_graph"};
-    files_ok = files_ok && test_file_contains_all(path, claude_terms, 7U);
+    files_ok = files_ok && test_file_contains_all(path, claude_terms, 8U);
+    snprintf(path, sizeof(path), "%s/.claude/agents/hyponoia-scout.md", tmpdir);
+    profile = read_test_file_alloc(path);
+    files_ok = files_ok && profile && !strstr(profile, "mcp__hyponoia__ask") &&
+               strstr(profile, "mcp__hyponoia__search_graph");
+    free(profile);
 
     snprintf(path, sizeof(path), "%s/agents/hyponoia.toml", codex_home);
     const char *const codex_terms[] = {"name = \"hyponoia\"",
@@ -5858,7 +5865,7 @@ TEST(cli_durable_profiles_follow_current_vendor_paths) {
                                        "args = [\"--tool-profile=analysis\"]",
                                        "check_index_coverage"};
     files_ok = files_ok && test_file_contains_all(path, codex_terms, 8U);
-    char *profile = read_test_file_alloc(path);
+    profile = read_test_file_alloc(path);
     files_ok = files_ok && profile && !strstr(profile, "model =") &&
                !strstr(profile, "index_repository") && !strstr(profile, "delete_project") &&
                !strstr(profile, "manage_adr") && !strstr(profile, "ingest_traces");
@@ -5952,7 +5959,7 @@ TEST(cli_durable_profiles_follow_current_vendor_paths) {
     yyjson_val *kiro_profile_name =
         kiro_args && yyjson_is_arr(kiro_args) ? yyjson_arr_get(kiro_args, 1U) : NULL;
     files_ok = files_ok && profile && kiro_root && yyjson_is_obj(kiro_root) && kiro_tools &&
-               yyjson_arr_size(kiro_tools) == 14U && kiro_read && yyjson_is_str(kiro_read) &&
+               yyjson_arr_size(kiro_tools) == 15U && kiro_read && yyjson_is_str(kiro_read) &&
                strcmp(yyjson_get_str(kiro_read), "read") == 0 && include_mcp &&
                yyjson_is_bool(include_mcp) && !yyjson_get_bool(include_mcp) && kiro_server_tool &&
                yyjson_is_str(kiro_server_tool) &&
@@ -6403,6 +6410,115 @@ TEST(cli_tiered_codex_profiles_migrate_preserve_and_uninstall) {
     if (!plan_ok || !installed || !ownership_safe)
         FAIL(
             "tiered Codex profiles must migrate exact legacy Verify bytes and preserve user files");
+    PASS();
+}
+
+/* A profile the installer wrote at an earlier generation (mcp/tool_tiers.h)
+ * is an owned document, not a user edit: install must upgrade it in place and
+ * uninstall must still recognise it. Anything else strands every existing
+ * user on a profile without `ask` while printing "preserved modified profile"
+ * for a file they never touched. A genuinely edited file is still preserved. */
+TEST(cli_tiered_profiles_migrate_earlier_generations) {
+    char tmpdir[256];
+    snprintf(tmpdir, sizeof(tmpdir), "/tmp/cli-tiered-generation-XXXXXX");
+    if (!hyp_mkdtemp(tmpdir))
+        FAIL("hyp_mkdtemp failed");
+
+    const char *const env_names[] = {"HOME", "PATH", "CLAUDE_CONFIG_DIR", "KIRO_HOME",
+                                     "XDG_CONFIG_HOME"};
+    char *saved_env[sizeof(env_names) / sizeof(env_names[0])];
+    for (size_t i = 0U; i < sizeof(env_names) / sizeof(env_names[0]); i++) {
+        saved_env[i] = save_test_env(env_names[i]);
+        hyp_unsetenv(env_names[i]);
+    }
+    hyp_setenv("HOME", tmpdir, 1);
+    hyp_setenv("PATH", tmpdir, 1);
+    char kiro_home[512];
+    snprintf(kiro_home, sizeof(kiro_home), "%s/vendor-kiro", tmpdir);
+    test_mkdirp(kiro_home);
+    hyp_setenv("KIRO_HOME", kiro_home, 1);
+
+    char agents_dir[512];
+    char verify_path[640];
+    char auditor_path[640];
+    char scout_path[640];
+    char kiro_verify_path[640];
+    snprintf(agents_dir, sizeof(agents_dir), "%s/.claude/agents", tmpdir);
+    snprintf(verify_path, sizeof(verify_path), "%s/hyponoia.md", agents_dir);
+    snprintf(auditor_path, sizeof(auditor_path), "%s/hyponoia-auditor.md", agents_dir);
+    snprintf(scout_path, sizeof(scout_path), "%s/hyponoia-scout.md", agents_dir);
+    snprintf(kiro_verify_path, sizeof(kiro_verify_path), "%s/agents/hyponoia.json", kiro_home);
+    test_mkdirp(agents_dir);
+    snprintf(kiro_verify_path, sizeof(kiro_verify_path), "%s/agents", kiro_home);
+    test_mkdirp(kiro_verify_path);
+    snprintf(kiro_verify_path, sizeof(kiro_verify_path), "%s/agents/hyponoia.json", kiro_home);
+
+    char installed_binary[640];
+    snprintf(installed_binary, sizeof(installed_binary), "%s/.local/bin/hyponoia", tmpdir);
+
+    char *gen0_verify = hyp_render_graph_profile_generation(
+        HYP_GRAPH_DIALECT_CLAUDE, HYP_GRAPH_TIER_VERIFY, HYP_GRAPH_ACCESS_DIRECT, NULL, 0U);
+    char *gen0_scout = hyp_render_graph_profile_generation(
+        HYP_GRAPH_DIALECT_CLAUDE, HYP_GRAPH_TIER_SCOUT, HYP_GRAPH_ACCESS_DIRECT, NULL, 0U);
+    char *gen0_kiro =
+        hyp_render_graph_profile_generation(HYP_GRAPH_DIALECT_KIRO, HYP_GRAPH_TIER_VERIFY,
+                                            HYP_GRAPH_ACCESS_DIRECT, installed_binary, 0U);
+    if (!gen0_verify || !gen0_scout || !gen0_kiro)
+        FAIL("generation-0 renderings must be available");
+    bool seeded_without_ask =
+        !strstr(gen0_verify, "mcp__hyponoia__ask") && !strstr(gen0_kiro, "@hyponoia/ask");
+    write_test_file(verify_path, gen0_verify);
+    write_test_file(scout_path, gen0_scout);
+    write_test_file(kiro_verify_path, gen0_kiro);
+    const char *edited_auditor = "---\nname: hyponoia-auditor\n---\nUser-owned auditor.\n";
+    write_test_file(auditor_path, edited_auditor);
+    free(gen0_kiro);
+
+    int install_rc = hyp_install_agent_configs(tmpdir, installed_binary, false, false);
+    char *verify = read_test_file_alloc(verify_path);
+    char *scout = read_test_file_alloc(scout_path);
+    char *auditor = read_test_file_alloc(auditor_path);
+    char *kiro = read_test_file_alloc(kiro_verify_path);
+    char *current_verify = hyp_render_graph_profile(HYP_GRAPH_DIALECT_CLAUDE, HYP_GRAPH_TIER_VERIFY,
+                                                    HYP_GRAPH_ACCESS_DIRECT, NULL);
+    bool upgraded = verify && current_verify && strcmp(verify, current_verify) == 0 &&
+                    strcmp(verify, gen0_verify) != 0 &&
+                    strstr(verify, "  - mcp__hyponoia__ask\n") && scout &&
+                    strcmp(scout, gen0_scout) == 0 && !strstr(scout, "mcp__hyponoia__ask") &&
+                    kiro && strstr(kiro, "\"@hyponoia/ask\"");
+    bool edited_preserved = auditor && strcmp(auditor, edited_auditor) == 0;
+    free(verify);
+    free(scout);
+    free(auditor);
+    free(kiro);
+    free(current_verify);
+
+    /* Downgrade the file to generation 0 again: uninstall must remove it as
+     * an owned document, not preserve it as a user file. */
+    write_test_file(verify_path, gen0_verify);
+    char *argv[] = {"uninstall", "--yes"};
+    int uninstall_rc = cli_test_cmd_uninstall(2, argv);
+    struct stat state;
+    bool removed = stat(verify_path, &state) != 0 && stat(scout_path, &state) != 0;
+    auditor = read_test_file_alloc(auditor_path);
+    bool edited_survives_uninstall = auditor && strcmp(auditor, edited_auditor) == 0;
+    free(auditor);
+    free(gen0_verify);
+    free(gen0_scout);
+
+    for (size_t i = 0U; i < sizeof(env_names) / sizeof(env_names[0]); i++) {
+        restore_test_env(env_names[i], saved_env[i]);
+    }
+    test_rmdir_r(tmpdir);
+    if (!seeded_without_ask || !upgraded || !edited_preserved || uninstall_rc != 0 || !removed ||
+        !edited_survives_uninstall) {
+        fprintf(stderr,
+                "generation migrate diag install_rc=%d seeded=%d upgraded=%d edited=%d "
+                "uninstall_rc=%d removed=%d survives=%d\n",
+                install_rc, seeded_without_ask, upgraded, edited_preserved, uninstall_rc, removed,
+                edited_survives_uninstall);
+        FAIL("earlier-generation profiles must upgrade on install and be removable on uninstall");
+    }
     PASS();
 }
 
@@ -13626,6 +13742,7 @@ SUITE(cli) {
     RUN_TEST(cli_warp_installs_shared_skill_without_mcp_or_permissions);
     RUN_TEST(cli_owned_durable_profiles_preserve_user_files);
     RUN_TEST(cli_tiered_codex_profiles_migrate_preserve_and_uninstall);
+    RUN_TEST(cli_tiered_profiles_migrate_earlier_generations);
     RUN_TEST(cli_tiered_vibe_installs_matching_agent_prompt_sets);
     RUN_TEST(cli_junie_current_durable_context_contract);
     RUN_TEST(cli_rovo_installs_documented_global_memory);

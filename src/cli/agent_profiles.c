@@ -1,13 +1,15 @@
 /*
  * agent_profiles.c — Canonical Scout/Verify/Audit profile renderer.
  *
- * Tier behavior and abstract read-only tool sets live here once. Dialect
- * renderers translate them to documented client syntax without granting any
+ * Tier behavior lives here once; the read-only tool set each tier requests is
+ * mcp/tool_tiers.h, shared with the MCP server that enforces it. Dialect
+ * renderers translate both to documented client syntax without granting any
  * graph mutation capability.
  */
 #include "cli/agent_profiles.h"
 
 #include "cli/config_toml_edit.h"
+#include "mcp/tool_tiers.h"
 #include "yyjson/yyjson.h"
 
 #include <stdbool.h>
@@ -23,39 +25,40 @@ typedef struct {
     bool failed;
 } profile_buffer_t;
 
-typedef enum {
-    PROFILE_TOOL_SEARCH_GRAPH = 0,
-    PROFILE_TOOL_TRACE_PATH,
-    PROFILE_TOOL_GET_CODE_SNIPPET,
-    PROFILE_TOOL_QUERY_GRAPH,
-    PROFILE_TOOL_GET_ARCHITECTURE,
-    PROFILE_TOOL_SEARCH_CODE,
-    PROFILE_TOOL_GET_GRAPH_SCHEMA,
-    PROFILE_TOOL_LIST_PROJECTS,
-    PROFILE_TOOL_INDEX_STATUS,
-    PROFILE_TOOL_DETECT_CHANGES,
-    PROFILE_TOOL_CHECK_INDEX_COVERAGE,
-    PROFILE_TOOL_COUNT
+/* The tool set each tier requests is mcp/tool_tiers.h — the table the MCP
+ * server enforces for `--tool-profile analysis|scout`. Rendering from the same
+ * rows the server allows is what keeps a profile from asking for a tool the
+ * server refuses, or (as `ask` was) never asking for one it offers. */
+typedef struct {
+    const char *name;
+    bool analysis;
+    bool scout;
+    unsigned generation;
 } profile_tool_t;
 
-static const profile_tool_t scout_tools[] = {
-    PROFILE_TOOL_SEARCH_GRAPH,         PROFILE_TOOL_TRACE_PATH,    PROFILE_TOOL_GET_CODE_SNIPPET,
-    PROFILE_TOOL_GET_ARCHITECTURE,     PROFILE_TOOL_LIST_PROJECTS, PROFILE_TOOL_INDEX_STATUS,
-    PROFILE_TOOL_CHECK_INDEX_COVERAGE,
+static const profile_tool_t profile_tools[] = {
+#define HYP_TOOL_TIER_ROW(name, analysis, scout, generation) \
+    {name, (analysis) != 0, (scout) != 0, generation},
+    HYP_TOOL_TIERS(HYP_TOOL_TIER_ROW)
+#undef HYP_TOOL_TIER_ROW
 };
 
-static const profile_tool_t verified_tools[] = {
-    PROFILE_TOOL_SEARCH_GRAPH,     PROFILE_TOOL_TRACE_PATH,           PROFILE_TOOL_GET_CODE_SNIPPET,
-    PROFILE_TOOL_QUERY_GRAPH,      PROFILE_TOOL_GET_ARCHITECTURE,     PROFILE_TOOL_SEARCH_CODE,
-    PROFILE_TOOL_GET_GRAPH_SCHEMA, PROFILE_TOOL_LIST_PROJECTS,        PROFILE_TOOL_INDEX_STATUS,
-    PROFILE_TOOL_DETECT_CHANGES,   PROFILE_TOOL_CHECK_INDEX_COVERAGE,
-};
+#define PROFILE_TOOL_COUNT (sizeof(profile_tools) / sizeof(profile_tools[0]))
 
-static const char *const tool_base_names[PROFILE_TOOL_COUNT] = {
-    "search_graph",     "trace_path",     "get_code_snippet",     "query_graph",
-    "get_architecture", "search_code",    "get_graph_schema",     "list_projects",
-    "index_status",     "detect_changes", "check_index_coverage",
-};
+/* Scout is the small surface; every other tier requests the analysis set. A
+ * row newer than `generation` is left out so an earlier generation's profile
+ * still renders byte-for-byte for the installer to recognise. */
+static bool tier_includes_tool(hyp_graph_tier_t tier, const profile_tool_t *tool,
+                               unsigned generation) {
+    if (tool->generation > generation) {
+        return false;
+    }
+    return tier == HYP_GRAPH_TIER_SCOUT ? tool->scout : tool->analysis;
+}
+
+unsigned hyp_graph_profile_generation(void) {
+    return HYP_TOOL_TIER_GENERATION;
+}
 
 static bool tier_valid(hyp_graph_tier_t tier) {
     return tier >= HYP_GRAPH_TIER_SCOUT && tier < HYP_GRAPH_TIER_COUNT;
@@ -277,14 +280,21 @@ char *hyp_render_graph_prompt(hyp_graph_tier_t tier, hyp_graph_access_t access) 
     return profile_buffer_finish(&buffer);
 }
 
-static void tier_tool_set(hyp_graph_tier_t tier, const profile_tool_t **tools, size_t *count) {
-    if (tier == HYP_GRAPH_TIER_SCOUT) {
-        *tools = scout_tools;
-        *count = sizeof(scout_tools) / sizeof(scout_tools[0]);
-    } else {
-        *tools = verified_tools;
-        *count = sizeof(verified_tools) / sizeof(verified_tools[0]);
+const char *hyp_graph_tier_tool_name(hyp_graph_tier_t tier, size_t index) {
+    if (!tier_valid(tier)) {
+        return NULL;
     }
+    size_t seen = 0U;
+    for (size_t i = 0U; i < PROFILE_TOOL_COUNT; i++) {
+        if (!tier_includes_tool(tier, &profile_tools[i], HYP_TOOL_TIER_GENERATION)) {
+            continue;
+        }
+        if (seen == index) {
+            return profile_tools[i].name;
+        }
+        seen++;
+    }
+    return NULL;
 }
 
 static const char *tier_server_profile(hyp_graph_tier_t tier) {
@@ -316,25 +326,24 @@ static const char *dialect_tool_prefix(hyp_graph_profile_dialect_t dialect) {
     }
 }
 
-static bool tool_identifier(hyp_graph_profile_dialect_t dialect, profile_tool_t tool, char *output,
-                            size_t output_size) {
+static bool tool_identifier(hyp_graph_profile_dialect_t dialect, const profile_tool_t *tool,
+                            char *output, size_t output_size) {
     const char *prefix = dialect_tool_prefix(dialect);
-    if (!prefix || tool < PROFILE_TOOL_SEARCH_GRAPH || tool >= PROFILE_TOOL_COUNT || !output ||
-        output_size == 0U) {
+    if (!prefix || !tool || !output || output_size == 0U) {
         return false;
     }
-    int written = snprintf(output, output_size, "%s%s", prefix, tool_base_names[tool]);
+    int written = snprintf(output, output_size, "%s%s", prefix, tool->name);
     return written >= 0 && (size_t)written < output_size;
 }
 
 static bool append_yaml_mcp_tools(profile_buffer_t *buffer, hyp_graph_profile_dialect_t dialect,
-                                  hyp_graph_tier_t tier) {
-    const profile_tool_t *tools = NULL;
-    size_t count = 0U;
-    tier_tool_set(tier, &tools, &count);
-    for (size_t i = 0U; i < count; i++) {
+                                  hyp_graph_tier_t tier, unsigned generation) {
+    for (size_t i = 0U; i < PROFILE_TOOL_COUNT; i++) {
+        if (!tier_includes_tool(tier, &profile_tools[i], generation)) {
+            continue;
+        }
         char identifier[160];
-        if (!tool_identifier(dialect, tools[i], identifier, sizeof(identifier)) ||
+        if (!tool_identifier(dialect, &profile_tools[i], identifier, sizeof(identifier)) ||
             !profile_buffer_append(buffer, "  - ") || !profile_buffer_append(buffer, identifier) ||
             !profile_buffer_append(buffer, "\n")) {
             return false;
@@ -344,47 +353,51 @@ static bool append_yaml_mcp_tools(profile_buffer_t *buffer, hyp_graph_profile_di
 }
 
 static bool append_csv_mcp_tools(profile_buffer_t *buffer, hyp_graph_profile_dialect_t dialect,
-                                 hyp_graph_tier_t tier) {
-    const profile_tool_t *tools = NULL;
-    size_t count = 0U;
-    tier_tool_set(tier, &tools, &count);
-    for (size_t i = 0U; i < count; i++) {
+                                 hyp_graph_tier_t tier, unsigned generation) {
+    size_t written = 0U;
+    for (size_t i = 0U; i < PROFILE_TOOL_COUNT; i++) {
+        if (!tier_includes_tool(tier, &profile_tools[i], generation)) {
+            continue;
+        }
         char identifier[160];
-        if (!tool_identifier(dialect, tools[i], identifier, sizeof(identifier)) ||
-            (i > 0U && !profile_buffer_append(buffer, ",")) ||
+        if (!tool_identifier(dialect, &profile_tools[i], identifier, sizeof(identifier)) ||
+            (written > 0U && !profile_buffer_append(buffer, ",")) ||
             !profile_buffer_append(buffer, identifier)) {
             return false;
         }
+        written++;
     }
     return true;
 }
 
 static bool append_toml_mcp_tools(profile_buffer_t *buffer, hyp_graph_profile_dialect_t dialect,
-                                  hyp_graph_tier_t tier, bool leading_items) {
-    const profile_tool_t *tools = NULL;
-    size_t count = 0U;
-    tier_tool_set(tier, &tools, &count);
-    for (size_t i = 0U; i < count; i++) {
+                                  hyp_graph_tier_t tier, unsigned generation, bool leading_items) {
+    size_t written = 0U;
+    for (size_t i = 0U; i < PROFILE_TOOL_COUNT; i++) {
+        if (!tier_includes_tool(tier, &profile_tools[i], generation)) {
+            continue;
+        }
         char identifier[160];
-        if (!tool_identifier(dialect, tools[i], identifier, sizeof(identifier)) ||
-            ((leading_items || i > 0U) && !profile_buffer_append(buffer, ", ")) ||
+        if (!tool_identifier(dialect, &profile_tools[i], identifier, sizeof(identifier)) ||
+            ((leading_items || written > 0U) && !profile_buffer_append(buffer, ", ")) ||
             !profile_buffer_append(buffer, "\"") || !profile_buffer_append(buffer, identifier) ||
             !profile_buffer_append(buffer, "\"")) {
             return false;
         }
+        written++;
     }
     return true;
 }
 
 static bool append_permission_mcp_tools(profile_buffer_t *buffer,
-                                        hyp_graph_profile_dialect_t dialect,
-                                        hyp_graph_tier_t tier) {
-    const profile_tool_t *tools = NULL;
-    size_t count = 0U;
-    tier_tool_set(tier, &tools, &count);
-    for (size_t i = 0U; i < count; i++) {
+                                        hyp_graph_profile_dialect_t dialect, hyp_graph_tier_t tier,
+                                        unsigned generation) {
+    for (size_t i = 0U; i < PROFILE_TOOL_COUNT; i++) {
+        if (!tier_includes_tool(tier, &profile_tools[i], generation)) {
+            continue;
+        }
         char identifier[160];
-        if (!tool_identifier(dialect, tools[i], identifier, sizeof(identifier)) ||
+        if (!tool_identifier(dialect, &profile_tools[i], identifier, sizeof(identifier)) ||
             !profile_buffer_append(buffer, "  \"") || !profile_buffer_append(buffer, identifier) ||
             !profile_buffer_append(buffer, "\": allow\n")) {
             return false;
@@ -401,7 +414,7 @@ static bool append_yaml_identity(profile_buffer_t *buffer, const char *slug,
 }
 
 static char *render_kiro_profile(hyp_graph_tier_t tier, hyp_graph_access_t access,
-                                 const char *binary_path, const char *prompt) {
+                                 const char *binary_path, const char *prompt, unsigned generation) {
     if (access == HYP_GRAPH_ACCESS_DIRECT && (!binary_path || !binary_path[0])) {
         return NULL;
     }
@@ -423,12 +436,12 @@ static char *render_kiro_profile(hyp_graph_tier_t tier, hyp_graph_access_t acces
         yyjson_mut_arr_add_str(doc, tools, "read") && yyjson_mut_arr_add_str(doc, tools, "grep") &&
         yyjson_mut_arr_add_str(doc, tools, "glob");
     if (ok && access == HYP_GRAPH_ACCESS_DIRECT) {
-        const profile_tool_t *tier_tools = NULL;
-        size_t count = 0U;
-        tier_tool_set(tier, &tier_tools, &count);
-        for (size_t i = 0U; ok && i < count; i++) {
+        for (size_t i = 0U; ok && i < PROFILE_TOOL_COUNT; i++) {
+            if (!tier_includes_tool(tier, &profile_tools[i], generation)) {
+                continue;
+            }
             char identifier[160];
-            ok = tool_identifier(HYP_GRAPH_DIALECT_KIRO, tier_tools[i], identifier,
+            ok = tool_identifier(HYP_GRAPH_DIALECT_KIRO, &profile_tools[i], identifier,
                                  sizeof(identifier)) &&
                  yyjson_mut_arr_add_strcpy(doc, tools, identifier);
         }
@@ -458,7 +471,7 @@ static char *render_kiro_profile(hyp_graph_tier_t tier, hyp_graph_access_t acces
  * v0.9.1-rc.1 rendering so installs can migrate those files. */
 static bool append_codex_profile(profile_buffer_t *buffer, hyp_graph_tier_t tier,
                                  hyp_graph_access_t access, const char *binary_path,
-                                 const char *prompt, bool rc1_transportless) {
+                                 const char *prompt, unsigned generation, bool rc1_transportless) {
     if (!profile_buffer_append(buffer, "name = \"") ||
         !profile_buffer_append(buffer, hyp_graph_tier_slug(tier)) ||
         !profile_buffer_append(buffer, "\"\ndescription = \"") ||
@@ -490,13 +503,13 @@ static bool append_codex_profile(profile_buffer_t *buffer, hyp_graph_tier_t tier
         }
     }
     return profile_buffer_append(buffer, "enabled_tools = [") &&
-           append_toml_mcp_tools(buffer, HYP_GRAPH_DIALECT_CODEX, tier, false) &&
+           append_toml_mcp_tools(buffer, HYP_GRAPH_DIALECT_CODEX, tier, generation, false) &&
            profile_buffer_append(buffer, "]\n");
 }
 
 static bool render_profile_text(profile_buffer_t *buffer, hyp_graph_profile_dialect_t dialect,
                                 hyp_graph_tier_t tier, hyp_graph_access_t access,
-                                const char *binary_path, const char *prompt) {
+                                const char *binary_path, const char *prompt, unsigned generation) {
     const char *slug = hyp_graph_tier_slug(tier);
     const char *display = hyp_graph_tier_display_name(tier);
     const char *description = profile_description(tier, access);
@@ -505,7 +518,7 @@ static bool render_profile_text(profile_buffer_t *buffer, hyp_graph_profile_dial
     case HYP_GRAPH_DIALECT_CLAUDE:
         if (!append_yaml_identity(buffer, slug, description) ||
             !profile_buffer_append(buffer, "tools:\n  - Read\n  - Grep\n  - Glob\n") ||
-            (direct && !append_yaml_mcp_tools(buffer, dialect, tier)) ||
+            (direct && !append_yaml_mcp_tools(buffer, dialect, tier, generation)) ||
             (direct && !profile_buffer_append(buffer, "mcpServers: [hyponoia]\n")) ||
             !profile_buffer_append(buffer, "permissionMode: plan\nskills: [hyponoia]\n---\n") ||
             !profile_buffer_append(buffer, prompt)) {
@@ -513,12 +526,12 @@ static bool render_profile_text(profile_buffer_t *buffer, hyp_graph_profile_dial
         }
         return true;
     case HYP_GRAPH_DIALECT_CODEX:
-        return append_codex_profile(buffer, tier, access, binary_path, prompt, false);
+        return append_codex_profile(buffer, tier, access, binary_path, prompt, generation, false);
     case HYP_GRAPH_DIALECT_GEMINI:
         if (!append_yaml_identity(buffer, slug, description) ||
             !profile_buffer_append(buffer,
                                    "kind: local\ntools:\n  - read_file\n  - grep_search\n") ||
-            (direct && !append_yaml_mcp_tools(buffer, dialect, tier)) ||
+            (direct && !append_yaml_mcp_tools(buffer, dialect, tier, generation)) ||
             !profile_buffer_append(buffer, "---\n") || !profile_buffer_append(buffer, prompt)) {
             return false;
         }
@@ -528,7 +541,7 @@ static bool render_profile_text(profile_buffer_t *buffer, hyp_graph_profile_dial
             !profile_buffer_append(buffer,
                                    "model: inherit\napprovalMode: plan\ntools:\n  - read_file\n  - "
                                    "grep_search\n  - glob\n  - list_directory\n") ||
-            (direct && !append_yaml_mcp_tools(buffer, dialect, tier)) ||
+            (direct && !append_yaml_mcp_tools(buffer, dialect, tier, generation)) ||
             !profile_buffer_append(buffer, "---\n") || !profile_buffer_append(buffer, prompt)) {
             return false;
         }
@@ -536,7 +549,7 @@ static bool render_profile_text(profile_buffer_t *buffer, hyp_graph_profile_dial
     case HYP_GRAPH_DIALECT_COPILOT:
         if (!append_yaml_identity(buffer, slug, description) ||
             !profile_buffer_append(buffer, "tools:\n  - read\n  - search\n") ||
-            (direct && !append_yaml_mcp_tools(buffer, dialect, tier)) ||
+            (direct && !append_yaml_mcp_tools(buffer, dialect, tier, generation)) ||
             !profile_buffer_append(buffer, "---\n") || !profile_buffer_append(buffer, prompt)) {
             return false;
         }
@@ -548,7 +561,7 @@ static bool render_profile_text(profile_buffer_t *buffer, hyp_graph_profile_dial
             !profile_buffer_append(
                 buffer, "\nmode: subagent\npermission:\n  \"*\": deny\n  read: allow\n  grep: "
                         "allow\n  glob: allow\n") ||
-            (direct && !append_permission_mcp_tools(buffer, dialect, tier)) ||
+            (direct && !append_permission_mcp_tools(buffer, dialect, tier, generation)) ||
             !profile_buffer_append(buffer, "---\n") || !profile_buffer_append(buffer, prompt)) {
             return false;
         }
@@ -576,7 +589,7 @@ static bool render_profile_text(profile_buffer_t *buffer, hyp_graph_profile_dial
         if (!append_yaml_identity(buffer, slug, description) ||
             !profile_buffer_append(buffer, "tools: Read,Grep,Glob") ||
             (direct && (!profile_buffer_append(buffer, ",") ||
-                        !append_csv_mcp_tools(buffer, dialect, tier))) ||
+                        !append_csv_mcp_tools(buffer, dialect, tier, generation))) ||
             !profile_buffer_append(buffer, "\n") ||
             (direct && !profile_buffer_append(buffer, "mcpServers:\n  - hyponoia\n")) ||
             !profile_buffer_append(buffer, "---\n") || !profile_buffer_append(buffer, prompt)) {
@@ -587,7 +600,7 @@ static bool render_profile_text(profile_buffer_t *buffer, hyp_graph_profile_dial
         if (!append_yaml_identity(buffer, slug, description) ||
             !profile_buffer_append(buffer, "tools: Read,Grep,Glob") ||
             (direct && (!profile_buffer_append(buffer, ",") ||
-                        !append_csv_mcp_tools(buffer, dialect, tier))) ||
+                        !append_csv_mcp_tools(buffer, dialect, tier, generation))) ||
             !profile_buffer_append(
                 buffer, "\nmodel: inherit\npermissionMode: plan\nskills: hyponoia\n---\n") ||
             !profile_buffer_append(buffer, prompt)) {
@@ -598,7 +611,7 @@ static bool render_profile_text(profile_buffer_t *buffer, hyp_graph_profile_dial
         if (!append_yaml_identity(buffer, slug, description) ||
             !profile_buffer_append(
                 buffer, "model: inherit\ntools: [\"Read\", \"LS\", \"Grep\", \"Glob\"") ||
-            (direct && !append_toml_mcp_tools(buffer, dialect, tier, true)) ||
+            (direct && !append_toml_mcp_tools(buffer, dialect, tier, generation, true)) ||
             !profile_buffer_append(buffer, "]\n") || !profile_buffer_append(buffer, "---\n") ||
             !profile_buffer_append(buffer, prompt)) {
             return false;
@@ -612,7 +625,7 @@ static bool render_profile_text(profile_buffer_t *buffer, hyp_graph_profile_dial
             !profile_buffer_append(buffer, "\"\nsafety = \"safe\"\nsystem_prompt_id = \"") ||
             !profile_buffer_append(buffer, slug) ||
             !profile_buffer_append(buffer, "\"\nenabled_tools = [\"read_file\", \"grep_search\"") ||
-            (direct && !append_toml_mcp_tools(buffer, dialect, tier, true)) ||
+            (direct && !append_toml_mcp_tools(buffer, dialect, tier, generation, true)) ||
             !profile_buffer_append(buffer, "]\n")) {
             return false;
         }
@@ -638,9 +651,11 @@ static bool render_profile_text(profile_buffer_t *buffer, hyp_graph_profile_dial
     }
 }
 
-char *hyp_render_graph_profile(hyp_graph_profile_dialect_t dialect, hyp_graph_tier_t tier,
-                               hyp_graph_access_t access, const char *binary_path) {
+char *hyp_render_graph_profile_generation(hyp_graph_profile_dialect_t dialect,
+                                          hyp_graph_tier_t tier, hyp_graph_access_t access,
+                                          const char *binary_path, unsigned generation) {
     if (!dialect_valid(dialect) || !tier_valid(tier) || !access_valid(access) ||
+        generation > HYP_TOOL_TIER_GENERATION ||
         (access == HYP_GRAPH_ACCESS_DIRECT && !hyp_graph_dialect_direct_capable(dialect))) {
         return NULL;
     }
@@ -649,13 +664,13 @@ char *hyp_render_graph_profile(hyp_graph_profile_dialect_t dialect, hyp_graph_ti
         return NULL;
     }
     if (dialect == HYP_GRAPH_DIALECT_KIRO) {
-        char *result = render_kiro_profile(tier, access, binary_path, prompt);
+        char *result = render_kiro_profile(tier, access, binary_path, prompt, generation);
         free(prompt);
         return result;
     }
     profile_buffer_t buffer;
     profile_buffer_init(&buffer);
-    bool ok = render_profile_text(&buffer, dialect, tier, access, binary_path, prompt);
+    bool ok = render_profile_text(&buffer, dialect, tier, access, binary_path, prompt, generation);
     free(prompt);
     if (!ok) {
         profile_buffer_discard(&buffer);
@@ -664,6 +679,15 @@ char *hyp_render_graph_profile(hyp_graph_profile_dialect_t dialect, hyp_graph_ti
     return profile_buffer_finish(&buffer);
 }
 
+char *hyp_render_graph_profile(hyp_graph_profile_dialect_t dialect, hyp_graph_tier_t tier,
+                               hyp_graph_access_t access, const char *binary_path) {
+    return hyp_render_graph_profile_generation(dialect, tier, access, binary_path,
+                                               HYP_TOOL_TIER_GENERATION);
+}
+
+/* v0.9.1-rc.1 predates every generation after 0, so its enabled_tools are the
+ * generation-0 set; rendering it with a newer set would stop matching the
+ * files it exists to recognise. */
 char *hyp_render_graph_profile_codex_rc1(hyp_graph_tier_t tier) {
     if (!tier_valid(tier)) {
         return NULL;
@@ -674,7 +698,7 @@ char *hyp_render_graph_profile_codex_rc1(hyp_graph_tier_t tier) {
     }
     profile_buffer_t buffer;
     profile_buffer_init(&buffer);
-    bool ok = append_codex_profile(&buffer, tier, HYP_GRAPH_ACCESS_DIRECT, NULL, prompt, true);
+    bool ok = append_codex_profile(&buffer, tier, HYP_GRAPH_ACCESS_DIRECT, NULL, prompt, 0U, true);
     free(prompt);
     if (!ok) {
         profile_buffer_discard(&buffer);

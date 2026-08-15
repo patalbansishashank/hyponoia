@@ -57,6 +57,59 @@ for f in $(grep -rlE '[0-9]+ MCP tools' --include='*.md' --include='*.txt' --inc
   done
 done
 
+# ── The restricted profiles' tool counts ──────────────────────────
+# `--tool-profile scout|analysis` advertise subsets rendered from one table
+# (src/mcp/tool_tiers.h). AGENTS.md and llms.txt state the two sizes and that
+# `ask` sits on analysis only; ask the binary rather than trust the prose.
+profile_tools() {
+  printf '%s\n' \
+    '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"docs-check","version":"1"}}}' \
+    '{"jsonrpc":"2.0","method":"notifications/initialized"}' \
+    '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' \
+    | HYP_LOG_LEVEL=error "$BIN" "--tool-profile=$1" 2>/dev/null \
+    | python3 -c '
+import sys, json
+for line in sys.stdin:
+    try: d = json.loads(line)
+    except ValueError: continue
+    if d.get("id") == 2:
+        print(" ".join(t["name"] for t in d["result"]["tools"])); break
+'
+}
+SCOUT_TOOLS=$(profile_tools scout)
+ANALYSIS_TOOLS=$(profile_tools analysis)
+SCOUT_N=$(printf '%s' "$SCOUT_TOOLS" | wc -w | tr -d ' ')
+ANALYSIS_N=$(printf '%s' "$ANALYSIS_TOOLS" | wc -w | tr -d ' ')
+if [ "$SCOUT_N" -eq 0 ] || [ "$ANALYSIS_N" -eq 0 ]; then
+  echo "check-docs-claims: could not read the restricted profiles' tools/list" >&2
+  exit 2
+fi
+echo "binary reports scout=$SCOUT_N analysis=$ANALYSIS_N profile tools"
+case " $ANALYSIS_TOOLS " in *" ask "*) ;; *)
+  note "MISMATCH the analysis profile does not advertise ask (docs say it does)"; fail=1 ;;
+esac
+case " $SCOUT_TOOLS " in *" ask "*)
+  note "MISMATCH the scout profile advertises ask (docs say it does not)"; fail=1 ;;
+esac
+for n in $(grep -oE 'Scout exposes [0-9]+' "$ROOT/docs/AGENTS.md" | grep -oE '[0-9]+$' | sort -u); do
+  if [ "$n" != "$SCOUT_N" ]; then
+    note "MISMATCH docs/AGENTS.md says 'Scout exposes $n' — binary has $SCOUT_N"
+    fail=1
+  fi
+done
+for n in $(grep -oE 'Analysis exposes [0-9]+' "$ROOT/docs/AGENTS.md" | grep -oE '[0-9]+$' | sort -u); do
+  if [ "$n" != "$ANALYSIS_N" ]; then
+    note "MISMATCH docs/AGENTS.md says 'Analysis exposes $n' — binary has $ANALYSIS_N"
+    fail=1
+  fi
+done
+for pair in $(grep -oE '\([0-9]+/[0-9]+ tools' "$ROOT/docs/llms.txt" | grep -oE '[0-9]+/[0-9]+' | sort -u); do
+  if [ "$pair" != "$SCOUT_N/$ANALYSIS_N" ]; then
+    note "MISMATCH docs/llms.txt says '($pair tools' — binary has $SCOUT_N/$ANALYSIS_N"
+    fail=1
+  fi
+done
+
 # ── The language count ────────────────────────────────────────────
 GRAMMARS=$(ls -1 "$ROOT/internal/hyp/vendored/grammars" 2>/dev/null | wc -l | tr -d ' ')
 for f in $(grep -rlE '[0-9]{3} languages' --include='*.md' --include='*.txt' --include='*.html' \
