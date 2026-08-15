@@ -161,8 +161,17 @@ static void ask_report_device_plan(hyp_ask_device_pref_t pref) {
     if (pref != HYP_ASK_DEVICE_CPU) {
         double total = 0.0;
         double used = 0.0;
-        if (!hyp_ask_device_vram_mib(&total, &used)) {
-            printf("  GPU: no device exposes its VRAM to this process, so a ceiling cannot be\n"
+        char gpu_name[128];
+        /* SAME QUESTION, SAME ORDER as hyp_ask_llama_encoder_create: the
+         * backend first, sysfs second. This report used to ask ONLY the AMD
+         * sysfs reader, so on an Intel or NVIDIA card it printed "no device
+         * exposes its VRAM ... falling back to CPU" and the encoder, one line
+         * later, used the GPU. A pre-flight that can disagree with the run it
+         * precedes is worse than none. */
+        bool readable = hyp_ask_llama_probe_device(gpu_name, sizeof(gpu_name), &total, &used) ||
+                        hyp_ask_device_vram_mib(&total, &used);
+        if (!readable) {
+            printf("  GPU: no device exposes its memory to this process, so a ceiling cannot be\n"
                    "       CHECKED — and it must never be assumed. %s\n",
                    pref == HYP_ASK_DEVICE_GPU
                        ? "--device gpu will REFUSE rather than guess."

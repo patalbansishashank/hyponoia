@@ -93,6 +93,12 @@ typedef struct {
 
     bool on_gpu;
     double ceiling_mib; /* what a GPU plan is checked against; 0 on CPU */
+    int n_head;         /* query heads: the KQ scores tensor is n_head deep */
+    /* The device's own per-buffer ceiling, from ggml_backend_buft_get_max_size
+     * of the device buffer type; 0 when unknown or on CPU. Any single tensor
+     * above it is refused by the device and lands on the CPU with its buffer
+     * in Vulkan_Host — see hyp_ask_attn_scores_bytes in ask_batch.h. */
+    uint64_t dev_max_tensor_bytes;
     char device_note[192];
     char model_id[HYP_ASK_MODEL_ID_MAX];
 
@@ -620,6 +626,29 @@ static int ask_llama_encode(ask_llama_t *s, const char *const *texts, const char
                     break;
                 }
             }
+            /* THE SECOND EDGE, and the one the KV plan cannot see: the pass's
+             * f32 attention-scores tensor must fit the device's own per-buffer
+             * ceiling or the device refuses the op and the scheduler runs the
+             * attention on the CPU through Vulkan_Host — 4,946 tok/s at 2
+             * documents, 734 at 3, same card. Narrowing here costs nothing
+             * measurable (1 and 2 documents ran at the same tok/s); the cliff
+             * costs 10x. A single sequence is always admitted. */
+            if (max_seq > 1 && s->dev_max_tensor_bytes) {
+                int fit = hyp_ask_max_seq_for_tensor_cap(max_seq, seq_len, s->n_head,
+                                                         s->dev_max_tensor_bytes);
+                if (fit < max_seq) {
+                    char note[192];
+                    (void)snprintf(note, sizeof(note),
+                                   "n_seq %d -> %d at seq_len=%d: scores tensor %.0f MiB at %d "
+                                   "would exceed the device's %.0f MiB per-buffer ceiling",
+                                   max_seq, fit, seq_len,
+                                   (double)hyp_ask_attn_scores_bytes(max_seq, seq_len, s->n_head) /
+                                       1048576.0,
+                                   max_seq, (double)s->dev_max_tensor_bytes / 1048576.0);
+                    hyp_log_info("ask.llama.tensor_cap", "narrow", note);
+                    max_seq = fit;
+                }
+            }
             if (max_seq == 0) {
                 /* Not even one sequence at this bucket fits. Take the largest
                  * per-sequence length that DOES fit alone. That lowers the
@@ -911,6 +940,27 @@ static ask_llama_t *ask_llama_open(hyp_ask_device_pref_t pref, char *err, size_t
         s->model_window = HYP_ASK_NONCAUSAL_MAX_SEQ;
     }
     s->on_gpu = use_gpu;
+    s->n_head = llama_model_n_head(s->model);
+    s->dev_max_tensor_bytes = 0;
+    if (use_gpu && gpu_dev) {
+        /* THE DEVICE'S OWN PER-BUFFER CEILING, asked of the device. Any single
+         * tensor above it is refused by ggml-vulkan's supports_op and the
+         * scheduler runs that op on the CPU with the activations in
+         * Vulkan_Host — the 10x cliff between a 2-document and a 3-document
+         * pass. ggml_backend_buft_get_max_size is what ggml exposes for it;
+         * on Vulkan it is the suballocation block, clamped to the device's
+         * maxMemoryAllocationSize, so it is never ABOVE the real limit. */
+        ggml_backend_buffer_type_t buft = ggml_backend_dev_buffer_type(gpu_dev);
+        if (buft) {
+            s->dev_max_tensor_bytes = (uint64_t)ggml_backend_buft_get_max_size(buft);
+        }
+        char note[160];
+        (void)snprintf(note, sizeof(note),
+                       "n_head=%d device_max_tensor_mib=%.0f (a pass whose f32 scores tensor "
+                       "exceeds it runs its attention on the CPU)",
+                       s->n_head, (double)s->dev_max_tensor_bytes / 1048576.0);
+        hyp_log_info("ask.llama.tensor_cap", "plan", note);
+    }
 
     /* SIZE THE PLANNER FOR THE MODEL THAT ACTUALLY LOADED, not for the one its
      * constants were measured against. ask_batch.h's KV and weight figures are
@@ -946,10 +996,23 @@ static ask_llama_t *ask_llama_open(hyp_ask_device_pref_t pref, char *err, size_t
                        "GPU (%s, Vulkan) — %.0f MiB free of %.0f MiB, ceiling %.0f MiB", gpu_name,
                        total - used, total, s->ceiling_mib);
     } else if (pref == HYP_ASK_DEVICE_AUTO && gpu_available) {
-        (void)snprintf(s->device_note, sizeof(s->device_note),
-                       "CPU (%d threads) — DOWNGRADED from the GPU that is present (%s): not "
-                       "enough free VRAM for a safe allocation",
-                       ASK_CPU_THREADS, gpu_name);
+        /* TWO different reasons land here and they must not share one
+         * sentence: the ceiling was READ and was too small, or it could not be
+         * read at all. "Not enough free VRAM" for the second case sent an
+         * Intel-card investigation at the wrong target. */
+        if (vram_readable) {
+            (void)snprintf(s->device_note, sizeof(s->device_note),
+                           "CPU (%d threads) — DOWNGRADED from the GPU that is present (%s): "
+                           "%.0f MiB free of %.0f MiB gives a %.0f MiB ceiling, not enough for "
+                           "the backend's fixed cost plus a minimum KV cache",
+                           ASK_CPU_THREADS, gpu_name, total - used, total, s->ceiling_mib);
+        } else {
+            (void)snprintf(s->device_note, sizeof(s->device_note),
+                           "CPU (%d threads) — DOWNGRADED from the GPU that is present (%s): "
+                           "no device exposes its memory to this process, so a ceiling cannot "
+                           "be checked and is not assumed",
+                           ASK_CPU_THREADS, gpu_name);
+        }
     } else {
         (void)snprintf(s->device_note, sizeof(s->device_note), "CPU (%d threads)",
                        ASK_CPU_THREADS);
@@ -1214,6 +1277,27 @@ bool hyp_ask_llama_compiled_in(void) {
     return true;
 }
 
+bool hyp_ask_llama_probe_device(char *name, size_t name_sz, double *out_total_mib,
+                                double *out_used_mib) {
+    ask_llama_backend_once();
+    ggml_backend_dev_t dev = ask_llama_gpu_device(name, name_sz);
+    if (!dev) {
+        return false;
+    }
+    double total = 0.0;
+    double used = 0.0;
+    if (!ask_llama_device_memory_mib(dev, &total, &used)) {
+        return false;
+    }
+    if (out_total_mib) {
+        *out_total_mib = total;
+    }
+    if (out_used_mib) {
+        *out_used_mib = used;
+    }
+    return true;
+}
+
 const char *hyp_ask_llama_build_note(void) {
     /* The pin is spelled here rather than taken from ggml's GGML_COMMIT: that
      * macro exists only inside the vendored flags bucket, and a build note
@@ -1234,6 +1318,16 @@ const char *hyp_ask_llama_build_note(void) {
  * own remedy — a different build — and not an error. */
 
 bool hyp_ask_llama_compiled_in(void) {
+    return false;
+}
+
+bool hyp_ask_llama_probe_device(char *name, size_t name_sz, double *out_total_mib,
+                                double *out_used_mib) {
+    if (name && name_sz) {
+        name[0] = '\0';
+    }
+    (void)out_total_mib;
+    (void)out_used_mib;
     return false;
 }
 
