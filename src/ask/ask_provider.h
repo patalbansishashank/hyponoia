@@ -47,13 +47,28 @@ typedef enum {
  * whether an index at dim 1024 is comparable to one at the native width.
  *
  * TRUNCATES  — Matryoshka. The provider cuts and renormalises a vector it
- *              already computed, so the prefix of a native vector IS the
- *              smaller vector, and one pass serves every dimension.
+ *              already computed, so the prefix of a wider vector, renormalised,
+ *              IS the smaller vector, and one pass serves every dimension.
  * REEMBEDS   — the requested dimension is a separate output head. Vectors at
- *              1024 and 2048 are DIFFERENT SPACES and each costs its own pass;
- *              §2.7 paid for both to find 2048 bought nothing (0.57323 ->
- *              0.56189 on the frozen 60).
- * FIXED      — no dimension parameter; take the native width. */
+ *              two widths are DIFFERENT SPACES and each costs its own pass.
+ *              No row carries this today; the value stays because the
+ *              distinction is real and a future provider may need it.
+ * FIXED      — no dimension parameter; take the native width.
+ *
+ * THIS TAG IS A STATEMENT ABOUT SPACES, NOT ABOUT WHETHER A WIDTH IS WORTH
+ * STORING. Those are separate measurements. Voyage was tagged REEMBEDS from
+ * 2026-08-12 (ec6bde21) to 2026-08-15 because §2.7 had paid for two passes to
+ * learn that voyage-code-3 at 2048 buys nothing (MRR@10 0.57323 at 1024 ->
+ * 0.56189 at 2048 on the frozen 60); the utility result stands, but running
+ * two passes was a choice, not a property of the API. §2.15 asked the API
+ * (engine/xmodel/dims.json): voyage-4-large's output_dimension=1024 is the
+ * renormalised first 1024 of its own output_dimension=2048, min cosine
+ * 1.000000. That is TRUNCATES.
+ *
+ * NO CODE PATH READS THIS FIELD. The adapter below always requests HYP_ASK_DIM
+ * from the provider and never truncates a wider vector locally, so the tag
+ * cannot make a build wrong — which is also why nothing failed while it was.
+ * It is pinned by tests/test_ask_provider.c so it cannot drift silently. */
 typedef enum {
     HYP_ASK_DIM_FIXED = 0,
     HYP_ASK_DIM_TRUNCATES = 1,

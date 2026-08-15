@@ -37,11 +37,31 @@ static const hyp_ask_provider_t PROVIDERS[] = {
         .asym_query = "query",
         .input_key = "input",
         .model_key = "model",
+        /* What comes back when output_dimension is omitted (dims.json
+         * "default": 1024). 2048 is the widest voyage-4-large accepts; the
+         * API refuses 1536 and 4096 by name. */
         .native_dim = 1024,
         .dim_param = "output_dimension",
-        /* RE-EMBEDS. §2.7 ran voyage-code-3 at 1024 and 2048 as two separate
-         * document passes for exactly this reason. */
-        .dim_mode = HYP_ASK_DIM_REEMBEDS,
+        /* TRUNCATES — Matryoshka, MEASURED, not read off a model card. §2.15
+         * (engine/xmodel/probe_dims.py -> dims.json) asked the API for the same
+         * two probe texts at 2048 and at 1024, cut the 2048 to its first 1024
+         * and renormalised: min cosine against the API's own 1024 is 1.000000
+         * ("matryoshka_1024_is_truncated_2048": holds), and every width the
+         * API returns is already unit-norm (||v|| = 1.0 at 256, 512, 1024,
+         * 2048). One document pass at 2048 serves 1024 by truncation plus
+         * renormalisation; a second width is not a second paid pass.
+         *
+         * This row read REEMBEDS from ec6bde21 until 2026-08-15, on the
+         * strength of §2.7 having run voyage-code-3 at 1024 and 2048 as two
+         * separate document passes. That was how the experiment was run, not
+         * a fact about the API. What §2.7 did establish is DIMENSION UTILITY,
+         * and it stands: 2048 scored MRR@10 0.56189 against 0.57323 at 1024
+         * on the frozen 60 (runs/VOYAGE/verdict.json, dim_2048_buys_nothing),
+         * so 1024 is the width to store. For voyage-4-large that utility
+         * question is NOT measured — §2.15 scored it at 1024 only
+         * (runs/XMODEL/frozen60-verdict.json, leg B); the 2048 request was
+         * used for the space probe, not for retrieval. */
+        .dim_mode = HYP_ASK_DIM_TRUNCATES,
         .max_rows_per_request = 1000,
         .max_tokens_per_request = 120000,
         .implemented = true,

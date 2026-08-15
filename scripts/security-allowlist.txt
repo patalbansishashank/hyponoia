@@ -84,6 +84,6 @@ URL:https://%s:GitHub blob-URL construction in src/ui/http_server.c hyp_ui_git_w
 # in the binary, never in the config DB and never in argv: `key_env` stores the
 # NAME of an environment variable, and the value reaches curl through a 0600
 # --config file that is scrubbed after use.
-URL:https://api.voyageai.com/v1/embeddings:escalation lane, Voyage provider (input_type document|query, re-embeds)
+URL:https://api.voyageai.com/v1/embeddings:escalation lane, Voyage provider (input_type document|query, output_dimension truncates — measured §2.15, min cosine 1.000000)
 URL:https://api.jina.ai/v1/embeddings:escalation lane, Jina provider (task retrieval.passage|retrieval.query, truncates)
 URL:https://generativelanguage.googleapis.com/v1beta/models:escalation lane, Gemini provider — DECLARED BUT NOT WIRED, refuses at call time; the string is linked in, so it is listed rather than left to surprise a release
