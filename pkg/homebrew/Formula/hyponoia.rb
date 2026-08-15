@@ -1,7 +1,7 @@
 class Hyponoia < Formula
   desc "Code context engine for AI coding agents"
   homepage "https://github.com/patalbansishashank/hyponoia"
-  version "0.8.1"
+  version "0.3.0"
   license "MIT"
 
   # RETIRED-PLATFORM(macos): the on_macos block and its two darwin URLs were
@@ -11,21 +11,24 @@ class Hyponoia < Formula
   # See docs/MAINTAINERS.md "Retired platforms".
   depends_on :linux
 
+  # Checksums are placeholders until v0.3.0 publishes — see pkg/aur/PKGBUILD
+  # for why they are zeroed rather than left at upstream's values.
   on_linux do
     on_arm do
       url "https://github.com/patalbansishashank/hyponoia/releases/download/v#{version}/hyponoia-linux-arm64.tar.gz"
-      sha256 "d2f842d1365da5c35d9c5796f57a821c9745267350994346735e1e6e04d46091"
+      sha256 "0000000000000000000000000000000000000000000000000000000000000000"
     end
     on_intel do
       url "https://github.com/patalbansishashank/hyponoia/releases/download/v#{version}/hyponoia-linux-amd64.tar.gz"
-      sha256 "dbd3b92ea870ef240b63059f26bda15015f76ef9978931bebc3a0f9d09470973"
+      sha256 "0000000000000000000000000000000000000000000000000000000000000000"
     end
   end
 
   def install
     bin.install "hyponoia"
     (share/"hyponoia").install "hyp-integrations.json"
-    # Third-party attribution bundle (present in archives since v0.8.1)
+    # Third-party attribution bundle. Guarded: archives older than this
+    # formula predate it, and the version it first appeared in was upstream's.
     doc.install "THIRD_PARTY_NOTICES.md" if File.exist?("THIRD_PARTY_NOTICES.md")
   end
 

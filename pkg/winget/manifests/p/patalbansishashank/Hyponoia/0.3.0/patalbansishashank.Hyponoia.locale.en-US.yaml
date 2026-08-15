@@ -1,5 +1,5 @@
 PackageIdentifier: patalbansishashank.Hyponoia
-PackageVersion: 0.8.1
+PackageVersion: 0.3.0
 PackageLocale: en-US
 Publisher: patalbansishashank
 PublisherUrl: https://github.com/patalbansishashank
@@ -26,6 +26,6 @@ Tags:
   - codebase
   - developer-tools
   - tree-sitter
-ReleaseNotesUrl: https://github.com/patalbansishashank/hyponoia/releases/tag/v0.8.1
+ReleaseNotesUrl: https://github.com/patalbansishashank/hyponoia/releases/tag/v0.3.0
 ManifestType: defaultLocale
 ManifestVersion: 1.6.0

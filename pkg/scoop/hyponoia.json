@@ -1,12 +1,12 @@
 {
-  "version": "0.8.1",
+  "version": "0.3.0",
   "description": "Code context engine for AI coding agents — indexes repositories into a queryable graph and returns exact code spans instead of whole files",
   "homepage": "https://github.com/patalbansishashank/hyponoia",
   "license": "MIT",
   "architecture": {
     "64bit": {
-      "url": "https://github.com/patalbansishashank/hyponoia/releases/download/v0.8.1/hyponoia-windows-amd64.zip",
-      "hash": "a602ad090ed3f49d86c55472f73f27ad7055222806a82358f2e08513e027f00f",
+      "url": "https://github.com/patalbansishashank/hyponoia/releases/download/v0.3.0/hyponoia-windows-amd64.zip",
+      "hash": "0000000000000000000000000000000000000000000000000000000000000000",
       "bin": "hyponoia.exe"
     }
   },

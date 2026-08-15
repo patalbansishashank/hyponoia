@@ -9,7 +9,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Release version (e.g. v0.8.0)"
+        description: "Release version (e.g. v0.3.0)"
         required: true
         type: string
       release_notes:

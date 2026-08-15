@@ -1,6 +1,6 @@
 # Maintainer: patalbansishashank <https://github.com/patalbansishashank>
 pkgname=hyponoia
-pkgver=0.8.1
+pkgver=0.3.0
 pkgrel=1
 pkgdesc="Code context engine for AI coding agents — indexes repositories into a queryable graph and returns exact code spans instead of whole files"
 arch=('x86_64' 'aarch64')
@@ -12,8 +12,12 @@ conflicts=("$pkgname")
 source_x86_64=("${pkgname}-${pkgver}-linux-amd64.tar.gz::https://github.com/patalbansishashank/hyponoia/releases/download/v${pkgver}/hyponoia-linux-amd64.tar.gz")
 source_aarch64=("${pkgname}-${pkgver}-linux-arm64.tar.gz::https://github.com/patalbansishashank/hyponoia/releases/download/v${pkgver}/hyponoia-linux-arm64.tar.gz")
 
-sha256sums_x86_64=('dbd3b92ea870ef240b63059f26bda15015f76ef9978931bebc3a0f9d09470973')
-sha256sums_aarch64=('d2f842d1365da5c35d9c5796f57a821c9745267350994346735e1e6e04d46091')
+# Checksums are placeholders until v0.3.0 publishes. They were upstream's,
+# for a v0.8.1 release this fork never cut; a plausible-but-wrong hash fails
+# at install time with a mismatch nobody can attribute, so they are zeroed
+# until the real values are copied from the release's checksums.txt.
+sha256sums_x86_64=('0000000000000000000000000000000000000000000000000000000000000000')
+sha256sums_aarch64=('0000000000000000000000000000000000000000000000000000000000000000')
 
 package() {
     install -Dm755 "${srcdir}/hyponoia" \
@@ -22,7 +26,8 @@ package() {
         "${pkgdir}/usr/share/hyponoia/hyp-integrations.json"
     install -Dm644 "${srcdir}/LICENSE" \
         "${pkgdir}/usr/share/licenses/${pkgname}/LICENSE"
-    # Third-party attribution bundle (present in archives since v0.8.1)
+    # Third-party attribution bundle. Guarded: archives older than this
+    # PKGBUILD predate it, and the version it first appeared in was upstream's.
     if [ -f "${srcdir}/THIRD_PARTY_NOTICES.md" ]; then
         install -Dm644 "${srcdir}/THIRD_PARTY_NOTICES.md" \
             "${pkgdir}/usr/share/licenses/${pkgname}/THIRD_PARTY_NOTICES.md"

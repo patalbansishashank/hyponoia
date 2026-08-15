@@ -1,9 +1,13 @@
 $ErrorActionPreference = 'Stop'
 
 $packageName = 'hyponoia'
-$version     = '0.8.1'
+$version     = '0.3.0'
 $url64       = "https://github.com/patalbansishashank/hyponoia/releases/download/v${version}/hyponoia-windows-amd64.zip"
-$checksum64  = 'a602ad090ed3f49d86c55472f73f27ad7055222806a82358f2e08513e027f00f'
+# Checksums are placeholders until v0.3.0 publishes. They were upstream's,
+# for a v0.8.1 release this fork never cut; a plausible-but-wrong hash fails
+# at install time with a mismatch nobody can attribute, so they are zeroed
+# until the real values are copied from the release's checksums.txt.
+$checksum64  = '0000000000000000000000000000000000000000000000000000000000000000'
 $installDir  = Join-Path $env:ChocolateyBinRoot $packageName
 
 Install-ChocolateyZipPackage `
