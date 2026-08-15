@@ -59,9 +59,19 @@ enum {
      *
      * Qwen3's optimum was 8 because 16 cost it throughput (24.09 -> 16.37).
      * nano is 12 layers against 28 and half the KV per token, so a wider batch
-     * fits where it did not before. 24 is not a memory ceiling but the ragged
-     * non-causal assert — see the equal-length note in ask_llama.c — so 16 is
-     * both the measured peak and the last value that runs. */
+     * fits where it did not before.
+     *
+     * THE "24 -> assert" ROW WAS MISREAD, and the misreading cost a week. It
+     * was called the ragged non-causal assert and treated as a ceiling on
+     * this constant. It was neither. It was n_batch (then a fixed 8,192) not
+     * dividing by n_seq: 8192 % 16 = 0 runs, 8192 % 24 = 8 aborts, inside
+     * llama.cpp's graph_reserve, before a single token — and it aborted just
+     * the same at n_seq = 3 with three 2,408-token rows, which no value of
+     * this constant could have prevented. n_batch is now the batch's own token
+     * count and divisible by n_seq by construction (see the n_batch note in
+     * ask_llama.c), so this number is once again ONLY a throughput knob and
+     * "the last value that runs" is no longer a property it has. 16 stays
+     * because it is the measured peak; re-measure before moving it. */
     HYP_ASK_MAX_DOCS = 16,
 
     /* voyage-4-nano's context window. The encoder reports its own; this is the
@@ -110,6 +120,7 @@ enum {
  * allocator freed and retried — the high-water mark fitted, the transient
  * allocations did not. 0.70 rather than the reference's 0.80 for that reason. */
 #define HYP_ASK_VRAM_HEADROOM 0.70
+
 
 /* Groups of ORIGINAL document indices, length-ascending.
  *

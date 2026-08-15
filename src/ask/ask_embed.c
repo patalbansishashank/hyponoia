@@ -397,13 +397,88 @@ static int ae_flush_window(ae_window_t *w, const hyp_ask_encoder_t *enc, hyp_ask
             rc = -1;
             break;
         }
-        for (int j = 0; j < n; j++) {
-            texts[j] = w->docs[batches.order[from + j]].text;
+        /* CONTENT-ADDRESSED WITHIN THE GROUP: byte-identical texts are
+         * encoded ONCE and the vector is copied to every row that shares it.
+         * Same bytes, same model, same prefix -> same vector, so this changes
+         * nothing about the answer and only the cost.
+         *
+         * It matters more than it sounds. assets/hyp-integrations.json is one
+         * line of 8,214 characters, so every Variable node in it spans line 1
+         * and reads the WHOLE file as its text — the same 2,414-token blob,
+         * dozens of times over. Those blobs land in the same length group and
+         * were each sent through the encoder: three of them made a
+         * 7,242-token pass that took 7.5 s on the GPU, five times per corpus.
+         * The reuse-by-hash path above only spares a declaration its OWN
+         * previous vector; it cannot see that its neighbour is the same text.
+         *
+         * `rep` maps each row to the row that carries its distinct text (its
+         * own index when it is the first of its kind). Groups are at most
+         * HYP_ASK_MAX_DOCS wide, so the quadratic scan is nothing. */
+        int *rep_of = malloc((size_t)n * sizeof(*rep_of));
+        int n_distinct = 0;
+        if (!rep_of) {
+            free(texts);
+            free(vecs);
+            free(rows);
+            rc = -1;
+            break;
         }
-        if (hyp_ask_encode_documents(enc, texts, n, vecs) != 0) {
+        for (int j = 0; j < n; j++) {
+            const ae_doc_t *dj = &w->docs[batches.order[from + j]];
+            rep_of[j] = -1;
+            for (int k = 0; k < j; k++) {
+                if (rep_of[k] == k) {
+                    const ae_doc_t *dk = &w->docs[batches.order[from + k]];
+                    if (strcmp(dk->hash, dj->hash) == 0) {
+                        rep_of[j] = k;
+                        break;
+                    }
+                }
+            }
+            if (rep_of[j] < 0) {
+                rep_of[j] = j;
+                texts[n_distinct++] = dj->text;
+            }
+        }
+        /* Encode the distinct texts into the FRONT of vecs, then fan out. Rows
+         * that are their own representative get slot p (their position among
+         * the distinct); duplicates copy from their representative's slot. */
+        int *slot_of = malloc((size_t)n * sizeof(*slot_of));
+        if (!slot_of) {
+            free(rep_of);
+            free(texts);
+            free(vecs);
+            free(rows);
+            rc = -1;
+            break;
+        }
+        {
+            int p = 0;
+            for (int j = 0; j < n; j++) {
+                slot_of[j] = (rep_of[j] == j) ? p++ : -1;
+            }
+        }
+        if (n_distinct < n) {
+            char b[AE_NUMBUF];
+            hyp_log_debug("ask.embed.dedup", "collapsed",
+                          ae_itoa(n - n_distinct, b, sizeof(b)));
+        }
+        if (hyp_ask_encode_documents(enc, texts, n_distinct, vecs) != 0) {
             hyp_log_error("ask.embed.encode_failed", "batch", "documents");
             rc = -1;
         } else {
+            /* Fan out from the back so a representative's slot is never
+             * overwritten before its duplicates have read it: slots are
+             * assigned in increasing j, so slot_of[j] <= j always, and
+             * writing row j from slot s <= j in DESCENDING j never clobbers
+             * a slot a later (smaller-j) row still needs. */
+            for (int j = n - 1; j >= 0; j--) {
+                int src = slot_of[rep_of[j]];
+                if (src != j) {
+                    memmove(vecs + (size_t)j * (size_t)dim, vecs + (size_t)src * (size_t)dim,
+                            (size_t)dim * sizeof(*vecs));
+                }
+            }
             int bad = -1;
             if (!hyp_ask_vectors_are_unit(vecs, n, dim, &bad)) {
                 /* Loudly absent, not silently wrong: an encoder that returns
@@ -442,6 +517,8 @@ static int ae_flush_window(ae_window_t *w, const hyp_ask_encoder_t *enc, hyp_ask
             free(d->text);
             d->text = NULL;
         }
+        free(slot_of);
+        free(rep_of);
         free(texts);
         free(vecs);
         free(rows);

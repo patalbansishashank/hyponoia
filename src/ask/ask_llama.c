@@ -50,7 +50,26 @@
  * the bucket list is what keeps the largest context affordable; declarations
  * longer than it are truncated to it, and model_window is clamped to the same
  * number so the truncation counter DISCLOSES exactly that. */
-static const int ASK_SEQ_BUCKETS[] = {512, 2048, HYP_ASK_NONCAUSAL_MAX_SEQ};
+/* GEOMETRIC, ROUGHLY sqrt(2) APART, and this is the second thing the buckets
+ * decide besides how often the context is rebuilt: HOW MUCH ATTENTION IS PAID
+ * FOR. Non-causal attention is O(ubatch^2) and the ubatch is the whole
+ * rectangle, so a document that rounds up to a bucket four times its length
+ * pays sixteen times its own attention. Measured on this card with the old
+ * ladder {512, 2048, 8192}: three 2,414-token rows landed in the 8,192 bucket,
+ * a 24,576-token ubatch for 7,242 real tokens, and ran at 950 tok/s — while a
+ * SINGLE 2,414-token row alone ran at 5,780 tok/s and sixteen 200-token rows
+ * at 3,400-4,700. The batch was five times slower per token than the same
+ * work done one document at a time. That is not a device limit; it is the
+ * ladder rounding a 2.4k document to 8k.
+ *
+ * With sqrt(2) steps no document pays more than ~2x its length in ubatch, so
+ * attention is at most ~4x, not 16x. The cost is more distinct buckets, i.e.
+ * more context rebuilds per corpus — but a rebuild happens only when the
+ * length-sorted stream crosses a bucket edge, once per edge, so a 24k-node
+ * corpus rebuilds nine times instead of three. Nine rebuilds are cheaper than
+ * paying 5x on every long batch. */
+static const int ASK_SEQ_BUCKETS[] = {512, 724, 1024, 1448, 2048, 2896, 4096, 5792,
+                                      HYP_ASK_NONCAUSAL_MAX_SEQ};
 enum { ASK_SEQ_BUCKET_COUNT = (int)(sizeof(ASK_SEQ_BUCKETS) / sizeof(ASK_SEQ_BUCKETS[0])) };
 
 /* Threads for the CPU path. The prototype measured 1.581 docs/s at 16. */
@@ -70,6 +89,7 @@ typedef struct {
     int model_window; /* what the weights support */
     int seq_len;      /* per-sequence limit of the LIVE context; 0 = none yet */
     int n_seq_max;    /* sequences the LIVE context can hold */
+    int n_batch;      /* tokens ONE decode through the LIVE context may carry */
 
     bool on_gpu;
     double ceiling_mib; /* what a GPU plan is checked against; 0 on CPU */
@@ -124,25 +144,74 @@ static void ask_llama_backend_once(void) {
 
 /* ── Device selection: the request, then the outcome, never merged ── */
 
-static bool ask_llama_gpu_present(char *name, size_t name_sz) {
+/* The accelerator this run would use, or NULL.
+ *
+ * BOTH DEVICE TYPES COUNT. Matching only GGML_BACKEND_DEVICE_TYPE_GPU made
+ * every Intel Xe and every AMD APU invisible, because Vulkan reports an
+ * integrated part as GGML_BACKEND_DEVICE_TYPE_IGPU (ggml-vulkan.cpp's
+ * device_get_type). Upstream's own ggml_backend_init_best checks GPU then
+ * IGPU; this one did not, so "no GPU present" was reported on hardware that
+ * ggml had already enumerated and was ready to use. A discrete card still
+ * wins when both are present — hence the two-pass search rather than taking
+ * whichever came first. */
+static ggml_backend_dev_t ask_llama_gpu_device(char *name, size_t name_sz) {
     if (name && name_sz) {
         name[0] = '\0';
     }
     if (!llama_supports_gpu_offload()) {
-        return false;
+        return NULL;
     }
+    const enum ggml_backend_dev_type wanted[] = {GGML_BACKEND_DEVICE_TYPE_GPU,
+                                                 GGML_BACKEND_DEVICE_TYPE_IGPU};
     size_t n = ggml_backend_dev_count();
-    for (size_t i = 0; i < n; i++) {
-        ggml_backend_dev_t d = ggml_backend_dev_get(i);
-        if (d && ggml_backend_dev_type(d) == GGML_BACKEND_DEVICE_TYPE_GPU) {
-            const char *desc = ggml_backend_dev_description(d);
-            if (name && name_sz) {
-                (void)snprintf(name, name_sz, "%s", desc ? desc : "unnamed GPU");
+    for (size_t w = 0; w < sizeof(wanted) / sizeof(wanted[0]); w++) {
+        for (size_t i = 0; i < n; i++) {
+            ggml_backend_dev_t d = ggml_backend_dev_get(i);
+            if (d && ggml_backend_dev_type(d) == wanted[w]) {
+                const char *desc = ggml_backend_dev_description(d);
+                if (name && name_sz) {
+                    (void)snprintf(name, name_sz, "%s", desc ? desc : "unnamed accelerator");
+                }
+                return d;
             }
-            return true;
         }
     }
-    return false;
+    return NULL;
+}
+
+/* Free/total memory for a device, ASKED OF THE BACKEND rather than of sysfs.
+ *
+ * hyp_ask_device_vram_mib reads mem_info_vram_total/used under each
+ * /sys/class/drm/cardN/device, which amdgpu exposes and nothing else does. On
+ * an Intel or NVIDIA card it returns false, and the caller then REFUSES
+ * `--device gpu` outright — so a correctly built Vulkan binary declined the GPU
+ * on every non-AMD machine for want of a file, not for want of a device. ggml
+ * answers the same question portably for whatever backend is actually loaded.
+ *
+ * Kept as the PREFERRED source with sysfs as fallback, not a replacement: when
+ * VK_EXT_memory_budget is missing, ggml-vulkan reports heap SIZE as free
+ * (ggml_backend_vk_device_get_memory), which is the "planned against memory the
+ * compositor is already holding" mistake ask_batch.h warns about. A device that
+ * claims every byte is free is not answering, so we fall through to sysfs. */
+static bool ask_llama_device_memory_mib(ggml_backend_dev_t dev, double *out_total_mib,
+                                        double *out_used_mib) {
+    if (!dev || !out_total_mib || !out_used_mib) {
+        return false;
+    }
+    size_t free_bytes = 0;
+    size_t total_bytes = 0;
+    ggml_backend_dev_memory(dev, &free_bytes, &total_bytes);
+    if (total_bytes == 0 || free_bytes > total_bytes) {
+        return false;
+    }
+    if (free_bytes == total_bytes) {
+        /* No budget extension: this is the heap size reported as free. */
+        return false;
+    }
+    const double mib = 1024.0 * 1024.0;
+    *out_total_mib = (double)total_bytes / mib;
+    *out_used_mib = (double)(total_bytes - free_bytes) / mib;
+    return true;
 }
 
 /* ── Context lifecycle ──────────────────────────────────────────── */
@@ -163,6 +232,7 @@ static void ask_llama_drop_ctx(ask_llama_t *s) {
     }
     s->seq_len = 0;
     s->n_seq_max = 0;
+    s->n_batch = 0;
 }
 
 /* Build a context for `n_seq` sequences of at most `seq_len` tokens.
@@ -171,7 +241,8 @@ static void ask_llama_drop_ctx(ask_llama_t *s) {
  * machine where the compute GPU is also the display GPU — the common case for
  * the developers this tool targets — an over-allocation is not an OOM return,
  * it is the user losing their session. */
-static bool ask_llama_make_ctx(ask_llama_t *s, int n_seq, int seq_len, char *err, size_t errlen) {
+static bool ask_llama_make_ctx(ask_llama_t *s, int n_seq, int seq_len, int batch_tokens, char *err,
+                               size_t errlen) {
     hyp_ask_kv_plan_t plan;
     if (s->on_gpu) {
         if (!hyp_ask_kv_plan(n_seq, seq_len, s->ceiling_mib, &plan)) {
@@ -220,25 +291,50 @@ static bool ask_llama_make_ctx(ask_llama_t *s, int n_seq, int seq_len, char *err
      * ever carry, and the Vulkan driver answers with
      * `Failed to allocate pinned memory` and silently falls back to unpinned
      * transfers. */
-    int n_batch = seq_len > HYP_ASK_TOKEN_BUDGET ? seq_len : HYP_ASK_TOKEN_BUDGET;
-    /* THE RECTANGLE IS THE REAL CEILING, and for a non-causal encoder it is
-     * also what the compute buffer is charged for.
+    /* n_batch = n_ctx, AND WHY THAT IS THE ONLY CORRECT VALUE.
      *
-     * n_seq sequences of at most seq_len tokens is n_seq * seq_len tokens; no
-     * batch this context ever sees can carry more. Under causal attention the
-     * HYP_ASK_TOKEN_BUDGET floor above was free — n_ubatch could be smaller
-     * than n_batch and llama.cpp would micro-batch. Under NON-CAUSAL it cannot
-     * (see below), so n_ubatch is forced up to n_batch, and every token of
-     * slack in n_batch becomes compute buffer allocated for work that never
-     * happens: a run of six 60-token declarations was reserving 8,192 slots to
-     * carry 360, and paid ~28x for it in wall clock. */
-    int64_t rectangle = (int64_t)n_seq * (int64_t)seq_len;
-    if (rectangle > 0 && rectangle < n_batch) {
-        n_batch = (int)rectangle;
+     * It used to be max(HYP_ASK_TOKEN_BUDGET, seq_len), lowered only when the
+     * rectangle was smaller. That is wrong in a way that took a week to see:
+     * llama.cpp's graph_reserve rounds min(n_ctx, n_ubatch) UP to a multiple of
+     * n_seq_max (llama-context.cpp: "round to next multiple of n_seqs") but
+     * leaves n_outputs = n_batch alone, and MEAN pooling then multiplies an
+     * [n_embd, n_outputs] tensor against an [n_tokens, n_seqs] one. When
+     * n_batch is not divisible by n_seq those differ by the rounding and
+     * ggml.c GGML_ASSERT(ggml_can_mul_mat(a, b)) aborts — inside
+     * llama_init_from_model, before the first token, on CPU and Vulkan alike.
+     *
+     * So the invariant is n_batch % n_seq == 0, and it is a property of
+     * llama.cpp's reserve granularity, not of any device. Three 2,414-token
+     * rows made a group of 3: 8192 % 3 = 2, abort. Two made a group of 2:
+     * 8192 % 2 = 0, fine. That is the whole "25 works, 26 crashes" boundary,
+     * and it is also why ask_batch.h's max_docs table said 16 runs and 24 does
+     * not: 8192 % 16 = 0 and 8192 % 24 = 8. That table measured a coincidence
+     * of two constants and called it a throughput ceiling.
+     *
+     * A first cut set n_batch to the batch's exact token count. Divisible,
+     * correct, and 30x too slow: consecutive batches were 20, 21, 25 tokens
+     * and each one that grew by a token forced a full context rebuild — KV
+     * freed and reallocated, graph reserved again — thousands of times per
+     * corpus, GPU at 0% while the CPU rebuilt. The context must be built once
+     * per bucket and REUSED, which means it must be sized for the bucket.
+     *
+     * So n_batch = n_ctx = n_seq * seq_len. That product is a multiple of n_seq
+     * by construction, so llama.cpp's reserve granularity is met with no
+     * rounding at all, and every batch at this bucket fits because each of its
+     * n_seq rows is <= seq_len. The KV plan above already priced exactly this
+     * rectangle against the ceiling, so nothing is allocated that was not
+     * checked. */
+    if ((int64_t)batch_tokens > plan.n_ctx) {
+        /* Every row is clamped to seq_len before this call, so this cannot
+         * happen; if it does, the grouping rule let a row past its bucket. Say
+         * so rather than let llama.cpp assert n_tokens_all <= n_batch. */
+        (void)snprintf(err, errlen,
+                       "internal: a batch of %d tokens was planned into a %lld-token context "
+                       "(n_seq=%d x seq_len=%d) — the grouping rule let a row past its bucket",
+                       batch_tokens, (long long)plan.n_ctx, n_seq, seq_len);
+        return false;
     }
-    if ((int64_t)n_batch > plan.n_ctx) {
-        n_batch = (int)plan.n_ctx;
-    }
+    int n_batch = plan.n_ctx < 1 ? 1 : (int)plan.n_ctx;
     cp.n_batch = (uint32_t)n_batch;
 
     /* The compute buffer is the OTHER allocation, it scales with n_ubatch, and
@@ -299,6 +395,7 @@ static bool ask_llama_make_ctx(ask_llama_t *s, int n_seq, int seq_len, char *err
     s->ctx = ctx;
     s->seq_len = seq_len;
     s->n_seq_max = n_seq;
+    s->n_batch = n_batch;
     char shape[224];
     (void)snprintf(shape, sizeof(shape),
                    "n_ctx=%lld n_seq_max=%d seq_len=%d n_batch=%u n_ubatch=%u kv_mib=%.0f "
@@ -487,49 +584,28 @@ static int ask_llama_encode(ask_llama_t *s, const char *const *texts, const char
         int seq_len = ask_bucket_for(longest);
         int n_seq = count;
 
-        /* EQUAL-LENGTH RUNS, for a bidirectional model.
+        /* RAGGED BATCHES ARE FINE, AND THIS USED TO SPLIT THEM ANYWAY.
          *
-         * Non-causal attention cannot be micro-batched — llama.cpp says so in
-         * `llama_encode` and asserts n_ubatch >= n_tokens — and the ubatch it
-         * builds with split_simple() is RAGGED (`equal_seqs == false`). Every
-         * token attending to every other needs a (sequence x token) rectangle,
-         * and a ragged pack has none, so ggml.c:3212
-         * GGML_ASSERT(ggml_can_mul_mat(a, b)) aborts on the Vulkan backend and
-         * on CPU alike as soon as a pass carries two documents of DIFFERENT
-         * lengths.
+         * A long note here once claimed llama.cpp cannot batch a bidirectional
+         * encoder with sequences of DIFFERENT lengths and asserts
+         * ggml_can_mul_mat if it tries, so this loop cut every batch into
+         * runs of IDENTICAL token count. On real code almost every run was
+         * one document — consecutive declarations are 20, 21, 25 tokens — so
+         * batching was defeated on the corpus it existed for, and the GPU sat
+         * at 0% while the CPU rebuilt contexts.
          *
-         * Padding to a common length is the upstream fix (`TODO: add new split
-         * mode where we pad the input sequences so that ubatch.equal_seqs ==
-         * true`) and is NOT available to us: a bidirectional model attends to
-         * the padding and the mean pooler averages it in, which would give
-         * unit-length vectors that are quietly wrong — the exact failure this
-         * model swap exists to avoid.
+         * The claim was wrong. The assert it described is a DIVISIBILITY bug
+         * — n_batch not a multiple of n_seq_max, see the n_batch note in
+         * make_ctx — and it fires for equal-length rows too (three 2,414-token
+         * rows: 8192 % 3 = 2, abort). Meanwhile llama_encode splits with
+         * split_simple(), which hands the graph n_seq_tokens = 1 and
+         * equal_seqs = false BY DESIGN, and mean pooling sums PER TOKEN by each
+         * token's own seq_id and divides each sequence by its own count
+         * (llm_graph_input_mean::set_input). Ragged is the encoder path's
+         * native shape. No padding, nothing averaged in, nothing to split.
          *
-         * What IS available: send documents whose token counts are already
-         * equal. Then the rectangle exists with no padding at all and nothing
-         * is contaminated. The caller hands batches down LENGTH-SORTED, so
-         * equal lengths are adjacent and this costs one pass over the array —
-         * and on real code the short tail dominates, which is where the
-         * batching was worth having. A run of one is the honest worst case, not
-         * a special case. */
-        int run = 1;
-        while (run < count && lens[run] == lens[0]) {
-            run++;
-        }
-        if (run < count) {
-            rc = ask_llama_encode(s, texts, prefix, run, out, err, errlen);
-            if (rc == 0) {
-                rc = ask_llama_encode(s, texts + run, prefix, count - run,
-                                      out + (size_t)run * (size_t)s->n_embd, err, errlen);
-            }
-            for (int i = 0; i < count; i++) {
-                free(rows[i]);
-            }
-            free(rows);
-            free(lens);
-            return rc;
-        }
-        /* One run of equal lengths: the rectangle is exact. */
+         * So a length-sorted, budget-bounded group goes down whole. The
+         * caller's rectangle bound (n_seq * longest <= budget) still holds. */
         seq_len = ask_bucket_for(longest);
 
         if (s->on_gpu) {
@@ -584,20 +660,33 @@ static int ask_llama_encode(ask_llama_t *s, const char *const *texts, const char
             }
         }
 
-        if (rc == 0 && (!s->ctx || s->seq_len != seq_len || s->n_seq_max < n_seq)) {
-            if (!ask_llama_make_ctx(s, n_seq, seq_len, err, errlen)) {
+        /* The batch's token count is decided BEFORE the context, because the
+         * context is checked against it — see the n_batch note in make_ctx.
+         * Rows may be RAGGED (each carries its own count) and every one is
+         * <= seq_len, so total <= n_seq * seq_len, which is the rectangle the
+         * context is built for. */
+        int total = 0;
+        for (int i = 0; i < count; i++) {
+            if (lens[i] > seq_len) {
+                lens[i] = seq_len; /* head-truncated; counted by the caller */
+            }
+            total += lens[i];
+        }
+
+        /* A context is reused only if it can hold this batch on EVERY axis:
+         * the same per-sequence length, at least as many sequences, and at
+         * least as many tokens per decode. The third test is new and is what
+         * makes sizing n_batch from the batch safe — a later, wider batch at
+         * the same bucket must not be poured into a context sized for a
+         * narrower one (llama-context asserts n_tokens_all <= n_batch). */
+        if (rc == 0 && (!s->ctx || s->seq_len != seq_len || s->n_seq_max < n_seq ||
+                        s->n_batch < total)) {
+            if (!ask_llama_make_ctx(s, n_seq, seq_len, total, err, errlen)) {
                 rc = -1;
             }
         }
 
         if (rc == 0) {
-            int total = 0;
-            for (int i = 0; i < count; i++) {
-                if (lens[i] > seq_len) {
-                    lens[i] = seq_len; /* head-truncated; counted by the caller */
-                }
-                total += lens[i];
-            }
             struct llama_batch batch = llama_batch_init(total, 0, n_seq);
             int k = 0;
             for (int i = 0; i < count; i++) {
@@ -611,6 +700,22 @@ static int ask_llama_encode(ask_llama_t *s, const char *const *texts, const char
                 }
             }
             batch.n_tokens = total;
+            {
+                /* The shape that reaches llama_decode, BEFORE it can assert.
+                 * If the equal-length invariant above ever fails, this line
+                 * is the evidence — a per-sequence token list — instead of a
+                 * bare GGML_ASSERT and a core dump. */
+                char shape[256];
+                int off = snprintf(shape, sizeof(shape),
+                                   "n_seq=%d seq_len=%d n_ctx=%d n_seq_max=%d n_ubatch=%d lens=",
+                                   count, seq_len, s->ctx ? (int)llama_n_ctx(s->ctx) : -1,
+                                   s->n_seq_max, s->ctx ? (int)llama_n_ubatch(s->ctx) : -1);
+                for (int i = 0; i < count && off > 0 && (size_t)off < sizeof(shape) - 8; i++) {
+                    off += snprintf(shape + off, sizeof(shape) - (size_t)off, "%s%d",
+                                    i ? "," : "", lens[i]);
+                }
+                hyp_log_info("ask.llama.batch", "shape", shape);
+            }
             llama_memory_clear(llama_get_memory(s->ctx), true);
             struct timespec t0;
             (void)clock_gettime(CLOCK_MONOTONIC, &t0);
@@ -721,11 +826,15 @@ static ask_llama_t *ask_llama_open(hyp_ask_device_pref_t pref, char *err, size_t
      * they are recorded separately so a run that asked for a GPU and got a CPU
      * is visible rather than merely fifteen times slower. */
     char gpu_name[128];
-    bool gpu_available = (pref != HYP_ASK_DEVICE_CPU) && ask_llama_gpu_present(gpu_name,
-                                                                               sizeof(gpu_name));
+    ggml_backend_dev_t gpu_dev =
+        (pref != HYP_ASK_DEVICE_CPU) ? ask_llama_gpu_device(gpu_name, sizeof(gpu_name)) : NULL;
+    bool gpu_available = gpu_dev != NULL;
     double total = 0.0;
     double used = 0.0;
-    bool vram_readable = hyp_ask_device_vram_mib(&total, &used);
+    /* Ask the backend first, sysfs second. Either answer is a MEASUREMENT; what
+     * must never happen is a ceiling assumed for a device nobody interrogated. */
+    bool vram_readable = ask_llama_device_memory_mib(gpu_dev, &total, &used) ||
+                         hyp_ask_device_vram_mib(&total, &used);
     bool use_gpu = false;
 
     if (gpu_available) {
@@ -900,9 +1009,37 @@ static int enc_window(void *self) {
     return ((ask_llama_t *)self)->model_window;
 }
 
+/* Token count of a document AS IT WILL BE ENCODED — behind the document
+ * marking — not of the bare text.
+ *
+ * The grouping rule budgets forward passes from this number, and encode_documents
+ * tokenizes HYP_ASK_NANO_DOCUMENT_PROMPT + text. Measuring the bare text put
+ * every group ~7 tokens per document UNDER what it actually carried: sixteen
+ * documents budgeted at exactly 512 became 16 x 519 = 8,304 tokens poured into a
+ * context sized for 8,192, and llama.cpp asserts n_tokens_all <= n_batch. On a
+ * real corpus that fires deep into the pass, which is what "died after 25
+ * minutes" looks like from outside. The budget must bound what is encoded, so
+ * the measurement includes the marking. */
+static int ask_llama_marked_tokens(ask_llama_t *s, const char *text) {
+    if (!text) {
+        return 0;
+    }
+    const char *prefix = HYP_ASK_NANO_DOCUMENT_PROMPT;
+    size_t plen = strlen(prefix);
+    size_t need = plen + strlen(text) + 1;
+    char *joined = (char *)malloc(need);
+    if (!joined) {
+        return -1;
+    }
+    (void)snprintf(joined, need, "%s%s", prefix, text);
+    int n = ask_llama_full_tokens(s, joined);
+    free(joined);
+    return n;
+}
+
 static int enc_token_length(void *self, const char *text) {
     ask_llama_t *s = (ask_llama_t *)self;
-    int n = ask_llama_full_tokens(s, text);
+    int n = ask_llama_marked_tokens(s, text);
     if (n < 0) {
         return -1;
     }
@@ -910,7 +1047,7 @@ static int enc_token_length(void *self, const char *text) {
 }
 
 static int enc_full_token_length(void *self, const char *text) {
-    return ask_llama_full_tokens((ask_llama_t *)self, text);
+    return ask_llama_marked_tokens((ask_llama_t *)self, text);
 }
 
 static int enc_encode_documents(void *self, const char *const *texts, int count, float *out) {
