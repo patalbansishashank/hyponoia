@@ -34,7 +34,18 @@ IS_SCRIPT=false
 if command -v file &>/dev/null; then
     FILE_TYPE=$(file -b "$BINARY" 2>/dev/null || echo "")
     case "$FILE_TYPE" in
-        *"shell script"*|*"ASCII text"*|*"UTF-8 Unicode text"*|*"Unicode text"*|*"a /usr/bin/env"*)
+        # JSON is here for a concrete reason, not for completeness. The release
+        # `verify` job runs this audit over EVERY extracted release object, and
+        # one of them is hyp-integrations.json — a data file whose whole content
+        # is shell-script templates. file(1) reports it as "JSON text data",
+        # which matched none of the arms below, so it was audited as a compiled
+        # binary and the dangerous-command scan fired on the five bytes `\ncat`:
+        # the JSON-escaped newline before a `cat << 'REMINDER'` heredoc. `-w`
+        # treats the backslash as a non-word character, so `ncat` matched with
+        # valid word boundaries. A false positive on our own shipped data, in
+        # the one job that runs AFTER the tag is pushed.
+        *"shell script"*|*"ASCII text"*|*"UTF-8 Unicode text"*|*"Unicode text"*|*"a /usr/bin/env"*|\
+        *"JSON text"*|*"JSON data"*)
             IS_SCRIPT=true
             ;;
     esac

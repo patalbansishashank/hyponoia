@@ -323,7 +323,16 @@ jobs:
             binaries/vt-results.tsv
           if-no-files-found: warn
 
+      # §2.12b gated the scan and the wait on has_vt but missed these last two,
+      # and the gap is invisible until you actually cut a release without the
+      # secret: the scan is skipped, so binaries/vt-results.tsv is never written,
+      # so publish-vt-evidence.sh exits 1 on "missing or unsafe evidence file".
+      # That fires in `verify`, which runs AFTER the tag is pushed and the draft
+      # created — a tagged, permanently-broken draft as the cost of an optional
+      # channel being off. The preflight job's own comment claims every
+      # dependent stage is gated on it; these two are why that was not true.
       - name: Publish durable public VirusTotal evidence
+        if: ${{ needs.preflight.outputs.has_vt == 'true' }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           VERSION: ${{ inputs.version }}
@@ -335,6 +344,7 @@ jobs:
       # Renders extracted-file scan results plus archive SHA-256 provenance. It
       # runs only after the exact-set zero-tolerance gate passed.
       - name: Append VirusTotal scan links to release notes
+        if: ${{ needs.preflight.outputs.has_vt == 'true' }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           VERSION: ${{ inputs.version }}
@@ -407,7 +417,13 @@ jobs:
         with:
           python-version: '3.12'
 
+      # Same class as the two VirusTotal steps above: building a distribution
+      # nobody will upload spends network on PyPI and a build backend for
+      # nothing, and any transient failure there fails publish-registries,
+      # which gates publish-final — so the draft never lifts. Gate the work on
+      # the channel, not just the upload.
       - name: Build PyPI distribution
+        if: ${{ needs.preflight.outputs.has_pypi == 'true' }}
         working-directory: pkg/pypi
         run: |
           # Pin to specific versions (typosquatting / supply-chain mitigation).
