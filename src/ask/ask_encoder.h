@@ -171,6 +171,52 @@ void hyp_ask_encoder_destroy(hyp_ask_encoder_t *e);
  * row index when the check fails. */
 bool hyp_ask_vectors_are_unit(const float *vecs, int count, int dim, int *out_bad_row);
 
+/* ── Batched-versus-alone self-check ────────────────────────────────
+ *
+ * The invariant every index depends on and nothing else asserts: a document's
+ * vector must not depend on WHAT ELSE WAS IN ITS FORWARD PASS. The embed pass
+ * encodes documents in length-sorted groups; `ask` encodes the query alone. If
+ * batching changes the vector, every index is a different space from the one
+ * queries are encoded into, and nothing downstream can tell — the rows are
+ * unit vectors of the right shape, and only their RANKING is wrong.
+ *
+ * It happened. Ragged batches through llama.cpp's non-unified KV cache came out
+ * at cosine 0.71 to the same texts encoded alone (87% of rows below 0.9), and
+ * the failure survived a CPU-vs-GPU comparison because both sides were batched
+ * the same wrong way. This check is the comparison that would have caught it:
+ * every text encoded ALONE (the reference), then in consecutive groups of
+ * `group`, and each batched row scored against its own reference AND against
+ * every other reference in its group.
+ *
+ * Two distinct failure shapes are told apart, because they have different
+ * causes: a row that matches ANOTHER text's reference at ~1.0 was ATTACHED TO
+ * THE WRONG ROW (a seq_id / slot mapping bug); a row that matches nothing was
+ * CONTAMINATED (attention or pooling leaking across sequences, or a sequence
+ * split across passes). */
+typedef struct {
+    float own;          /* cosine to the same text encoded alone */
+    float best_other;   /* highest cosine to any OTHER text's solo vector in the group */
+    int best_other_idx; /* index (into texts) of that other text; -1 in a group of one */
+} hyp_ask_batch_row_t;
+
+typedef struct {
+    int n;
+    int group;
+    int groups;      /* how many forward passes the batched half took */
+    float min_own;   /* worst own-cosine over every row */
+    int min_own_row; /* which row */
+    int misassigned; /* rows whose best_other exceeds own */
+    int below;       /* rows with own < threshold */
+} hyp_ask_batch_check_t;
+
+/* Encode `texts` alone and in groups of `group`, compare, and fill `out`.
+ * `rows` (n entries) is optional per-row detail. Returns 0 when both encodes
+ * succeeded — the VERDICT is in `out` (out->below == 0 && out->misassigned == 0
+ * passes) — and -1 when the encoder failed or memory ran out. */
+int hyp_ask_encoder_check_batching(const hyp_ask_encoder_t *e, const char *const *texts, int n,
+                                   int group, float threshold, hyp_ask_batch_row_t *rows,
+                                   hyp_ask_batch_check_t *out);
+
 /* ── The stub ──────────────────────────────────────────────────────
  *
  * A deterministic, weight-free encoder: it hashes the text and expands the hash

@@ -49,6 +49,11 @@ static void ask_embed_usage(void) {
            "                         PCA, deterministic, seconds — and exit. Encodes\n"
            "                         nothing. Every full pass fits it anyway; this is\n"
            "                         for an index built by a binary that predates it.\n"
+           "  --verify-batching      Encode a fixture alone and in groups of --max-docs and\n"
+           "                         compare; PASS means a vector does not depend on what\n"
+           "                         shared its forward pass. No project needed, nothing\n"
+           "                         written. HYP_ASK_VERIFY_TEXTS=<file> (NUL-separated)\n"
+           "                         substitutes real declarations for the fixture.\n"
            "  --force                Re-encode even byte-identical declarations.\n"
            "  --allow-model-change   Discard vectors from a different model/dim/window.\n"
            "  --limit <n>            Stop after n declarations (partial index).\n"
@@ -92,6 +97,178 @@ static void ask_embed_usage(void) {
            "quality at all.\n",
            HYP_ASK_TOKEN_BUDGET, HYP_ASK_MAX_DOCS, HYP_ASK_GPU_DOCS_PER_SEC,
            HYP_ASK_CPU_DOCS_PER_SEC, HYP_ASK_STUB_MODEL_ID);
+}
+
+/* ── --verify-batching ──────────────────────────────────────────── */
+
+/* Sixteen declarations of DIFFERENT token lengths, so the batches this check
+ * forms are ragged the way a real length-sorted group is. Not sorted: a fixed,
+ * unsorted order is what makes "which position in the batch went wrong" a
+ * readable answer. */
+static const char *const ASK_VERIFY_FIXTURE[] = {
+    "int add(int a, int b) { return a + b; }",
+    "static void clear(char *p, size_t n) {\n    memset(p, 0, n);\n}",
+    "def parse(line):\n    return [int(x) for x in line.split(',') if x]",
+    "struct node { struct node *next; int key; };",
+    "bool is_prime(unsigned n) {\n    if (n < 2) return false;\n    for (unsigned d = 2; d * d <= "
+    "n; d++)\n"
+    "        if (n % d == 0) return false;\n    return true;\n}",
+    "class Stack {\npublic:\n    void push(int v) { data.push_back(v); }\n    int pop() { int v = "
+    "data.back(); data.pop_back(); return v; }\nprivate:\n    std::vector<int> data;\n};",
+    "fn main() { println!(\"hello\"); }",
+    "/* Reads the whole file into a heap buffer; caller frees. Returns NULL on any "
+    "error and leaves errno set by the failing call. */\nchar *slurp(const char *path);",
+    "SELECT name, count(*) FROM users GROUP BY name HAVING count(*) > 1;",
+    "template <typename T> T max_of(T a, T b) { return a < b ? b : a; }",
+    "void ObjFile::parseSymbols(ArrayRef<Elf_Sym> syms) {\n    for (const Elf_Sym &s : syms)\n"
+    "        symbols.push_back(make<Symbol>(s));\n}",
+    "x = 1",
+    "async function fetchJson(url) {\n    const r = await fetch(url);\n    if (!r.ok) throw new "
+    "Error(r.statusText);\n    return r.json();\n}",
+    "#define ARRAY_LEN(a) (sizeof(a) / sizeof((a)[0]))",
+    "func (s *Server) Close() error {\n\ts.mu.Lock()\n\tdefer s.mu.Unlock()\n\treturn "
+    "s.listener.Close()\n}",
+    "enum Color { RED, GREEN, BLUE };",
+};
+enum {
+    ASK_VERIFY_FIXTURE_COUNT = (int)(sizeof(ASK_VERIFY_FIXTURE) / sizeof(ASK_VERIFY_FIXTURE[0]))
+};
+
+/* Texts for the check: HYP_ASK_VERIFY_TEXTS names a NUL-separated file when a
+ * measurement wants real declarations; otherwise the fixture above. Returns the
+ * count; `*out_buf` (may be NULL) is the caller's to free. */
+static int ask_verify_texts(const char ***out_texts, char **out_buf) {
+    *out_buf = NULL;
+    const char *path = getenv("HYP_ASK_VERIFY_TEXTS");
+    if (!path || !path[0]) {
+        const char **t = malloc(sizeof(*t) * (size_t)ASK_VERIFY_FIXTURE_COUNT);
+        if (!t) {
+            return -1;
+        }
+        for (int i = 0; i < ASK_VERIFY_FIXTURE_COUNT; i++) {
+            t[i] = ASK_VERIFY_FIXTURE[i];
+        }
+        *out_texts = t;
+        return ASK_VERIFY_FIXTURE_COUNT;
+    }
+    FILE *f = fopen(path, "rb");
+    if (!f) {
+        (void)fprintf(stderr, "embed --verify-batching: cannot open %s\n", path);
+        return -1;
+    }
+    size_t cap = 1 << 16;
+    size_t len = 0;
+    char *buf = malloc(cap + 1);
+    while (buf) {
+        size_t got = fread(buf + len, 1, cap - len, f);
+        len += got;
+        if (len < cap) {
+            break;
+        }
+        cap *= 2;
+        char *nb = realloc(buf, cap + 1);
+        if (!nb) {
+            free(buf);
+            buf = NULL;
+        } else {
+            buf = nb;
+        }
+    }
+    (void)fclose(f);
+    if (!buf) {
+        return -1;
+    }
+    buf[len] = '\0';
+    int n = 0;
+    for (size_t i = 0; i < len; i++) {
+        if (buf[i] == '\0') {
+            n++;
+        }
+    }
+    if (len > 0 && buf[len - 1] != '\0') {
+        n++; /* unterminated last text */
+    }
+    const char **t = malloc(sizeof(*t) * (size_t)(n > 0 ? n : 1));
+    if (!t) {
+        free(buf);
+        return -1;
+    }
+    int k = 0;
+    size_t start = 0;
+    for (size_t i = 0; i <= len && k < n; i++) {
+        if (i == len || buf[i] == '\0') {
+            t[k++] = buf + start;
+            start = i + 1;
+        }
+    }
+    *out_texts = t;
+    *out_buf = buf;
+    return n;
+}
+
+static int ask_cmd_verify_batching(hyp_ask_encoder_t *enc, int group) {
+    const char **texts = NULL;
+    char *buf = NULL;
+    int n = ask_verify_texts(&texts, &buf);
+    if (n <= 0) {
+        free(texts);
+        free(buf);
+        return 1;
+    }
+    if (group <= 0) {
+        group = HYP_ASK_MAX_DOCS;
+    }
+    hyp_ask_batch_row_t *rows = calloc((size_t)n, sizeof(*rows));
+    hyp_ask_batch_check_t chk;
+    printf("embed --verify-batching: %d text(s), alone then in groups of %d, on %s\n", n, group,
+           hyp_ask_encoder_device_note(enc));
+    /* THE BAR, SET FROM MEASUREMENT ON BOTH SIDES.
+     *
+     * The failure this exists to catch (a ragged batch through per-sequence
+     * KV streams, see ask_llama.c) put every row but the shortest at cosine
+     * 0.49-0.91 to the same text alone. The lane's own arithmetic floor is
+     * NOT 1.0: the same 96 declarations encoded ALONE on the CPU and ALONE on
+     * the GPU agree at mean 0.999924, min 0.999873, and a correctly batched
+     * pass sits at exactly that floor (mean 0.999919, min 0.999868, CPU and
+     * GPU alike). Q8_0 weights, f16 K/V and a tiled attention kernel differ
+     * in the last bits per device and per tile alignment, and Q8 activation
+     * quantisation turns those bits into ~1e-4 of cosine; disabling flash
+     * attention put 11 of 16 rows at exactly 1.000000, which is what shows
+     * the residual is arithmetic and not a leak. So the bar is 0.999: an
+     * order of magnitude above the floor's worst deficit (1.3e-4) and two
+     * below the failure's best (9e-2). Four nines would fail alone-vs-alone
+     * across devices, which is what the index/query split does every day. */
+    const float threshold = 0.999F;
+    int rc =
+        rows ? hyp_ask_encoder_check_batching(enc, texts, n, group, threshold, rows, &chk) : -1;
+    if (rc != 0) {
+        (void)fprintf(stderr, "embed --verify-batching: the encoder failed; nothing compared\n");
+        free(rows);
+        free(texts);
+        free(buf);
+        return 1;
+    }
+    for (int i = 0; i < n; i++) {
+        int len = hyp_ask_encoder_token_length(enc, texts[i]);
+        printf("  row %3d  group %2d  pos %2d  tokens %5d  own %.6f  best_other %.6f (row %d)%s\n",
+               i, i / group, i % group, len, (double)rows[i].own, (double)rows[i].best_other,
+               rows[i].best_other_idx,
+               rows[i].own < threshold
+                   ? (rows[i].best_other_idx >= 0 && rows[i].best_other > rows[i].own
+                          ? "  <- MISASSIGNED"
+                          : "  <- CONTAMINATED")
+                   : "");
+    }
+    printf("  passes %d  min own-cosine %.6f (row %d)  below %.4f: %d  misassigned: %d\n",
+           chk.groups, (double)chk.min_own, chk.min_own_row, (double)threshold, chk.below,
+           chk.misassigned);
+    bool ok = chk.below == 0 && chk.misassigned == 0;
+    printf("  verdict: %s — a document's vector %s on what shared its forward pass\n",
+           ok ? "PASS" : "FAIL", ok ? "does not depend" : "DEPENDS");
+    free(rows);
+    free(texts);
+    free(buf);
+    return ok ? 0 : 1;
 }
 
 static int ask_cmd_status(const char *project) {
@@ -315,6 +492,7 @@ int hyp_cmd_embed(int argc, char **argv) {
     memset(&opts, 0, sizeof(opts));
     bool status_only = false;
     bool fit_view_only = false;
+    bool verify_batching = false;
     bool use_stub = false;
     bool stub_reports_truncation = true;
     bool escalation = false;
@@ -348,6 +526,8 @@ int hyp_cmd_embed(int argc, char **argv) {
             status_only = true;
         } else if (strcmp(a, "--fit-view") == 0) {
             fit_view_only = true;
+        } else if (strcmp(a, "--verify-batching") == 0) {
+            verify_batching = true;
         } else if (strcmp(a, "--force") == 0) {
             opts.force = true;
         } else if (strcmp(a, "--allow-model-change") == 0) {
@@ -394,7 +574,7 @@ int hyp_cmd_embed(int argc, char **argv) {
         }
     }
 
-    if (!opts.project) {
+    if (!opts.project && !verify_batching) {
         (void)fprintf(stderr, "embed: --project is required\n\n");
         ask_embed_usage();
         return 2;
@@ -406,6 +586,42 @@ int hyp_cmd_embed(int argc, char **argv) {
         /* Needs no encoder and no weights: it reads vectors that already
          * exist. Decided before every backend check for that reason. */
         return ask_cmd_fit_view(opts.project, opts.vectors_db_path);
+    }
+    if (verify_batching && !escalation) {
+        /* No project, no index, nothing written: the encoder alone, asked the
+         * one question the pass's output cannot answer about itself. */
+        hyp_ask_encoder_t *enc = NULL;
+        if (use_stub) {
+            enc = hyp_ask_encoder_stub_create(HYP_ASK_DIM_DEFAULT, HYP_ASK_MODEL_WINDOW,
+                                              stub_reports_truncation);
+        } else if (!hyp_ask_llama_compiled_in()) {
+            (void)fprintf(stderr,
+                          "embed --verify-batching: no inference backend compiled in (%s)\n",
+                          hyp_ask_llama_build_note());
+            return 3;
+        } else if (!hyp_model_ask_present() || !hyp_model_spec_present(hyp_model_ask_proj_spec())) {
+            (void)fprintf(stderr,
+                          "embed --verify-batching: the ask lane's model is not on this machine; "
+                          "run `%s`\n",
+                          HYP_MODEL_ASK_COMMAND);
+            return 3;
+        } else {
+            char err[512];
+            err[0] = '\0';
+            enc = hyp_ask_llama_encoder_create(opts.device_pref, err, sizeof(err));
+            if (!enc) {
+                (void)fprintf(stderr, "embed --verify-batching: %s\n",
+                              err[0] ? err : "the embedding backend could not be started");
+                return 1;
+            }
+        }
+        if (!enc) {
+            (void)fprintf(stderr, "embed --verify-batching: could not create the encoder\n");
+            return 1;
+        }
+        int vrc = ask_cmd_verify_batching(enc, opts.max_docs);
+        hyp_ask_encoder_destroy(enc);
+        return vrc;
     }
     /* THE TWO UNAVAILABLE STATES, SAID SEPARATELY. "No encoder in this build"
      * is fixed by a different binary; "the weights are not on this machine" is
