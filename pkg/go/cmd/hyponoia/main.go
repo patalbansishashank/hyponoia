@@ -44,8 +44,6 @@ const (
 
 	windowsBinaryName    = "hyponoia.exe"
 	integrationsFileName = "hyp-integrations.json"
-	windowsBinaryName    = "hyponoia.exe"
-	integrationsFileName = "hyp-integrations.json"
 
 	maxRedirects            = 5
 	requestTimeout          = 2 * time.Minute
