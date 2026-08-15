@@ -6417,15 +6417,18 @@ TEST(cli_tiered_codex_profiles_migrate_preserve_and_uninstall) {
  * is an owned document, not a user edit: install must upgrade it in place and
  * uninstall must still recognise it. Anything else strands every existing
  * user on a profile without `ask` while printing "preserved modified profile"
- * for a file they never touched. A genuinely edited file is still preserved. */
+ * for a file they never touched. A genuinely edited file is still preserved.
+ * Seeds generation 0 (Kiro, scout) AND generation 1 (Claude verify, the Vibe
+ * prompt file): 0 -> 1 changed the tools list and 1 -> 2 changed the prompt,
+ * and both roads must lead to the current bytes. */
 TEST(cli_tiered_profiles_migrate_earlier_generations) {
     char tmpdir[256];
     snprintf(tmpdir, sizeof(tmpdir), "/tmp/cli-tiered-generation-XXXXXX");
     if (!hyp_mkdtemp(tmpdir))
         FAIL("hyp_mkdtemp failed");
 
-    const char *const env_names[] = {"HOME", "PATH", "CLAUDE_CONFIG_DIR", "KIRO_HOME",
-                                     "XDG_CONFIG_HOME"};
+    const char *const env_names[] = {
+        "HOME", "PATH", "CLAUDE_CONFIG_DIR", "KIRO_HOME", "XDG_CONFIG_HOME", "VIBE_HOME"};
     char *saved_env[sizeof(env_names) / sizeof(env_names[0])];
     for (size_t i = 0U; i < sizeof(env_names) / sizeof(env_names[0]); i++) {
         saved_env[i] = save_test_env(env_names[i]);
@@ -6437,6 +6440,13 @@ TEST(cli_tiered_profiles_migrate_earlier_generations) {
     snprintf(kiro_home, sizeof(kiro_home), "%s/vendor-kiro", tmpdir);
     test_mkdirp(kiro_home);
     hyp_setenv("KIRO_HOME", kiro_home, 1);
+    char vibe_home[512];
+    char vibe_prompt_path[640];
+    snprintf(vibe_home, sizeof(vibe_home), "%s/vendor-vibe", tmpdir);
+    snprintf(vibe_prompt_path, sizeof(vibe_prompt_path), "%s/prompts", vibe_home);
+    test_mkdirp(vibe_prompt_path);
+    snprintf(vibe_prompt_path, sizeof(vibe_prompt_path), "%s/prompts/hyponoia.md", vibe_home);
+    hyp_setenv("VIBE_HOME", vibe_home, 1);
 
     char agents_dir[512];
     char verify_path[640];
@@ -6447,7 +6457,6 @@ TEST(cli_tiered_profiles_migrate_earlier_generations) {
     snprintf(verify_path, sizeof(verify_path), "%s/hyponoia.md", agents_dir);
     snprintf(auditor_path, sizeof(auditor_path), "%s/hyponoia-auditor.md", agents_dir);
     snprintf(scout_path, sizeof(scout_path), "%s/hyponoia-scout.md", agents_dir);
-    snprintf(kiro_verify_path, sizeof(kiro_verify_path), "%s/agents/hyponoia.json", kiro_home);
     test_mkdirp(agents_dir);
     snprintf(kiro_verify_path, sizeof(kiro_verify_path), "%s/agents", kiro_home);
     test_mkdirp(kiro_verify_path);
@@ -6456,46 +6465,58 @@ TEST(cli_tiered_profiles_migrate_earlier_generations) {
     char installed_binary[640];
     snprintf(installed_binary, sizeof(installed_binary), "%s/.local/bin/hyponoia", tmpdir);
 
-    char *gen0_verify = hyp_render_graph_profile_generation(
-        HYP_GRAPH_DIALECT_CLAUDE, HYP_GRAPH_TIER_VERIFY, HYP_GRAPH_ACCESS_DIRECT, NULL, 0U);
+    char *gen1_verify = hyp_render_graph_profile_generation(
+        HYP_GRAPH_DIALECT_CLAUDE, HYP_GRAPH_TIER_VERIFY, HYP_GRAPH_ACCESS_DIRECT, NULL, 1U);
     char *gen0_scout = hyp_render_graph_profile_generation(
         HYP_GRAPH_DIALECT_CLAUDE, HYP_GRAPH_TIER_SCOUT, HYP_GRAPH_ACCESS_DIRECT, NULL, 0U);
     char *gen0_kiro =
         hyp_render_graph_profile_generation(HYP_GRAPH_DIALECT_KIRO, HYP_GRAPH_TIER_VERIFY,
                                             HYP_GRAPH_ACCESS_DIRECT, installed_binary, 0U);
-    if (!gen0_verify || !gen0_scout || !gen0_kiro)
-        FAIL("generation-0 renderings must be available");
-    bool seeded_without_ask =
-        !strstr(gen0_verify, "mcp__hyponoia__ask") && !strstr(gen0_kiro, "@hyponoia/ask");
-    write_test_file(verify_path, gen0_verify);
+    char *gen1_prompt =
+        hyp_render_graph_prompt_generation(HYP_GRAPH_TIER_VERIFY, HYP_GRAPH_ACCESS_DIRECT, 1U);
+    if (!gen1_verify || !gen0_scout || !gen0_kiro || !gen1_prompt)
+        FAIL("earlier-generation renderings must be available");
+    bool seeded_earlier =
+        strstr(gen1_verify, "mcp__hyponoia__ask") && !strstr(gen1_verify, "call ask first") &&
+        !strstr(gen0_kiro, "@hyponoia/ask") && !strstr(gen1_prompt, "call ask first");
+    write_test_file(verify_path, gen1_verify);
     write_test_file(scout_path, gen0_scout);
     write_test_file(kiro_verify_path, gen0_kiro);
+    write_test_file(vibe_prompt_path, gen1_prompt);
     const char *edited_auditor = "---\nname: hyponoia-auditor\n---\nUser-owned auditor.\n";
     write_test_file(auditor_path, edited_auditor);
     free(gen0_kiro);
+    free(gen1_prompt);
 
     int install_rc = hyp_install_agent_configs(tmpdir, installed_binary, false, false);
     char *verify = read_test_file_alloc(verify_path);
     char *scout = read_test_file_alloc(scout_path);
     char *auditor = read_test_file_alloc(auditor_path);
     char *kiro = read_test_file_alloc(kiro_verify_path);
+    char *vibe_prompt = read_test_file_alloc(vibe_prompt_path);
     char *current_verify = hyp_render_graph_profile(HYP_GRAPH_DIALECT_CLAUDE, HYP_GRAPH_TIER_VERIFY,
                                                     HYP_GRAPH_ACCESS_DIRECT, NULL);
+    char *current_prompt = hyp_render_graph_prompt(HYP_GRAPH_TIER_VERIFY, HYP_GRAPH_ACCESS_DIRECT);
     bool upgraded = verify && current_verify && strcmp(verify, current_verify) == 0 &&
-                    strcmp(verify, gen0_verify) != 0 &&
-                    strstr(verify, "  - mcp__hyponoia__ask\n") && scout &&
-                    strcmp(scout, gen0_scout) == 0 && !strstr(scout, "mcp__hyponoia__ask") &&
-                    kiro && strstr(kiro, "\"@hyponoia/ask\"");
+                    strcmp(verify, gen1_verify) != 0 &&
+                    strstr(verify, "  - mcp__hyponoia__ask\n") &&
+                    strstr(verify, "call ask first") && scout && strcmp(scout, gen0_scout) == 0 &&
+                    !strstr(scout, "mcp__hyponoia__ask") && !strstr(scout, "call ask first") &&
+                    kiro && strstr(kiro, "\"@hyponoia/ask\"") && strstr(kiro, "call ask first") &&
+                    vibe_prompt && current_prompt && strcmp(vibe_prompt, current_prompt) == 0 &&
+                    strstr(vibe_prompt, "call ask first");
     bool edited_preserved = auditor && strcmp(auditor, edited_auditor) == 0;
     free(verify);
     free(scout);
     free(auditor);
     free(kiro);
+    free(vibe_prompt);
     free(current_verify);
+    free(current_prompt);
 
-    /* Downgrade the file to generation 0 again: uninstall must remove it as
+    /* Downgrade the file to generation 1 again: uninstall must remove it as
      * an owned document, not preserve it as a user file. */
-    write_test_file(verify_path, gen0_verify);
+    write_test_file(verify_path, gen1_verify);
     char *argv[] = {"uninstall", "--yes"};
     int uninstall_rc = cli_test_cmd_uninstall(2, argv);
     struct stat state;
@@ -6503,19 +6524,19 @@ TEST(cli_tiered_profiles_migrate_earlier_generations) {
     auditor = read_test_file_alloc(auditor_path);
     bool edited_survives_uninstall = auditor && strcmp(auditor, edited_auditor) == 0;
     free(auditor);
-    free(gen0_verify);
+    free(gen1_verify);
     free(gen0_scout);
 
     for (size_t i = 0U; i < sizeof(env_names) / sizeof(env_names[0]); i++) {
         restore_test_env(env_names[i], saved_env[i]);
     }
     test_rmdir_r(tmpdir);
-    if (!seeded_without_ask || !upgraded || !edited_preserved || uninstall_rc != 0 || !removed ||
+    if (!seeded_earlier || !upgraded || !edited_preserved || uninstall_rc != 0 || !removed ||
         !edited_survives_uninstall) {
         fprintf(stderr,
                 "generation migrate diag install_rc=%d seeded=%d upgraded=%d edited=%d "
                 "uninstall_rc=%d removed=%d survives=%d\n",
-                install_rc, seeded_without_ask, upgraded, edited_preserved, uninstall_rc, removed,
+                install_rc, seeded_earlier, upgraded, edited_preserved, uninstall_rc, removed,
                 edited_survives_uninstall);
         FAIL("earlier-generation profiles must upgrade on install and be removable on uninstall");
     }

@@ -7594,6 +7594,27 @@ static void hyp_released_profiles_collect(hyp_released_profiles_t *set,
     }
 }
 
+/* The prompt-only file some clients keep beside the agent definition (Vibe's
+ * prompts/<slug>.md): the pre-tier Verify text plus every earlier
+ * generation's prompt in both access modes. */
+static void hyp_released_prompts_collect(hyp_released_profiles_t *set, hyp_graph_tier_t tier,
+                                         hyp_graph_access_t access,
+                                         const char *legacy_verify_content) {
+    memset(set, 0, sizeof(*set));
+    hyp_graph_access_t alternate_access =
+        access == HYP_GRAPH_ACCESS_DIRECT ? HYP_GRAPH_ACCESS_HANDOFF : HYP_GRAPH_ACCESS_DIRECT;
+    if (tier == HYP_GRAPH_TIER_VERIFY && legacy_verify_content &&
+        set->count < HYP_RELEASED_PROFILE_CAP) {
+        set->items[set->count++] = legacy_verify_content;
+    }
+    for (unsigned generation = 0U; generation < hyp_graph_profile_generation(); generation++) {
+        hyp_released_profiles_add(set,
+                                  hyp_render_graph_prompt_generation(tier, access, generation));
+        hyp_released_profiles_add(
+            set, hyp_render_graph_prompt_generation(tier, alternate_access, generation));
+    }
+}
+
 static void hyp_released_profiles_free(hyp_released_profiles_t *set) {
     for (size_t i = 0U; i < set->owned_count; i++) {
         free(set->owned[i]);
@@ -7702,11 +7723,13 @@ static void install_tiered_profile_prompts(const char *label, const char *verify
             record_agent_config_error(false, label, "prompt_render", path);
             continue;
         }
-        const char *released[] = {legacy_verify_content};
-        size_t released_count = tier == HYP_GRAPH_TIER_VERIFY && legacy_verify_content ? 1U : 0U;
-        int result = prepare_config_parent(path)
-                         ? hyp_text_migrate_owned_document(path, current, released, released_count)
-                         : CLI_ERR;
+        hyp_released_profiles_t released;
+        hyp_released_prompts_collect(&released, tier, access, legacy_verify_content);
+        int result =
+            prepare_config_parent(path)
+                ? hyp_text_migrate_owned_document(path, current, released.items, released.count)
+                : CLI_ERR;
+        hyp_released_profiles_free(&released);
         free(current);
         if (result != CLI_OK) {
             if (result > CLI_OK) {
@@ -7739,9 +7762,11 @@ static void uninstall_tiered_profile_prompts(const char *label, const char *veri
             record_agent_config_error(true, label, "prompt_render", path);
             continue;
         }
-        const char *released[] = {legacy_verify_content};
-        size_t released_count = tier == HYP_GRAPH_TIER_VERIFY && legacy_verify_content ? 1U : 0U;
-        int result = hyp_text_remove_owned_document_any(path, current, released, released_count);
+        hyp_released_profiles_t released;
+        hyp_released_prompts_collect(&released, tier, access, legacy_verify_content);
+        int result =
+            hyp_text_remove_owned_document_any(path, current, released.items, released.count);
+        hyp_released_profiles_free(&released);
         free(current);
         if (result < CLI_OK) {
             record_agent_config_error(true, label, "prompt_uninstall", path);

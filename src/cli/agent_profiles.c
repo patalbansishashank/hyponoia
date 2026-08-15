@@ -46,8 +46,9 @@ static const profile_tool_t profile_tools[] = {
 #define PROFILE_TOOL_COUNT (sizeof(profile_tools) / sizeof(profile_tools[0]))
 
 /* Scout is the small surface; every other tier requests the analysis set. A
- * row newer than `generation` is left out so an earlier generation's profile
- * still renders byte-for-byte for the installer to recognise. */
+ * row newer than `generation` is left out — as are prompt words newer than
+ * it, in hyp_render_graph_prompt_generation — so an earlier generation's
+ * profile still renders byte-for-byte for the installer to recognise. */
 static bool tier_includes_tool(hyp_graph_tier_t tier, const profile_tool_t *tool,
                                unsigned generation) {
     if (tool->generation > generation) {
@@ -57,7 +58,7 @@ static bool tier_includes_tool(hyp_graph_tier_t tier, const profile_tool_t *tool
 }
 
 unsigned hyp_graph_profile_generation(void) {
-    return HYP_TOOL_TIER_GENERATION;
+    return HYP_PROFILE_GENERATION;
 }
 
 static bool tier_valid(hyp_graph_tier_t tier) {
@@ -186,8 +187,27 @@ static const char *profile_description(hyp_graph_tier_t tier, hyp_graph_access_t
     return access == HYP_GRAPH_ACCESS_DIRECT ? direct[tier] : handoff[tier];
 }
 
-char *hyp_render_graph_prompt(hyp_graph_tier_t tier, hyp_graph_access_t access) {
-    if (!tier_valid(tier) || !access_valid(access)) {
+/* Generation 2's addition to the analysis-tier direct body, placed exactly
+ * where the measured column put it (after "Use only read-only graph and
+ * source tools."). The first sentence is the measured wording verbatim; the
+ * rest answers the two things every measured run spent turns on: what
+ * available:false means, and the project name — 240/240 MCP runs opened with
+ * list_projects because nothing told the agent how the name is derived
+ * (hyp_project_name_from_path: canonical absolute path, leading slash
+ * dropped, every other separator mapped to '-'). Scout never gets this:
+ * scout is the surface where every tool answers, and ask can say
+ * unavailable. Never edit these words in place — that is a new generation. */
+static const char PROMPT_ASK_GUIDANCE_GEN2[] =
+    "For a natural-language question about what code does, call ask first with the question as "
+    "one string; read its top 2–3 rows and verify with get_code_snippet, and treat "
+    "available:false as a statement about the index, not the code. The project name is the "
+    "indexed root's absolute path (usually the repository root or working directory) without "
+    "its leading slash and with every other separator as `-`, e.g. /home/u/repo → home-u-repo; "
+    "pass it directly and use list_projects only if that fails. ";
+
+char *hyp_render_graph_prompt_generation(hyp_graph_tier_t tier, hyp_graph_access_t access,
+                                         unsigned generation) {
+    if (!tier_valid(tier) || !access_valid(access) || generation > HYP_PROFILE_GENERATION) {
         return NULL;
     }
     profile_buffer_t buffer;
@@ -222,10 +242,14 @@ char *hyp_render_graph_prompt(hyp_graph_tier_t tier, hyp_graph_access_t access) 
         default:
             break;
         }
+        profile_buffer_append(&buffer, "Use hyponoia in the exact graph project. Use only "
+                                       "read-only graph and source tools. ");
+        if (tier != HYP_GRAPH_TIER_SCOUT && generation >= HYP_PROFILE_GENERATION_ASK_GUIDANCE) {
+            profile_buffer_append(&buffer, PROMPT_ASK_GUIDANCE_GEN2);
+        }
         profile_buffer_append(
             &buffer,
-            "Use hyponoia in the exact graph project. Use only read-only graph and "
-            "source tools. Locate candidates with search_graph, "
+            "Locate candidates with search_graph, "
             "inspect relationships with trace_path, and verify material definitions with "
             "get_code_snippet. Use query_graph or get_architecture only when available and "
             "required by the tier. After candidate paths are known, call "
@@ -280,13 +304,17 @@ char *hyp_render_graph_prompt(hyp_graph_tier_t tier, hyp_graph_access_t access) 
     return profile_buffer_finish(&buffer);
 }
 
+char *hyp_render_graph_prompt(hyp_graph_tier_t tier, hyp_graph_access_t access) {
+    return hyp_render_graph_prompt_generation(tier, access, HYP_PROFILE_GENERATION);
+}
+
 const char *hyp_graph_tier_tool_name(hyp_graph_tier_t tier, size_t index) {
     if (!tier_valid(tier)) {
         return NULL;
     }
     size_t seen = 0U;
     for (size_t i = 0U; i < PROFILE_TOOL_COUNT; i++) {
-        if (!tier_includes_tool(tier, &profile_tools[i], HYP_TOOL_TIER_GENERATION)) {
+        if (!tier_includes_tool(tier, &profile_tools[i], HYP_PROFILE_GENERATION)) {
             continue;
         }
         if (seen == index) {
@@ -655,11 +683,11 @@ char *hyp_render_graph_profile_generation(hyp_graph_profile_dialect_t dialect,
                                           hyp_graph_tier_t tier, hyp_graph_access_t access,
                                           const char *binary_path, unsigned generation) {
     if (!dialect_valid(dialect) || !tier_valid(tier) || !access_valid(access) ||
-        generation > HYP_TOOL_TIER_GENERATION ||
+        generation > HYP_PROFILE_GENERATION ||
         (access == HYP_GRAPH_ACCESS_DIRECT && !hyp_graph_dialect_direct_capable(dialect))) {
         return NULL;
     }
-    char *prompt = hyp_render_graph_prompt(tier, access);
+    char *prompt = hyp_render_graph_prompt_generation(tier, access, generation);
     if (!prompt) {
         return NULL;
     }
@@ -682,17 +710,17 @@ char *hyp_render_graph_profile_generation(hyp_graph_profile_dialect_t dialect,
 char *hyp_render_graph_profile(hyp_graph_profile_dialect_t dialect, hyp_graph_tier_t tier,
                                hyp_graph_access_t access, const char *binary_path) {
     return hyp_render_graph_profile_generation(dialect, tier, access, binary_path,
-                                               HYP_TOOL_TIER_GENERATION);
+                                               HYP_PROFILE_GENERATION);
 }
 
-/* v0.9.1-rc.1 predates every generation after 0, so its enabled_tools are the
- * generation-0 set; rendering it with a newer set would stop matching the
- * files it exists to recognise. */
+/* v0.9.1-rc.1 predates every generation after 0, so its enabled_tools and
+ * its prompt are generation 0; rendering it with anything newer would stop
+ * matching the files it exists to recognise. */
 char *hyp_render_graph_profile_codex_rc1(hyp_graph_tier_t tier) {
     if (!tier_valid(tier)) {
         return NULL;
     }
-    char *prompt = hyp_render_graph_prompt(tier, HYP_GRAPH_ACCESS_DIRECT);
+    char *prompt = hyp_render_graph_prompt_generation(tier, HYP_GRAPH_ACCESS_DIRECT, 0U);
     if (!prompt) {
         return NULL;
     }
