@@ -59,6 +59,7 @@ enum {
 #include "cli/cli.h"
 #include "ask/ask_embed.h" /* hyp_ask_read_span */
 #include "ask/ask_llama.h"
+#include "ask/ask_view.h"     /* the 3-D view's overlay (NEXT-STEPS §3.1 step 5) */
 #include "ask/ask_provider.h" /* the escalation lane's encoder */
 #include "cli/model_fetch.h"
 #include "watcher/watcher.h"
@@ -4109,7 +4110,16 @@ static char *ask_error(const char *msg, char *project, char *question) {
 /* Defined below, with the rest of the project-root helpers. */
 static char *project_root_from_store(hyp_store_t *store, const char *project);
 
-static char *handle_ask(hyp_mcp_server_t *srv, const char *args) {
+/* The `ask` tool. `force_json` overrides the format argument; `qvec_out`, when
+ * non-NULL, receives the HYP_ASK_DIM-float QUESTION VECTOR the ranking was
+ * scored against (zeroed when no vector was produced). It exists for ONE
+ * caller — hyp_mcp_ask_view_overlay — so the 3-D view draws the question with
+ * the very vector that ranked, rather than re-encoding and hoping the two
+ * agree. handle_ask passes NULL and is otherwise identical. */
+static char *ask_run(hyp_mcp_server_t *srv, const char *args, bool force_json, float *qvec_out) {
+    if (qvec_out) {
+        memset(qvec_out, 0, (size_t)HYP_ASK_DIM * sizeof(float));
+    }
     char *project = get_project_arg(args);
     hyp_store_t *store = resolve_store(srv, project);
     REQUIRE_STORE(store, project);
@@ -4121,7 +4131,7 @@ static char *handle_ask(hyp_mcp_server_t *srv, const char *args) {
     }
 
     char *format_arg = hyp_mcp_get_string_arg(args, "format");
-    bool json = format_arg && strcmp(format_arg, "json") == 0;
+    bool json = force_json || (format_arg && strcmp(format_arg, "json") == 0);
     free(format_arg);
 
     /* Argument validation before availability: a malformed call is the
@@ -4302,6 +4312,11 @@ static char *handle_ask(hyp_mcp_server_t *srv, const char *args) {
     hyp_ask_hit_t *hits = NULL;
     int hit_count = 0;
     int rc = hyp_ask_index_search_lane(store, project, lane, qvec, search_limit, &hits, &hit_count);
+    if (qvec_out) {
+        /* Handed out AFTER the search, so the caller holds exactly the vector
+         * the hits below were scored against — no second encode. */
+        memcpy(qvec_out, qvec, (size_t)HYP_ASK_DIM * sizeof(float));
+    }
     free(qvec);
     hyp_ask_encoder_destroy(esc_enc);
     if (rc != HYP_STORE_OK) {
@@ -4407,6 +4422,329 @@ static char *handle_ask(hyp_mcp_server_t *srv, const char *args) {
     free(project);
     free(question);
     return result;
+}
+
+static char *handle_ask(hyp_mcp_server_t *srv, const char *args) {
+    return ask_run(srv, args, false, NULL);
+}
+
+/* ── The 3-D view's query overlay (NEXT-STEPS §3.1 step 5) ─────────
+ *
+ * Runs the `ask` tool — the SAME code path, the same encoder, the same
+ * search — and then places the question and its ranked answer into the
+ * persisted 3-space of the project's vector file (ask_view.h). The neighbours
+ * in the overlay are the tool's own rows, in the tool's own order, read back
+ * out of the tool's own JSON: nothing here re-ranks, and a test asserts that
+ * `hits[i].qualified_name == ask.rows[i][0]` for every i so the two ends
+ * cannot drift apart without a red run.
+ *
+ * Shape:
+ *   { "project", "question",
+ *     "ask":   <the ask tool's JSON result, verbatim, whatever it said>,
+ *     "view":  { "available", "method", "dim", "rows", "variance_kept",
+ *                "eigen": [3], "fitted_at", "stale", "reason"? },
+ *     "query": { "x","y","z" }            — absent when there is no view,
+ *     "hits":  [ { "rank", "qualified_name", "node_id", "label", "file",
+ *                  "lines", "score", "projected", "x","y","z" } ],
+ *     "caveat": HYP_ASK_VIEW_CAVEAT }
+ *
+ * "ask" is always present so a client sees exactly what the tool would have
+ * said, including every unavailable state; "query"/"hits" are only claims
+ * when a view exists — an absent key means "look at ask", never "nothing". */
+char *hyp_mcp_ask_view_overlay(hyp_mcp_server_t *srv, const char *args_json) {
+    if (!srv || !args_json) {
+        return NULL;
+    }
+    float *qvec = (float *)calloc(HYP_ASK_DIM, sizeof(float));
+    if (!qvec) {
+        return NULL;
+    }
+    char *tool_result = ask_run(srv, args_json, true, qvec);
+
+    yyjson_mut_doc *doc = yyjson_mut_doc_new(NULL);
+    yyjson_mut_val *root = yyjson_mut_obj(doc);
+    yyjson_mut_doc_set_root(doc, root);
+
+    char *project = get_project_arg(args_json);
+    char *question = hyp_mcp_get_string_arg(args_json, "question");
+    yyjson_mut_obj_add_strcpy(doc, root, "project", project ? project : "");
+    yyjson_mut_obj_add_strcpy(doc, root, "question", question ? question : "");
+    bool escalate = hyp_mcp_get_bool_arg(args_json, "escalate");
+    hyp_ask_lane_t lane = escalate ? HYP_ASK_LANE_ESCALATION : HYP_ASK_LANE_LOCAL;
+    yyjson_mut_obj_add_str(doc, root, "lane", hyp_ask_lane_name(lane));
+
+    /* Unwrap the tool result: {"content":[{"type":"text","text":"..."}],
+     * "isError":bool}. The text is the JSON the tool rendered. */
+    yyjson_doc *env = tool_result ? yyjson_read(tool_result, strlen(tool_result), 0) : NULL;
+    yyjson_val *env_root = env ? yyjson_doc_get_root(env) : NULL;
+    yyjson_val *is_err = env_root ? yyjson_obj_get(env_root, "isError") : NULL;
+    bool tool_error = is_err && yyjson_is_bool(is_err) && yyjson_get_bool(is_err);
+    yyjson_val *content = env_root ? yyjson_obj_get(env_root, "content") : NULL;
+    yyjson_val *first = content ? yyjson_arr_get(content, 0) : NULL;
+    yyjson_val *text = first ? yyjson_obj_get(first, "text") : NULL;
+    const char *inner = text && yyjson_is_str(text) ? yyjson_get_str(text) : NULL;
+    yyjson_doc *ask_doc = NULL;
+    yyjson_val *ask_root = NULL;
+    if (inner) {
+        ask_doc = yyjson_read(inner, strlen(inner), 0);
+        ask_root = ask_doc ? yyjson_doc_get_root(ask_doc) : NULL;
+    }
+    if (ask_root && yyjson_is_obj(ask_root)) {
+        yyjson_mut_obj_add_val(doc, root, "ask", yyjson_val_mut_copy(doc, ask_root));
+    } else {
+        /* An error, or the unavailable prose the tool renders as TOON. Carry
+         * the text as-is under "ask_text" so nothing the tool said is lost. */
+        yyjson_mut_obj_add_strcpy(doc, root, "ask_text", inner ? inner : "");
+    }
+    yyjson_mut_obj_add_bool(doc, root, "ask_error", tool_error);
+
+    yyjson_val *avail = ask_root ? yyjson_obj_get(ask_root, "available") : NULL;
+    bool answered = avail && yyjson_is_bool(avail) && yyjson_get_bool(avail) && !tool_error;
+    yyjson_val *rows = ask_root ? yyjson_obj_get(ask_root, "rows") : NULL;
+
+    yyjson_mut_val *view_obj = yyjson_mut_obj(doc);
+    /* Open ONLY an existing file: the store's open creates on absence, and an
+     * overlay request for an un-embedded project must not mint an empty index
+     * that later reads as "built and empty". */
+    char vpath[HYP_SZ_4K];
+    bool have_file = project && hyp_ask_vectors_path_lane(project, lane, vpath, sizeof(vpath)) &&
+                     hyp_file_exists(vpath);
+    hyp_ask_vectors_t *v = have_file ? hyp_ask_vectors_open_lane(project, lane) : NULL;
+    hyp_ask_view_t view;
+    memset(&view, 0, sizeof(view));
+    int vrc = v ? hyp_ask_view_load(v, &view) : HYP_ASK_VEC_NOT_FOUND;
+    if (vrc == HYP_ASK_VEC_OK) {
+        double kept = view.total_var > 0.0
+                          ? (view.eigen[0] + view.eigen[1] + view.eigen[2]) / view.total_var
+                          : 0.0;
+        yyjson_mut_obj_add_bool(doc, view_obj, "available", true);
+        yyjson_mut_obj_add_strcpy(doc, view_obj, "method", view.method ? view.method : "");
+        yyjson_mut_obj_add_int(doc, view_obj, "dim", view.dim);
+        yyjson_mut_obj_add_int(doc, view_obj, "rows", view.rows);
+        yyjson_mut_obj_add_real(doc, view_obj, "variance_kept", kept);
+        yyjson_mut_val *eig = yyjson_mut_arr(doc);
+        for (int k = 0; k < HYP_ASK_VIEW_K; k++) {
+            yyjson_mut_arr_add_real(doc, eig, view.eigen[k]);
+        }
+        yyjson_mut_obj_add_val(doc, view_obj, "eigen", eig);
+        yyjson_mut_obj_add_real(doc, view_obj, "total_var", view.total_var);
+        yyjson_mut_obj_add_strcpy(doc, view_obj, "fitted_at", view.fitted_at ? view.fitted_at : "");
+        yyjson_mut_obj_add_bool(doc, view_obj, "stale", hyp_ask_view_is_stale(v, &view));
+        yyjson_mut_obj_add_bool(doc, view_obj, "deterministic", true);
+        yyjson_mut_obj_add_str(doc, view_obj, "refit",
+                               "after every embed pass, over the whole table; or "
+                               "`hyponoia embed --project <p> --fit-view`");
+    } else {
+        yyjson_mut_obj_add_bool(doc, view_obj, "available", false);
+        yyjson_mut_obj_add_str(doc, view_obj, "reason",
+                               vrc == HYP_ASK_VEC_INCOMPATIBLE
+                                   ? "a view exists but this binary does not read its method"
+                                   : "no 3-D view has been fitted for this index");
+        yyjson_mut_obj_add_str(doc, view_obj, "remedy", "hyponoia embed --project <p> --fit-view");
+    }
+    yyjson_mut_obj_add_val(doc, root, "view", view_obj);
+
+    if (vrc == HYP_ASK_VEC_OK && answered) {
+        float q3[HYP_ASK_VIEW_K];
+        hyp_ask_view_project(&view, qvec, q3);
+        yyjson_mut_val *qo = yyjson_mut_obj(doc);
+        yyjson_mut_obj_add_real(doc, qo, "x", (double)q3[0]);
+        yyjson_mut_obj_add_real(doc, qo, "y", (double)q3[1]);
+        yyjson_mut_obj_add_real(doc, qo, "z", (double)q3[2]);
+        yyjson_mut_obj_add_val(doc, root, "query", qo);
+    }
+    if (vrc == HYP_ASK_VEC_OK && answered && rows && yyjson_is_arr(rows)) {
+        /* Column order is the tool's: qn, label, file, lines, score[, cut].
+         * Read by position from the tool's own `cols` so a column reorder
+         * there is a red run here, not a silent shift. */
+        yyjson_val *cols = yyjson_obj_get(ask_root, "cols");
+        int c_qn = -1;
+        int c_label = -1;
+        int c_file = -1;
+        int c_lines = -1;
+        int c_score = -1;
+        if (cols && yyjson_is_arr(cols)) {
+            size_t ci = 0;
+            size_t cmax = 0;
+            yyjson_val *cv = NULL;
+            yyjson_arr_foreach(cols, ci, cmax, cv) {
+                const char *cn = yyjson_is_str(cv) ? yyjson_get_str(cv) : "";
+                if (strcmp(cn, "qn") == 0) {
+                    c_qn = (int)ci;
+                } else if (strcmp(cn, "label") == 0) {
+                    c_label = (int)ci;
+                } else if (strcmp(cn, "file") == 0) {
+                    c_file = (int)ci;
+                } else if (strcmp(cn, "lines") == 0) {
+                    c_lines = (int)ci;
+                } else if (strcmp(cn, "score") == 0) {
+                    c_score = (int)ci;
+                }
+            }
+        }
+        yyjson_mut_val *hits = yyjson_mut_arr(doc);
+        size_t ri = 0;
+        size_t rmax = 0;
+        yyjson_val *row = NULL;
+        int rank = 0;
+        yyjson_arr_foreach(rows, ri, rmax, row) {
+            rank++;
+            yyjson_mut_val *h = yyjson_mut_obj(doc);
+            yyjson_mut_obj_add_int(doc, h, "rank", rank);
+            yyjson_val *qn_v = c_qn >= 0 ? yyjson_arr_get(row, (size_t)c_qn) : NULL;
+            const char *qn = qn_v && yyjson_is_str(qn_v) ? yyjson_get_str(qn_v) : "";
+            yyjson_mut_obj_add_strcpy(doc, h, "qualified_name", qn);
+            yyjson_val *lv = c_label >= 0 ? yyjson_arr_get(row, (size_t)c_label) : NULL;
+            yyjson_mut_obj_add_strcpy(doc, h, "label",
+                                      lv && yyjson_is_str(lv) ? yyjson_get_str(lv) : "");
+            yyjson_val *fv = c_file >= 0 ? yyjson_arr_get(row, (size_t)c_file) : NULL;
+            yyjson_mut_obj_add_strcpy(doc, h, "file",
+                                      fv && yyjson_is_str(fv) ? yyjson_get_str(fv) : "");
+            yyjson_val *lnv = c_lines >= 0 ? yyjson_arr_get(row, (size_t)c_lines) : NULL;
+            yyjson_mut_obj_add_strcpy(doc, h, "lines",
+                                      lnv && yyjson_is_str(lnv) ? yyjson_get_str(lnv) : "");
+            yyjson_val *sv = c_score >= 0 ? yyjson_arr_get(row, (size_t)c_score) : NULL;
+            yyjson_mut_obj_add_real(doc, h, "score",
+                                    sv && yyjson_is_num(sv) ? yyjson_get_num(sv) : 0.0);
+            float p3[HYP_ASK_VIEW_K];
+            int64_t node_id = 0;
+            bool present = false;
+            int lrc = (vrc == HYP_ASK_VEC_OK && v)
+                          ? hyp_ask_view_lookup(v, qn, p3, &node_id, &present)
+                          : HYP_ASK_VEC_NOT_FOUND;
+            yyjson_mut_obj_add_int(doc, h, "node_id", node_id);
+            yyjson_mut_obj_add_bool(doc, h, "projected", lrc == HYP_ASK_VEC_OK);
+            if (lrc == HYP_ASK_VEC_OK) {
+                yyjson_mut_obj_add_real(doc, h, "x", (double)p3[0]);
+                yyjson_mut_obj_add_real(doc, h, "y", (double)p3[1]);
+                yyjson_mut_obj_add_real(doc, h, "z", (double)p3[2]);
+            }
+            yyjson_mut_arr_append(hits, h);
+        }
+        yyjson_mut_obj_add_val(doc, root, "hits", hits);
+    }
+    yyjson_mut_obj_add_str(doc, root, "caveat", HYP_ASK_VIEW_CAVEAT);
+
+    if (vrc == HYP_ASK_VEC_OK) {
+        hyp_ask_view_free(&view);
+    }
+    if (v) {
+        hyp_ask_vectors_close(v);
+    }
+    if (ask_doc) {
+        yyjson_doc_free(ask_doc);
+    }
+    if (env) {
+        yyjson_doc_free(env);
+    }
+    free(tool_result);
+    free(project);
+    free(question);
+    free(qvec);
+    char *out = yy_doc_to_str(doc);
+    yyjson_mut_doc_free(doc);
+    return out;
+}
+
+/* The cloud: every projected declaration of a project's vector file, for the
+ * UI to draw the question against. Same "view" object as the overlay, plus
+ * "points" and the count of rows that have no coordinates yet. */
+char *hyp_mcp_ask_view_points_json(const char *project, bool escalation) {
+    if (!project || !project[0]) {
+        return NULL;
+    }
+    hyp_ask_lane_t lane = escalation ? HYP_ASK_LANE_ESCALATION : HYP_ASK_LANE_LOCAL;
+    yyjson_mut_doc *doc = yyjson_mut_doc_new(NULL);
+    yyjson_mut_val *root = yyjson_mut_obj(doc);
+    yyjson_mut_doc_set_root(doc, root);
+    yyjson_mut_obj_add_strcpy(doc, root, "project", project);
+    yyjson_mut_obj_add_str(doc, root, "lane", hyp_ask_lane_name(lane));
+
+    char path[HYP_SZ_4K];
+    bool have_file =
+        hyp_ask_vectors_path_lane(project, lane, path, sizeof(path)) && hyp_file_exists(path);
+    hyp_ask_vectors_t *v = have_file ? hyp_ask_vectors_open_lane(project, lane) : NULL;
+    hyp_ask_view_t view;
+    memset(&view, 0, sizeof(view));
+    int vrc = v ? hyp_ask_view_load(v, &view) : HYP_ASK_VEC_NOT_FOUND;
+    yyjson_mut_val *view_obj = yyjson_mut_obj(doc);
+    if (!have_file) {
+        yyjson_mut_obj_add_bool(doc, view_obj, "available", false);
+        yyjson_mut_obj_add_str(doc, view_obj, "reason", "no vector index for this project");
+        yyjson_mut_obj_add_str(doc, view_obj, "remedy", "hyponoia embed --project <p>");
+    } else if (vrc == HYP_ASK_VEC_OK) {
+        double kept = view.total_var > 0.0
+                          ? (view.eigen[0] + view.eigen[1] + view.eigen[2]) / view.total_var
+                          : 0.0;
+        yyjson_mut_obj_add_bool(doc, view_obj, "available", true);
+        yyjson_mut_obj_add_strcpy(doc, view_obj, "method", view.method ? view.method : "");
+        yyjson_mut_obj_add_int(doc, view_obj, "dim", view.dim);
+        yyjson_mut_obj_add_int(doc, view_obj, "rows", view.rows);
+        yyjson_mut_obj_add_real(doc, view_obj, "variance_kept", kept);
+        yyjson_mut_val *eig = yyjson_mut_arr(doc);
+        for (int k = 0; k < HYP_ASK_VIEW_K; k++) {
+            yyjson_mut_arr_add_real(doc, eig, view.eigen[k]);
+        }
+        yyjson_mut_obj_add_val(doc, view_obj, "eigen", eig);
+        yyjson_mut_obj_add_real(doc, view_obj, "total_var", view.total_var);
+        yyjson_mut_obj_add_strcpy(doc, view_obj, "fitted_at", view.fitted_at ? view.fitted_at : "");
+        yyjson_mut_obj_add_real(doc, view_obj, "fit_ms", view.fit_ms);
+        yyjson_mut_obj_add_int(doc, view_obj, "iterations", view.iterations);
+        yyjson_mut_obj_add_bool(doc, view_obj, "stale", hyp_ask_view_is_stale(v, &view));
+        yyjson_mut_obj_add_bool(doc, view_obj, "deterministic", true);
+        yyjson_mut_obj_add_str(doc, view_obj, "refit",
+                               "after every embed pass, over the whole table; or "
+                               "`hyponoia embed --project <p> --fit-view`");
+        hyp_ask_vec_meta_t meta;
+        if (hyp_ask_vectors_get_meta(v, &meta) == HYP_ASK_VEC_OK) {
+            yyjson_mut_obj_add_strcpy(doc, view_obj, "model", meta.model_id ? meta.model_id : "");
+            yyjson_mut_obj_add_strcpy(doc, view_obj, "index_built_at",
+                                      meta.built_at ? meta.built_at : "");
+            hyp_ask_vec_meta_free(&meta);
+        }
+    } else {
+        yyjson_mut_obj_add_bool(doc, view_obj, "available", false);
+        yyjson_mut_obj_add_str(doc, view_obj, "reason",
+                               vrc == HYP_ASK_VEC_INCOMPATIBLE
+                                   ? "a view exists but this binary does not read its method"
+                                   : "no 3-D view has been fitted for this index");
+        yyjson_mut_obj_add_str(doc, view_obj, "remedy", "hyponoia embed --project <p> --fit-view");
+    }
+    yyjson_mut_obj_add_val(doc, root, "view", view_obj);
+
+    if (vrc == HYP_ASK_VEC_OK) {
+        hyp_ask_view_point_t *pts = NULL;
+        int n = 0;
+        int64_t gaps = 0;
+        yyjson_mut_val *arr = yyjson_mut_arr(doc);
+        if (hyp_ask_view_points(v, &pts, &n, &gaps) == HYP_ASK_VEC_OK) {
+            for (int i = 0; i < n; i++) {
+                yyjson_mut_val *p = yyjson_mut_obj(doc);
+                yyjson_mut_obj_add_int(doc, p, "id", pts[i].node_id);
+                yyjson_mut_obj_add_strcpy(doc, p, "qn",
+                                          pts[i].qualified_name ? pts[i].qualified_name : "");
+                yyjson_mut_obj_add_strcpy(doc, p, "label", pts[i].label ? pts[i].label : "");
+                yyjson_mut_obj_add_strcpy(doc, p, "file", pts[i].file_path ? pts[i].file_path : "");
+                yyjson_mut_obj_add_int(doc, p, "start_line", pts[i].start_line);
+                yyjson_mut_obj_add_int(doc, p, "end_line", pts[i].end_line);
+                yyjson_mut_obj_add_real(doc, p, "x", (double)pts[i].x);
+                yyjson_mut_obj_add_real(doc, p, "y", (double)pts[i].y);
+                yyjson_mut_obj_add_real(doc, p, "z", (double)pts[i].z);
+                yyjson_mut_arr_append(arr, p);
+            }
+            hyp_ask_view_points_free(pts, n);
+        }
+        yyjson_mut_obj_add_val(doc, root, "points", arr);
+        yyjson_mut_obj_add_int(doc, root, "unprojected", gaps);
+        hyp_ask_view_free(&view);
+    }
+    if (v) {
+        hyp_ask_vectors_close(v);
+    }
+    yyjson_mut_obj_add_str(doc, root, "caveat", HYP_ASK_VIEW_CAVEAT);
+    char *out = yy_doc_to_str(doc);
+    yyjson_mut_doc_free(doc);
+    return out;
 }
 
 static char *handle_query_graph(hyp_mcp_server_t *srv, const char *args) {

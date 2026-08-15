@@ -12,6 +12,7 @@
 
 #include "ask/ask_encoder.h"
 #include "ask/ask_vectors.h"
+#include "ask/ask_view.h"
 
 #include <math.h>
 #include <stdlib.h>
@@ -430,7 +431,229 @@ TEST(ask_vectors_stub_encoder_returns_unit_rows) {
     PASS();
 }
 
+/* ── The 3-D view (ask_view.h) ───────────────────────────────────── */
+
+/* A small store whose vectors have a KNOWN principal structure: points on the
+ * unit sphere in AV_TEST_DIM dims, spread widely along axes 0 and 1, barely
+ * along axis 2, and not at all along the rest. PCA must find axes 0/1/2 as its
+ * three directions, in that order. Unit-normalised so put() accepts them. */
+static hyp_ask_vectors_t *view_fixture(const char *path, int rows) {
+    hyp_ask_vectors_t *v = hyp_ask_vectors_open_path("p", path);
+    if (!v) {
+        return NULL;
+    }
+    if (hyp_ask_vectors_begin_build(v, "m", "", AV_TEST_DIM, 64, "g1", "test", false) !=
+        HYP_ASK_VEC_OK) {
+        hyp_ask_vectors_close(v);
+        return NULL;
+    }
+    static char names[64][16];
+    static char hashes[64][8];
+    static float vecs[64][AV_TEST_DIM];
+    static hyp_ask_vec_row_t rowbuf[64];
+    if (rows > 64) {
+        rows = 64;
+    }
+    for (int i = 0; i < rows; i++) {
+        double t = (double)i / (double)rows * 6.283185307179586;
+        float *x = vecs[i];
+        for (int k = 0; k < AV_TEST_DIM; k++) {
+            x[k] = 0.0F;
+        }
+        x[0] = (float)(0.8 * cos(t));
+        x[1] = (float)(0.5 * sin(t));
+        x[2] = (float)(0.2 * ((i % 3) - 1));
+        double n2 = 0.0;
+        for (int k = 0; k < 3; k++) {
+            n2 += (double)x[k] * (double)x[k];
+        }
+        /* Axis 3 completes the unit norm. It varies with the others, but by
+         * less than any planted axis, so it does not compete for the top-3. */
+        x[3] = (float)sqrt(1.0 - n2);
+        snprintf(names[i], sizeof(names[i]), "p.row%02d", i);
+        snprintf(hashes[i], sizeof(hashes[i]), "h%d", i);
+        rowbuf[i] = make_row(names[i], x, hashes[i], false);
+        rowbuf[i].node_id = 100 + i;
+    }
+    if (hyp_ask_vectors_put(v, rowbuf, rows) != HYP_ASK_VEC_OK ||
+        hyp_ask_vectors_finish_build(v, true) != HYP_ASK_VEC_OK) {
+        hyp_ask_vectors_close(v);
+        return NULL;
+    }
+    return v;
+}
+
+TEST(ask_view_unfitted_is_not_found) {
+    char *dir = th_mktempdir("hyp-askview");
+    ASSERT_NOT_NULL(dir);
+    hyp_ask_vectors_t *v = view_fixture(TH_PATH(dir, "v.db"), 12);
+    ASSERT_NOT_NULL(v);
+    hyp_ask_view_t view;
+    /* An index without a view says so; it does not hand back zeros. */
+    ASSERT_EQ(hyp_ask_view_load(v, &view), HYP_ASK_VEC_NOT_FOUND);
+    hyp_ask_view_point_t *pts = NULL;
+    int n = -1;
+    int64_t gaps = -1;
+    ASSERT_EQ(hyp_ask_view_points(v, &pts, &n, &gaps), HYP_ASK_VEC_OK);
+    ASSERT_EQ(n, 0);
+    ASSERT_EQ(gaps, 12);
+    hyp_ask_view_points_free(pts, n);
+    hyp_ask_vectors_close(v);
+    th_cleanup(dir);
+    PASS();
+}
+
+TEST(ask_view_fit_finds_the_planted_axes_and_round_trips) {
+    char *dir = th_mktempdir("hyp-askview");
+    ASSERT_NOT_NULL(dir);
+    hyp_ask_vectors_t *v = view_fixture(TH_PATH(dir, "v.db"), 24);
+    ASSERT_NOT_NULL(v);
+    hyp_ask_view_t view;
+    ASSERT_EQ(hyp_ask_view_fit(v, &view), HYP_ASK_VEC_OK);
+    ASSERT_STR_EQ(view.method, HYP_ASK_VIEW_METHOD);
+    ASSERT_EQ(view.dim, AV_TEST_DIM);
+    ASSERT_EQ(view.rows, 24);
+    /* Descending variance, and the planted order: 0.8-cos, 0.5-sin, 0.2-step.
+     * (ASSERT_GT truncates to integers; these are doubles.) */
+    ASSERT_TRUE(view.eigen[0] > view.eigen[1]);
+    ASSERT_TRUE(view.eigen[1] > view.eigen[2]);
+    ASSERT_TRUE(view.eigen[2] > 0.0);
+    ASSERT_TRUE(fabsf(view.basis[0 * AV_TEST_DIM + 0]) > 0.99F);
+    ASSERT_TRUE(fabsf(view.basis[1 * AV_TEST_DIM + 1]) > 0.99F);
+    ASSERT_TRUE(fabsf(view.basis[2 * AV_TEST_DIM + 2]) > 0.9F);
+    /* Sign convention: the dominant component is positive. */
+    ASSERT_TRUE(view.basis[0 * AV_TEST_DIM + 0] > 0.0F);
+    ASSERT_TRUE(view.basis[1 * AV_TEST_DIM + 1] > 0.0F);
+    ASSERT_TRUE(view.basis[2 * AV_TEST_DIM + 2] > 0.0F);
+    /* Nearly all variance is on the three planted axes; the norm-completing
+     * axis carries the little that is left. */
+    double kept = (view.eigen[0] + view.eigen[1] + view.eigen[2]) / view.total_var;
+    ASSERT_TRUE(kept > 0.95);
+    /* Every row has coordinates, and they ARE the projection of its vector —
+     * what the store returns for a row and what a query would get for the
+     * same vector are one computation. */
+    hyp_ask_view_point_t *pts = NULL;
+    int n = 0;
+    int64_t gaps = -1;
+    ASSERT_EQ(hyp_ask_view_points(v, &pts, &n, &gaps), HYP_ASK_VEC_OK);
+    ASSERT_EQ(n, 24);
+    ASSERT_EQ(gaps, 0);
+    ASSERT_STR_EQ(pts[0].qualified_name, "p.row00");
+    ASSERT_EQ(pts[0].node_id, 100);
+    float row0[AV_TEST_DIM] = {0.8F, 0.0F, -0.2F, 0.0F, 0, 0, 0, 0};
+    row0[3] = (float)sqrt(1.0 - (0.64 + 0.04));
+    float p3[3];
+    hyp_ask_view_project(&view, row0, p3);
+    ASSERT_FLOAT_EQ(pts[0].x, p3[0], 1e-5F);
+    ASSERT_FLOAT_EQ(pts[0].y, p3[1], 1e-5F);
+    ASSERT_FLOAT_EQ(pts[0].z, p3[2], 1e-5F);
+    float lk[3];
+    int64_t nid = 0;
+    bool present = false;
+    ASSERT_EQ(hyp_ask_view_lookup(v, "p.row00", lk, &nid, &present), HYP_ASK_VEC_OK);
+    ASSERT_TRUE(present);
+    ASSERT_EQ(nid, 100);
+    ASSERT_FLOAT_EQ(lk[0], pts[0].x, 0.0F);
+    ASSERT_EQ(hyp_ask_view_lookup(v, "p.nope", lk, &nid, &present), HYP_ASK_VEC_NOT_FOUND);
+    ASSERT_FALSE(present);
+    /* Fresh: fitted against the seal that exists. */
+    ASSERT_FALSE(hyp_ask_view_is_stale(v, &view));
+    hyp_ask_view_points_free(pts, n);
+    hyp_ask_view_free(&view);
+    hyp_ask_vectors_close(v);
+    th_cleanup(dir);
+    PASS();
+}
+
+TEST(ask_view_fit_is_deterministic_bit_for_bit) {
+    /* The plan's requirement — pin the seed — is met by having no seed. Two
+     * fits over the same rows must agree to the bit: same basis, same
+     * coordinates, same eigenvalues. Anything less and a re-render that moved
+     * would be indistinguishable from an index that changed. */
+    char *dir = th_mktempdir("hyp-askview");
+    ASSERT_NOT_NULL(dir);
+    hyp_ask_vectors_t *v = view_fixture(TH_PATH(dir, "v.db"), 40);
+    ASSERT_NOT_NULL(v);
+    hyp_ask_view_t a;
+    hyp_ask_view_t b;
+    ASSERT_EQ(hyp_ask_view_fit(v, &a), HYP_ASK_VEC_OK);
+    hyp_ask_view_point_t *pa = NULL;
+    int na = 0;
+    ASSERT_EQ(hyp_ask_view_points(v, &pa, &na, NULL), HYP_ASK_VEC_OK);
+    ASSERT_EQ(hyp_ask_view_fit(v, &b), HYP_ASK_VEC_OK);
+    hyp_ask_view_point_t *pb = NULL;
+    int nb = 0;
+    ASSERT_EQ(hyp_ask_view_points(v, &pb, &nb, NULL), HYP_ASK_VEC_OK);
+    ASSERT_EQ(na, nb);
+    ASSERT_EQ(na, 40);
+    ASSERT_MEM_EQ(a.basis, b.basis, sizeof(float) * 3 * AV_TEST_DIM);
+    ASSERT_MEM_EQ(a.mean, b.mean, sizeof(float) * AV_TEST_DIM);
+    ASSERT_MEM_EQ(a.eigen, b.eigen, sizeof(a.eigen));
+    ASSERT_EQ(a.iterations, b.iterations);
+    for (int i = 0; i < na; i++) {
+        ASSERT_STR_EQ(pa[i].qualified_name, pb[i].qualified_name);
+        ASSERT_MEM_EQ(&pa[i].x, &pb[i].x, sizeof(float));
+        ASSERT_MEM_EQ(&pa[i].y, &pb[i].y, sizeof(float));
+        ASSERT_MEM_EQ(&pa[i].z, &pb[i].z, sizeof(float));
+    }
+    /* And what was persisted reads back as what was fitted. */
+    hyp_ask_view_t loaded;
+    ASSERT_EQ(hyp_ask_view_load(v, &loaded), HYP_ASK_VEC_OK);
+    ASSERT_MEM_EQ(loaded.basis, b.basis, sizeof(float) * 3 * AV_TEST_DIM);
+    ASSERT_MEM_EQ(loaded.mean, b.mean, sizeof(float) * AV_TEST_DIM);
+    ASSERT_EQ(loaded.rows, 40);
+    hyp_ask_view_free(&loaded);
+    hyp_ask_view_points_free(pa, na);
+    hyp_ask_view_points_free(pb, nb);
+    hyp_ask_view_free(&a);
+    hyp_ask_view_free(&b);
+    hyp_ask_vectors_close(v);
+    th_cleanup(dir);
+    PASS();
+}
+
+TEST(ask_view_rewritten_vector_loses_its_coordinates) {
+    char *dir = th_mktempdir("hyp-askview");
+    ASSERT_NOT_NULL(dir);
+    hyp_ask_vectors_t *v = view_fixture(TH_PATH(dir, "v.db"), 12);
+    ASSERT_NOT_NULL(v);
+    hyp_ask_view_t view;
+    ASSERT_EQ(hyp_ask_view_fit(v, &view), HYP_ASK_VEC_OK);
+    ASSERT_FALSE(hyp_ask_view_is_stale(v, &view));
+    /* Re-put one row with a different vector: its dot must vanish, not stay
+     * where the old vector was. */
+    float moved[AV_TEST_DIM];
+    unit_axis(moved, AV_TEST_DIM, 5);
+    hyp_ask_vec_row_t r = make_row("p.row03", moved, "changed", false);
+    ASSERT_EQ(hyp_ask_vectors_put(v, &r, 1), HYP_ASK_VEC_OK);
+    float xyz[3];
+    bool present = false;
+    ASSERT_EQ(hyp_ask_view_lookup(v, "p.row03", xyz, NULL, &present), HYP_ASK_VEC_NOT_FOUND);
+    ASSERT_TRUE(present); /* the row exists; only its picture is gone */
+    hyp_ask_view_point_t *pts = NULL;
+    int n = 0;
+    int64_t gaps = 0;
+    ASSERT_EQ(hyp_ask_view_points(v, &pts, &n, &gaps), HYP_ASK_VEC_OK);
+    ASSERT_EQ(n, 11);
+    ASSERT_EQ(gaps, 1);
+    hyp_ask_view_points_free(pts, n);
+    /* Untouched rows keep theirs. */
+    ASSERT_EQ(hyp_ask_view_lookup(v, "p.row04", xyz, NULL, &present), HYP_ASK_VEC_OK);
+    /* A re-fit fills the gap back in — over the whole table. */
+    hyp_ask_view_free(&view);
+    ASSERT_EQ(hyp_ask_view_fit(v, &view), HYP_ASK_VEC_OK);
+    ASSERT_EQ(hyp_ask_view_lookup(v, "p.row03", xyz, NULL, &present), HYP_ASK_VEC_OK);
+    hyp_ask_view_free(&view);
+    hyp_ask_vectors_close(v);
+    th_cleanup(dir);
+    PASS();
+}
+
 SUITE(ask_vectors) {
+    RUN_TEST(ask_view_unfitted_is_not_found);
+    RUN_TEST(ask_view_fit_finds_the_planted_axes_and_round_trips);
+    RUN_TEST(ask_view_fit_is_deterministic_bit_for_bit);
+    RUN_TEST(ask_view_rewritten_vector_loses_its_coordinates);
     RUN_TEST(ask_vectors_unbuilt_index_is_not_found_not_empty);
     RUN_TEST(ask_vectors_roundtrip_and_meta);
     RUN_TEST(ask_vectors_refuses_a_row_that_is_not_unit_normalised);

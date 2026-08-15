@@ -218,6 +218,15 @@ typedef struct {
      * against ~45, and a silent fallback is the failure that wastes an
      * afternoon. */
     bool device_downgraded;
+    /* The 3-D view (ask_view.h), re-fitted over the WHOLE table at the end of
+     * every pass that sealed the index. It gates nothing: a fit that fails is
+     * logged and reported here as not fitted, and the pass still succeeds.
+     * `view_variance_kept` is the fraction of total variance the three axes
+     * hold — the number that says how much the picture threw away. */
+    bool view_fitted;
+    double view_fit_ms;
+    int64_t view_rows;
+    double view_variance_kept;
 } hyp_ask_embed_report_t;
 
 void hyp_ask_embed_report_free(hyp_ask_embed_report_t *r);

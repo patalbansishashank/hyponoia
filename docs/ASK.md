@@ -157,6 +157,30 @@ ours loses badly. That is a real boundary, not a defect — and it is the reason
 `ask` also refuses a question longer than 4,096 characters. It encodes a
 *question*, not a document.
 
+## Seeing where a question landed
+
+The graph UI has an **Embeddings** view: every embedded declaration, projected
+from the model's 1,024 dimensions to three by PCA, and — after a question —
+where the question's vector landed and which declarations `ask` ranked, with
+their ranks. The neighbours drawn are the `ask` tool's own rows, in its own
+order, read back out of its own JSON; nothing is re-ranked for the picture, and
+a test holds the two ends together.
+
+**Distances in that view are not real.** Three axes keep about a quarter of the
+variance on lld/ELF (26.1%) and discard the rest; the ranking was computed by
+cosine in the full space, never in the picture. The view says so on its face.
+It is a diagnostic — a way to *look* at the vocabulary-gap regime, which until
+now was only ever a statistic — not a measurement.
+
+The projection is deterministic (PCA has no seed: same rows in, same bits out —
+verified bit-for-bit on 4,072 rows) and is re-fitted over the whole table at
+the end of every `hyponoia embed` pass, so adding declarations moves every dot;
+the view records which index seal it was fitted against and reports itself
+STALE when the index has been re-sealed since. `hyponoia embed --project <p>
+--fit-view` fits it over an existing index without encoding anything. The
+record is `engine/hyponoia/runs/EMBED-VIEW/`. Deep link:
+`/?tab=graph&project=<p>&view=embed&q=<question>`.
+
 ## The reranker that used to be here
 
 §2.2 added a cross-encoder that re-read the top N candidates, on the strength

@@ -19,6 +19,9 @@
 #include "test_framework.h"
 #include "test_helpers.h"
 
+#include <ask/ask_vectors.h>
+#include <ask/ask_view.h>
+#include <foundation/compat_fs.h> /* hyp_file_exists */
 #include <mcp/mcp.h>
 #include <semantic/ask_embed.h>
 #include <semantic/ask_lang.h>
@@ -788,7 +791,263 @@ TEST(ask_is_a_separate_tool_and_semantic_query_is_unchanged) {
     PASS();
 }
 
+/* ── The 3-D view's query overlay: TWO ENDS MUST AGREE ──────────────
+ *
+ * The overlay's neighbours must be the `ask` tool's own ranked rows — the
+ * same list, in the same order — not a recomputation that could disagree.
+ * This test builds a REAL vector file (the production store, under an
+ * isolated cache dir), fits the view, calls the tool through the MCP envelope
+ * as a client would, calls the overlay as the UI would, and asserts the two
+ * agree row for row. It also pins the caveat: the sentence that says the
+ * distances are not real must be in the JSON, verbatim. */
+static const char *json_str_at(yyjson_val *obj, const char *key) {
+    yyjson_val *v = obj ? yyjson_obj_get(obj, key) : NULL;
+    return v && yyjson_is_str(v) ? yyjson_get_str(v) : NULL;
+}
+
+TEST(ask_view_overlay_neighbours_are_the_tools_own_rows) {
+    fake_reset();
+    ASSERT_EQ(hyp_ask_backend_install(&g_fake_backend), 0);
+    char *dir = th_mktempdir("hyp-askview-overlay");
+    ASSERT_NOT_NULL(dir);
+    char *old_cache = getenv("HYP_CACHE_DIR") ? hyp_strdup(getenv("HYP_CACHE_DIR")) : NULL;
+    ASSERT_EQ(hyp_setenv("HYP_CACHE_DIR", dir, 1), 0);
+
+    const char *project = "askview";
+    hyp_mcp_server_t *srv = ask_srv_with_nodes(project);
+    /* Everything below the fixture is captured first and asserted after the
+     * environment is restored, so a failing assert cannot leak HYP_CACHE_DIR
+     * into every later suite in this process. */
+    bool built = false;
+    bool fitted = false;
+    char *tool_json = NULL;
+    char *overlay = NULL;
+    char *cloud = NULL;
+    if (srv) {
+        hyp_ask_vectors_t *v = hyp_ask_vectors_open(project);
+        if (v && hyp_ask_vectors_begin_build(v, g_fake_backend.model_id, "", HYP_ASK_DIM,
+                                             g_fake_backend.window_tokens, "g1", "test double",
+                                             false) == HYP_ASK_VEC_OK) {
+            static float vecs[3][HYP_ASK_DIM];
+            fake_axis_vector("GOLD", vecs[0]);
+            fake_axis_vector("other-1", vecs[1]);
+            fake_axis_vector("other-2", vecs[2]);
+            hyp_ask_vec_row_t rows[3];
+            memset(rows, 0, sizeof(rows));
+            rows[0].qualified_name = "askview.writer.orderSections";
+            rows[0].node_id = 1;
+            rows[0].label = "Function";
+            rows[0].file_path = "src/writer.c";
+            rows[0].start_line = 120;
+            rows[0].end_line = 168;
+            rows[0].lang = "C";
+            rows[0].content_hash = "h-gold";
+            rows[0].vector = vecs[0];
+            rows[1] = rows[0];
+            rows[1].qualified_name = "askview.writer.emit";
+            rows[1].node_id = 2;
+            rows[1].label = "Method";
+            rows[1].start_line = 200;
+            rows[1].end_line = 240;
+            rows[1].content_hash = "h-1";
+            rows[1].vector = vecs[1];
+            rows[2] = rows[0];
+            rows[2].qualified_name = "askview.reader.Reader";
+            rows[2].node_id = 3;
+            rows[2].label = "Class";
+            rows[2].file_path = "src/reader.c";
+            rows[2].start_line = 10;
+            rows[2].end_line = 90;
+            rows[2].content_hash = "h-2";
+            rows[2].vector = vecs[2];
+            built = hyp_ask_vectors_put(v, rows, 3) == HYP_ASK_VEC_OK &&
+                    hyp_ask_vectors_finish_build(v, true) == HYP_ASK_VEC_OK;
+            fitted = built && hyp_ask_view_fit(v, NULL) == HYP_ASK_VEC_OK;
+        }
+        if (v) {
+            hyp_ask_vectors_close(v);
+        }
+        if (fitted) {
+            /* END ONE: the tool, through the MCP envelope, as a client sees it. */
+            char *resp = ask_call(
+                srv,
+                "{\"project\":\"askview\",\"question\":\"GOLD\",\"limit\":3,\"format\":\"json\"}");
+            tool_json = ask_inner_text(resp);
+            free(resp);
+            /* END TWO: the overlay, as the UI's /api/embed-view/ask serves it. */
+            overlay =
+                hyp_mcp_ask_view_overlay(srv, "{\"project\":\"askview\",\"question\":\"GOLD\","
+                                              "\"limit\":3}");
+            cloud = hyp_mcp_ask_view_points_json(project, false);
+        }
+        hyp_mcp_server_free(srv);
+    }
+    hyp_ask_backend_install(NULL);
+    if (old_cache) {
+        (void)hyp_setenv("HYP_CACHE_DIR", old_cache, 1);
+    } else {
+        (void)hyp_unsetenv("HYP_CACHE_DIR");
+    }
+    free(old_cache);
+    th_cleanup(dir);
+
+    ASSERT_NOT_NULL(srv);
+    ASSERT_TRUE(built);
+    ASSERT_TRUE(fitted);
+    ASSERT_NOT_NULL(tool_json);
+    ASSERT_NOT_NULL(overlay);
+    ASSERT_NOT_NULL(cloud);
+
+    yyjson_doc *td = yyjson_read(tool_json, strlen(tool_json), 0);
+    yyjson_doc *od = yyjson_read(overlay, strlen(overlay), 0);
+    yyjson_doc *cd = yyjson_read(cloud, strlen(cloud), 0);
+    ASSERT_NOT_NULL(td);
+    ASSERT_NOT_NULL(od);
+    ASSERT_NOT_NULL(cd);
+    yyjson_val *troot = yyjson_doc_get_root(td);
+    yyjson_val *oroot = yyjson_doc_get_root(od);
+    yyjson_val *croot = yyjson_doc_get_root(cd);
+
+    /* The tool answered from the REAL vector file (population 3, available). */
+    yyjson_val *tavail = yyjson_obj_get(troot, "available");
+    ASSERT_TRUE(tavail && yyjson_get_bool(tavail));
+    yyjson_val *trows = yyjson_obj_get(troot, "rows");
+    ASSERT_NOT_NULL(trows);
+    ASSERT_EQ((int)yyjson_arr_size(trows), 3);
+    /* Gold first — the only row on the question's axis. */
+    yyjson_val *r0 = yyjson_arr_get(trows, 0);
+    ASSERT_STR_EQ(yyjson_get_str(yyjson_arr_get(r0, 0)), "askview.writer.orderSections");
+
+    /* The overlay carries the tool's own answer verbatim... */
+    yyjson_val *oask = yyjson_obj_get(oroot, "ask");
+    ASSERT_NOT_NULL(oask);
+    yyjson_val *oask_rows = yyjson_obj_get(oask, "rows");
+    ASSERT_NOT_NULL(oask_rows);
+    ASSERT_EQ((int)yyjson_arr_size(oask_rows), 3);
+    /* ...a fitted view... */
+    yyjson_val *oview = yyjson_obj_get(oroot, "view");
+    ASSERT_NOT_NULL(oview);
+    yyjson_val *oview_avail = yyjson_obj_get(oview, "available");
+    ASSERT_TRUE(oview_avail && yyjson_get_bool(oview_avail));
+    ASSERT_STR_EQ(json_str_at(oview, "method"), HYP_ASK_VIEW_METHOD);
+    yyjson_val *ostale = yyjson_obj_get(oview, "stale");
+    ASSERT_TRUE(ostale && !yyjson_get_bool(ostale));
+    /* ...the question placed in it... */
+    yyjson_val *oq = yyjson_obj_get(oroot, "query");
+    ASSERT_NOT_NULL(oq);
+    ASSERT_TRUE(yyjson_is_num(yyjson_obj_get(oq, "x")));
+    ASSERT_TRUE(yyjson_is_num(yyjson_obj_get(oq, "y")));
+    ASSERT_TRUE(yyjson_is_num(yyjson_obj_get(oq, "z")));
+    /* ...and hits that ARE the tool's rows, rank for rank, both against the
+     * embedded copy and against the SEPARATE tool call a client made. */
+    yyjson_val *hits = yyjson_obj_get(oroot, "hits");
+    ASSERT_NOT_NULL(hits);
+    ASSERT_EQ((int)yyjson_arr_size(hits), 3);
+    for (int i = 0; i < 3; i++) {
+        yyjson_val *h = yyjson_arr_get(hits, (size_t)i);
+        yyjson_val *client_row = yyjson_arr_get(trows, (size_t)i);
+        yyjson_val *embedded_row = yyjson_arr_get(oask_rows, (size_t)i);
+        const char *hqn = json_str_at(h, "qualified_name");
+        ASSERT_NOT_NULL(hqn);
+        ASSERT_STR_EQ(hqn, yyjson_get_str(yyjson_arr_get(client_row, 0)));
+        ASSERT_STR_EQ(hqn, yyjson_get_str(yyjson_arr_get(embedded_row, 0)));
+        ASSERT_EQ((int)yyjson_get_int(yyjson_obj_get(h, "rank")), i + 1);
+        ASSERT_TRUE(yyjson_get_bool(yyjson_obj_get(h, "projected")));
+        ASSERT_TRUE(yyjson_is_num(yyjson_obj_get(h, "x")));
+        /* Same score the client saw. */
+        ASSERT_FLOAT_EQ((float)yyjson_get_num(yyjson_obj_get(h, "score")),
+                        (float)yyjson_get_num(yyjson_arr_get(client_row, 4)), 1e-6F);
+    }
+    /* A hit's coordinates are the cloud's coordinates for the same row: one
+     * projection on disk, read from two routes. */
+    yyjson_val *h0 = yyjson_arr_get(hits, 0);
+    yyjson_val *points = yyjson_obj_get(croot, "points");
+    ASSERT_NOT_NULL(points);
+    ASSERT_EQ((int)yyjson_arr_size(points), 3);
+    bool matched = false;
+    size_t pi = 0;
+    size_t pmax = 0;
+    yyjson_val *pt = NULL;
+    yyjson_arr_foreach(points, pi, pmax, pt) {
+        const char *pqn = json_str_at(pt, "qn");
+        if (pqn && strcmp(pqn, "askview.writer.orderSections") == 0) {
+            matched = true;
+            ASSERT_FLOAT_EQ((float)yyjson_get_num(yyjson_obj_get(pt, "x")),
+                            (float)yyjson_get_num(yyjson_obj_get(h0, "x")), 0.0F);
+            ASSERT_FLOAT_EQ((float)yyjson_get_num(yyjson_obj_get(pt, "y")),
+                            (float)yyjson_get_num(yyjson_obj_get(h0, "y")), 0.0F);
+            ASSERT_FLOAT_EQ((float)yyjson_get_num(yyjson_obj_get(pt, "z")),
+                            (float)yyjson_get_num(yyjson_obj_get(h0, "z")), 0.0F);
+        }
+    }
+    ASSERT_TRUE(matched);
+    /* THE CAVEAT, on both payloads, verbatim. */
+    ASSERT_STR_EQ(json_str_at(oroot, "caveat"), HYP_ASK_VIEW_CAVEAT);
+    ASSERT_STR_EQ(json_str_at(croot, "caveat"), HYP_ASK_VIEW_CAVEAT);
+    ASSERT_NOT_NULL(strstr(HYP_ASK_VIEW_CAVEAT, "not real"));
+
+    yyjson_doc_free(td);
+    yyjson_doc_free(od);
+    yyjson_doc_free(cd);
+    free(tool_json);
+    free(overlay);
+    free(cloud);
+    PASS();
+}
+
+/* Without a view, the overlay still carries the tool's answer and says why
+ * there is no picture — an absent "query" means "look at ask", never "the
+ * question landed nowhere". And it must not mint a vector file for a project
+ * that has none. */
+TEST(ask_view_overlay_without_a_view_says_so_and_creates_nothing) {
+    fake_reset();
+    ASSERT_EQ(hyp_ask_backend_install(&g_fake_backend), 0);
+    char *dir = th_mktempdir("hyp-askview-none");
+    ASSERT_NOT_NULL(dir);
+    char *old_cache = getenv("HYP_CACHE_DIR") ? hyp_strdup(getenv("HYP_CACHE_DIR")) : NULL;
+    ASSERT_EQ(hyp_setenv("HYP_CACHE_DIR", dir, 1), 0);
+    hyp_mcp_server_t *srv = ask_srv_with_nodes("askproj");
+    char *overlay =
+        srv ? hyp_mcp_ask_view_overlay(srv, "{\"project\":\"askproj\",\"question\":\"GOLD\"}")
+            : NULL;
+    char vpath[HYP_SZ_4K];
+    bool minted = hyp_ask_vectors_path("askproj", vpath, sizeof(vpath)) && hyp_file_exists(vpath);
+    if (srv) {
+        hyp_mcp_server_free(srv);
+    }
+    hyp_ask_backend_install(NULL);
+    if (old_cache) {
+        (void)hyp_setenv("HYP_CACHE_DIR", old_cache, 1);
+    } else {
+        (void)hyp_unsetenv("HYP_CACHE_DIR");
+    }
+    free(old_cache);
+    th_cleanup(dir);
+    ASSERT_NOT_NULL(overlay);
+    ASSERT_FALSE(minted);
+    yyjson_doc *od = yyjson_read(overlay, strlen(overlay), 0);
+    ASSERT_NOT_NULL(od);
+    yyjson_val *root = yyjson_doc_get_root(od);
+    /* The tool answered (from the in-graph fixture) — its answer is here. */
+    yyjson_val *ask = yyjson_obj_get(root, "ask");
+    ASSERT_NOT_NULL(ask);
+    ASSERT_TRUE(yyjson_get_bool(yyjson_obj_get(ask, "available")));
+    /* No view: said, with the remedy; no query, no hits. */
+    yyjson_val *view = yyjson_obj_get(root, "view");
+    ASSERT_NOT_NULL(view);
+    ASSERT_FALSE(yyjson_get_bool(yyjson_obj_get(view, "available")));
+    ASSERT_NOT_NULL(strstr(json_str_at(view, "remedy"), "--fit-view"));
+    ASSERT_NULL(yyjson_obj_get(root, "query"));
+    ASSERT_NULL(yyjson_obj_get(root, "hits"));
+    ASSERT_STR_EQ(json_str_at(root, "caveat"), HYP_ASK_VIEW_CAVEAT);
+    yyjson_doc_free(od);
+    free(overlay);
+    PASS();
+}
+
 SUITE(ask) {
+    RUN_TEST(ask_view_overlay_neighbours_are_the_tools_own_rows);
+    RUN_TEST(ask_view_overlay_without_a_view_says_so_and_creates_nothing);
     RUN_TEST(ask_backend_none_by_default);
     RUN_TEST(ask_backend_install_and_uninstall);
     RUN_TEST(ask_backend_rejects_malformed);

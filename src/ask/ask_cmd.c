@@ -15,6 +15,7 @@
 #include "semantic/ask_embed.h" /* HYP_ASK_MODEL_ID_MAX */
 #include "cli/model_fetch.h"
 #include "ask/ask_vectors.h"
+#include "ask/ask_view.h"
 #include "ask/ask_provider.h"
 #include "cli/cli.h"
 #include "foundation/platform.h"
@@ -44,6 +45,10 @@ static void ask_embed_usage(void) {
            "  --project <name>       Indexed project to embed. Required.\n"
            "  --repo-path <path>     Source root. Default: the graph's recorded root.\n"
            "  --status               Report the stored index and exit.\n"
+           "  --fit-view             Only (re)fit the 3-D view of the existing index —\n"
+           "                         PCA, deterministic, seconds — and exit. Encodes\n"
+           "                         nothing. Every full pass fits it anyway; this is\n"
+           "                         for an index built by a binary that predates it.\n"
            "  --force                Re-encode even byte-identical declarations.\n"
            "  --allow-model-change   Discard vectors from a different model/dim/window.\n"
            "  --limit <n>            Stop after n declarations (partial index).\n"
@@ -139,10 +144,70 @@ static int ask_cmd_status(const char *project) {
         printf("  %s\n", line);
         hyp_ask_trunc_free(&tr);
     }
+    /* The 3-D view, said the same way the rest of the index is: fitted or not,
+     * and if fitted, against which seal — because a view fitted before the
+     * last pass is a picture of a matrix that no longer exists. */
+    hyp_ask_view_t view;
+    int vrc = hyp_ask_view_load(v, &view);
+    if (vrc == HYP_ASK_VEC_OK) {
+        double kept = view.total_var > 0.0
+                          ? (view.eigen[0] + view.eigen[1] + view.eigen[2]) / view.total_var
+                          : 0.0;
+        printf("  3-D view         %s over %lld rows, %.1f%% of variance kept, fitted %s%s\n",
+               view.method ? view.method : "?", (long long)view.rows, kept * 100.0,
+               view.fitted_at ? view.fitted_at : "?",
+               hyp_ask_view_is_stale(v, &view)
+                   ? " — STALE: the index was re-sealed since; run --fit-view"
+                   : "");
+        hyp_ask_view_free(&view);
+    } else {
+        printf("  3-D view         not fitted — `hyponoia embed --project %s --fit-view`\n",
+               project);
+    }
     hyp_ask_vectors_close(v);
     return 0;
 }
 
+/* `--fit-view`: (re)fit the 3-D view over an existing index and stop. */
+static int ask_cmd_fit_view(const char *project, const char *vectors_db_path) {
+    hyp_ask_vectors_t *v = vectors_db_path ? hyp_ask_vectors_open_path(project, vectors_db_path)
+                                           : hyp_ask_vectors_open(project);
+    if (!v) {
+        (void)fprintf(stderr, "embed --fit-view: cannot open the vector store for '%s'\n", project);
+        return 1;
+    }
+    hyp_ask_view_t view;
+    int rc = hyp_ask_view_fit(v, &view);
+    if (rc == HYP_ASK_VEC_NOT_FOUND) {
+        (void)fprintf(stderr,
+                      "embed --fit-view: no index for '%s' — nothing to fit. Run "
+                      "`hyponoia embed --project %s` first.\n",
+                      project, project);
+        hyp_ask_vectors_close(v);
+        return 4;
+    }
+    if (rc != HYP_ASK_VEC_OK) {
+        (void)fprintf(stderr, "embed --fit-view: %s\n", hyp_ask_vectors_error(v));
+        hyp_ask_vectors_close(v);
+        return 1;
+    }
+    double kept = view.total_var > 0.0
+                      ? (view.eigen[0] + view.eigen[1] + view.eigen[2]) / view.total_var
+                      : 0.0;
+    printf("embed --fit-view: project=%s method=%s\n", project, view.method ? view.method : "?");
+    printf("  rows             %lld x %d\n", (long long)view.rows, view.dim);
+    printf("  variance kept    %.2f%%  (axes %.4g / %.4g / %.4g of trace %.4g)\n", kept * 100.0,
+           view.eigen[0], view.eigen[1], view.eigen[2], view.total_var);
+    printf("  iterations       %d\n", view.iterations);
+    printf("  fit              %.1f ms\n", view.fit_ms);
+    printf("  fitted against   %s\n", view.fitted_against && view.fitted_against[0]
+                                          ? view.fitted_against
+                                          : "(unsealed index)");
+    printf("  NOTE             %s\n", HYP_ASK_VIEW_CAVEAT);
+    hyp_ask_view_free(&view);
+    hyp_ask_vectors_close(v);
+    return 0;
+}
 
 /* What the GPU can be asked for on this machine, priced BEFORE anything is
  * allocated.
@@ -229,6 +294,7 @@ int hyp_cmd_embed(int argc, char **argv) {
     hyp_ask_embed_opts_t opts;
     memset(&opts, 0, sizeof(opts));
     bool status_only = false;
+    bool fit_view_only = false;
     bool use_stub = false;
     bool stub_reports_truncation = true;
     bool escalation = false;
@@ -260,6 +326,8 @@ int hyp_cmd_embed(int argc, char **argv) {
             opts.vectors_db_path = argv[++i];
         } else if (strcmp(a, "--status") == 0) {
             status_only = true;
+        } else if (strcmp(a, "--fit-view") == 0) {
+            fit_view_only = true;
         } else if (strcmp(a, "--force") == 0) {
             opts.force = true;
         } else if (strcmp(a, "--allow-model-change") == 0) {
@@ -313,6 +381,11 @@ int hyp_cmd_embed(int argc, char **argv) {
     }
     if (status_only) {
         return ask_cmd_status(opts.project);
+    }
+    if (fit_view_only) {
+        /* Needs no encoder and no weights: it reads vectors that already
+         * exist. Decided before every backend check for that reason. */
+        return ask_cmd_fit_view(opts.project, opts.vectors_db_path);
     }
     /* THE TWO UNAVAILABLE STATES, SAID SEPARATELY. "No encoder in this build"
      * is fixed by a different binary; "the weights are not on this machine" is
@@ -487,6 +560,14 @@ int hyp_cmd_embed(int argc, char **argv) {
     printf("  padded slots       %lld  (largest single rectangle %lld)\n",
            (long long)rep.padded_slots, (long long)rep.max_rect);
     printf("  elapsed            %.0f ms\n", rep.elapsed_ms);
+    if (rep.view_fitted) {
+        printf("  3-D view           %s over %lld rows in %.0f ms, %.1f%% of variance kept "
+               "(a picture, not a metric)\n",
+               HYP_ASK_VIEW_METHOD, (long long)rep.view_rows, rep.view_fit_ms,
+               rep.view_variance_kept * 100.0);
+    } else {
+        printf("  3-D view           not fitted (see the log; the index itself is complete)\n");
+    }
     if (rep.partial) {
         printf("  PARTIAL: --limit stopped the run, so this index does not cover the corpus\n");
     }
