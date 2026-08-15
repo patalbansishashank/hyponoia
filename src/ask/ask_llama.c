@@ -954,6 +954,48 @@ static ask_llama_t *ask_llama_open(hyp_ask_device_pref_t pref, char *err, size_t
         if (buft) {
             s->dev_max_tensor_bytes = (uint64_t)ggml_backend_buft_get_max_size(buft);
         }
+        /* THE BOUND IS TWICE WHAT THE DEVICE REPORTS, AND THAT IS MEASURED,
+         * not chosen. What ggml exposes is the suballocation block — on
+         * Vulkan min(1 GiB default, true limit) — and the true per-buffer
+         * limit is not public. So the bound was swept on the pinned lld/ELF
+         * corpus (4,072 declarations, tree 55f62cf5), same run, same card:
+         *
+         *     bound      wall      docs/s
+         *     off       317 s      12.8    <- the cliff, every big pass
+         *     512 MiB   120 s      33.9
+         *     1 GiB     120 s      33.9    <- what the device reports
+         *     2 GiB     110 s      36.9    <- optimum; the 36.7 bar
+         *     4 GiB     149 s      27.4    <- the true limit: admissible
+         *                                    but a near-limit f32 tensor is
+         *                                    slow even when it fits
+         *
+         * A real optimum, not a monotone. Below it the pass is over-split;
+         * above it the surviving large passes cost more than the splits
+         * saved. Twice the reported block sits at the optimum on this device
+         * and stays under its true limit by construction (the block is
+         * clamped to at most the limit; doubling a block that already equals
+         * the limit is caught by the min below on any device that reports
+         * its true limit as the block). If the reported block is ever the
+         * true limit, doubling would overshoot — so the doubled value is
+         * itself capped at 4 GiB, the largest single Vulkan buffer any
+         * driver here has been observed to create. */
+        if (s->dev_max_tensor_bytes > 0) {
+            uint64_t doubled = s->dev_max_tensor_bytes * 2ULL;
+            const uint64_t four_gib = 4ULL * 1024ULL * 1024ULL * 1024ULL;
+            s->dev_max_tensor_bytes = doubled < four_gib ? doubled : four_gib - 4ULL;
+        }
+        /* Measurement seam, not a knob: HYP_ASK_TENSOR_CAP_MIB overrides what
+         * the device reported (0 disables the bound entirely) so the bound can
+         * be A/B'd against the same corpus. The value the device reports is a
+         * suballocation block, conservative against its true per-buffer limit,
+         * and whether narrowing at that value costs throughput is a question
+         * for the clock, not for the comment. */
+        {
+            const char *ov = getenv("HYP_ASK_TENSOR_CAP_MIB");
+            if (ov && ov[0]) {
+                s->dev_max_tensor_bytes = (uint64_t)strtoull(ov, NULL, 10) * 1048576ULL;
+            }
+        }
         char note[160];
         (void)snprintf(note, sizeof(note),
                        "n_head=%d device_max_tensor_mib=%.0f (a pass whose f32 scores tensor "
