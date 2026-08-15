@@ -44,16 +44,19 @@ ask("which pass folds together read-only sections holding identical contents?")
 → lld-elf.ICF.run    ICF.cpp:464-580
 ```
 
-`ask` scores **33.69 NDCG@10 on CoIR's CosQA** with the encoder that ships
-today, `voyage-4-nano` — narrowly ahead of the best model in the CoIR paper's
-column for that task (BGE-Base, 32.76) and well behind the current frontier.
-The **39.44** this project quoted until now is `Qwen3-Embedding-0.6B`'s, the
-encoder the lane ran until 2026-08-12: nano wins on C/C++, on CodeSearchNet and
-on the frozen 60-question set, and it **loses** on CosQA. `ask` is opt-in, it
-tells you when its index isn't built instead of returning nothing, and it has a
-boundary it will admit to.
-[The full measurement, and the reranker we deleted because it did not survive
-it →](docs/ASK.md)
+`ask`'s firmest public coordinate is **CLARC** — 1,245 distinct public C/C++
+queries across eight splits, 2,990 query-evaluations. The shipping encoder
+`voyage-4-nano` beats the one it replaced on **seven of eight splits,
+significant** (+4.62 to +19.23 NDCG@10), with the eighth a tie — at 346M
+parameters against 596M, Apache 2.0, no network.
+
+On **CoIR's CosQA** it goes the other way, and that is the honest counterweight.
+The **39.44 NDCG@10** this project used to quote is `Qwen3-Embedding-0.6B`'s, the
+encoder the lane ran until 2026-08-12; measured like-for-like on one lane, nano
+is **3.55 lower (p = 0.0154)**. `ask` is opt-in, it tells you when its index
+isn't built instead of returning nothing, and it has a boundary it will admit to.
+[The full measurement, why the lanes are not interchangeable, and the reranker we
+deleted because it did not survive it →](docs/ASK.md)
 
 ## Quick start
 

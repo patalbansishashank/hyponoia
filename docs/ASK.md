@@ -97,15 +97,19 @@ whether any declaration was truncated, and the population searched.
 Measured on **CoIR's CosQA** — 500 public queries, 20,604 documents, scored
 with CoIR's own evaluator:
 
-| | NDCG@10 |
-|---|---|
-| BM25 (lexical floor) | 13.96 |
-| Voyage-Code-002 (commercial) | 29.79 |
-| BGE-Base (best in the CoIR paper's table) | 32.76 |
-| **hyponoia `ask` — `voyage-4-nano`, SHIPPING** | **33.69** |
-| hyponoia `ask` — `Qwen3-Embedding-0.6B`, retired 2026-08-12 | 39.44 |
-| CodeR-1.5B | 46.72 |
-| Gemini-embedding (current frontier) | 50.24 |
+| | NDCG@10 | measured by |
+|---|---|---|
+| BM25 (lexical floor) | 13.96 | the CoIR paper |
+| Voyage-Code-002 (commercial) | 29.79 | the CoIR paper |
+| BGE-Base (best in the CoIR paper's table) | 32.76 | the CoIR paper |
+| hyponoia `ask` — `Qwen3-Embedding-0.6B`, retired 2026-08-12 | 39.44 | us, **shipped binary** |
+| **hyponoia `ask` — `voyage-4-nano`, SHIPPING** | **33.69** | us, **PyTorch lane** |
+| CodeR-1.5B | 46.72 | the CoIR paper |
+| Gemini-embedding (current frontier) | 50.24 | the CoIR paper |
+
+**The third column is not decoration.** Three harnesses appear in that table and
+they are not interchangeable — which is exactly how the number below it got
+misquoted for three days.
 
 **Anchor each number to the encoder that produced it.** 39.44 is Qwen3's, run
 through the shipped binary (`runs/COIR/`). 33.69 is nano's, run through a
@@ -117,14 +121,24 @@ the model for the rest.
 **The swap cost us this benchmark, and that is worth saying plainly.** Paired on
 the same lane, nano minus Qwen3 on CosQA is **−3.55 NDCG@10 (−9.53%), CI
 [−6.24, −0.87], p = 0.0154** — significant, and the first public corpus where the
-shipping model loses to the retired one. It did not reverse the swap, because
-nano wins the frozen 60-question set (recall@10 0.650 against 0.550), CLARC 7 of
-8, and both CodeSearchNet languages. A model that wins four evaluations and loses
-one is a trade, not an upgrade, and the losing one belongs on this page.
+shipping model loses to the retired one.
 
-Nano still clears every model in the paper's CosQA column, including two
-commercial ones — but by 0.93 rather than Qwen3's 6.68. It does not lead the
-field.
+**It did not reverse the swap, and the reason is corpus size, not stubbornness.**
+The evidence the swap was decided on is **CLARC**: 1,245 distinct public C/C++
+queries across eight split-by-setting combinations, 2,990 query-evaluations, on
+which nano beats the retired encoder on **seven of eight, all significant**
+(+4.62 to +19.23 NDCG@10), the eighth a tie (+1.15, p = 0.227). CosQA is 500
+queries and one loss against that. Both CodeSearchNet languages also go to nano.
+
+**The frozen 60-question set is not the argument and should not be quoted as
+one.** It is a smoke test: nano is +0.100 recall@10 on it but a *tie* on MRR@10
+(+0.5%, p = 0.577), which is what a 60-question set buys you — one query moves
+recall@10 by 0.0167. Lead with CLARC.
+
+Nano's 33.69 sits above every model in the paper's CosQA column, including two
+commercial ones — but by 0.93 rather than Qwen3's 6.68, and across a lane
+boundary, so read that as "not obviously worse than the paper's table" rather
+than as a win. It does not lead the field.
 
 **Read it against the ceiling, not against 100.** CosQA's corpus is 86%
 duplicate text — 20,604 documents are only 6,267 distinct strings, and 426 of
