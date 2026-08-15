@@ -122,6 +122,96 @@ bool hyp_ask_vectors_are_unit(const float *vecs, int count, int dim, int *out_ba
     return true;
 }
 
+static float ae_cosine(const float *a, const float *b, int dim) {
+    double acc = 0.0;
+    for (int d = 0; d < dim; d++) {
+        acc += (double)a[d] * (double)b[d];
+    }
+    return (float)acc;
+}
+
+int hyp_ask_encoder_check_batching(const hyp_ask_encoder_t *e, const char *const *texts, int n,
+                                   int group, float threshold, hyp_ask_batch_row_t *rows,
+                                   hyp_ask_batch_check_t *out) {
+    if (!out) {
+        return -1;
+    }
+    memset(out, 0, sizeof(*out));
+    out->n = n;
+    out->group = group;
+    out->min_own = 1.0F;
+    out->min_own_row = -1;
+    if (!e || !texts || n <= 0 || group <= 0) {
+        return -1;
+    }
+    int dim = hyp_ask_encoder_dim(e);
+    if (dim <= 0) {
+        return -1;
+    }
+    float *solo = (float *)malloc((size_t)n * (size_t)dim * sizeof(float));
+    float *batched = (float *)malloc((size_t)n * (size_t)dim * sizeof(float));
+    if (!solo || !batched) {
+        free(solo);
+        free(batched);
+        return -1;
+    }
+    int rc = 0;
+    /* ALONE FIRST, one text per forward pass: this is the reference, and it is
+     * exactly what `ask` does to a query. */
+    for (int i = 0; i < n && rc == 0; i++) {
+        rc = hyp_ask_encode_documents(e, texts + i, 1, solo + (size_t)i * (size_t)dim);
+    }
+    /* Then in consecutive groups, IN THE ORDER GIVEN — the caller decides
+     * whether the groups are ragged, equal-length, or carry duplicates. */
+    for (int off = 0; off < n && rc == 0; off += group) {
+        int chunk = n - off < group ? n - off : group;
+        rc = hyp_ask_encode_documents(e, texts + off, chunk, batched + (size_t)off * (size_t)dim);
+        out->groups++;
+    }
+    if (rc != 0) {
+        free(solo);
+        free(batched);
+        return -1;
+    }
+    for (int off = 0; off < n; off += group) {
+        int chunk = n - off < group ? n - off : group;
+        for (int i = off; i < off + chunk; i++) {
+            const float *b = batched + (size_t)i * (size_t)dim;
+            float own = ae_cosine(b, solo + (size_t)i * (size_t)dim, dim);
+            float best_other = -1.0F;
+            int best_idx = -1;
+            for (int j = off; j < off + chunk; j++) {
+                if (j == i) {
+                    continue;
+                }
+                float c = ae_cosine(b, solo + (size_t)j * (size_t)dim, dim);
+                if (c > best_other) {
+                    best_other = c;
+                    best_idx = j;
+                }
+            }
+            if (rows) {
+                rows[i].own = own;
+                rows[i].best_other = best_other;
+                rows[i].best_other_idx = best_idx;
+            }
+            if (own < out->min_own) {
+                out->min_own = own;
+                out->min_own_row = i;
+            }
+            if (own < threshold) {
+                out->below++;
+            }
+            if (best_idx >= 0 && best_other > own) {
+                out->misassigned++;
+            }
+        }
+    }
+    free(solo);
+    free(batched);
+    return 0;
+}
+
 /* ── Deterministic stub encoder ─────────────────────────────────── */
 
 typedef struct {

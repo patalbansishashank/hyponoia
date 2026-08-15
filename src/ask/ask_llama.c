@@ -283,9 +283,59 @@ static bool ask_llama_make_ctx(ask_llama_t *s, int n_seq, int seq_len, int batch
      * all because llama.cpp had no such flag; it does now. */
     cp.attention_type = LLAMA_ATTENTION_TYPE_NON_CAUSAL;
 
-    /* n_ctx is TOTAL KV capacity and llama.cpp DIVIDES it by n_seq_max.
-     * n_ctx = n_batch * n_seq_max is the line that looks right and asked for
-     * ~57 GB. This is the other one. */
+    /* ONE KV BUFFER FOR ALL SEQUENCES, AND THIS IS THE LINE THAT MAKES A RAGGED
+     * BATCH ENCODE CORRECTLY. Not a memory choice; a correctness one.
+     *
+     * The default (kv_unified = false, llama-context.cpp:3517) gives every
+     * sequence its own KV stream, and a multi-stream cache does not split a
+     * batch with split_simple(). It splits it with split_equal()
+     * (llama-kv-cache.cpp:709: `n_stream == 1 ? balloc.split_simple(n_ubatch)
+     * : balloc.split_equal(n_ubatch, true, 0)`), which takes tokens from every
+     * sequence IN LOCK-STEP and stops when the shortest one runs out
+     * (llama-batch.cpp:573-603). A batch whose rows are 10 and 21 tokens long
+     * therefore becomes TWO micro-batches: [10 of seq 0, 10 of seq 1], then
+     * [the last 11 of seq 1] — llama.cpp's own LLAMA_BATCH_DEBUG=1 prints
+     * exactly that. Nothing asserts: `n_ubatch >= n_tokens_all`
+     * (llama-context.cpp:1772) is necessary and NOT sufficient, because the
+     * split here is by raggedness, not by size.
+     *
+     * Two micro-batches break a bidirectional encoder twice over. In the
+     * first, seq 1's head tokens attend only to cells that already exist —
+     * `if (cells.is_empty(j)) goto skip;` (llama-kv-cache.cpp:1627) — so they
+     * never see their own tail, and their K/V at every layer above the first
+     * are computed from that truncated view. Then the pooled row is
+     * OVERWRITTEN per micro-batch (llama-context.cpp:1961-1966,
+     * `embd_seq_out[seq_id].resize(); tensor_get_async(...)`), and the mean is
+     * taken over the micro-batch's slice only (llama-graph.cpp:248-255 sums
+     * n_seq_tokens per sequence per ubatch) — so seq 1's vector is the mean of
+     * its last 11 tokens, seq 0's is correct. Measured: in a ragged group of
+     * 16 real declarations exactly the shortest row came back at cosine
+     * 1.000000 to the same text encoded alone and the other 15 sat at
+     * 0.63-0.91; eight EQUAL-length rows all came back at 1.000000; the order
+     * of rows in the batch made no difference at all.
+     *
+     * With one unified buffer, n_stream is 1 and the batch goes through
+     * split_simple(): one micro-batch holding every token (the 1772 assert now
+     * guarantees it), equal_seqs = false, n_seq_tokens = 1
+     * (llama-batch.cpp:507 -> ubatch_add(idxs, idxs.size(), false)), the KQ
+     * mask still keeps cross-sequence attention out (`!cells.seq_has(j,
+     * seq_id)`, llama-kv-cache.cpp:1632), and mean pooling sums per token by
+     * each token's own seq_id. That is the shape the RAGGED note below always
+     * assumed it was getting. The cost is that attention runs over the
+     * concatenation instead of per stream — O(total^2) rather than
+     * O(n_seq x len^2). Measured on the pinned lld/ELF corpus (4,072
+     * declarations, RX 6900 XT): 35.7 docs/s with the wrong vectors, 28.5
+     * with this line alone, 34.9 once the tensor-cap bound below was
+     * re-swept for the new layout — the optimum moved from twice the
+     * device's block to the block itself. Two percent, for vectors that
+     * are the same ones `ask` encodes its queries into. */
+    cp.kv_unified = true;
+
+    /* n_ctx is TOTAL KV capacity. Under per-sequence streams llama.cpp DIVIDES
+     * it by n_seq_max — n_ctx = n_batch * n_seq_max is the line that looks
+     * right and asked for ~57 GB — and under the unified buffer above it is
+     * simply the number of cells every sequence in a batch shares. Either
+     * way n_seq * seq_len is the rectangle the plan priced. */
     cp.n_ctx = (uint32_t)plan.n_ctx;
     cp.n_seq_max = (uint32_t)n_seq;
 
@@ -590,28 +640,41 @@ static int ask_llama_encode(ask_llama_t *s, const char *const *texts, const char
         int seq_len = ask_bucket_for(longest);
         int n_seq = count;
 
-        /* RAGGED BATCHES ARE FINE, AND THIS USED TO SPLIT THEM ANYWAY.
+        /* RAGGED BATCHES GO DOWN WHOLE — AND THAT IS ONLY CORRECT BECAUSE THE
+         * CONTEXT IS BUILT WITH ONE UNIFIED KV BUFFER (see make_ctx).
          *
-         * A long note here once claimed llama.cpp cannot batch a bidirectional
-         * encoder with sequences of DIFFERENT lengths and asserts
-         * ggml_can_mul_mat if it tries, so this loop cut every batch into
-         * runs of IDENTICAL token count. On real code almost every run was
-         * one document — consecutive declarations are 20, 21, 25 tokens — so
-         * batching was defeated on the corpus it existed for, and the GPU sat
-         * at 0% while the CPU rebuilt contexts.
+         * The history of this spot is two wrong notes in a row. The first
+         * claimed llama.cpp cannot batch a bidirectional encoder with rows of
+         * DIFFERENT lengths and cut every batch into runs of identical token
+         * count; on real code almost every run was one document (consecutive
+         * declarations are 20, 21, 25 tokens), so batching was defeated on
+         * the corpus it existed for. The second note removed the splitter and
+         * said ragged was the encoder path's native shape, because
+         * split_simple() hands the graph n_seq_tokens = 1 and mean pooling
+         * sums per token by seq_id. That is true of split_simple(). It was not
+         * the split the context was getting: with the default per-sequence KV
+         * streams llama.cpp uses split_equal(), which cuts a ragged batch by
+         * LENGTH into several micro-batches, and a bidirectional pass split
+         * across micro-batches is wrong for every row but the shortest
+         * (llama-kv-cache.cpp:709, llama-batch.cpp:573-603; the mechanism is
+         * spelled out at cp.kv_unified in make_ctx). Every index the second
+         * note's binaries built carried those vectors: cosine 0.71 to the same
+         * texts encoded alone, 87% of rows below 0.9 — and CPU agreed with GPU
+         * at 0.9997 because both were wrong the same way.
          *
-         * The claim was wrong. The assert it described is a DIVISIBILITY bug
-         * — n_batch not a multiple of n_seq_max, see the n_batch note in
-         * make_ctx — and it fires for equal-length rows too (three 2,414-token
-         * rows: 8192 % 3 = 2, abort). Meanwhile llama_encode splits with
-         * split_simple(), which hands the graph n_seq_tokens = 1 and
-         * equal_seqs = false BY DESIGN, and mean pooling sums PER TOKEN by each
-         * token's own seq_id and divides each sequence by its own count
-         * (llm_graph_input_mean::set_input). Ragged is the encoder path's
-         * native shape. No padding, nothing averaged in, nothing to split.
+         * The first note's splitter WAS producing correct vectors — eight
+         * equal-length rows in one pass measure 1.000000 against alone —
+         * which is why the frozen-60 numbers taken with it stand. What it
+         * cost was throughput, not truth.
          *
-         * So a length-sorted, budget-bounded group goes down whole. The
-         * caller's rectangle bound (n_seq * longest <= budget) still holds. */
+         * So: one unified buffer, split_simple(), one micro-batch, and a
+         * length-sorted, budget-bounded group goes down whole. The invariant
+         * is asserted by `hyponoia embed --verify-batching` (alone vs
+         * batched, every row >= 0.999 — the lane's alone-vs-alone floor
+         * across devices is 0.99987, see the bar in ask_cmd.c), and it must
+         * be re-run on any change to this file, to the context parameters, or
+         * to the vendored llama.cpp — none of the three announces a change in
+         * split policy. */
         seq_len = ask_bucket_for(longest);
 
         if (s->on_gpu) {
@@ -954,36 +1017,30 @@ static ask_llama_t *ask_llama_open(hyp_ask_device_pref_t pref, char *err, size_t
         if (buft) {
             s->dev_max_tensor_bytes = (uint64_t)ggml_backend_buft_get_max_size(buft);
         }
-        /* THE BOUND IS TWICE WHAT THE DEVICE REPORTS, AND THAT IS MEASURED,
-         * not chosen. What ggml exposes is the suballocation block — on
-         * Vulkan min(1 GiB default, true limit) — and the true per-buffer
-         * limit is not public. So the bound was swept on the pinned lld/ELF
-         * corpus (4,072 declarations, tree 55f62cf5), same run, same card:
+        /* THE BOUND IS WHAT THE DEVICE REPORTS, AND THAT IS MEASURED — TWICE,
+         * because the optimum MOVED when the KV layout did. What ggml exposes
+         * is the suballocation block — on Vulkan min(1 GiB default, true
+         * limit) — and the true per-buffer limit is not public, so the bound
+         * is swept on the pinned lld/ELF corpus (4,072 declarations, tree
+         * 55f62cf5), same run, same card, and re-swept whenever the shape of
+         * a pass changes. It changed with cp.kv_unified above: attention now
+         * runs over the concatenated batch instead of per stream.
          *
-         *     bound      wall      docs/s
-         *     off       317 s      12.8    <- the cliff, every big pass
-         *     512 MiB   120 s      33.9
-         *     1 GiB     120 s      33.9    <- what the device reports
-         *     2 GiB     110 s      36.9    <- optimum; the 36.7 bar
-         *     4 GiB     149 s      27.4    <- the true limit: admissible
-         *                                    but a near-limit f32 tensor is
-         *                                    slow even when it fits
+         *     bound      per-stream KV (old)     unified KV (now, correct)
+         *     off        317 s   12.8 docs/s     342 s   11.9   <- the cliff
+         *     512 MiB    120 s   33.9            118 s   34.5
+         *     1 GiB      120 s   33.9            117 s   34.9   <- optimum
+         *     2 GiB      110 s   36.9 <- was     143 s   28.5
+         *     4 GiB      149 s   27.4            (not re-run)
          *
-         * A real optimum, not a monotone. Below it the pass is over-split;
-         * above it the surviving large passes cost more than the splits
-         * saved. Twice the reported block sits at the optimum on this device
-         * and stays under its true limit by construction (the block is
-         * clamped to at most the limit; doubling a block that already equals
-         * the limit is caught by the min below on any device that reports
-         * its true limit as the block). If the reported block is ever the
-         * true limit, doubling would overshoot — so the doubled value is
-         * itself capped at 4 GiB, the largest single Vulkan buffer any
-         * driver here has been observed to create. */
-        if (s->dev_max_tensor_bytes > 0) {
-            uint64_t doubled = s->dev_max_tensor_bytes * 2ULL;
-            const uint64_t four_gib = 4ULL * 1024ULL * 1024ULL * 1024ULL;
-            s->dev_max_tensor_bytes = doubled < four_gib ? doubled : four_gib - 4ULL;
-        }
+         * A real optimum on both sides, and not the same one. Under the old
+         * layout twice the reported block was fastest, and this code doubled
+         * it; under the unified buffer the doubled bound admits 11-row passes
+         * whose concatenated attention costs more than the split it saves,
+         * and the reported block itself is fastest — 8-row passes at 512, 571
+         * decodes for 275 groups, 34.9 docs/s against the old layout's 36.9
+         * with WRONG vectors. So the reported block is used as reported. The
+         * cliff at "off" is real on both layouts and is why the bound stays. */
         /* Measurement seam, not a knob: HYP_ASK_TENSOR_CAP_MIB overrides what
          * the device reported (0 disables the bound entirely) so the bound can
          * be A/B'd against the same corpus. The value the device reports is a

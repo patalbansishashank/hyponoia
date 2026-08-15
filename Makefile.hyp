@@ -974,7 +974,7 @@ PP_OBJ_TSAN = $(BUILD_DIR)/tsan_preprocessor.o
 
 # ── Targets ──────────────────────────────────────────────────────
 
-.PHONY: test test-par test-repro test-foundation test-tsan test-daemon-smoke hyp hyp-with-ui frontend ui-pack clean-c lint lint-tidy lint-cppcheck lint-format security
+.PHONY: test test-par test-repro test-foundation test-tsan test-daemon-smoke test-ask-batching hyp hyp-with-ui frontend ui-pack clean-c lint lint-tidy lint-cppcheck lint-format security
 
 $(BUILD_DIR):
 	mkdir -p $(BUILD_DIR)
@@ -1240,6 +1240,23 @@ test-tsan: $(BUILD_DIR)/test-runner-tsan
 # silently skipping an occupied one. Deterministic C tests cover Windows IPC.
 test-daemon-smoke: $(BUILD_DIR)/hyponoia
 	cd $(CURDIR) && HYP_DAEMON_SMOKE_REQUIRE_RUN=1 python3 tests/test_daemon_smoke.py $(BUILD_DIR)/hyponoia
+
+# The `ask` lane's batching invariant, against the REAL model: every document's
+# vector must not depend on what shared its forward pass. The stub cannot show
+# this — it hashes each text on its own — and the pass's own output cannot
+# either, which is how ragged batches through llama.cpp's per-sequence KV
+# streams shipped vectors at cosine 0.71 to the same texts encoded alone
+# (src/ask/ask_llama.c, cp.kv_unified). Gated on the weights being present:
+# with no model on this machine it SKIPS and says so, it never passes vacuously.
+# `hyponoia embed --verify-batching` is the check; --device cpu so it needs
+# nothing but the weights; HYP_ASK_VERIFY_TEXTS=<file> swaps in real code.
+ASK_MODEL_FILE = $(or $(HYP_CACHE_DIR),$(HOME)/.cache/hyponoia)/models/voyage-4-nano-q8_0.gguf
+test-ask-batching: $(BUILD_DIR)/hyponoia
+	@if [ -f "$(ASK_MODEL_FILE)" ]; then \
+	    cd $(CURDIR) && $(BUILD_DIR)/hyponoia embed --verify-batching --device cpu --max-docs 16; \
+	else \
+	    echo "test-ask-batching: SKIP — $(ASK_MODEL_FILE) is not on this machine (hyponoia fetch-model)"; \
+	fi
 
 # ── Production binary ────────────────────────────────────────────
 
