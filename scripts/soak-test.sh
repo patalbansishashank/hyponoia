@@ -851,6 +851,24 @@ FIRST_RSS=$(awk -F, 'NR==2 && $3>0 { printf "%.0f", $3/1024/1024 }' "$METRICS_CS
 LAST_RSS=$(awk -F, '$3>0 { last=$3 } END { printf "%.0f", last/1024/1024 }' "$METRICS_CSV")
 echo "RSS: first=${FIRST_RSS}MB last=${LAST_RSS}MB max=${MAX_RSS}MB (${TOTAL_SAMPLES} samples)" | tee -a "$SUMMARY"
 
+# Sanity bound BEFORE the leak checks: a sample larger than any machine's RAM is
+# a broken instrument, not a leak, and the two need opposite responses. This is
+# not a budget and needs no tuning — 1 TiB is unreachable for this process on any
+# runner, so it can never mask a real leak (one that large would have blown the
+# 200 MB ceiling five million times over). It exists because the checks below
+# faithfully divided 18446744073580445696 by 1 MB and reported a 17-trillion-MB
+# leak while real RSS was 7 MB: mimalloc's current_rss is its committed-page
+# counter on Linux, an int64 that goes negative under our tuning and wraps when
+# cast to size_t. Reporting "the meter is broken" instead of "the product is
+# leaking" is the whole difference between a five-minute diagnosis and an hour.
+MAX_RSS_BYTES=$(awk -F, 'NR>1 && $3>0 { if ($3>max) max=$3 } END { printf "%.0f", max+0 }' "$METRICS_CSV")
+if awk "BEGIN { exit (${MAX_RSS_BYTES:-0} > 1099511627776) ? 0 : 1 }" 2>/dev/null; then
+    echo "FAIL: rss_bytes reported ${MAX_RSS_BYTES} — physically impossible, so the" \
+        "metric is broken rather than the product. A value near 2^64 is a signed" \
+        "counter that wrapped; see hyp_mem_rss() in src/foundation/mem.c." | tee -a "$SUMMARY"
+    PASS=false
+fi
+
 # Absolute ceiling — catches catastrophic leaks on any run length
 if [ "${MAX_RSS:-0}" -gt 200 ] 2>/dev/null; then
     echo "FAIL: RSS ${MAX_RSS}MB > 200MB ceiling" | tee -a "$SUMMARY"

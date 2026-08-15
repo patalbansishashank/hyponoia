@@ -9,13 +9,22 @@
 # (gcc -static) — unlike the standard asset, which dynamically links glibc/
 # libstdc++ and would fail on an older base. Because it's static, the runtime
 # base image is arbitrary. TARGETARCH is amd64 / arm64, matching the asset names.
+#
+# The name carries "-ui-" because that is the ONLY variant the release builds:
+# every package-release.sh call in _build.yml passes --variant ui, and
+# `hyponoia-linux-<arch>-portable.tar.gz` has never been published. This asked
+# for a name that does not exist and 404'd, which nobody could see because the
+# only release this fork had cut carried zero assets.
+#
+# Extract the whole archive rather than naming members: the UI pack is
+# content-addressed (hyp-ui-<sha256>.pack), so it cannot be listed literally.
 
 FROM debian:bookworm-slim AS fetch
 ARG TARGETARCH
 RUN apt-get update \
  && apt-get install -y --no-install-recommends curl ca-certificates \
- && curl -fsSL "https://github.com/patalbansishashank/hyponoia/releases/latest/download/hyponoia-linux-${TARGETARCH}-portable.tar.gz" \
-      | tar -xz -C /tmp hyponoia hyp-integrations.json LICENSE THIRD_PARTY_NOTICES.md \
+ && curl -fsSL "https://github.com/patalbansishashank/hyponoia/releases/latest/download/hyponoia-ui-linux-${TARGETARCH}-portable.tar.gz" \
+      | tar -xz -C /tmp \
  && chmod +x /tmp/hyponoia \
  && rm -rf /var/lib/apt/lists/*
 

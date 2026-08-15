@@ -556,7 +556,10 @@ static bool mem_map_collect_impl(hyp_mem_map_t *out, bool walk_allocator) {
     size_t page_faults = 0;
     mi_process_info(&elapsed_ms, &user_ms, &sys_ms, &current_rss, &peak_rss, &current_commit,
                     &peak_commit, &page_faults);
-    out->os_rss_bytes = current_rss ? current_rss : hyp_mem_rss();
+    /* Same wrap as write_diagnostics(): mimalloc's current_rss is its committed
+     * counter on Linux and can present as ~2^64, so a truthiness guard passes it
+     * straight through. hyp_mem_rss() is the authority — see its comment above. */
+    out->os_rss_bytes = hyp_mem_rss();
     out->os_committed_bytes = current_commit;
 
     /* Does plain malloc actually land in the allocator's regions? This single

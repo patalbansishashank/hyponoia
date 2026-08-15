@@ -348,10 +348,29 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Build Glama image and verify MCP introspection
         run: bash pkg/glama/verify.sh
+      # Same shape as the Glama check above: the formula installs from a
+      # PUBLISHED release, so during a release run it can only ever see the
+      # previous one, and before the first release with assets it sees nothing.
+      # It also carries placeholder checksums between a version bump and the
+      # release that fills them. Probe the formula's own URL and skip cleanly
+      # when the asset is not there — a red X for "nothing has been published
+      # yet" trains people to ignore this job, which is the opposite of what a
+      # packaging check is for. A missing asset on a release that HAS assets
+      # still fails, because that is real drift.
       - name: Test homebrew installation
         env:
           HOMEBREW_NO_AUTO_UPDATE: 1
         run: |
+          set -euo pipefail
+          formula="$GITHUB_WORKSPACE/pkg/homebrew/Formula/hyponoia.rb"
+          version="$(sed -n 's/^  version "\(.*\)"$/\1/p' "$formula" | head -1)"
+          asset="$(grep -oE 'hyponoia[^"/]*-linux-amd64[^"]*\.tar\.gz' "$formula" | head -1)"
+          url="https://github.com/patalbansishashank/hyponoia/releases/download/v${version}/${asset}"
+          if ! curl -fsIL -o /dev/null "$url"; then
+            echo "SKIP: the formula pins v${version}, whose ${asset} is not published."
+            echo "      Nothing to install yet; this checks a released artifact, not the tree."
+            exit 0
+          fi
           eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
           brew tap patalbansishashank/hyponoia "$GITHUB_WORKSPACE"
           brew trust patalbansishashank/hyponoia

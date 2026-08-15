@@ -11,9 +11,10 @@ Platform:
   - Windows.Universal
 # InstallerSha256 is a placeholder until v0.3.0 publishes; copy the real value
 # from the release's checksums.txt before submitting this manifest.
+# The build publishes only the UI variant, so this is the only archive that exists.
 Installers:
   - Architecture: x64
-    InstallerUrl: https://github.com/patalbansishashank/hyponoia/releases/download/v0.3.0/hyponoia-windows-amd64.zip
-    InstallerSha256: 0000000000000000000000000000000000000000000000000000000000000000
+    InstallerUrl: https://github.com/patalbansishashank/hyponoia/releases/download/v0.3.0/hyponoia-ui-windows-amd64.zip
+    InstallerSha256: "0000000000000000000000000000000000000000000000000000000000000000"
 ManifestType: installer
 ManifestVersion: 1.6.0

@@ -15,9 +15,18 @@ const {
 } = require('./install.js');
 
 const isWindows = process.platform === 'win32';
-const variant = (process.env.HYP_VARIANT || '').toLowerCase() === 'ui'
-  ? 'ui'
-  : 'standard';
+// 'ui' unconditionally, and NOT via install.js's runtimeVariant(): that function
+// now throws on HYP_VARIANT=standard, which is right for an installer and wrong
+// for a launcher — refusing to start an already-installed binary because of a
+// stale environment variable helps nobody.
+//
+// This line had its own copy of the old default, and the copy is the whole
+// hazard: install.js caches into bin/ui while this read bin/standard, so
+// `npm install` would succeed and then EVERY invocation would report the binary
+// missing, re-run the installer, still find nothing, and exit 1 — worse than the
+// 404 it replaced. The build publishes only the ui variant; both ends say so
+// here rather than each deciding for itself.
+const variant = 'ui';
 // npm is a portable one-shot wrapper. Every platform ships exactly one binary,
 // which is executed directly beside its authenticated runtime sidecars.
 const binName = isWindows ? 'hyponoia.exe' : 'hyponoia';

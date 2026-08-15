@@ -48,19 +48,26 @@ releases are published.*
 <!-- RETIRED-PLATFORM(macos): the darwin-arm64 and darwin-amd64 rows were removed
      here. See docs/MAINTAINERS.md "Retired platforms". -->
 
-| Platform | Standard | With Graph UI |
-|----------|----------|---------------|
-| Linux (x86_64) | `hyponoia-linux-amd64.tar.gz` | `hyponoia-ui-linux-amd64.tar.gz` |
-| Linux (ARM64) | `hyponoia-linux-arm64.tar.gz` | `hyponoia-ui-linux-arm64.tar.gz` |
-| Windows (x86_64) | `hyponoia-windows-amd64.zip` | `hyponoia-ui-windows-amd64.zip` |
+One archive per platform, and it includes the graph UI:
 
-Published binaries cover Linux (amd64 and arm64, including the fully static
-`-portable` archives) and Windows (amd64). There is no macOS download and no
-ARM64 Windows download. On macOS, [build from source](#build-from-source) —
-that path is fully supported. On ARM64 Windows, use the amd64 archive under
-emulation.
+| Platform | Archive |
+|----------|---------|
+| Linux (x86_64) | `hyponoia-ui-linux-amd64.tar.gz` |
+| Linux (x86_64, static) | `hyponoia-ui-linux-amd64-portable.tar.gz` |
+| Linux (ARM64) | `hyponoia-ui-linux-arm64.tar.gz` |
+| Linux (ARM64, static) | `hyponoia-ui-linux-arm64-portable.tar.gz` |
+| Windows (x86_64) | `hyponoia-ui-windows-amd64.zip` |
 
-Every release includes `checksums.txt` with SHA-256 hashes. Keep the native executable together with the authenticated `hyp-integrations.json` asset and, for the UI variant, its single content-addressed `hyp-ui-<sha256>.pack`. Linux `-portable` archives contain the fully static builds; ordinary platform archives use their native system ABI.
+There is no separate "standard" archive. The graph UI's asset pack is about
+1.3 MB of a ~41 MB download, so a second variant without it would save 3% and
+double the build; the `--standard` flag is kept only to say that, rather than
+silently handing you the UI archive under another name.
+
+There is no macOS download and no ARM64 Windows download. On macOS,
+[build from source](#build-from-source) — that path is fully supported. On
+ARM64 Windows, use the amd64 archive under emulation.
+
+Every release includes `checksums.txt` with SHA-256 hashes. Keep the native executable together with the authenticated `hyp-integrations.json` asset and its single content-addressed `hyp-ui-<sha256>.pack`. Linux `-portable` archives contain the fully static builds; ordinary platform archives use their native system ABI.
 
 > **Windows note**: SmartScreen may show a warning for unsigned software. Click **"More info"** → **"Run anyway"**. Verify integrity with `checksums.txt`.
 

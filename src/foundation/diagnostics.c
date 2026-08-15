@@ -528,9 +528,22 @@ static void write_diagnostics(void) {
     size_t page_faults = 0;
     mi_process_info(&elapsed_ms, &user_ms, &sys_ms, &current_rss, &peak_rss, &current_commit,
                     &peak_commit, &page_faults);
-    if (current_rss == 0) {
-        current_rss = hyp_mem_rss();
-    }
+    /* NEVER report mimalloc's current_rss. On Linux it is not RSS at all — it
+     * is aliased to mimalloc's own committed-page counter, an int64 the vendored
+     * stats.c casts to size_t (vendored/mimalloc/src/stats.c). Under this
+     * project's tuning (arena_eager_commit=0, purge_decommits=1, purge_delay=0)
+     * that counter goes NEGATIVE, and the cast wraps it to ~2^64. The soak
+     * harness then faithfully divided 18446744073580445696 by 1 MB and reported
+     * a 17-trillion-MB leak while real RSS was 7 MB — both Linux legs of dry run
+     * 31852463409, while the Windows leg passed because it gets a real number
+     * from GetProcessMemoryInfo.
+     *
+     * The `== 0` guard could not catch it: a wrapped value is enormous, not
+     * zero. hyp_mem_rss() exists precisely for this and reads /proc/self/statm
+     * on Linux; its own comment names this trap and warns that a nonzero-but-
+     * wrong current_rss defeats exactly this shape of guard. Use it
+     * unconditionally rather than as a fallback. */
+    current_rss = hyp_mem_rss();
 
     int fds = count_open_fds();
     time_t now = time(NULL);
