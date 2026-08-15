@@ -25,7 +25,17 @@ SUITE_NAME = re.compile(r"^[a-z0-9_]+$")
 SUMMARY = re.compile(r"^  (?P<passed>[0-9]+) passed")
 FAILED = re.compile(r"(?:^|, )(?P<failed>[0-9]+) failed")
 SKIPPED = re.compile(r"(?:^|, )(?P<skipped>[0-9]+) skipped")
-SLOW_SUITES = frozenset(("incremental", "store_arch", "daemon_runtime"))
+# `cli` joins the wide-ceiling group on the same grounds as the other three: it
+# is not slow because something is wrong, it is slow because it does real work.
+# Its install tests stage the running executable — under sanitizers the ~570 MB
+# test runner — and one test does it in two concurrent children. Measured on
+# ubuntu-24.04-arm (dry run 31846658607, shard 2/3): the deterministic
+# activation lease alone took 71,125 ms and reaping the two install children
+# took 119,165 ms, so a single test costs ~190 s on that pool. The suite blew
+# the 900 s ceiling and was killed as hung when it was not hung at all. That
+# pool is CPU-equal to ubuntu-22.04-arm and 10-80x slower on filesystem-heavy
+# work, which is exactly what staging half a gigabyte twice is.
+SLOW_SUITES = frozenset(("incremental", "store_arch", "daemon_runtime", "cli"))
 POLL_SECONDS = 0.05
 
 

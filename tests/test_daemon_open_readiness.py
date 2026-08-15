@@ -41,6 +41,43 @@ OPEN_MARKER_ENV = "HYP_TEST_DAEMON_OPEN_MARKER"
 READY_TIMEOUT_ENV = "HYP_TEST_DAEMON_UI_READY_TIMEOUT_MS"
 RUNTIME_PARENT_ENV = "HYP_TEST_DAEMON_RUNTIME_PARENT"
 
+# ── Budgets, every one derived rather than chosen ──────────────────────────
+#
+# This file used to carry seven independent magic timeouts, and several of them
+# were SMALLER than the budget of the very command they were timing. That is not
+# a stricter test — it is a test that cannot observe an answer. It kills the
+# product mid-decision and reports its own deadline as the product's verdict,
+# which is exactly how "UI endpoint did not become ready within 10000 ms" came
+# to be printed as the cause of a failure it had nothing to do with.
+#
+# The product's own numbers (src/main.c):
+#   MAIN_DAEMON_CTL_PROBE_TIMEOUT_MS    =  3000   one control-plane probe, and
+#                                                 an ABSENT daemon costs the
+#                                                 full amount on POSIX before
+#                                                 `status` can say "not running"
+#   MAIN_DAEMON_CTL_START_TIMEOUT_MS    = 30000   how long a start may take
+#   MAIN_DAEMON_CTL_UI_READY_TIMEOUT_MS = 30000   production UI-ready default
+#
+# SLACK covers what the product does not count: spawning a ~600 MB binary and
+# tearing it down. Measured worst case is the ubuntu-24.04-arm runner pool,
+# CPU-equal to ubuntu-22.04-arm and 10-80x slower on filesystem-heavy work.
+#
+# Anything that waits on a command must allow START + SLACK, plus that
+# command's own UI budget when it has one. Read these as "the product's budget
+# plus room", never as "how long this ought to take".
+PRODUCT_PROBE_S = 3
+PRODUCT_START_S = 30
+PRODUCT_UI_READY_MS = 30000
+SLACK_S = 30
+
+STATUS_PROBE_S = PRODUCT_PROBE_S + SLACK_S // 2   # one `daemon status` call
+START_WAIT_S = PRODUCT_START_S + SLACK_S         # a start with a short UI budget
+UI_WAIT_S = START_WAIT_S + PRODUCT_UI_READY_MS // 1000  # a start that waits on UI
+# A negative case still has to START the daemon before its short UI deadline
+# can even be reached, so it needs the full start budget too. Its 900 ms UI
+# budget is what makes the ASSERTION fast, not what makes the command fast.
+SHORT_UI_READY_MS = 900
+
 
 def output_text(result):
     return ((result.stdout or b"") + (result.stderr or b"")).decode("utf-8", "replace")
@@ -63,10 +100,11 @@ def force_kill(pid):
 def stop_daemon(binary, env, pid):
     stopped = False
     try:
-        subprocess.run([binary, "daemon", "stop"], capture_output=True, timeout=30, env=env)
+        subprocess.run([binary, "daemon", "stop"], capture_output=True,
+                       timeout=START_WAIT_S, env=env)
     except (OSError, subprocess.TimeoutExpired):
         pass
-    deadline = time.monotonic() + 15
+    deadline = time.monotonic() + START_WAIT_S
     while time.monotonic() < deadline:
         try:
             # Same arithmetic as wait_daemon_active: a probe budget under the
@@ -74,7 +112,7 @@ def stop_daemon(binary, env, pid):
             # exact string this loop is waiting for. It would fall through to
             # force_kill on every slow leg.
             status = subprocess.run([binary, "daemon", "status"], capture_output=True,
-                                    timeout=5, env=env)
+                                    timeout=STATUS_PROBE_S, env=env)
             if status.returncode != 0 and "not running" in output_text(status):
                 stopped = True
                 break
@@ -180,13 +218,13 @@ def launch_start(binary, work, cache, marker, port, timeout_ms):
     return process, env
 
 
-def collect(process, timeout=30):
+def collect(process, timeout=START_WAIT_S):
     stdout, stderr = process.communicate(timeout=timeout)
     result = subprocess.CompletedProcess(process.args, process.returncode, stdout, stderr)
     return result, output_text(result)
 
 
-def wait_daemon_active(binary, env, process, timeout=60):
+def wait_daemon_active(binary, env, process, timeout=START_WAIT_S):
     # BOTH numbers here are bounded by the product, not chosen for taste.
     #
     # PROBE_TIMEOUT must strictly exceed the product's own control-probe budget,
@@ -207,7 +245,7 @@ def wait_daemon_active(binary, env, process, timeout=60):
     # filesystem-heavy work than ubuntu-22.04-arm at equal CPU — needs about 15.
     # This costs nothing on a healthy leg: the loop returns the moment status
     # says active, or the moment the starter exits.
-    probe_timeout = 5
+    probe_timeout = STATUS_PROBE_S
     deadline = time.monotonic() + timeout
     last_probe = "status probe was not attempted"
     while time.monotonic() < deadline:
@@ -245,7 +283,7 @@ def assert_delayed_success(binary, work):
     # 30 s, src/daemon/host.c), so releasing the port mid-backoff meant the next
     # attempt landed after the client had already given up. That is a budget
     # losing a race with a backoff curve, not a readiness bug.
-    process, env = launch_start(binary, work, cache, marker, port, 30000)
+    process, env = launch_start(binary, work, cache, marker, port, PRODUCT_UI_READY_MS)
     daemon_pid = 0
     try:
         if not wait_daemon_active(binary, env, process):
@@ -269,7 +307,7 @@ def assert_delayed_success(binary, work):
         # Releasing the port lets the background retry publish the real HYP UI.
         blocker.close()
         blocker = None
-        result, text = collect(process, timeout=25)
+        result, text = collect(process, timeout=UI_WAIT_S)
         daemon_pid = pid_from(text)
         expected_url = "http://127.0.0.1:%d" % port
         marker_text = ""
@@ -297,10 +335,10 @@ def assert_bounded_foreign_port_failure(binary, work):
     marker = os.path.join(work, "browser-occupied.txt")
     blocker = OldMarkerResponder()
     port = blocker.port
-    process, env = launch_start(binary, work, cache, marker, port, 900)
+    process, env = launch_start(binary, work, cache, marker, port, SHORT_UI_READY_MS)
     daemon_pid = 0
     try:
-        result, text = collect(process, timeout=10)
+        result, text = collect(process, timeout=START_WAIT_S)
         daemon_pid = pid_from(text)
         url = "http://127.0.0.1:%d" % port
         if (result.returncode == 0 or os.path.exists(marker) or url in text or
@@ -310,7 +348,7 @@ def assert_bounded_foreign_port_failure(binary, work):
             return False
         request_count = blocker.request_count
         status = subprocess.run([binary, "daemon", "status"], capture_output=True,
-                                timeout=3, env=env)
+                                timeout=STATUS_PROBE_S, env=env)
         status_text = output_text(status)
         if (status.returncode != 0 or "daemon: active" not in status_text or
                 blocker.request_count != request_count):
@@ -335,11 +373,11 @@ def assert_active_daemon_open(binary, work):
     probe, port = occupied_loopback_port()
     probe.close()
     os.makedirs(cache, exist_ok=True)
-    env = fixture_environment(work, cache, marker, 30000)  # production default; see above
+    env = fixture_environment(work, cache, marker, PRODUCT_UI_READY_MS)
     daemon_pid = 0
     try:
         first = subprocess.run([binary, "daemon", "start", "--port=%d" % port],
-                               capture_output=True, timeout=30, env=env)
+                               capture_output=True, timeout=START_WAIT_S, env=env)
         first_text = output_text(first)
         daemon_pid = pid_from(first_text)
         if first.returncode != 0 or "daemon: started" not in first_text:
@@ -347,7 +385,7 @@ def assert_active_daemon_open(binary, work):
             return False
 
         second = subprocess.run([binary, "daemon", "start", "--open"], capture_output=True,
-                                timeout=20, env=env)
+                                timeout=UI_WAIT_S, env=env)
         second_text = output_text(second)
         expected_url = "http://127.0.0.1:%d" % port
         marker_text = ""
@@ -375,10 +413,10 @@ def assert_missing_pack_failure(binary, work):
     marker = os.path.join(work, "browser-missing-pack.txt")
     probe, port = occupied_loopback_port()
     probe.close()  # reserve an unused port number without keeping it occupied
-    process, env = launch_start(copied_binary, work, cache, marker, port, 900)
+    process, env = launch_start(copied_binary, work, cache, marker, port, SHORT_UI_READY_MS)
     daemon_pid = 0
     try:
-        result, text = collect(process, timeout=10)
+        result, text = collect(process, timeout=START_WAIT_S)
         daemon_pid = pid_from(text)
         url = "http://127.0.0.1:%d" % port
         if (result.returncode == 0 or os.path.exists(marker) or url in text or
