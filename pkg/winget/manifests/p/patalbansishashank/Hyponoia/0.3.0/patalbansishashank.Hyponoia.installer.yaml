@@ -15,6 +15,6 @@ Platform:
 Installers:
   - Architecture: x64
     InstallerUrl: https://github.com/patalbansishashank/hyponoia/releases/download/v0.3.0/hyponoia-ui-windows-amd64.zip
-    InstallerSha256: "0000000000000000000000000000000000000000000000000000000000000000"
+    InstallerSha256: "078399bd0e87d08666a2c6762834aa64a5004bcd5f7abade88070f91fdecabfe"
 ManifestType: installer
 ManifestVersion: 1.6.0

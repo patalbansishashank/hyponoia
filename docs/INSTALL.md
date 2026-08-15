@@ -4,12 +4,13 @@ Getting the binary onto your machine and your agent talking to it.
 
 [← README](../README.md)
 
-> **Where the project actually is.** The repository is public. There are no
-> published binaries yet — so the `curl … | bash` one-liners, the package
-> managers and the release archives described below **do not work today**. They
-> are the shape of the distribution once releases are cut. Until then,
-> **[build from source](#build-from-source)** is the path that works, and it is
-> two commands.
+> **Where the project actually is.** `v0.3.0` is published and is the first
+> release carrying binaries — the one-liners and release archives below work.
+> The **package managers do not yet**: Homebrew, Scoop, Chocolatey, AUR and
+> winget manifests are in-tree with real checksums but have not been submitted
+> to their registries, so install from the script or the archive for now.
+> **[Building from source](#build-from-source)** remains supported everywhere,
+> and is the only path on macOS.
 
 ## Build from source
 
@@ -40,8 +41,9 @@ build/c/test-runner --list-suites   # what is available
 
 ---
 
-*Everything below describes the distribution as designed. It becomes live when
-releases are published.*
+*The direct downloads and the install scripts below are live as of `v0.3.0`. The
+package-manager entries are not yet submitted to their registries — see the note
+at the top.*
 
 ## Pre-built Binaries
 

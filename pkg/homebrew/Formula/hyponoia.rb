@@ -17,11 +17,11 @@ class Hyponoia < Formula
   on_linux do
     on_arm do
       url "https://github.com/patalbansishashank/hyponoia/releases/download/v#{version}/hyponoia-ui-linux-arm64.tar.gz"
-      sha256 "0000000000000000000000000000000000000000000000000000000000000000"
+      sha256 "5fa1342d7ebfb00e32048fcf39bf21a7314a0a07af3a7e045a46ecea0303b720"
     end
     on_intel do
       url "https://github.com/patalbansishashank/hyponoia/releases/download/v#{version}/hyponoia-ui-linux-amd64.tar.gz"
-      sha256 "0000000000000000000000000000000000000000000000000000000000000000"
+      sha256 "baecf99e5ad46976d75a96ffd2a71a145e68b09710a2b32f983a4202afc73d60"
     end
   end
 

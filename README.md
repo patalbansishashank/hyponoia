@@ -60,7 +60,13 @@ deleted because it did not survive it →](docs/ASK.md)
 
 ## Quick start
 
-There are no published binaries yet. Building takes two commands:
+```bash
+curl -fsSL https://raw.githubusercontent.com/patalbansishashank/hyponoia/main/install.sh | bash
+```
+
+Linux amd64/arm64 and Windows amd64. **On macOS, build from source** — there is no
+macOS download; see [Retired platforms](docs/MAINTAINERS.md#retired-platforms).
+Building takes two commands and works everywhere:
 
 ```bash
 git clone https://github.com/patalbansishashank/hyponoia.git

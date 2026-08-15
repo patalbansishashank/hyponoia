@@ -8,7 +8,7 @@ $url64       = "https://github.com/patalbansishashank/hyponoia/releases/download
 # for a v0.8.1 release this fork never cut; a plausible-but-wrong hash fails
 # at install time with a mismatch nobody can attribute, so they are zeroed
 # until the real values are copied from the release's checksums.txt.
-$checksum64  = '0000000000000000000000000000000000000000000000000000000000000000'
+$checksum64  = '078399bd0e87d08666a2c6762834aa64a5004bcd5f7abade88070f91fdecabfe'
 $installDir  = Join-Path $env:ChocolateyBinRoot $packageName
 
 Install-ChocolateyZipPackage `
