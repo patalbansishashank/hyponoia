@@ -312,35 +312,40 @@ char *hyp_mcp_text_result(const char *text, bool is_error) {
         }
     }
     if (!has_structured_content) {
-        /* Every advertised MCP tool declares an object outputSchema, so a
-         * conforming structuredContent object is mandatory even for compact
-         * TOON/plain-text and error results. What is NOT mandatory is putting
-         * the whole payload in it a second time.
+        /* A non-JSON payload gets NO structuredContent key at all.
          *
-         * It used to. For any result that is not a JSON object — which is every
-         * TOON answer, i.e. the large ones — structuredContent was
-         * {"text": <the entire payload>} sitting beside an identical
-         * content[0].text. Measured at 2.05x the payload on a 20k-node
-         * query_graph, so half of every reply was redundant bytes: half the
-         * usable transport budget, and double the tokens billed to every LLM
-         * caller (#1375).
+         * It used to be repeated verbatim as {"text": <the entire payload>}
+         * beside an identical content[0].text — 2.05x the payload on a 20k-node
+         * query_graph, i.e. half the transport budget and double the tokens for
+         * every LLM caller (#1375). Dropping that was right: structuredContent
+         * carries STRUCTURE, and a string rewrapped in a one-key object has
+         * none.
          *
-         * Nothing is lost by dropping it. structuredContent exists to carry
-         * STRUCTURE, and a string re-wrapped in a one-key object has none —
-         * a client parsing structuredContent.text learns exactly what
-         * content[0].text already told it. The empty object still satisfies
-         * outputSchema ({"type":"object","additionalProperties":true}), and the
-         * JSON branch above is untouched: when a tool really does return an
-         * object, callers still get it parsed.
+         * The mistake was replacing it with an EMPTY OBJECT. Paired with the
+         * blanket outputSchema this server used to advertise on every tool,
+         * that told clients "the result of this call is an object" and then
+         * handed them {}. A client that prefers structuredContent when a tool
+         * declares an output schema — which is exactly what the schema is for,
+         * and what Claude Code does — rendered every TOON answer as an empty
+         * result while the real payload sat unread in content[0].text.
+         * query_graph and ask, the two tools whose whole job is returning rows,
+         * both came back blank over MCP while the identical call through
+         * `hyponoia cli` returned everything.
+         *
+         * So: no schema is declared (see mcp_add_tool_def) and no empty object
+         * is emitted. Absent means "read content", which is the protocol's own
+         * default and cannot be misread. The JSON branch above is untouched:
+         * when a tool really does return an object it is still parsed into
+         * structuredContent, and clients still get it.
          *
          * Errors keep their payload. They are bounded and small, the duplication
          * costs nothing measurable, and structuredContent.error is the only
          * machine-readable form of a failure a client has. */
-        yyjson_mut_val *structured = yyjson_mut_obj(doc);
         if (is_error) {
+            yyjson_mut_val *structured = yyjson_mut_obj(doc);
             yyjson_mut_obj_add_str(doc, structured, "error", text ? text : "");
+            yyjson_mut_obj_add_val(doc, root, "structuredContent", structured);
         }
-        yyjson_mut_obj_add_val(doc, root, "structuredContent", structured);
     }
     yyjson_mut_obj_add_bool(doc, root, "isError", is_error);
 
@@ -763,7 +768,14 @@ static const tool_def_t TOOLS[] = {
 
 static const int TOOL_COUNT = sizeof(TOOLS) / sizeof(TOOLS[0]);
 
-static const char MCP_TOOL_OUTPUT_SCHEMA[] = "{\"type\":\"object\",\"additionalProperties\":true}";
+/* No outputSchema is advertised. It used to be
+ * {"type":"object","additionalProperties":true} on every tool — a schema that
+ * constrains nothing, so it told a client precisely one thing: "structuredContent
+ * is the result of this call". Most tools answer in TOON, which is not a JSON
+ * object, so structuredContent was empty and clients that honoured the
+ * declaration read an empty result. A schema that conveys no shape is not free;
+ * it is a promise, and this one could not be kept. Declare one again only
+ * per-tool, and only for tools that genuinely return a JSON object. */
 
 typedef struct {
     const char *name;
@@ -826,7 +838,6 @@ static void mcp_add_tool_def(yyjson_mut_doc *doc, yyjson_mut_val *tools, int i) 
     yyjson_mut_obj_add_str(doc, tool, "description", TOOLS[i].description);
 
     mcp_add_json_schema(doc, tool, "inputSchema", TOOLS[i].input_schema);
-    mcp_add_json_schema(doc, tool, "outputSchema", MCP_TOOL_OUTPUT_SCHEMA);
 
     const tool_annotation_def_t *def = mcp_tool_annotations(TOOLS[i].name);
     yyjson_mut_val *annotations = yyjson_mut_obj(doc);

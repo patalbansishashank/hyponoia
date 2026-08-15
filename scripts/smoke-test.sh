@@ -450,21 +450,27 @@ if d.get("isError"):
     print("skip"); raise SystemExit
 content = d.get("content") or []
 text = content[0].get("text", "") if content else ""
+has_sc = "structuredContent" in d
 sc = d.get("structuredContent")
-if not isinstance(sc, dict):
-    print("no-structured"); raise SystemExit
 try:
     payload_is_object = isinstance(json.loads(text), dict)
 except Exception:
     payload_is_object = False
 if payload_is_object:
     print("skip"); raise SystemExit
-print("dup" if sc.get("text") == text and text else "ok")
+# Non-JSON payload. The key must be ABSENT, not present-and-empty: an empty
+# object reads as "the answer is nothing" to any client that prefers
+# structuredContent, which is what silently blanked query_graph and ask.
+if has_sc and isinstance(sc, dict) and not sc:
+    print("empty-structured"); raise SystemExit
+if has_sc and isinstance(sc, dict) and sc.get("text") == text and text:
+    print("dup"); raise SystemExit
+print("ok")
 ')
   case "$VERDICT" in
     dup) echo "FAIL: $(echo "$TOOL_ARGS" | cut -d" " -f1) repeats its payload in structuredContent (#1375)"; DUP_TOOLS=$((DUP_TOOLS+1)) ;;
     ok) DUP_CHECKED=$((DUP_CHECKED+1)) ;;
-    no-structured) echo "FAIL: $(echo "$TOOL_ARGS" | cut -d" " -f1) has no structuredContent object (outputSchema requires one)"; DUP_TOOLS=$((DUP_TOOLS+1)) ;;
+    empty-structured) echo "FAIL: $(echo "$TOOL_ARGS" | cut -d" " -f1) sends an EMPTY structuredContent beside a non-JSON payload — clients that prefer it render an empty result while the answer sits unread in content"; DUP_TOOLS=$((DUP_TOOLS+1)) ;;
   esac
 done
 if [ "$DUP_TOOLS" -ne 0 ]; then

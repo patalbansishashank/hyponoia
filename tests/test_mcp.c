@@ -826,8 +826,14 @@ TEST(mcp_tools_list_latest_metadata) {
     ASSERT_NOT_NULL(strstr(json, "\"title\":\"Search graph\""));
     ASSERT_NOT_NULL(strstr(json, "\"title\":\"Index repository\""));
     ASSERT_NOT_NULL(strstr(json, "\"title\":\"Check index coverage\""));
-    ASSERT_NOT_NULL(strstr(json, "\"outputSchema\":{\"type\":\"object\""));
-    ASSERT_NOT_NULL(strstr(json, "\"additionalProperties\":true"));
+    /* NO outputSchema is advertised. It was
+     * {"type":"object","additionalProperties":true} on every tool — a schema
+     * constraining nothing, whose only effect was to tell clients
+     * "structuredContent is the result". Most tools answer in TOON, which is
+     * not a JSON object, so those clients read an empty result for
+     * query_graph and ask. Declare one again only per-tool, and only where the
+     * tool genuinely returns a JSON object. */
+    ASSERT_NULL(strstr(json, "\"outputSchema\""));
     /* search_graph's compact degree columns intentionally count the graph
      * relationships used for call/reference/type centrality, not every edge
      * family (for example DEFINES or CONTAINS_FILE). Keep the public contract
@@ -1102,12 +1108,17 @@ TEST(mcp_text_result_does_not_duplicate_plain_text_into_structured_content) {
      * and double the tokens for every LLM caller (#1375).
      *
      * structuredContent carries STRUCTURE; a string rewrapped in a one-key
-     * object has none, so the empty object is the honest answer and still
-     * satisfies the permissive outputSchema. The payload stays in content. */
+     * object has none. But the empty object that replaced it was NOT the honest
+     * answer — paired with the blanket outputSchema this server advertised, it
+     * announced "the result is an object" and then handed over {}. Clients that
+     * honour the declaration showed an empty result for every TOON answer,
+     * query_graph and ask included, while the payload sat unread in content.
+     * Absent is the honest answer: it means "read content", which is the
+     * protocol default. This assertion is the regression guard — an empty
+     * structuredContent here is the bug, not the fix. */
     char *json = hyp_mcp_text_result("plain text", false);
     ASSERT_NOT_NULL(json);
-    ASSERT_NOT_NULL(strstr(json, "\"structuredContent\":{}"));
-    ASSERT_NULL(strstr(json, "\"structuredContent\":{\"text\""));
+    ASSERT_NULL(strstr(json, "\"structuredContent\""));
     /* The payload is still delivered — exactly once. */
     ASSERT_NOT_NULL(strstr(json, "\"text\":\"plain text\""));
     ASSERT_NOT_NULL(strstr(json, "\"isError\":false"));
@@ -1865,9 +1876,14 @@ TEST(mcp_every_tool_result_is_duplication_free) {
         const char *text = text_val ? yyjson_get_str(text_val) : NULL;
         yyjson_val *structured = yyjson_obj_get(root, "structuredContent");
 
-        /* outputSchema is declared for every tool, so this stays mandatory. */
-        ASSERT_NOT_NULL(structured);
-        ASSERT_TRUE(yyjson_is_obj(structured));
+        /* structuredContent is OPTIONAL now that no outputSchema is advertised:
+         * absent means "read content". What must never happen is a structured
+         * key that is present and empty, because that is indistinguishable from
+         * "the answer is nothing" to a client that prefers it. */
+        if (structured) {
+            ASSERT_TRUE(yyjson_is_obj(structured));
+            ASSERT_TRUE(yyjson_obj_size(structured) > 0);
+        }
 
         yyjson_val *is_error = yyjson_obj_get(root, "isError");
         bool errored = is_error && yyjson_is_true(is_error);
@@ -1921,11 +1937,11 @@ TEST(tool_search_graph_includes_node_properties) {
              "\"arguments\":{\"project\":\"test-project\",\"label\":\"Function\","
              "\"name_pattern\":\"HandleRequest\",\"limit\":5}}}");
     ASSERT_NOT_NULL(resp);
-    /* TOON is not a JSON object, so structuredContent stays empty rather than
-     * repeating the whole table a second time (#1375). The payload travels once,
-     * in content. */
-    ASSERT_NOT_NULL(strstr(resp, "\"structuredContent\":{}"));
-    ASSERT_NULL(strstr(resp, "\"structuredContent\":{\"text\":"));
+    /* TOON is not a JSON object, so the key is OMITTED rather than repeating
+     * the whole table a second time (#1375) and rather than sitting there empty.
+     * The payload travels once, in content, and a client is told to look there
+     * by the absence itself. */
+    ASSERT_NULL(strstr(resp, "\"structuredContent\""));
     char *inner = extract_text_content(resp);
     ASSERT_NOT_NULL(inner);
     ASSERT_NOT_NULL(strstr(inner, "results:")); /* TOON table header */
