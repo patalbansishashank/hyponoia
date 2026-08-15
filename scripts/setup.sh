@@ -164,6 +164,36 @@ install_integration_asset() {
     chmod 644 "${INSTALL_DIR}/hyp-integrations.json"
 }
 
+# Graph UI asset pack. Without it the UI has no assets to serve, so the
+# archive's sixth member cannot be dropped on the floor. The name is the sha256
+# of the pack's own bytes, so it can only ever be matched by glob.
+#
+# Beside the binary, not ../share/hyponoia: this installer already places
+# hyp-integrations.json beside the binary, that is the first location
+# src/ui/asset_pack.c looks in and the only one src/cli/cli.c accepts, and
+# ${INSTALL_DIR}/../share/hyponoia is $HOME/.local/share/hyponoia — which this
+# script uses as the source checkout for --from-source.
+#
+# Guarded like THIRD_PARTY_NOTICES.md elsewhere in packaging: a release archive
+# that predates the pack must still install, with the UI degraded rather than
+# the install failed.
+install_ui_pack_asset() {
+    local source_dir="$1"
+    local pack name found=false
+
+    for pack in "${source_dir}"/hyp-ui-*.pack; do
+        [ -f "$pack" ] || continue
+        name=$(basename "$pack")
+        cp "$pack" "${INSTALL_DIR}/${name}"
+        chmod 644 "${INSTALL_DIR}/${name}"
+        found=true
+    done
+
+    if [ "$found" = false ]; then
+        warn "No UI asset pack found — the graph UI will be unavailable."
+    fi
+}
+
 download_binary() {
     local platform="$1" tool="$2"
 
@@ -177,7 +207,8 @@ download_binary() {
     fi
     ok "Latest release: $tag"
 
-    local asset="hyponoia-${platform}.tar.gz"
+    # The build publishes only the UI variant, so this is the only archive that exists.
+    local asset="hyponoia-ui-${platform}.tar.gz"
     local url="https://github.com/${REPO}/releases/download/${tag}/${asset}"
 
     echo "${BOLD}Downloading ${asset}...${RESET}"
@@ -192,6 +223,7 @@ download_binary() {
     mv "${tmpdir}/${BINARY_NAME}" "${INSTALL_DIR}/${BINARY_NAME}"
     chmod +x "${INSTALL_DIR}/${BINARY_NAME}"
     install_integration_asset "$tmpdir"
+    install_ui_pack_asset "$tmpdir"
 
     ok "Installed to ${INSTALL_DIR}/${BINARY_NAME}"
 }
@@ -224,6 +256,7 @@ build_from_source() {
     cp "${SOURCE_DIR}/build/c/hyponoia" "${INSTALL_DIR}/${BINARY_NAME}"
     chmod +x "${INSTALL_DIR}/${BINARY_NAME}"
     install_integration_asset "${SOURCE_DIR}/build/c"
+    install_ui_pack_asset "${SOURCE_DIR}/build/c"
 
     ok "Built and installed to ${INSTALL_DIR}/${BINARY_NAME}"
 }
@@ -368,5 +401,6 @@ echo ""
 info "To uninstall:"
 info "  rm ${INSTALL_DIR}/${BINARY_NAME}"
 info "  rm ${INSTALL_DIR}/hyp-integrations.json"
+info "  rm ${INSTALL_DIR}/hyp-ui-*.pack  # graph UI assets"
 info "  rm -rf ${SOURCE_DIR}  # if built from source"
 info "  rm -rf ~/.cache/hyponoia/  # graph database"

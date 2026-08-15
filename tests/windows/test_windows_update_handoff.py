@@ -14,6 +14,9 @@ the process into install.ps1, which runs while HYP is NOT running.
 This guard asserts the replacement contract on real native Windows:
 
 * ``update`` exits 0 and prints the exact install.ps1 command.
+* ``update --standard`` is refused: the release publishes ui archives only, so
+  the flag names an archive that does not exist and must not be silently
+  served the ui one instead.
 * ``update`` NEVER replaces the running image in-process — the executable's
   bytes are unchanged, and no launcher/payload sibling appears next to it.
 * ``update`` refuses to reach the network first: it hands off before it
@@ -116,9 +119,9 @@ def assert_update_hands_off_to_install_script(source, env, work):
     # of the just-written image inflates process load time, and the handoff
     # itself is a fast STATELESS local print (no daemon IPC, no download) whose
     # timing is what this guard measures. The warm-up behaves identically.
-    run([binary, "update", "--yes", "--standard"], command_env, timeout=20)
+    run([binary, "update", "--yes"], command_env, timeout=20)
     started = time.monotonic()
-    result = run([binary, "update", "--yes", "--standard"], command_env, timeout=20)
+    result = run([binary, "update", "--yes"], command_env, timeout=20)
     elapsed = time.monotonic() - started
     diagnostic = output_text(result)
     lowered = diagnostic.lower()
@@ -155,6 +158,25 @@ def assert_update_hands_off_to_install_script(source, env, work):
     )
     print("PASS: update handed off to install.ps1 without touching its own image")
 
+    # The release publishes ui archives only. --standard names an archive that
+    # does not exist, so it must be refused rather than quietly handed the ui
+    # one under the name the user did not ask for.
+    refused = run([binary, "update", "--yes", "--standard"], command_env, timeout=20)
+    refusal_text = output_text(refused).lower()
+    require(
+        refused.returncode != 0,
+        "update --standard exited 0; it must refuse, not substitute ui",
+    )
+    require(
+        "standard" in refusal_text and "publish" in refusal_text,
+        "update --standard did not say why it refused: %s" % refusal_text[-800:],
+    )
+    require(
+        "install.ps1" not in refusal_text,
+        "update --standard printed the handoff instead of refusing",
+    )
+    print("PASS: update --standard is refused; no standard archive is published")
+
 
 def assert_update_does_not_drain_active_session(source, env, cache, work):
     binary = copy_binary(source, work / "update-session")
@@ -165,7 +187,7 @@ def assert_update_does_not_drain_active_session(source, env, cache, work):
         command = copy_binary(source, work / "update-session-command")
         command_env = dict(env)
         command_env["HYP_DOWNLOAD_URL"] = "https://127.0.0.1:1"
-        result = run([command, "update", "--yes", "--standard"], command_env, timeout=20)
+        result = run([command, "update", "--yes"], command_env, timeout=20)
         require(
             result.returncode == 0,
             "update exited %s beside a live session: %s"

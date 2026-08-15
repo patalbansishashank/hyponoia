@@ -667,7 +667,9 @@ def create_local_update_release(release_dir, candidate):
         portable = "-portable"
     machine = platform.machine().lower()
     arch = "arm64" if machine in ("arm64", "aarch64") else "amd64"
-    asset_name = "hyponoia-{}-{}{}.tar.gz".format(
+    # The release publishes ui archives only, so that is the single name
+    # `update` composes -- and the only one this fixture can answer with.
+    asset_name = "hyponoia-ui-{}-{}{}.tar.gz".format(
         os_name, arch, portable
     )
     archive = release_dir / asset_name
@@ -2135,7 +2137,9 @@ def main():
                 activation_log,
                 "activation-update",
                 "update",
-                ["update", "--force", "--standard", "--yes"],
+                # No variant flag: the unflagged default must compose the ui
+                # name, which is the only archive the fixture publishes.
+                ["update", "--force", "--yes"],
                 active_fingerprint,
             )
             check(
@@ -2196,6 +2200,31 @@ def main():
                 sha256_file(binary) == source_binary_before
                 and sha256_file(conflict_binary) == conflict_binary_before,
                 "update activation modified a source executable",
+            )
+
+            # --standard must be refused outright. No standard archive is
+            # published, and quietly serving the ui archive under the name the
+            # user did not ask for is the defect, not the fallback. The refusal
+            # is a flag-parse rejection: no daemon work, no network, no
+            # activation record.
+            refused_standard = subprocess.run(
+                [str(binary), "update", "--force", "--standard", "--yes"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                env=update_env,
+                timeout=10,
+                check=False,
+            )
+            check(
+                refused_standard.returncode != 0,
+                "update --standard exited 0; it must refuse, not substitute ui",
+            )
+            check(
+                "standard" in refused_standard.stderr
+                and "publish" in refused_standard.stderr,
+                "update --standard did not say why it refused: "
+                + refused_standard.stderr[-400:],
             )
 
             # Launch the activated target itself as the final daemon build,

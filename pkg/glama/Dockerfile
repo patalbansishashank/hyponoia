@@ -16,21 +16,27 @@
 # for a name that does not exist and 404'd, which nobody could see because the
 # only release this fork had cut carried zero assets.
 #
-# Extract the whole archive rather than naming members: the UI pack is
-# content-addressed (hyp-ui-<sha256>.pack), so it cannot be listed literally.
+# The UI pack is content-addressed (hyp-ui-<sha256>.pack), so it cannot be named
+# literally — hence --wildcards for that one member. The others stay named, so a
+# member disappearing from the archive still fails loudly here rather than
+# producing an image quietly missing a runtime asset.
 
 FROM debian:bookworm-slim AS fetch
 ARG TARGETARCH
 RUN apt-get update \
  && apt-get install -y --no-install-recommends curl ca-certificates \
  && curl -fsSL "https://github.com/patalbansishashank/hyponoia/releases/latest/download/hyponoia-ui-linux-${TARGETARCH}-portable.tar.gz" \
-      | tar -xz -C /tmp \
+      | tar -xz -C /tmp --wildcards hyponoia hyp-integrations.json LICENSE THIRD_PARTY_NOTICES.md 'hyp-ui-*.pack' \
  && chmod +x /tmp/hyponoia \
  && rm -rf /var/lib/apt/lists/*
 
 FROM debian:bookworm-slim
 COPY --from=fetch /tmp/hyponoia /usr/local/bin/hyponoia
 COPY --from=fetch /tmp/hyp-integrations.json /usr/local/share/hyponoia/hyp-integrations.json
+# The binary resolves its UI pack at <bindir>/../share/hyponoia/<pack> (see
+# src/ui/asset_pack.c), which is /usr/local/share/hyponoia here — the same place
+# hyp-integrations.json goes. Dropping it left the image unable to serve the UI.
+COPY --from=fetch /tmp/hyp-ui-*.pack /usr/local/share/hyponoia/
 COPY --from=fetch /tmp/LICENSE /tmp/THIRD_PARTY_NOTICES.md /usr/share/doc/hyponoia/
 ENV HYP_CACHE_DIR=/tmp/hyp
 ENTRYPOINT ["hyponoia"]

@@ -415,7 +415,16 @@ def _cache_dir() -> Path:
 
 
 def _variant() -> str:
-    return "ui" if os.environ.get("HYP_VARIANT", "").lower() == "ui" else "standard"
+    # The build publishes only the UI variant, so ui is the only archive that
+    # exists; HYP_VARIANT=standard is refused rather than silently substituted.
+    if os.environ.get("HYP_VARIANT", "").lower() == "standard":
+        sys.exit(
+            "hyponoia: HYP_VARIANT=standard: no standard archives are "
+            "published for this release.\n"
+            "  The published archive includes the graph UI.\n"
+            "  Unset HYP_VARIANT and retry."
+        )
+    return "ui"
 
 
 def _runtime_dir(version: str, variant: str = None) -> Path:
@@ -1298,8 +1307,8 @@ def _download(version: str) -> Path:
     # such variant. Keep in sync with install.sh / install.js / cli.c.
     # RETIRED-PLATFORM(macos): this used to read "macOS/Windows".
     portable = "-portable" if os_name == "linux" else ""
-    # Opt into the UI build, whose verified asset pack is published beside the
-    # binary, with HYP_VARIANT=ui. Default is the standard (headless) build.
+    # The build publishes only the UI variant, so this is the only archive that
+    # exists; its verified asset pack is published beside the binary.
     ui = "ui-" if selected_variant == "ui" else ""
     archive = f"hyponoia-{ui}{os_name}-{arch}{portable}.{ext}"
     url = f"https://github.com/{REPO}/releases/download/v{version}/{archive}"

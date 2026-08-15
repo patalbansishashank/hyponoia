@@ -45,18 +45,20 @@ func (body *archiveCountingBody) Read(buffer []byte) (int, error) {
 
 func (*archiveCountingBody) Close() error { return nil }
 
-func TestStandardAndUICachePathsDoNotCollide(t *testing.T) {
+// The build publishes only the UI variant, so the UI cache path is the only
+// one. HYP_VARIANT=standard is refused inside runtimeVariant, which exits the
+// process, so that branch cannot be exercised from an in-process test.
+func TestUICachePathIsTheOnlyVariantPath(t *testing.T) {
 	t.Setenv("HYP_CACHE_DIR", t.TempDir())
-	t.Setenv("HYP_VARIANT", "standard")
-	standard := binPath()
 	t.Setenv("HYP_VARIANT", "ui")
-	ui := binPath()
-	if standard == ui {
-		t.Fatalf("standard and UI cache paths collide at %q", standard)
+	explicit := binPath()
+	t.Setenv("HYP_VARIANT", "")
+	byDefault := binPath()
+	if byDefault != explicit {
+		t.Fatalf("default cache path %q does not match the UI path %q", byDefault, explicit)
 	}
-	if filepath.Base(filepath.Dir(standard)) != "standard" ||
-		filepath.Base(filepath.Dir(ui)) != "ui" {
-		t.Fatalf("variant cache paths = %q and %q", standard, ui)
+	if filepath.Base(filepath.Dir(byDefault)) != "ui" {
+		t.Fatalf("variant cache path = %q, want a ui directory", byDefault)
 	}
 }
 

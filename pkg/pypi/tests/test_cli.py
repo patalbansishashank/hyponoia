@@ -87,13 +87,25 @@ class BinarySelectionTests(unittest.TestCase):
                     ["uninstall", "--dir", str(explicit_dir)],
                 )
 
-    def test_standard_and_ui_cache_paths_do_not_collide(self):
+    def test_standard_is_refused_and_ui_is_the_only_cache_path(self):
+        # The build publishes only the UI variant, so an explicit request for
+        # standard is refused rather than silently served the UI archive.
         with mock.patch.dict("os.environ", {"HYP_VARIANT": "standard"}):
-            standard = _cli._bin_path("0.8.1")
-        with mock.patch.dict("os.environ", {"HYP_VARIANT": "ui"}):
-            ui = _cli._bin_path("0.8.1")
+            with self.assertRaises(SystemExit):
+                _cli._bin_path("0.8.1")
 
-        self.assertNotEqual(standard, ui)
+        with mock.patch.dict("os.environ", {"HYP_VARIANT": "ui"}):
+            explicit = _cli._bin_path("0.8.1")
+        without_variant = {
+            name: value
+            for name, value in os.environ.items()
+            if name != "HYP_VARIANT"
+        }
+        with mock.patch.dict("os.environ", without_variant, clear=True):
+            default = _cli._bin_path("0.8.1")
+
+        self.assertEqual(default, explicit)
+        self.assertEqual(default.parent.name, "ui")
 
     def test_release_archives_require_the_integrations_sidecar(self):
         self.assertIn("hyp-integrations.json", _cli._WINDOWS_ARCHIVE_NAMES)
@@ -594,33 +606,26 @@ class RuntimeSetTests(unittest.TestCase):
                 )
 
     def test_readiness_requires_the_complete_selected_variant(self):
+        # The build publishes only the UI variant, so the complete set is
+        # always binary + integrations + exactly one digest-matching pack.
         with tempfile.TemporaryDirectory() as root, mock.patch.object(
             _cli, "_cache_dir", return_value=Path(root)
         ):
-            with mock.patch.dict(os.environ, {"HYP_VARIANT": "standard"}):
-                standard_binary = _cli._bin_path("0.8.1")
-                standard_binary.parent.mkdir(parents=True)
-                standard_binary.write_text("binary")
-                (standard_binary.parent / _cli._INTEGRATIONS_NAME).write_text(
-                    "integrations"
-                )
-                self.assertTrue(_cli._runtime_set_ready("0.8.1"))
-                (standard_binary.parent / _cli._INTEGRATIONS_NAME).unlink()
-                self.assertFalse(_cli._runtime_set_ready("0.8.1"))
-
             with mock.patch.dict(os.environ, {"HYP_VARIANT": "ui"}):
                 ui_binary = _cli._bin_path("0.8.1")
                 ui_binary.parent.mkdir(parents=True)
                 ui_binary.write_text("binary")
-                (ui_binary.parent / _cli._INTEGRATIONS_NAME).write_text(
-                    "integrations"
-                )
+                integrations = ui_binary.parent / _cli._INTEGRATIONS_NAME
+                integrations.write_text("integrations")
                 pack_bytes = b"pack"
                 pack_name = (
                     f"hyp-ui-{hashlib.sha256(pack_bytes).hexdigest()}.pack"
                 )
                 (ui_binary.parent / pack_name).write_bytes(pack_bytes)
                 self.assertTrue(_cli._runtime_set_ready("0.8.1"))
+                integrations.unlink()
+                self.assertFalse(_cli._runtime_set_ready("0.8.1"))
+                integrations.write_text("integrations")
                 second_pack = f"hyp-ui-{'b' * 64}.pack"
                 (ui_binary.parent / second_pack).write_text("second pack")
                 self.assertFalse(_cli._runtime_set_ready("0.8.1"))

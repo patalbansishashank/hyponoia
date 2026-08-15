@@ -76,8 +76,6 @@ enum {
     MIN_ARGC_GET = 2,
     AUTO_YES = 1,
     AUTO_NO = -1,
-    VARIANT_A = 1,
-    VARIANT_B = 2,
     OCTAL_BASE = 8,
     CLI_ACTIVATION_DRAIN_TIMEOUT_MS = 15000,
     CLI_ACTIVATION_CONTROL_TIMEOUT_MS = 2000,
@@ -9720,8 +9718,8 @@ static void print_update_help(void) {
     printf("Downloads the latest release and replaces the installed binary.\n\n");
     printf("Options:\n");
     printf("  --dry-run     Report what would change; download and write nothing\n");
-    printf("  --standard    Update to the standard variant without asking\n");
-    printf("  --ui          Update to the UI variant without asking\n");
+    printf("  --ui          Update to the UI variant (the only one published)\n");
+    printf("  --standard    Refused: no standard archive is published\n");
     printf("  --force       Reinstall even when already at the latest version\n");
     printf("  -y, --yes     Answer yes to every prompt\n");
     printf("  -n, --no      Answer no to every prompt\n");
@@ -11721,7 +11719,7 @@ static int extract_and_install_binary(extract_install_args_t args) {
  * covers the flow through the activation test seam. */
 /* Build the download URL for the update command. */
 static void build_update_url(char *url, int url_sz, const char *os, const char *arch,
-                             const char *ext, bool want_ui) {
+                             const char *ext) {
     char base_url_buf[CLI_BUF_512];
     const char *base_url =
         hyp_safe_getenv("HYP_DOWNLOAD_URL", base_url_buf, sizeof(base_url_buf), NULL);
@@ -11739,8 +11737,9 @@ static void build_update_url(char *url, int url_sz, const char *os, const char *
      * would only affect a binary that, by construction, no macOS user has.
      * See docs/MAINTAINERS.md "Retired platforms". */
     const char *portable = (strcmp(os, "linux") == 0) ? "-portable" : "";
-    snprintf(url, url_sz, "%s/hyponoia-%s%s-%s%s.%s", base_url, want_ui ? "ui-" : "", os, arch,
-             portable, ext);
+    /* "ui-" is a literal, not a variant choice: the release publishes ui
+     * archives only, so a non-ui name cannot be composed at all. */
+    snprintf(url, url_sz, "%s/hyponoia-ui-%s-%s%s.%s", base_url, os, arch, portable, ext);
 }
 
 /* Confirm index deletion before network I/O, but defer the deletion itself to
@@ -11773,8 +11772,8 @@ static int update_prepare_clear_indexes(const char *home, bool dry_run, bool *de
 
 /* Download and verify before disruption, then activate under daemon locks. */
 static int download_verify_install(const char *url, const char *ext, const char *os,
-                                   const char *arch, bool want_ui, const char *bin_dest,
-                                   const char *home, bool delete_indexes) {
+                                   const char *arch, const char *bin_dest, const char *home,
+                                   bool delete_indexes) {
     char tmp_archive[CLI_BUF_256];
     int archive_path_length =
         snprintf(tmp_archive, sizeof(tmp_archive), "%s/hyp-update-XXXXXX", hyp_tmpdir());
@@ -11803,10 +11802,10 @@ static int download_verify_install(const char *url, const char *ext, const char 
     }
 
     char archive_name[CLI_BUF_256];
-    /* Must match build_update_url: linux uses the static "-portable" asset. */
+    /* Must match build_update_url: linux uses the static "-portable" asset, and
+     * "ui-" is fixed because it is the only variant published. */
     const char *portable = (strcmp(os, "linux") == 0) ? "-portable" : "";
-    snprintf(archive_name, sizeof(archive_name), "hyponoia-%s%s-%s%s.%s", want_ui ? "ui-" : "", os,
-             arch, portable, ext);
+    snprintf(archive_name, sizeof(archive_name), "hyponoia-ui-%s-%s%s.%s", os, arch, portable, ext);
     /* Fail closed: install only a positively-verified download. A mismatch,
      * a missing checksum entry, or an unavailable hash tool (crc != 0) all
      * abort rather than install an unverified binary. */
@@ -11827,34 +11826,6 @@ static int download_verify_install(const char *url, const char *ext, const char 
         return CLI_TRUE;
     }
     return 0;
-}
-
-/* Select update variant. Returns 0=standard, 1=ui, -1=error. */
-static int select_update_variant(int variant_flag) {
-    if (variant_flag == VARIANT_A) {
-        return 0;
-    }
-    if (variant_flag == VARIANT_B) {
-        return CLI_TRUE;
-    }
-#ifndef _WIN32
-    if (!isatty(fileno(stdin))) {
-        (void)fprintf(stderr, "error: variant selection requires a terminal. "
-                              "Use --standard or --ui flag.\n");
-        return CLI_ERR;
-    }
-#endif
-    printf("Which binary variant do you want?\n");
-    printf("  1) standard  — MCP server only\n");
-    printf("  2) ui        — MCP server + external graph-visualization assets\n");
-    printf("Choose (1/2): ");
-    (void)fflush(stdout);
-    char choice[CLI_BUF_16];
-    if (!fgets(choice, sizeof(choice), stdin)) {
-        (void)fprintf(stderr, "error: failed to read input\n");
-        return CLI_ERR;
-    }
-    return (choice[0] == '2') ? CLI_TRUE : 0;
 }
 
 /* Case-insensitive prefix match (portable — no strncasecmp dependency). */
@@ -11942,14 +11913,21 @@ int hyp_cmd_update(int argc, char **argv) {
 
     bool dry_run = false;
     bool force = false;
-    int variant_flag = 0; /* 0 = ask, 1 = standard, 2 = ui */
     for (int i = 0; i < argc; i++) {
         if (strcmp(argv[i], "--dry-run") == 0) {
             dry_run = true;
         } else if (strcmp(argv[i], "--standard") == 0) {
-            variant_flag = VARIANT_A;
+            /* Refuse instead of substituting: a flag that fetches something
+             * other than what it names is the defect this closes. The variant
+             * menu that used to offer "standard" is gone rather than kept and
+             * refusing — one published archive is not a choice worth asking
+             * about — which also lets `update` run without a terminal. */
+            (void)fprintf(stderr, "error: no standard archive is published for this release.\n"
+                                  "The published archive includes the graph UI. Re-run without "
+                                  "--standard.\n");
+            return CLI_TRUE;
         } else if (strcmp(argv[i], "--ui") == 0) {
-            variant_flag = VARIANT_B;
+            /* Accepted and inert: ui is what an unflagged update already does. */
         } else if (strcmp(argv[i], "--force") == 0) {
             force = true;
         } else if (strcmp(argv[i], "-y") != 0 && strcmp(argv[i], "--yes") != 0 &&
@@ -11984,7 +11962,6 @@ int hyp_cmd_update(int argc, char **argv) {
      * rejecting typos instead of silently accepting them. */
     (void)dry_run;
     (void)force;
-    (void)variant_flag;
 #endif
 #ifdef HYP_CLI_ENABLE_TEST_API
     if (g_cli_activation_test_ops_set) {
@@ -12037,7 +12014,8 @@ int hyp_cmd_update(int argc, char **argv) {
         }
         printf("It downloads the latest release, verifies its checksum, and replaces\n"
                "this binary in place. install.sh is idempotent, so re-running it IS\n"
-               "the update; pass --ui for the UI build.\n");
+               "the update; the published build is the UI build, so it needs no\n"
+               "variant flag.\n");
 #endif
         return 0;
     }
@@ -12066,26 +12044,19 @@ int hyp_cmd_update(int argc, char **argv) {
         return CLI_TRUE;
     }
 
-    /* Step 2: Determine variant */
-    int want_ui_rc = select_update_variant(variant_flag);
-    if (want_ui_rc < 0) {
-        return CLI_TRUE;
-    }
-    bool want_ui = (want_ui_rc == CLI_TRUE);
-    const char *variant = want_ui ? "ui-" : "";
-    const char *variant_label = want_ui ? "ui" : "standard";
-
+    /* Step 2: No variant to determine — ui is the only archive published, and
+     * an explicit --standard was already refused above. */
     const char *os = detect_os();
     const char *arch = detect_arch();
     const char *ext = strcmp(os, "windows") == 0 ? "zip" : "tar.gz";
 
     char url[CLI_BUF_512];
-    build_update_url(url, sizeof(url), os, arch, ext, want_ui);
+    build_update_url(url, sizeof(url), os, arch, ext);
 
     if (dry_run) {
-        printf("\nWould download %s binary for %s/%s ...\n", variant_label, os, arch);
+        printf("\nWould download ui binary for %s/%s ...\n", os, arch);
     } else {
-        printf("\nDownloading %s binary for %s/%s ...\n", variant_label, os, arch);
+        printf("\nDownloading ui binary for %s/%s ...\n", os, arch);
     }
     printf("  %s\n", url);
 
@@ -12096,10 +12067,9 @@ int hyp_cmd_update(int argc, char **argv) {
 #else
         printf("  target: %s/.local/bin/hyponoia\n", home);
 #endif
-        printf("  variant: %s\n", variant_label);
+        printf("  variant: ui\n");
         printf("  os/arch: %s/%s\n", os, arch);
         printf("\nUpdate dry-run complete.\n");
-        (void)variant;
         return 0;
     }
 
@@ -12118,7 +12088,7 @@ int hyp_cmd_update(int argc, char **argv) {
         return CLI_TRUE;
     }
 
-    int rc = download_verify_install(url, ext, os, arch, want_ui, bin_dest, home, delete_indexes);
+    int rc = download_verify_install(url, ext, os, arch, bin_dest, home, delete_indexes);
     if (rc != 0) {
         return CLI_TRUE;
     }
@@ -12135,7 +12105,6 @@ int hyp_cmd_update(int argc, char **argv) {
     printf("automatically when you next use the MCP server.\n");
     printf("\nUpdate complete. Please restart your coding-agent sessions to "
            "properly take this into account.\n");
-    (void)variant;
     return 0;
 #endif /* HYP_CLI_ENABLE_TEST_API */
 }

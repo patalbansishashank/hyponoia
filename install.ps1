@@ -134,11 +134,18 @@ function New-HypExclusiveTempDirectory {
 }
 
 # Detect variant from args (--ui or --standard)
-$Variant = "standard"
+# The build publishes only the UI variant, so this is the only archive that exists.
+$Variant = "ui"
 $SkipConfig = $false
 foreach ($arg in $args) {
     if ($arg -eq "--ui") { $Variant = "ui" }
-    if ($arg -eq "--standard") { $Variant = "standard" }
+    # Refuse rather than silently hand a user who asked for standard a different archive.
+    if ($arg -eq "--standard") {
+        Write-Host "error: no standard archives are published for this release." -ForegroundColor Red
+        Write-Host "  The published archive includes the graph UI."
+        Write-Host "  Re-run without --standard."
+        exit 1
+    }
     if ($arg -eq "--skip-config") { $SkipConfig = $true }
     if ($arg -like "--dir=*") { $InstallDir = $arg.Substring(6) }
 }
@@ -186,6 +193,8 @@ Write-Host ""
 if ($Variant -eq "ui") {
     $Archive = "hyponoia-ui-windows-$Arch.zip"
 } else {
+    # Unreachable -- the build publishes only the UI variant, so --standard exits
+    # above. Kept so restoring a standard build is one edit, not two.
     $Archive = "hyponoia-windows-$Arch.zip"
 }
 $Url = "$BaseUrl/$Archive"

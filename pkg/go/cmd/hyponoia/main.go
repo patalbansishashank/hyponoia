@@ -185,11 +185,19 @@ func executionPathForOS(binary, targetOS string) string {
 	return binary
 }
 
+// The build publishes only the UI variant, so ui is the only archive that
+// exists; HYP_VARIANT=standard is refused rather than silently substituted.
 func runtimeVariant() string {
-	if strings.EqualFold(os.Getenv("HYP_VARIANT"), "ui") {
-		return "ui"
+	if strings.EqualFold(os.Getenv("HYP_VARIANT"), "standard") {
+		fmt.Fprintln(
+			os.Stderr,
+			"hyponoia: HYP_VARIANT=standard: no standard archives are published for this release.\n"+
+				"  The published archive includes the graph UI.\n"+
+				"  Unset HYP_VARIANT and retry.",
+		)
+		os.Exit(1)
 	}
-	return "standard"
+	return "ui"
 }
 
 func printPortableMutationGuidance(args []string) {
@@ -412,6 +420,7 @@ func download(dest string) error {
 	if platform == "linux" {
 		portable = "-portable"
 	}
+	// The build publishes only the UI variant, so this is the only archive that exists.
 	uiPrefix := ""
 	if selectedVariant == "ui" {
 		uiPrefix = "ui-"

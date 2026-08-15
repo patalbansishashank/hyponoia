@@ -694,7 +694,15 @@ if os.name != "nt" and helper.is_file():
         (stage / "LICENSE").write_bytes(b"fixture license\n")
         (stage / "THIRD_PARTY_NOTICES.md").write_bytes(b"fixture notices\n")
 
-        archive_name = "hyponoia-linux-amd64-portable.tar.gz"
+        # The release publishes only UI archives, so the fixture must be one:
+        # six members, the sixth a root-level pack whose name IS the sha256 of
+        # its own bytes. install.sh re-derives that digest and refuses a pack
+        # whose name does not match, so the name is computed, never written out.
+        ui_pack_bytes = b"fixture ui asset pack\n"
+        ui_pack_name = f"hyp-ui-{hashlib.sha256(ui_pack_bytes).hexdigest()}.pack"
+        (stage / ui_pack_name).write_bytes(ui_pack_bytes)
+
+        archive_name = "hyponoia-ui-linux-amd64-portable.tar.gz"
         archive_path = fixture / archive_name
         with tarfile.open(archive_path, "w:gz") as archive:
             for name in (
@@ -702,6 +710,7 @@ if os.name != "nt" and helper.is_file():
                 "hyp-integrations.json",
                 "LICENSE",
                 "THIRD_PARTY_NOTICES.md",
+                ui_pack_name,
             ):
                 archive.add(stage / name, arcname=name)
             archive.add(root / "install.sh", arcname="install.sh")
@@ -739,7 +748,10 @@ if os.name != "nt" and helper.is_file():
             "ln -s \"$foreign_sidecar\" \"$install_dir/.hyp-integrations.json.$$\"\n"
             "ln -s \"$foreign_updater\" \"$install_dir/.install.sh.$$\"\n"
             "printf '%s\\n' \"$$\" > \"$pid_file\"\n"
-            "exec bash \"$installer\" --standard \"--dir=$install_dir\" --skip-config\n",
+            # --standard is a hard refusal now (no standard archives are
+            # published), so pin the published variant explicitly rather than
+            # leaning on install.sh's default.
+            "exec bash \"$installer\" --ui \"--dir=$install_dir\" --skip-config\n",
             encoding="utf-8",
         )
         wrapper.chmod(0o755)

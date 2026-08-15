@@ -19,7 +19,8 @@ main() {
 
 REPO="patalbansishashank/hyponoia"
 INSTALL_DIR="$HOME/.local/bin"
-VARIANT="standard"
+# The build publishes only the UI variant, so this is the only archive that exists.
+VARIANT="ui"
 SKIP_CONFIG=false
 HYP_DOWNLOAD_URL="${HYP_DOWNLOAD_URL:-https://github.com/${REPO}/releases/latest/download}"
 
@@ -84,13 +85,20 @@ download_file() {
 for arg in "$@"; do
     case "$arg" in
         --ui)           VARIANT="ui" ;;
-        --standard)     VARIANT="standard" ;;
+        # The build publishes only the UI variant, so refuse rather than
+        # silently hand a user who asked for standard a different archive.
+        --standard)
+            echo "error: no standard archives are published for this release." >&2
+            echo "  The published archive includes the graph UI." >&2
+            echo "  Re-run without --standard." >&2
+            exit 1
+            ;;
         --dir=*)        INSTALL_DIR="${arg#--dir=}" ;;
         --skip-config)  SKIP_CONFIG=true ;;
         --help|-h)
             echo "Usage: install.sh [--ui] [--dir=<path>] [--skip-config]"
-            echo "  --ui           Install the UI variant (with graph visualization)"
-            echo "  --standard     Install the standard variant (default)"
+            echo "  --ui           Install the UI variant (with graph visualization; default)"
+            echo "  --standard     Refused: no standard archives are published"
             echo "  --dir PATH     Install directory (default: ~/.local/bin)"
             echo "  --skip-config  Skip automatic agent configuration"
             exit 0
@@ -179,6 +187,8 @@ PORTABLE=""
 if [ "$VARIANT" = "ui" ]; then
     ARCHIVE="hyponoia-ui-${OS}-${ARCH}${PORTABLE}.${EXT}"
 else
+    # Unreachable — the build publishes only the UI variant, so --standard exits
+    # above. Kept so restoring a standard build is one edit, not two.
     ARCHIVE="hyponoia-${OS}-${ARCH}${PORTABLE}.${EXT}"
 fi
 

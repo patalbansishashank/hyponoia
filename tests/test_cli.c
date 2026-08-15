@@ -1143,10 +1143,12 @@ TEST(cli_activation_commands_reject_malformed_and_unknown_flags) {
     char *bad_install[] = {"--skip-config=value"};
     char *bad_update[] = {"--not-an-update-option"};
     char *bad_uninstall[] = {"--not-an-uninstall-option"};
+    char *standard_update[] = {"--standard"};
     int missing_rc = cli_test_cmd_install(1, missing_dir);
     int empty_rc = cli_test_cmd_install(1, empty_dir);
     int install_rc = cli_test_cmd_install(1, bad_install);
     int update_rc = cli_test_cmd_update(1, bad_update);
+    int standard_update_rc = cli_test_cmd_update(1, standard_update);
     int uninstall_rc = cli_test_cmd_uninstall(1, bad_uninstall);
     hyp_cli_set_activation_ops_for_test(NULL);
 
@@ -1154,6 +1156,9 @@ TEST(cli_activation_commands_reject_malformed_and_unknown_flags) {
     ASSERT_EQ(empty_rc, 1);
     ASSERT_EQ(install_rc, 1);
     ASSERT_EQ(update_rc, 1);
+    /* --standard names an archive this release does not publish. It must be
+     * refused, not silently served the ui archive under the wrong name. */
+    ASSERT_EQ(standard_update_rc, 1);
     ASSERT_EQ(uninstall_rc, 1);
     ASSERT_EQ(fake.mutation_reserve_count, 0);
     PASS();
@@ -1995,7 +2000,7 @@ TEST(cli_update_download_failure_does_not_quiesce_sessions) {
     };
     hyp_cli_activation_ops_t ops = cli_activation_fake_ops(&fake);
     hyp_cli_set_activation_ops_for_test(&ops);
-    char *argv[] = {"--force", "--standard", "--yes"};
+    char *argv[] = {"--force", "--ui", "--yes"};
     int rc = cli_test_cmd_update(3, argv);
     hyp_cli_set_activation_ops_for_test(NULL);
     hyp_set_auto_answer_for_test(0);
@@ -2056,7 +2061,7 @@ TEST(cli_update_already_current_does_not_quiesce_sessions) {
     };
     hyp_cli_activation_ops_t ops = cli_activation_fake_ops(&fake);
     hyp_cli_set_activation_ops_for_test(&ops);
-    char *argv[] = {"--standard"};
+    char *argv[] = {"--ui"};
     int rc = fixture_ready ? cli_test_cmd_update(1, argv) : -1;
     hyp_cli_set_activation_ops_for_test(NULL);
 
@@ -2122,17 +2127,19 @@ TEST(cli_update_agent_configs_finish_before_guard_release) {
 #else
     char archive_path[768];
     char checksum_path[640];
+/* The release publishes ui archives only, so that is the name `update`
+ * composes and the only name this fixture can answer with. */
 #if defined(__APPLE__)
 #if defined(__aarch64__) || defined(__arm64__)
-    const char *asset_name = "hyponoia-darwin-arm64.tar.gz";
+    const char *asset_name = "hyponoia-ui-darwin-arm64.tar.gz";
 #else
-    const char *asset_name = "hyponoia-darwin-amd64.tar.gz";
+    const char *asset_name = "hyponoia-ui-darwin-amd64.tar.gz";
 #endif
 #else
 #if defined(__aarch64__)
-    const char *asset_name = "hyponoia-linux-arm64-portable.tar.gz";
+    const char *asset_name = "hyponoia-ui-linux-arm64-portable.tar.gz";
 #else
-    const char *asset_name = "hyponoia-linux-amd64-portable.tar.gz";
+    const char *asset_name = "hyponoia-ui-linux-amd64-portable.tar.gz";
 #endif
 #endif
 #ifdef __APPLE__
@@ -2188,7 +2195,7 @@ TEST(cli_update_agent_configs_finish_before_guard_release) {
     };
     hyp_cli_activation_ops_t ops = cli_activation_fake_ops(&fake);
     hyp_cli_set_activation_ops_for_test(&ops);
-    char *argv[] = {"--force", "--standard"};
+    char *argv[] = {"--force", "--ui"};
     int rc = cli_test_cmd_update(2, argv);
     hyp_cli_set_activation_ops_for_test(NULL);
 
@@ -2531,7 +2538,7 @@ TEST(cli_activation_guard_is_bypassed_for_dry_run_and_plan) {
     hyp_cli_set_activation_ops_for_test(&ops);
     char *install_dry[] = {"--force", "--dry-run"};
     char *install_plan[] = {"--force", "--plan"};
-    char *update_dry[] = {"--force", "--dry-run", "--standard"};
+    char *update_dry[] = {"--force", "--dry-run", "--ui"};
     char *uninstall_dry[] = {"--dry-run", "--yes"};
     int install_dry_rc = cli_test_cmd_install(2, install_dry);
     int install_plan_rc = cli_test_cmd_install(2, install_plan);

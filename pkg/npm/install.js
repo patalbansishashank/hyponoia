@@ -279,8 +279,17 @@ function sleepSync(milliseconds) {
   Atomics.wait(SLEEP_WORD, 0, 0, milliseconds);
 }
 
+// The build publishes only the UI variant, so ui is the only archive that
+// exists; HYP_VARIANT=standard is refused rather than silently substituted.
 function runtimeVariant(env = process.env) {
-  return (env.HYP_VARIANT || '').toLowerCase() === 'ui' ? 'ui' : 'standard';
+  if ((env.HYP_VARIANT || '').toLowerCase() === 'standard') {
+    throw new Error(
+      'HYP_VARIANT=standard: no standard archives are published for this release.\n'
+      + 'The published archive includes the graph UI.\n'
+      + 'Unset HYP_VARIANT and retry.',
+    );
+  }
+  return 'ui';
 }
 
 function cacheDirForVariant(variant) {
@@ -1076,8 +1085,8 @@ async function main() {
   // such variant. Keep in sync with install.sh / pypi _cli.py / cli.c.
   // RETIRED-PLATFORM(macos): this used to read "macOS/Windows".
   const variant = platform === 'linux' ? '-portable' : '';
-  // Opt into the UI build, whose verified asset pack is published beside the
-  // binary, with HYP_VARIANT=ui. Default is the standard (headless) build.
+  // The build publishes only the UI variant, so this is the only archive that
+  // exists; its verified asset pack is published beside the binary.
   const ui = selectedVariant === 'ui' ? 'ui-' : '';
   const archive = `hyponoia-${ui}${platform}-${arch}${variant}.${ext}`;
   const url = `https://github.com/${REPO}/releases/download/v${VERSION}/${archive}`;

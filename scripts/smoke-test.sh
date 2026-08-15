@@ -1085,7 +1085,7 @@ if ! echo "$UNINSTALL_OUT" | grep -qi 'uninstall\|remov'; then
 fi
 echo "OK: uninstall --dry-run completed"
 
-# 6c: update --dry-run --standard -y
+# 6c: update --dry-run -y
 # The product binary never replaces itself on ANY platform. `update` is a
 # handoff: it prints the shipped install script's command and exits 0. An
 # in-process updater is structurally a downloader -- fetch archive, extract,
@@ -1097,7 +1097,11 @@ if [[ "$BINARY" == *.exe ]]; then
 else
   UPDATE_SCRIPT="install.sh"
 fi
-if ! UPDATE_OUT=$(run_dryrun_env "$BINARY" update --dry-run --standard -y 2>&1); then
+# --standard was here only to skip a variant prompt that no longer exists.
+# The build publishes one archive, so the updater needs no variant flag and
+# refuses --standard outright; passing it would fail this phase on a refusal
+# rather than on the handoff it is actually asserting.
+if ! UPDATE_OUT=$(run_dryrun_env "$BINARY" update --dry-run -y 2>&1); then
   echo "FAIL: update handoff exited non-zero"
   echo "$UPDATE_OUT"
   exit 1
@@ -2931,7 +2935,10 @@ echo "OK 9b-8: double uninstall doesn't crash"
 retire_account_daemon "9b-8-cleanup"
 smoke_rmtree "$DBL_HOME"
 
-# 9b-9: Non-interactive update without --standard/--ui should fail cleanly (not hang)
+# 9b-9: Non-interactive update must not hang. It used to have a variant prompt
+# to fail on; with one published variant there is no prompt, so this now only
+# asserts the weaker-but-still-real property that it terminates and says
+# something. Both branches below already accept that.
 if [ "$(uname -s)" != "MINGW64_NT" ] 2>/dev/null; then
   NONINT_OUT=$(echo "" | "$BINARY" update --dry-run 2>&1) || true
   if echo "$NONINT_OUT" | grep -qi 'terminal\|requires.*flag\|error'; then
@@ -3160,11 +3167,11 @@ if [ -n "${SMOKE_DOWNLOAD_URL:-}" ]; then
     'import json, os; print(json.dumps({"mcpServers":{"hyponoia":{"command":os.environ["STALE_CMD"]}}}))' \
     > "$UPDATE_HOME/.claude.json"
 
-  # 14a: Run actual update command (detect variant from available archive)
-  UPDATE_VARIANT="--standard"
-  if curl --noproxy '*' -sf "$SMOKE_DOWNLOAD_URL/" 2>/dev/null | grep -q "ui-"; then
-    UPDATE_VARIANT="--ui"
-  fi
+  # 14a: Run actual update command. There is one published variant, so there
+  # is nothing to detect: this used to default to --standard and flip to --ui
+  # only if a directory listing happened to mention "ui-", which meant a failed
+  # probe silently selected a flag the updater now refuses.
+  UPDATE_VARIANT="--ui"
   UPDATE_LOG=$(smoke_mktemp_file)
   # Hash the driver BEFORE the run and compare it against itself afterwards.
   # Comparing against "$BINARY" instead looks equivalent but is not: the POSIX
