@@ -65,10 +65,19 @@ typedef enum {
  * renormalised first 1024 of its own output_dimension=2048, min cosine
  * 1.000000. That is TRUNCATES.
  *
- * NO CODE PATH READS THIS FIELD. The adapter below always requests HYP_ASK_DIM
- * from the provider and never truncates a wider vector locally, so the tag
- * cannot make a build wrong — which is also why nothing failed while it was.
- * It is pinned by tests/test_ask_provider.c so it cannot drift silently. */
+ * ONE CODE PATH READS THIS FIELD, and it was the first: `ask(escalate=true)`
+ * in ask.escalation.mode=query (src/mcp/mcp.c, NEXT-STEPS §3.1 step 3) refuses
+ * a provider tagged REEMBEDS, because it scores a query the provider encoded
+ * at the LOCAL index's width (1024) against document vectors another model
+ * truncated to that width — an operation that is only the same on both sides
+ * when "smaller dimension" means "the renormalised prefix of the wider vector"
+ * on both sides. A re-embedding head is a different space at a different
+ * width, so the gate says no. No row carries REEMBEDS today, so the branch is
+ * dormant, but it is the branch that makes a future row's tag load-bearing.
+ * The adapter itself still always requests HYP_ASK_DIM from the provider and
+ * never truncates a wider vector locally, so a wrong tag cannot make an INDEX
+ * wrong — which is why nothing failed while voyage's was. It is pinned by
+ * tests/test_ask_provider.c so it cannot drift silently. */
 typedef enum {
     HYP_ASK_DIM_FIXED = 0,
     HYP_ASK_DIM_TRUNCATES = 1,

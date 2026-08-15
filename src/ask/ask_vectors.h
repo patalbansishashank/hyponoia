@@ -146,6 +146,42 @@ typedef enum {
 
 const char *hyp_ask_lane_name(hyp_ask_lane_t lane);
 
+/* ── The embedding SPACE a model's vectors live in (NEXT-STEPS §3.1 step 3) ──
+ *
+ * Which vectors may be scored against which. This is a DIFFERENT question from
+ * the prefix contract below: the contract answers "were these encoded with the
+ * same prompts", the space answers "does a cosine between them mean anything".
+ * Two models can share a space with different prompts (voyage-4-nano's two card
+ * strings against voyage-4-large's `input_type`) and the whole point of the
+ * query-escalation mode is that they do.
+ *
+ * Returns "voyage-4" for a model id that names a member of the voyage-4 family
+ * — an id beginning "voyage-4-nano", "voyage-4-large" or "voyage-4-lite", or
+ * exactly "voyage-4" — with or without the "voyage/" provider prefix that
+ * ask_provider.c puts in front of an API model's id. Prefix match on the family
+ * name, because the local id carries a quant and a revision after it
+ * ("voyage-4-nano-Q8_0@75e62c7dba5e") and those change the weights' bytes, not
+ * the space. Returns NULL for EVERYTHING ELSE, including "" and NULL (an index
+ * written before the field existed, which is "not recorded", not "shared").
+ *
+ * The allowlist is MEASURED, not read off a vendor page, and it earns its
+ * authority from the eight negative controls in §2.15 that all correctly said
+ * NO: a random orthogonal rotation of voyage-4-large (self-retrieval acc@1
+ * 0.005), Qwen3-Embedding-0.6B (0.0034) and voyage-code-3 (0.0047), against a
+ * 0.005 chance floor — while the four voyage-4 members score 0.985–0.995 both
+ * ways. So voyage-code-3, same vendor and one generation back, is NOT in the
+ * space; Qwen3 is not; Jina and Gemini are unmeasured and therefore refused,
+ * because cross-space scoring returns confidently-ranked garbage with no error
+ * — the worst available failure for a tool an agent trusts. Extend this list
+ * with a measurement, never with a model card.
+ *
+ * Lives here, in the STORAGE seam, rather than in ask_provider.h: the space is
+ * a property of the vectors on disk (the local lane's nano is not a provider),
+ * the stamp is written by hyp_ask_vectors_begin_build and read back through
+ * hyp_ask_vec_meta_t, and both the embed pass and the ask handler already
+ * include this header through the index they build and search. */
+const char *hyp_ask_space_id_for_model(const char *model_id);
+
 /* Provenance recorded beside the matrix. A vector whose provenance is unknown
  * may not be reused, and two models' vectors are not comparable while nothing
  * downstream can detect the mix — so these are gates, not decoration. */
@@ -170,6 +206,18 @@ typedef struct {
      * recorded", which is NOT the same claim as "no contract" and so is never
      * compared. See hyp_ask_vectors_check_compatible. */
     char *prefix_contract;
+    /* WHICH EMBEDDING SPACE these vectors live in, as hyp_ask_space_id_for_model
+     * named it from the DOCUMENT encoder's model id at build time — "voyage-4",
+     * or "" when that model's space is unmeasured or the index predates the
+     * column. NOT a reuse gate (model_id, contract, dim and window are); it is
+     * the gate for scoring a query encoded by a DIFFERENT model against this
+     * matrix (ask.escalation.mode = query). Stamped rather than only derived so
+     * an index records what its builder knew: a later binary that learns a new
+     * family does not retroactively re-label an old index, and an index a
+     * newer binary labelled with a family this one does not know still refuses
+     * cleanly against a model this one does. Read as: '' means "derive it from
+     * model_id through the same function, and say that you did". */
+    char *space_id;
     int dim;
     int window_tokens;
     /* The graph generation this pass read. Versioned SEPARATELY from the

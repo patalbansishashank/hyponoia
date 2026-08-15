@@ -6533,6 +6533,21 @@ int hyp_config_validate(const char *key, const char *value, char *err, size_t er
         }
         return 0;
     }
+    if (strcmp(key, HYP_CONFIG_ASK_ESC_MODE) == 0) {
+        /* Two words, refused otherwise: a misspelling that silently selected
+         * the default would change WHAT LEAVES THE MACHINE on the next
+         * escalated question, and nothing downstream would say so. */
+        if (strcmp(value, HYP_CONFIG_ASK_ESC_MODE_QUERY) == 0 ||
+            strcmp(value, HYP_CONFIG_ASK_ESC_MODE_INDEX) == 0) {
+            return 0;
+        }
+        snprintf(err, errlen,
+                 "%s must be '%s' (send only the question to the provider and score it against "
+                 "the local index — the default) or '%s' (query a second, API-built index from "
+                 "`hyponoia embed --escalation`); got '%s'",
+                 key, HYP_CONFIG_ASK_ESC_MODE_QUERY, HYP_CONFIG_ASK_ESC_MODE_INDEX, value);
+        return CLI_ERR;
+    }
     return 0;
 }
 
@@ -6601,8 +6616,16 @@ int hyp_cmd_config(int argc, char **argv) {
                "Model to call on that provider, e.g. voyage-4-large");
         printf("  %-25s  default=%-10s  %s\n", HYP_CONFIG_ASK_ESC_KEY_ENV, "none",
                "NAME of the env var holding the API key — never the key");
-        printf("\nEscalation is opt-in and never automatic. Build its index with\n"
-               "`hyponoia embed --escalation`, then ask for it per query.\n");
+        printf("  %-25s  default=%-10s  %s\n", HYP_CONFIG_ASK_ESC_MODE,
+               HYP_CONFIG_ASK_ESC_MODE_DEFAULT, "What ask(escalate=true) sends: query | index");
+        printf("\nEscalation is opt-in and never automatic: ask(escalate=true) per question.\n"
+               "  mode=query  sends ONLY the question to the provider and scores it against the\n"
+               "              local index. Needs the key and the local index, nothing else; the\n"
+               "              code never leaves the machine. Refused unless the local index and\n"
+               "              the escalation model share a measured embedding space (voyage-4).\n"
+               "  mode=index  queries a second, API-built index of the whole corpus; build it\n"
+               "              with `hyponoia embed --escalation` (spends tokens per declaration).\n"
+               "Neither mode ever falls back to the local answer: a refusal says so.\n");
         return 0;
     }
 

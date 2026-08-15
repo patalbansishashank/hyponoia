@@ -39,9 +39,13 @@ TEST(ask_provider_table_rows_are_complete_and_asymmetric) {
     PASS();
 }
 
-/* §3.1 step 4. NO CODE PATH READS dim_mode — the adapter always asks the API for
- * HYP_ASK_DIM and never cuts a wider vector itself — so a wrong tag fails
- * nothing, and voyage's was wrong for three days. It read REEMBEDS ("1024 and
+/* §3.1 step 4. When this was written NO CODE PATH READ dim_mode — the adapter
+ * always asks the API for HYP_ASK_DIM and never cuts a wider vector itself —
+ * so a wrong tag failed nothing, and voyage's was wrong for three days. Since
+ * §3.1 step 3 one path does read it: `ask(escalate=true)` in query mode
+ * refuses a REEMBEDS provider, because scoring its 1024 against a matrix
+ * another model truncated to 1024 is cross-space. That makes THIS pin
+ * load-bearing rather than documentary. It read REEMBEDS ("1024 and
  * 2048 are DIFFERENT SPACES, each costs its own pass") because §2.7 had run
  * voyage-code-3 at both widths as two document passes; that was how the
  * experiment was run, not a fact about the API. §2.15 asked the API
@@ -185,7 +189,28 @@ TEST(ask_provider_config_refuses_an_unknown_provider_and_names_the_known_ones) {
     PASS();
 }
 
+/* §3.1 step 3. The mode decides WHAT LEAVES THE MACHINE on an escalated
+ * question — the ~30-token question, or the whole corpus — so it is two words
+ * and nothing else, and the refusal names both so a typo is one round trip. */
+TEST(ask_provider_config_mode_is_query_or_index_and_names_both_on_refusal) {
+    char err[512];
+    ASSERT_EQ(hyp_config_validate(HYP_CONFIG_ASK_ESC_MODE, "query", err, sizeof(err)), 0);
+    ASSERT_EQ(hyp_config_validate(HYP_CONFIG_ASK_ESC_MODE, "index", err, sizeof(err)), 0);
+    /* The default is the measured-useful, code-stays-local mode. */
+    ASSERT_STR_EQ(HYP_CONFIG_ASK_ESC_MODE_DEFAULT, "query");
+
+    err[0] = '\0';
+    ASSERT_TRUE(hyp_config_validate(HYP_CONFIG_ASK_ESC_MODE, "Query", err, sizeof(err)) != 0);
+    ASSERT_TRUE(strstr(err, "'query'") != NULL);
+    ASSERT_TRUE(strstr(err, "'index'") != NULL);
+    ASSERT_TRUE(hyp_config_validate(HYP_CONFIG_ASK_ESC_MODE, "both", err, sizeof(err)) != 0);
+    ASSERT_TRUE(hyp_config_validate(HYP_CONFIG_ASK_ESC_MODE, "", err, sizeof(err)) != 0);
+    ASSERT_TRUE(hyp_config_validate(HYP_CONFIG_ASK_ESC_MODE, "auto", err, sizeof(err)) != 0);
+    PASS();
+}
+
 SUITE(ask_provider) {
+    RUN_TEST(ask_provider_config_mode_is_query_or_index_and_names_both_on_refusal);
     RUN_TEST(ask_provider_table_rows_are_complete_and_asymmetric);
     RUN_TEST(ask_provider_voyage_dimension_parameter_truncates_it_does_not_reembed);
     RUN_TEST(ask_provider_lookup_refuses_unknown_names);

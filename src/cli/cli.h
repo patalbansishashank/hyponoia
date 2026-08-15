@@ -405,6 +405,29 @@ int hyp_config_delete(hyp_config_t *cfg, const char *key);
  * written here is a key handed out. hyp_config_validate refuses values that
  * look like secrets rather than trusting the documentation to be read. */
 #define HYP_CONFIG_ASK_ESC_KEY_ENV "ask.escalation.key_env"
+/* WHAT `ask(escalate=true)` SENDS TO THE PROVIDER (NEXT-STEPS.md §3.1 step 3):
+ *
+ *   query  — the QUESTION only. It is encoded by the hosted model and scored
+ *            against the local index that already exists. No second index, no
+ *            drift between two indexes, no corpus-sized bill, and the code
+ *            never leaves the machine — only the ~30-token question does.
+ *            Gated on a shared embedding SPACE (hyp_ask_space_id_for_model):
+ *            voyage-4-only until another family is measured. THE DEFAULT.
+ *   index  — the whole corpus, once, into a second API-built index that the
+ *            escalated question is then encoded by the same model against
+ *            (`hyponoia embed --escalation`). Provider-agnostic because both
+ *            sides are one model; kept for anyone who wants a fully-API index.
+ *
+ * Query mode is licensed on QUALITY — nano documents + voyage-4-large queries
+ * beat nano/nano by +0.2087 MRR@10 on the vocabulary-gap frozen 60 and by
+ * +0.444% RR (p 5.5e-05) on 8,122 public CodeSearchNet-Go queries — and its
+ * case OVER index mode is OPERATIONAL, not a quality margin: index mode
+ * replicates at scale too and the two are indistinguishable there (p 0.62).
+ * Anything but these two words is refused by hyp_config_validate. */
+#define HYP_CONFIG_ASK_ESC_MODE "ask.escalation.mode"
+#define HYP_CONFIG_ASK_ESC_MODE_QUERY "query"
+#define HYP_CONFIG_ASK_ESC_MODE_INDEX "index"
+#define HYP_CONFIG_ASK_ESC_MODE_DEFAULT HYP_CONFIG_ASK_ESC_MODE_QUERY
 
 /* Check a key/value pair before it is stored. Returns 0 when the value is
  * acceptable, non-zero otherwise with a caller-facing sentence in `err`.

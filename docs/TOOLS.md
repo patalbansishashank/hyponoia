@@ -46,7 +46,7 @@ JSON arguments can also be piped on stdin. Inline JSON remains accepted for back
 | Tool | Description |
 |------|-------------|
 | `search_graph` | Structured search by label, name pattern, file pattern, degree filters. Pagination via limit/offset. |
-| `ask` | Ask ONE natural-language question; ranked declarations with line ranges. The semantic lane — documents encoded whole and bare, the question behind an instruct prefix, so an answer can match code sharing none of the question's words. Reports `available: false` with a remedy (never zero results) until the opt-in semantic index is built. |
+| `ask` | Ask ONE natural-language question; ranked declarations with line ranges. The semantic lane — documents encoded whole and bare, the question behind an instruct prefix, so an answer can match code sharing none of the question's words. Reports `available: false` with a remedy (never zero results) until the opt-in semantic index is built. `escalate=true` (off by default, per question) brings a configured hosted model in: in the default `ask.escalation.mode=query` only the question is sent and scored against the local index (refused unless both are in a measured shared space); `index` mode queries a second API-built index. Every answer names `lane`, `query_encoder` and `index_encoder`; nothing falls back silently. |
 | `trace_path` | BFS traversal — who calls a function and what it calls (alias: `trace_call_path`). Depth 1-5. |
 | `detect_changes` | Map git diff to affected symbols + blast radius with risk classification. |
 | `query_graph` | Execute Cypher-like graph queries (read-only). |
