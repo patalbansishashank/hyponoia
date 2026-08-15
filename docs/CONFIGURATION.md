@@ -86,6 +86,15 @@ Current keys:
 |---|---|---|
 | `auto_index` | `false` | Automatically index new projects when an MCP session starts. |
 | `auto_index_limit` | `50000` | Maximum file count allowed for automatic indexing of a new project. |
+| `ask.escalation.provider` | none | Hosted embedding provider for `ask(escalate=true)`: `voyage` or `jina`. |
+| `ask.escalation.model` | none | Model to call on that provider, e.g. `voyage-4-large`. |
+| `ask.escalation.key_env` | none | The **NAME** of the environment variable holding the API key — never the key itself; a value that looks like a key is refused. |
+| `ask.escalation.mode` | `query` | What an escalated question sends. `query`: only the question, encoded by the hosted model and scored against the local index — the code never leaves the machine, and it is refused unless the local index and the hosted model share a measured embedding space (voyage-4 family). `index`: a second, API-built index of the whole corpus (`hyponoia embed --escalation`), queried by the model that built it. |
+
+Escalation is never automatic — `ask` takes `escalate=true` per question and,
+whatever the mode, refuses rather than silently answering from the local
+encoder when the lane is unconfigured, keyless, unbuilt or mismatched. Every
+answer names the lane that produced it.
 
 ## 3. UI Settings
 

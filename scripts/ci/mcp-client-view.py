@@ -50,8 +50,8 @@ int main(void) { printf("%d\\n", compute(3)); return 0; }
 
 
 class Client:
-    def __init__(self, binary, env):
-        self.p = subprocess.Popen([binary], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+    def __init__(self, binary, env, args=()):
+        self.p = subprocess.Popen([binary, *args], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                   stderr=subprocess.DEVNULL, text=True, bufsize=1, env=env)
 
     def send(self, obj):
@@ -77,6 +77,74 @@ class Client:
         except Exception:
             pass
         self.p.terminate()
+
+
+def profile_view(binary, env, project):
+    """The restricted profiles as a client sees them.
+
+    `--tool-profile analysis` is what the generated `hyponoia` and
+    `hyponoia-auditor` agents run against, `scout` what `hyponoia-scout` runs
+    against. `ask` must be advertised by analysis, never by scout, and an
+    analysis client that calls it must get a reachable answer — the server
+    permitted `ask` on analysis for a whole release while no generated profile
+    requested it, and every unit test on both ends passed. Returns a list of
+    failures.
+    """
+    bad = []
+    seen = {}
+    for profile in ("analysis", "scout"):
+        c = Client(binary, env, ("--tool-profile=%s" % profile,))
+        c.send({"jsonrpc": "2.0", "id": 1, "method": "initialize",
+                "params": {"protocolVersion": "2025-06-18", "capabilities": {},
+                           "clientInfo": {"name": "mcp-client-view", "version": "0"}}})
+        if c.read() is None:
+            print("FAIL: --tool-profile=%s sent no initialize response" % profile)
+            bad.append("profile:%s" % profile)
+            c.close()
+            continue
+        c.send({"jsonrpc": "2.0", "method": "notifications/initialized"})
+        c.send({"jsonrpc": "2.0", "id": 2, "method": "tools/list"})
+        tools = (((c.read() or {}).get("result")) or {}).get("tools") or []
+        names = [t["name"] for t in tools]
+        seen[profile] = names
+        print("--tool-profile=%-8s advertises %2d tools: %s" % (profile, len(names), ", ".join(names)))
+        if profile == "analysis":
+            if "ask" not in names:
+                print("FAIL: analysis profile does not advertise ask")
+                bad.append("analysis:ask-missing")
+            c.send({"jsonrpc": "2.0", "id": 3, "method": "tools/call",
+                    "params": {"name": "ask",
+                               "arguments": {"project": project, "question": "how is a value doubled"}}})
+            resp = c.read() or {}
+            res = resp.get("result") or {}
+            content = res.get("content") or []
+            text = content[0].get("text", "") if content else ""
+            sc = res.get("structuredContent")
+            if "structuredContent" in res and isinstance(sc, dict) and not sc:
+                print("FAIL: analysis ask -> structuredContent {} (renders nothing)")
+                bad.append("analysis:ask-empty")
+            elif not text and not sc:
+                print("FAIL: analysis ask -> no content, no structure")
+                bad.append("analysis:ask-unreachable")
+            else:
+                print("analysis ask -> %d bytes of content, reachable" % len(text))
+        else:
+            if "ask" in names:
+                print("FAIL: scout profile advertises ask; scout is the surface where every tool answers")
+                bad.append("scout:ask-present")
+            c.send({"jsonrpc": "2.0", "id": 3, "method": "tools/call",
+                    "params": {"name": "ask", "arguments": {"project": project, "question": "x"}}})
+            resp = c.read() or {}
+            res = resp.get("result") or {}
+            if not res.get("isError"):
+                print("FAIL: scout profile executed ask instead of refusing it")
+                bad.append("scout:ask-callable")
+        c.close()
+    if "analysis" in seen and "scout" in seen:
+        if not set(seen["scout"]) < set(seen["analysis"]):
+            print("FAIL: scout is not a strict subset of analysis")
+            bad.append("profiles:not-nested")
+    return bad
 
 
 def main():
@@ -181,10 +249,13 @@ def main():
 
         c.close()
         print()
+        bad.extend(profile_view(binary, env, project))
+        print()
         if bad:
             print("FAIL: %d tool(s) unreachable to a client: %s" % (len(bad), ", ".join(sorted(set(bad)))))
             return 1
-        print("PASS: every probed tool's answer is reachable to a client")
+        print("PASS: every probed tool's answer is reachable to a client, "
+              "and ask is on analysis and not on scout")
         return 0
     finally:
         shutil.rmtree(tmp, ignore_errors=True)

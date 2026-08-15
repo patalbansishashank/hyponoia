@@ -106,6 +106,47 @@ const char *hyp_ask_lane_name(hyp_ask_lane_t lane) {
     return lane == HYP_ASK_LANE_ESCALATION ? "escalation" : "local";
 }
 
+/* ── Space identity ─────────────────────────────────────────────── */
+
+static bool av_starts_with(const char *s, const char *prefix) {
+    return strncmp(s, prefix, strlen(prefix)) == 0;
+}
+
+const char *hyp_ask_space_id_for_model(const char *model_id) {
+    if (!model_id || !model_id[0]) {
+        /* "" is an index that never recorded a model — "not recorded" is not
+         * "shared", so it is refused, never guessed. */
+        return NULL;
+    }
+    const char *m = model_id;
+    /* API-built ids are "provider/model" (ask_provider.c: "the provider is part
+     * of the identity"). Only voyage's own endpoint serves the voyage-4 family,
+     * so ONLY that prefix is peeled; a same-named model behind another provider
+     * is not proven to be the same vectors and stays NULL. */
+    static const char VOYAGE_PROVIDER[] = "voyage/";
+    if (av_starts_with(m, VOYAGE_PROVIDER)) {
+        m += sizeof(VOYAGE_PROVIDER) - 1;
+    } else if (strchr(m, '/')) {
+        return NULL;
+    }
+    /* THE MEASURED ALLOWLIST (NEXT-STEPS §2.15, runs/XMODEL/cosine-verdict.json):
+     * the four voyage-4 members share one space — 0.75–0.77 self-cosine against
+     * a 0.13 null, self-retrieval acc@1 0.985–0.995 in both directions — and
+     * eight negative controls (a random rotation, Qwen3, voyage-code-3) all
+     * correctly said NO at the 0.005 chance floor. Prefix match on the family
+     * name because the local id continues "-Q8_0@<revision>". A future
+     * "voyage-4.5" or "voyage-5" begins with none of these and is refused
+     * until it is measured, which is the right default. */
+    if (av_starts_with(m, "voyage-4-nano") || av_starts_with(m, "voyage-4-large") ||
+        av_starts_with(m, "voyage-4-lite") || strcmp(m, "voyage-4") == 0) {
+        return "voyage-4";
+    }
+    /* voyage-code-3 (same vendor, one generation back: 0.0047 against 0.005
+     * chance), Qwen3 (0.0034), Jina, Gemini, the test stub — everything not
+     * proven above. */
+    return NULL;
+}
+
 bool hyp_ask_vectors_path_lane(const char *project, hyp_ask_lane_t lane, char *buf, size_t bufsz) {
     if (!project || !project[0] || !buf || bufsz == 0) {
         return false;
@@ -247,6 +288,16 @@ static int av_init_schema(hyp_ask_vectors_t *v) {
      * the contract this binary happens to use, which would make an old index
      * claim a space it was never encoded in. */
     rc = av_add_column_if_absent(v, "ask_index", "prefix_contract", "TEXT NOT NULL DEFAULT ''");
+    if (rc != HYP_ASK_VEC_OK) {
+        return rc;
+    }
+    /* Same shape, same reasoning, one column later: the embedding SPACE the
+     * document encoder's vectors live in (hyp_ask_space_id_for_model). "" for
+     * an index that predates the column, which the reader resolves by deriving
+     * the space from model_id through the same function — and saying so. No
+     * format bump: what a vector MEANS did not change, only what the index says
+     * about itself, exactly the distinction the comment above draws. */
+    rc = av_add_column_if_absent(v, "ask_index", "space_id", "TEXT NOT NULL DEFAULT ''");
     if (rc != HYP_ASK_VEC_OK) {
         return rc;
     }
@@ -397,7 +448,7 @@ int hyp_ask_vectors_get_meta(hyp_ask_vectors_t *v, hyp_ask_vec_meta_t *out) {
     sqlite3_stmt *st = NULL;
     const char *sql = "SELECT format, project, model_id, dim, window_tokens, graph_generation,"
                       "       built_at, row_count, truncation_known, truncated_count, device_note,"
-                      "       whole_file_spans, prefix_contract"
+                      "       whole_file_spans, prefix_contract, space_id"
                       " FROM ask_index WHERE singleton = 1";
     if (sqlite3_prepare_v2(v->db, sql, -1, &st, NULL) != SQLITE_OK) {
         av_err_sqlite(v, "meta prepare");
@@ -418,6 +469,7 @@ int hyp_ask_vectors_get_meta(hyp_ask_vectors_t *v, hyp_ask_vec_meta_t *out) {
         out->device_note = av_strdup((const char *)sqlite3_column_text(st, 10));
         out->whole_file_spans = av_strdup((const char *)sqlite3_column_text(st, 11));
         out->prefix_contract = av_strdup((const char *)sqlite3_column_text(st, 12));
+        out->space_id = av_strdup((const char *)sqlite3_column_text(st, 13));
         rc = HYP_ASK_VEC_OK;
     }
     sqlite3_finalize(st);
@@ -431,6 +483,7 @@ void hyp_ask_vec_meta_free(hyp_ask_vec_meta_t *m) {
     free(m->project);
     free(m->model_id);
     free(m->prefix_contract);
+    free(m->space_id);
     free(m->graph_generation);
     free(m->device_note);
     free(m->whole_file_spans);
@@ -509,19 +562,28 @@ int hyp_ask_vectors_begin_build(hyp_ask_vectors_t *v, const char *model_id,
         return HYP_ASK_VEC_ERR;
     }
 
+    /* The SPACE these document vectors will live in, named from the model id
+     * through the one function the reader also uses — so the stamp and the
+     * derivation can only disagree if the function changes, which is the case
+     * the stamp exists to make visible. "" when the model's space is
+     * unmeasured: recorded as "unknown", never as "the family this binary is
+     * fondest of". */
+    const char *space = hyp_ask_space_id_for_model(model_id);
+
     sqlite3_stmt *st = NULL;
     const char *sql =
         "INSERT INTO ask_index (singleton, format, project, model_id, dim, window_tokens,"
-        "                       graph_generation, device_note, prefix_contract, built_at,"
-        "                       row_count, truncation_known, truncated_count)"
-        " VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, '', 0, 0, 0)"
+        "                       graph_generation, device_note, prefix_contract, space_id,"
+        "                       built_at, row_count, truncation_known, truncated_count)"
+        " VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, '', 0, 0, 0)"
         " ON CONFLICT(singleton) DO UPDATE SET"
         "   format = excluded.format, project = excluded.project,"
         "   model_id = excluded.model_id, dim = excluded.dim,"
         "   window_tokens = excluded.window_tokens,"
         "   graph_generation = excluded.graph_generation,"
         "   device_note = excluded.device_note,"
-        "   prefix_contract = excluded.prefix_contract";
+        "   prefix_contract = excluded.prefix_contract,"
+        "   space_id = excluded.space_id";
     if (sqlite3_prepare_v2(v->db, sql, -1, &st, NULL) != SQLITE_OK) {
         av_err_sqlite(v, "begin_build prepare");
         return HYP_ASK_VEC_ERR;
@@ -534,6 +596,7 @@ int hyp_ask_vectors_begin_build(hyp_ask_vectors_t *v, const char *model_id,
     sqlite3_bind_text(st, 6, graph_generation ? graph_generation : "", -1, AV_TRANSIENT);
     sqlite3_bind_text(st, 7, device_note ? device_note : "", -1, AV_TRANSIENT);
     sqlite3_bind_text(st, 8, prefix_contract ? prefix_contract : "", -1, AV_TRANSIENT);
+    sqlite3_bind_text(st, 9, space ? space : "", -1, AV_TRANSIENT);
     int step = sqlite3_step(st);
     sqlite3_finalize(st);
     if (step != SQLITE_DONE) {

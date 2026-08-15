@@ -155,12 +155,22 @@ it can make, and you ask for both by name:
 
 - `fetch-model` downloads the encoder from a pinned revision, verified against a
   SHA-256 compiled into the binary.
-- The **escalation lane** sends declaration text to a hosted embedding API — and
-  only if you have configured a provider AND asked for it explicitly with
-  `embed --escalation` or `ask(escalate=true)`. It is off by default, it
-  **refuses rather than falling back** when it is not configured or the index
-  does not match, and your API key is never stored in the binary or the config
-  database: `key_env` holds the NAME of an environment variable.
+- The **escalation lane** sends text to a hosted embedding API — and only if
+  you have configured a provider AND asked for it explicitly, per question, with
+  `ask(escalate=true)`. What it sends is `ask.escalation.mode`: in the default
+  **`query`** mode **only the question leaves the machine** — the hosted model
+  encodes those ~30 tokens and the vector is scored against the local index you
+  already have, so no second index, no drift and no corpus-sized bill; it is
+  **refused unless the local index and the hosted model share a measured
+  embedding space** (the voyage-4 family, until another is measured — the
+  gate exists because cross-space scoring returns confidently-ranked garbage
+  with no error). In **`index`** mode `embed --escalation` sends every
+  declaration once to build a second, API-encoded index that the escalated
+  question is then scored against. Both are off by default, both **refuse
+  rather than falling back** when unconfigured, keyless, unbuilt or mismatched,
+  every answer names the lane that produced it (`lane`, `query_encoder`,
+  `index_encoder`), and your API key is never stored in the binary or the
+  config database: `key_env` holds the NAME of an environment variable.
 
 Found a security issue? See [SECURITY.md](.github/SECURITY.md).
 

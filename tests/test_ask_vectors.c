@@ -15,6 +15,7 @@
 #include "ask/ask_view.h"
 
 #include <math.h>
+#include <sqlite3.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -204,6 +205,139 @@ TEST(ask_vectors_prefix_contract_persists) {
     hyp_ask_vec_meta_free(&m);
     ASSERT_EQ(hyp_ask_vectors_check_compatible(v, "m1", "nano-prompted-v1", AV_TEST_DIM, 32768),
               HYP_ASK_VEC_INCOMPATIBLE);
+    hyp_ask_vectors_close(v);
+    th_cleanup(dir);
+    PASS();
+}
+
+/* NEXT-STEPS §3.1 step 3: the SPACE gate. The allowlist is the measurement in
+ * §2.15 and nothing else — four voyage-4 members share a space, and eight
+ * negative controls (a random rotation, Qwen3, voyage-code-3) all said NO. So
+ * the positives are the family, spelled every way an id in this codebase is
+ * spelled, and the negatives are everything the measurement rejected or never
+ * saw. A NULL from this function is what makes cross-space scoring refuse
+ * instead of returning ordinary-looking garbage. */
+TEST(ask_vectors_space_id_is_the_measured_voyage4_family_and_nothing_else) {
+    /* The exact local id on this machine: family + quant + revision. */
+    ASSERT_STR_EQ(hyp_ask_space_id_for_model("voyage-4-nano-Q8_0@75e62c7dba5e"), "voyage-4");
+    ASSERT_STR_EQ(hyp_ask_space_id_for_model("voyage-4-nano"), "voyage-4");
+    ASSERT_STR_EQ(hyp_ask_space_id_for_model("voyage-4-large"), "voyage-4");
+    ASSERT_STR_EQ(hyp_ask_space_id_for_model("voyage-4-lite"), "voyage-4");
+    ASSERT_STR_EQ(hyp_ask_space_id_for_model("voyage-4"), "voyage-4");
+    /* The id an API-built encoder stamps: "provider/model" (ask_provider.c). */
+    ASSERT_STR_EQ(hyp_ask_space_id_for_model("voyage/voyage-4-large"), "voyage-4");
+    ASSERT_STR_EQ(hyp_ask_space_id_for_model("voyage/voyage-4-nano"), "voyage-4");
+
+    /* Same vendor, one generation back: measured NOT shared (0.0047 vs 0.005). */
+    ASSERT_NULL(hyp_ask_space_id_for_model("voyage-code-3"));
+    ASSERT_NULL(hyp_ask_space_id_for_model("voyage/voyage-code-3"));
+    /* Measured not shared (0.0034). */
+    ASSERT_NULL(hyp_ask_space_id_for_model("Qwen3-Embedding-0.6B"));
+    ASSERT_NULL(hyp_ask_space_id_for_model("Qwen/Qwen3-Embedding-0.6B"));
+    /* Unmeasured — refused, not assumed. */
+    ASSERT_NULL(hyp_ask_space_id_for_model("jina/jina-embeddings-v3"));
+    ASSERT_NULL(hyp_ask_space_id_for_model("jina-embeddings-v3"));
+    ASSERT_NULL(hyp_ask_space_id_for_model("gemini/gemini-embedding-001"));
+    /* A voyage-4 NAME behind another provider is not proven to be the same
+     * vectors: only voyage's own prefix is peeled. */
+    ASSERT_NULL(hyp_ask_space_id_for_model("jina/voyage-4-large"));
+    /* A future family that merely starts with the digits is refused until it
+     * is measured — "voyage-4.5" begins with "voyage-4" but IS not it. */
+    ASSERT_NULL(hyp_ask_space_id_for_model("voyage-4.5-large"));
+    ASSERT_NULL(hyp_ask_space_id_for_model("voyage-5-large"));
+    /* The test double and the stub. */
+    ASSERT_NULL(hyp_ask_space_id_for_model("test-double/axis-1024"));
+    ASSERT_NULL(hyp_ask_space_id_for_model(HYP_ASK_STUB_MODEL_ID));
+    /* Not recorded is not shared. */
+    ASSERT_NULL(hyp_ask_space_id_for_model(""));
+    ASSERT_NULL(hyp_ask_space_id_for_model(NULL));
+    PASS();
+}
+
+/* The stamp is written by begin_build from the model id THROUGH THE SAME
+ * FUNCTION, read back through get_meta, and is "" for a model whose space is
+ * unmeasured — recorded as unknown, never as the family this binary prefers. */
+TEST(ask_vectors_space_id_is_stamped_from_the_model_id_and_persists) {
+    char *dir = th_mktempdir("hyp-askvec");
+    ASSERT_NOT_NULL(dir);
+    char kept[512];
+    snprintf(kept, sizeof(kept), "%s", TH_PATH(dir, "v.db"));
+
+    hyp_ask_vectors_t *v = hyp_ask_vectors_open_path("p", kept);
+    ASSERT_NOT_NULL(v);
+    ASSERT_EQ(hyp_ask_vectors_begin_build(v, "voyage-4-nano-Q8_0@75e62c7dba5e",
+                                          "nano-card-prompts-v1", AV_TEST_DIM, 32768, "g",
+                                          "GPU (test)", false),
+              HYP_ASK_VEC_OK);
+    hyp_ask_vectors_close(v);
+
+    v = hyp_ask_vectors_open_path("p", kept);
+    ASSERT_NOT_NULL(v);
+    hyp_ask_vec_meta_t m;
+    ASSERT_EQ(hyp_ask_vectors_get_meta(v, &m), HYP_ASK_VEC_OK);
+    ASSERT_NOT_NULL(m.space_id);
+    ASSERT_STR_EQ(m.space_id, "voyage-4");
+    hyp_ask_vec_meta_free(&m);
+
+    /* Rebuilt by an unmeasured model (wiping): the stamp follows the model. */
+    ASSERT_EQ(hyp_ask_vectors_begin_build(v, HYP_ASK_STUB_MODEL_ID, "", AV_TEST_DIM, 32768, "g",
+                                          "CPU (stub)", true),
+              HYP_ASK_VEC_OK);
+    ASSERT_EQ(hyp_ask_vectors_get_meta(v, &m), HYP_ASK_VEC_OK);
+    ASSERT_NOT_NULL(m.space_id);
+    ASSERT_STR_EQ(m.space_id, "");
+    hyp_ask_vec_meta_free(&m);
+    hyp_ask_vectors_close(v);
+    th_cleanup(dir);
+    PASS();
+}
+
+/* An index written before the column existed opens, migrates, and reads "" —
+ * the same shape prefix_contract's migration took, and NOT a format bump: what
+ * a vector means did not change, so no existing index is refused. */
+TEST(ask_vectors_space_id_migrates_an_old_index_to_not_recorded) {
+    char *dir = th_mktempdir("hyp-askvec");
+    ASSERT_NOT_NULL(dir);
+    char kept[512];
+    snprintf(kept, sizeof(kept), "%s", TH_PATH(dir, "old.db"));
+
+    /* Write the pre-§3.1 schema by hand: ask_index without space_id. */
+    sqlite3 *raw = NULL;
+    ASSERT_EQ(sqlite3_open(kept, &raw), SQLITE_OK);
+    ASSERT_EQ(sqlite3_exec(raw,
+                           "CREATE TABLE ask_index ("
+                           "  singleton INTEGER PRIMARY KEY CHECK (singleton = 1),"
+                           "  format INTEGER NOT NULL, project TEXT NOT NULL,"
+                           "  model_id TEXT NOT NULL, dim INTEGER NOT NULL,"
+                           "  window_tokens INTEGER NOT NULL,"
+                           "  graph_generation TEXT NOT NULL DEFAULT '',"
+                           "  device_note TEXT NOT NULL DEFAULT '',"
+                           "  built_at TEXT NOT NULL DEFAULT '',"
+                           "  row_count INTEGER NOT NULL DEFAULT 0,"
+                           "  truncation_known INTEGER NOT NULL DEFAULT 0,"
+                           "  truncated_count INTEGER NOT NULL DEFAULT 0,"
+                           "  whole_file_spans TEXT NOT NULL DEFAULT 'keep',"
+                           "  prefix_contract TEXT NOT NULL DEFAULT '');"
+                           "INSERT INTO ask_index (singleton, format, project, model_id, dim,"
+                           "  window_tokens, row_count, prefix_contract)"
+                           " VALUES (1, 1, 'p', 'voyage-4-nano-Q8_0@75e62c7dba5e', 8, 32768, 3,"
+                           "  'nano-card-prompts-v1');",
+                           NULL, NULL, NULL),
+              SQLITE_OK);
+    sqlite3_close(raw);
+
+    hyp_ask_vectors_t *v = hyp_ask_vectors_open_path("p", kept);
+    ASSERT_NOT_NULL(v);
+    hyp_ask_vec_meta_t m;
+    ASSERT_EQ(hyp_ask_vectors_get_meta(v, &m), HYP_ASK_VEC_OK);
+    ASSERT_NOT_NULL(m.space_id);
+    ASSERT_STR_EQ(m.space_id, ""); /* not recorded — the reader derives, and says so */
+    ASSERT_STR_EQ(m.model_id, "voyage-4-nano-Q8_0@75e62c7dba5e");
+    /* And it is still compatible: an added defaulted column is not a format change. */
+    ASSERT_EQ(hyp_ask_vectors_check_compatible(v, "voyage-4-nano-Q8_0@75e62c7dba5e",
+                                               "nano-card-prompts-v1", 8, 32768),
+              HYP_ASK_VEC_OK);
+    hyp_ask_vec_meta_free(&m);
     hyp_ask_vectors_close(v);
     th_cleanup(dir);
     PASS();
@@ -659,6 +793,9 @@ SUITE(ask_vectors) {
     RUN_TEST(ask_vectors_refuses_a_row_that_is_not_unit_normalised);
     RUN_TEST(ask_vectors_refuses_a_different_model_unless_told_to_wipe);
     RUN_TEST(ask_vectors_prefix_contract_persists);
+    RUN_TEST(ask_vectors_space_id_is_the_measured_voyage4_family_and_nothing_else);
+    RUN_TEST(ask_vectors_space_id_is_stamped_from_the_model_id_and_persists);
+    RUN_TEST(ask_vectors_space_id_migrates_an_old_index_to_not_recorded);
     RUN_TEST(ask_vectors_lanes_are_distinct_files);
     RUN_TEST(ask_vectors_search_is_exact_top_k);
     RUN_TEST(ask_vectors_truncation_has_three_states);

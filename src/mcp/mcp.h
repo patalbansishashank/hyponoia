@@ -119,6 +119,12 @@ int hyp_mcp_parse_tool_profile_args(int argc, const char *const argv[const],
 /* Restricted servers must not start a second unrestricted HTTP/RPC surface. */
 bool hyp_mcp_tool_profile_allows_http(hyp_mcp_tool_profile_t profile);
 
+/* Whether `name` is advertised and callable under `profile`. ALL admits every
+ * registered tool; ANALYSIS and SCOUT admit exactly the rows mcp/tool_tiers.h
+ * marks for them — the same table the generated agent profiles request their
+ * tools from, so a test can hold both ends to one answer. */
+bool hyp_mcp_tool_profile_allows(hyp_mcp_tool_profile_t profile, const char *name);
+
 /* Optional daemon-owned physical index executor. repo_path is canonical and
  * already authorized against this session; args_json contains that canonical
  * path plus all caller options. The callback returns a complete malloc-owned
@@ -220,8 +226,12 @@ char *hyp_mcp_handle_tool(hyp_mcp_server_t *srv, const char *tool_name, const ch
  * returns its verbatim JSON result under "ask", plus the question and the
  * ranked rows placed in the project's persisted 3-space — "query" and "hits"
  * (rank, qualified_name, node_id, label, file, lines, score, x, y, z). The hits
- * ARE the tool's rows in the tool's order; nothing is re-ranked. Every answer
- * carries "caveat": the coordinates are a picture, not a metric.
+ * ARE the tool's rows in the tool's order; nothing is re-ranked. "lane" is the
+ * tool's own word (local | escalation-query | escalation-index) and the view
+ * is read from the vector file that lane searched — query mode scores the
+ * provider's question against the LOCAL table, so it is drawn in the local
+ * view. Every answer carries "caveat": the coordinates are a picture, not a
+ * metric.
  *
  * hyp_mcp_ask_view_points_json returns the cloud: every projected declaration
  * of the project ("points": id, qn, label, file, lines, x, y, z), the basis's

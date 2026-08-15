@@ -46,6 +46,7 @@ enum {
 #define SLEN(s) (sizeof(s) - 1)
 #include "mcp/mcp.h"
 #include "mcp/mcp_internal.h"
+#include "mcp/tool_tiers.h"
 #include "store/store.h"
 #include <sqlite3.h>
 #include "cypher/cypher.h"
@@ -505,7 +506,8 @@ static const tool_def_t TOOLS[] = {
      "and NO rows. That is not 'nothing matched' — ask never conflates the two, because "
      "'your codebase has no such code' is a claim about your code and 'the index is not "
      "built' is a claim about this tool. "
-     "RESPONSE: available, then the disclosures (model, language, truncation, population), "
+     "RESPONSE: available, then the disclosures (lane, query_encoder, index_encoder, model, "
+     "language, truncation, population), "
      "then rows carrying qn/label/file/lines/score — the SAME span shape search_graph "
      "returns, so an agent that can read one can read the other. A 'cut' column appears "
      "only when the index reports truncated declarations. format=\"json\" returns cols plus "
@@ -530,15 +532,23 @@ static const tool_def_t TOOLS[] = {
      "\"format\":{\"type\":\"string\",\"enum\":[\"tree\",\"json\"],\"default\":\"tree\","
      "\"description\":\"Response encoding. tree (default): compact text rows. json: cols + "
      "column-ordered row arrays (the SAME model, structured).\"},"
-     "\"escalate\":{\"type\":\"boolean\",\"default\":false,\"description\":\"Answer "
-     "from the OPTIONAL escalation index — a stronger hosted model — instead of the local "
-     "one. Off by default and NEVER chosen for you: the engine cannot tell whether you need "
-     "to be right, and every score threshold this project has set has died on a corpus "
-     "change. It costs tokens against a configured account and requires that index to have "
-     "been built (`hyponoia embed --escalation`). If it is unconfigured, unbuilt or built by "
-     "a different model, this RETURNS AN ERROR SAYING SO and does not quietly answer from "
-     "the local index — you would otherwise get the cheap answer while believing you had "
-     "the expensive one. The two indexes are separate and go stale independently.\"}},"
+     "\"escalate\":{\"type\":\"boolean\",\"default\":false,\"description\":\"Bring a "
+     "stronger hosted embedding model into THIS question. Off by default and NEVER chosen "
+     "for you: the engine cannot tell whether you need to be right, and every score "
+     "threshold this project has set has died on a corpus change. What it sends is set by "
+     "`ask.escalation.mode`: `query` (the DEFAULT) sends ONLY the ~30-token question, "
+     "encodes it with the hosted model and scores it against the LOCAL index already on "
+     "this machine — no second index, the code never leaves the machine, and it is refused "
+     "unless the local index and the hosted model share a MEASURED embedding space "
+     "(voyage-4 family only, until another is measured); `index` queries a second, "
+     "API-built index of the whole corpus (`hyponoia embed --escalation`) with the model "
+     "that built it. Both cost tokens against a configured account. If the lane is "
+     "unconfigured, its key is unset, its index is unbuilt or built by a different model, "
+     "or the two spaces are not provably the same, this RETURNS AN ERROR SAYING SO and does "
+     "not quietly answer from the local encoder — you would otherwise get the cheap answer "
+     "while believing you had the expensive one. Every answer names the lane that answered "
+     "(`lane`: local | escalation-query | escalation-index) and both encoders "
+     "(`query_encoder`, `index_encoder`).\"}},"
      "\"required\":[\"question\",\"project\"]}"},
 
     {"query_graph", "Query graph",
@@ -851,44 +861,42 @@ static void mcp_add_tool_def(yyjson_mut_doc *doc, yyjson_mut_val *tools, int i) 
     yyjson_mut_arr_add_val(tools, tool);
 }
 
+/* The restricted profiles' allowlists come from mcp/tool_tiers.h — the same
+ * table agent_profiles.c renders into every generated agent definition. The
+ * two ends used to keep separate lists; see that header for what it cost. */
+typedef struct {
+    const char *name;
+    bool analysis;
+    bool scout;
+} tool_tier_row_t;
+
+static const tool_tier_row_t TOOL_TIERS[] = {
+#define HYP_TOOL_TIER_ROW(name, analysis, scout, generation) {name, (analysis) != 0, (scout) != 0},
+    HYP_TOOL_TIERS(HYP_TOOL_TIER_ROW)
+#undef HYP_TOOL_TIER_ROW
+};
+
 static bool mcp_tool_allowed(hyp_mcp_tool_profile_t profile, const char *name) {
-    /* `ask` joins analysis but NOT scout. Scout's promise is a small surface
-     * whose every tool answers; a lane that can legitimately report
-     * unavailable belongs on the surface where an agent is already expected
-     * to reason about index state. */
-    static const char *const analysis_tools[] = {
-        "search_graph",         "ask",
-        "query_graph",          "trace_path",
-        "get_code_snippet",     "get_graph_schema",
-        "get_architecture",     "search_code",
-        "list_projects",        "index_status",
-        "check_index_coverage", "detect_changes",
-    };
-    static const char *const scout_tools[] = {
-        "search_graph",  "trace_path",   "get_code_snippet",     "get_architecture",
-        "list_projects", "index_status", "check_index_coverage",
-    };
     if (!name) {
         return false;
     }
     if (profile == HYP_MCP_TOOL_PROFILE_ALL) {
         return true;
     }
-    const char *const *allowed = NULL;
-    size_t allowed_count = 0U;
-    if (profile == HYP_MCP_TOOL_PROFILE_ANALYSIS) {
-        allowed = analysis_tools;
-        allowed_count = sizeof(analysis_tools) / sizeof(analysis_tools[0]);
-    } else if (profile == HYP_MCP_TOOL_PROFILE_SCOUT) {
-        allowed = scout_tools;
-        allowed_count = sizeof(scout_tools) / sizeof(scout_tools[0]);
+    if (profile != HYP_MCP_TOOL_PROFILE_ANALYSIS && profile != HYP_MCP_TOOL_PROFILE_SCOUT) {
+        return false;
     }
-    for (size_t i = 0U; i < allowed_count; i++) {
-        if (strcmp(name, allowed[i]) == 0) {
-            return true;
+    for (size_t i = 0U; i < sizeof(TOOL_TIERS) / sizeof(TOOL_TIERS[0]); i++) {
+        if (strcmp(name, TOOL_TIERS[i].name) == 0) {
+            return profile == HYP_MCP_TOOL_PROFILE_ANALYSIS ? TOOL_TIERS[i].analysis
+                                                            : TOOL_TIERS[i].scout;
         }
     }
     return false;
+}
+
+bool hyp_mcp_tool_profile_allows(hyp_mcp_tool_profile_t profile, const char *name) {
+    return mcp_tool_allowed(profile, name);
 }
 
 static const char *mcp_tool_profile_name(hyp_mcp_tool_profile_t profile) {
@@ -1335,7 +1343,10 @@ static const char MCP_ANALYSIS_SERVER_INSTRUCTIONS[] =
     "This is the analysis tool profile; graph and index mutation tools are unavailable. Use "
     "list_projects and index_status to select a current graph project, then use search_graph, "
     "trace_path, get_code_snippet, query_graph, get_architecture, and search_code for read-only "
-    "analysis. Call check_index_coverage for every cited path and for scopes behind negative or "
+    "analysis. Use ask for one natural-language question about where behaviour lives; it "
+    "returns ranked declarations with line ranges, and available:false with a remedy when the "
+    "semantic index has not been built, which is not the same as no matches. "
+    "Call check_index_coverage for every cited path and for scopes behind negative or "
     "exhaustive claims; read flagged ranges or skipped files directly. Coverage is best-effort, "
     "never proof of completeness. Check has_more or nextCursor and paginate when present. If the "
     "project is missing or stale, ask the parent agent to index or refresh it.";
@@ -4077,6 +4088,9 @@ static char *ask_emit_unavailable(const hyp_ask_status_t *st, const char *projec
         yyjson_mut_val *root = yyjson_mut_obj(doc);
         yyjson_mut_doc_set_root(doc, root);
         yyjson_mut_obj_add_bool(doc, root, "available", false);
+        /* Only the LOCAL lane answers unavailable in this shape; an escalated
+         * ask that cannot proceed is an error that says which lane and why. */
+        yyjson_mut_obj_add_str(doc, root, "lane", "local");
         yyjson_mut_obj_add_str(doc, root, "reason", ask_reason_token(st->avail));
         yyjson_mut_obj_add_strcpy(doc, root, "detail", detail);
         yyjson_mut_obj_add_strcpy(doc, root, "remedy", remedy);
@@ -4091,6 +4105,7 @@ static char *ask_emit_unavailable(const hyp_ask_status_t *st, const char *projec
     hyp_sb_t sb;
     hyp_sb_init(&sb);
     hyp_tree_scalar_bool(&sb, "available", false);
+    hyp_tree_scalar_str(&sb, "lane", "local");
     hyp_tree_scalar_str(&sb, "reason", ask_reason_token(st->avail));
     hyp_tree_scalar_str(&sb, "detail", detail);
     hyp_tree_scalar_str(&sb, "remedy", remedy);
@@ -4183,8 +4198,25 @@ static char *ask_run(hyp_mcp_server_t *srv, const char *args, bool force_json, f
      * on band width. The caller knows whether it needs to be right; the engine
      * cannot. */
     bool escalate = hyp_mcp_get_bool_arg(args, "escalate");
-    hyp_ask_lane_t lane = escalate ? HYP_ASK_LANE_ESCALATION : HYP_ASK_LANE_LOCAL;
+    /* WHICH escalation (NEXT-STEPS §3.1 step 3, ask.escalation.mode).
+     *
+     *   query  — send ONLY the question to the provider, score its vector
+     *            against the LOCAL index. No second index, no drift, no
+     *            corpus-sized bill; the code never leaves the machine. Gated on
+     *            a shared embedding SPACE, below. The default.
+     *   index  — the pre-existing lane: a second, API-built index of the whole
+     *            corpus, queried by the same model that built it.
+     *
+     * Query mode is licensed on QUALITY: nano documents scored by voyage-4-large
+     * questions beat nano/nano by +0.2087 MRR@10 on the vocabulary-gap frozen
+     * 60 (runs/XMODEL) and by +0.444% RR, p 5.5e-05, on 8,122 public
+     * CodeSearchNet-Go queries (runs/XMODEL-PUBLIC). Its case OVER index mode
+     * is OPERATIONAL, not a quality margin — index mode replicates at scale
+     * too, and the two are indistinguishable there (p 0.62). */
+    bool esc_query_mode = false;
+    hyp_ask_lane_t lane = HYP_ASK_LANE_LOCAL;
     hyp_ask_encoder_t *esc_enc = NULL;
+    const hyp_ask_provider_t *esc_provider = NULL;
     if (escalate) {
         /* Not `cache_dir`: this file already has a static cache_dir(char *,
          * size_t) at line 1948, and shadowing it reads as a call site. */
@@ -4193,52 +4225,105 @@ static char *ask_run(hyp_mcp_server_t *srv, const char *args, bool force_json, f
         char provider[64];
         char model[128];
         char key_env[128];
+        char mode[HYP_SZ_32];
         snprintf(provider, sizeof(provider), "%s",
                  cfg ? hyp_config_get(cfg, HYP_CONFIG_ASK_ESC_PROVIDER, "") : "");
         snprintf(model, sizeof(model), "%s",
                  cfg ? hyp_config_get(cfg, HYP_CONFIG_ASK_ESC_MODEL, "") : "");
         snprintf(key_env, sizeof(key_env), "%s",
                  cfg ? hyp_config_get(cfg, HYP_CONFIG_ASK_ESC_KEY_ENV, "") : "");
+        snprintf(mode, sizeof(mode), "%s",
+                 cfg ? hyp_config_get(cfg, HYP_CONFIG_ASK_ESC_MODE, HYP_CONFIG_ASK_ESC_MODE_DEFAULT)
+                     : HYP_CONFIG_ASK_ESC_MODE_DEFAULT);
         if (cfg) {
             hyp_config_close(cfg);
         }
+        if (strcmp(mode, HYP_CONFIG_ASK_ESC_MODE_QUERY) == 0) {
+            esc_query_mode = true;
+        } else if (strcmp(mode, HYP_CONFIG_ASK_ESC_MODE_INDEX) != 0) {
+            /* `config set` validates this key, but the database can be written
+             * by an older binary or by hand. An unrecognised mode decides WHAT
+             * LEAVES THE MACHINE, so it is refused, not defaulted. */
+            char msg[ASK_MSG];
+            snprintf(msg, sizeof(msg),
+                     "escalate=true was asked for but %s is '%s', which is neither '%s' nor "
+                     "'%s'. This did NOT fall back to the local index or to either mode: the "
+                     "mode decides whether the question or the whole corpus is sent to the "
+                     "provider, so it is not guessed. Fix it with `hyponoia config set %s %s`.",
+                     HYP_CONFIG_ASK_ESC_MODE, mode, HYP_CONFIG_ASK_ESC_MODE_QUERY,
+                     HYP_CONFIG_ASK_ESC_MODE_INDEX, HYP_CONFIG_ASK_ESC_MODE,
+                     HYP_CONFIG_ASK_ESC_MODE_DEFAULT);
+            return ask_error(msg, project, question);
+        }
+        lane = esc_query_mode ? HYP_ASK_LANE_LOCAL : HYP_ASK_LANE_ESCALATION;
         char eerr[ASK_MSG] = "";
         esc_enc = hyp_ask_provider_encoder_create(provider, model, key_env, eerr, sizeof(eerr));
         if (!esc_enc) {
             /* NEVER A SILENT FALLBACK. Answering from the local index here
              * would hand back the cheap answer to someone who asked for the
              * expensive one and say nothing — the ambiguous-empty-result
-             * failure in new clothes. */
+             * failure in new clothes. The remedy differs by mode: query mode
+             * needs the key and the local index and NOTHING ELSE — telling
+             * someone to build an escalation index they will never search
+             * would send them off to spend money on the wrong thing. */
             char msg[ASK_MSG + HYP_SZ_256];
-            snprintf(msg, sizeof(msg),
-                     "escalate=true was asked for and the escalation lane is not usable: %s. "
-                     "This did NOT fall back to the local index — you asked for the escalation "
-                     "answer and would have received a different one without being told. "
-                     "Configure it with `hyponoia config set ask.escalation.provider|model|"
-                     "key_env`, then build the index with `hyponoia embed --escalation`.",
-                     eerr[0] ? eerr : "it is not configured");
+            if (esc_query_mode) {
+                snprintf(msg, sizeof(msg),
+                         "escalate=true was asked for and the escalation encoder is not usable: "
+                         "%s. This did NOT fall back to the local encoder — you asked for the "
+                         "escalated answer and would have received a different one without "
+                         "being told. In %s=%s the provider encodes ONLY the question and it "
+                         "is scored against the local index you already have; nothing else is "
+                         "built or sent. Configure it with `hyponoia config set "
+                         "ask.escalation.provider|model|key_env` (key_env is the NAME of the "
+                         "environment variable holding the key) and re-run.",
+                         eerr[0] ? eerr : "it is not configured", HYP_CONFIG_ASK_ESC_MODE,
+                         HYP_CONFIG_ASK_ESC_MODE_QUERY);
+            } else {
+                snprintf(msg, sizeof(msg),
+                         "escalate=true was asked for and the escalation lane is not usable: %s. "
+                         "This did NOT fall back to the local index — you asked for the "
+                         "escalation answer and would have received a different one without "
+                         "being told. Configure it with `hyponoia config set "
+                         "ask.escalation.provider|model|key_env`, then build the index with "
+                         "`hyponoia embed --escalation`.",
+                         eerr[0] ? eerr : "it is not configured");
+            }
             return ask_error(msg, project, question);
         }
+        /* Non-NULL whenever the encoder was created; kept for the dim_mode gate. */
+        esc_provider = hyp_ask_provider_by_name(provider);
     }
 
     hyp_ask_status_t st;
-    /* Hold the index to the identity of the encoder that will QUERY it, which
-     * for the escalation lane is the hosted model and not the linked one. */
-    hyp_ask_index_status_lane(store, project, lane,
-                              escalate ? hyp_ask_encoder_model_id(esc_enc) : NULL,
-                              escalate ? hyp_ask_encoder_prefix_contract(esc_enc) : NULL, &st);
+    /* Hold the index to the identity of the encoder that BUILT it. For the
+     * escalation INDEX lane that is the hosted model, not the linked one. For
+     * query mode the index being scored is the LOCAL one, so it is held to the
+     * local model's identity exactly as an ordinary ask is — the hosted model
+     * is the QUERY side and is gated separately, on space, below. */
+    bool esc_index_mode = escalate && !esc_query_mode;
+    hyp_ask_index_status_lane(
+        store, project, lane, esc_index_mode ? hyp_ask_encoder_model_id(esc_enc) : NULL,
+        esc_index_mode ? hyp_ask_encoder_prefix_contract(esc_enc) : NULL, &st);
     /* THE WEIGHTS, BEFORE THE INDEX. hyp_ask_index_status answers about the
      * store and the linked encoder; whether that encoder's 639 MB of weights
      * are on disk is the fetcher's question and is asked here, where the CLI
      * layer is already reachable. Order matters: someone with neither weights
      * nor index must be told to fetch the model, because the embed pass that
-     * builds the index is the thing that needs it. */
+     * builds the index is the thing that needs it.
+     *
+     * NOT for either escalation mode. Index mode never touches the local
+     * weights. Query mode does not either: the question is encoded by the
+     * provider, and the local index it is scored against was built by those
+     * weights EARLIER — their presence today is irrelevant to reading it. A
+     * machine that built its index, then lost or never re-fetched the model,
+     * can still ask escalated questions; only a plain ask needs the weights. */
     if (!escalate && (st.avail == HYP_ASK_NO_INDEX || st.avail == HYP_ASK_AVAILABLE) &&
         hyp_ask_llama_backend_installed() && !hyp_model_ask_present()) {
         st.avail = HYP_ASK_NO_WEIGHTS;
     }
     if (st.avail != HYP_ASK_AVAILABLE) {
-        if (escalate) {
+        if (esc_index_mode) {
             /* Same rule as above: an unbuilt or mismatched ESCALATION index is
              * reported as itself, never served from the local one. */
             char msg[ASK_MSG + HYP_SZ_256];
@@ -4254,10 +4339,118 @@ static char *ask_run(hyp_mcp_server_t *srv, const char *args, bool force_json, f
             hyp_ask_encoder_destroy(esc_enc);
             return ask_error(msg, project, question);
         }
+        if (esc_query_mode) {
+            /* Query mode scores the LOCAL index; without one there is nothing
+             * to score and NOTHING to fall back to. Said as itself, with the
+             * local lane's own remedy, and never as an empty ranking. */
+            char detail[ASK_MSG];
+            char remedy[ASK_MSG];
+            if (st.avail == HYP_ASK_NO_BACKEND) {
+                /* The local lane's sentence for this state — "a question cannot
+                 * be turned into a vector at all" — is false here: the provider
+                 * can encode it. What is missing is the LOCAL model's identity,
+                 * which is what the local index is held to; unverified, it is
+                 * not scored. */
+                snprintf(detail, sizeof(detail),
+                         "this build links no local encoder, so which model built the local "
+                         "index cannot be verified, and an unverified index is not scored.");
+                snprintf(remedy, sizeof(remedy),
+                         "Use a build with the embedding backend, or %s=%s, whose index is built "
+                         "and queried by the provider alone.",
+                         HYP_CONFIG_ASK_ESC_MODE, HYP_CONFIG_ASK_ESC_MODE_INDEX);
+            } else {
+                ask_unavailable_text(&st, project, detail, sizeof(detail), remedy, sizeof(remedy));
+            }
+            char msg[ASK_MSG * 3];
+            snprintf(msg, sizeof(msg),
+                     "escalate=true (%s=%s) encodes the question with %s and scores it against "
+                     "the LOCAL index, and the local index is not usable (%s): %s This did NOT "
+                     "fall back to anything — there is no answer without that index. %s",
+                     HYP_CONFIG_ASK_ESC_MODE, HYP_CONFIG_ASK_ESC_MODE_QUERY,
+                     hyp_ask_encoder_model_id(esc_enc), ask_reason_token(st.avail), detail, remedy);
+            hyp_ask_encoder_destroy(esc_enc);
+            return ask_error(msg, project, question);
+        }
         char *result = ask_emit_unavailable(&st, project, json);
         free(project);
         free(question);
         return result;
+    }
+
+    /* ── THE SPACE GATE (query mode only) ────────────────────────────
+     *
+     * A cosine between two models' vectors means something ONLY if they live in
+     * the same embedding space, and cross-space failure is SILENT: score a
+     * Qwen3 index against a voyage query and nothing errors — the ranking comes
+     * back ordinary-looking and wrong, which for a tool an agent trusts is the
+     * worst failure available. So the gate is a space id, not the prefix
+     * contract (that answers "same prompts", the wrong invariant here), and it
+     * refuses the unknown as firmly as the different. */
+    const char *space_index = NULL;
+    bool space_derived = false;
+    if (esc_query_mode) {
+        const char *esc_model_id = hyp_ask_encoder_model_id(esc_enc);
+        const char *space_query = hyp_ask_space_id_for_model(esc_model_id);
+        /* The stamp the index carries, if its builder wrote one; otherwise the
+         * same function over the model id it recorded — and the answer SAYS
+         * which, so an old index is not mistaken for a labelled one. */
+        space_derived = st.space_id[0] == '\0';
+        space_index = space_derived ? hyp_ask_space_id_for_model(st.model_id) : st.space_id;
+        char msg[ASK_MSG * 2];
+        if (esc_provider && esc_provider->dim_mode == HYP_ASK_DIM_REEMBEDS) {
+            /* A re-embedding head is a DIFFERENT SPACE AT A DIFFERENT WIDTH:
+             * "1024" from it is not the renormalised prefix of its 2048, so
+             * scoring it against a matrix another model truncated to 1024 is
+             * cross-space no matter what the family name says. Nothing in the
+             * table is tagged this way today; this is the branch that makes the
+             * tag load-bearing the day a row is. */
+            snprintf(msg, sizeof(msg),
+                     "escalate=true (%s=%s) is refused: provider '%s' re-embeds into a separate "
+                     "output head at each dimension (dim_mode REEMBEDS), so its %d-wide query "
+                     "vector is not in the space of the local index's %d-wide document vectors "
+                     "even within one model family. Cross-space scoring returns confidently-"
+                     "ranked garbage with no error. This did NOT fall back to the local encoder. "
+                     "Use %s=%s (a second index built AND queried by that provider) instead.",
+                     HYP_CONFIG_ASK_ESC_MODE, HYP_CONFIG_ASK_ESC_MODE_QUERY, esc_provider->name,
+                     st.dim, st.dim, HYP_CONFIG_ASK_ESC_MODE, HYP_CONFIG_ASK_ESC_MODE_INDEX);
+            hyp_ask_encoder_destroy(esc_enc);
+            return ask_error(msg, project, question);
+        }
+        if (!space_index || !space_query || strcmp(space_index, space_query) != 0) {
+            snprintf(msg, sizeof(msg),
+                     "escalate=true (%s=%s) is refused: the local index was built by '%s' "
+                     "(embedding space: %s%s) and the escalation model is '%s' (embedding "
+                     "space: %s). Scoring a question from one embedding space against vectors "
+                     "from another returns confidently-ranked garbage with no error — the worst "
+                     "failure mode for a tool an agent trusts — so it is refused unless BOTH "
+                     "spaces are known and identical. Only the voyage-4 family (nano, lite, "
+                     "large, 4) is measured to share a space; voyage-code-3 and Qwen3 are "
+                     "measured NOT to, and unmeasured families are refused rather than assumed. "
+                     "This did NOT fall back to the local encoder. Either set "
+                     "ask.escalation.model to a voyage-4 model, or set %s=%s to build a "
+                     "separate index with the configured model.",
+                     HYP_CONFIG_ASK_ESC_MODE, HYP_CONFIG_ASK_ESC_MODE_QUERY, st.model_id,
+                     space_index ? space_index : "unknown/unmeasured",
+                     space_derived ? ", derived from the index's model id"
+                                   : ", stamped on the index",
+                     esc_model_id, space_query ? space_query : "unknown/unmeasured",
+                     HYP_CONFIG_ASK_ESC_MODE, HYP_CONFIG_ASK_ESC_MODE_INDEX);
+            hyp_ask_encoder_destroy(esc_enc);
+            return ask_error(msg, project, question);
+        }
+        /* The provider adapter asks for HYP_ASK_DIM; the status gate has already
+         * held the local index to the local backend's dim, which is the same
+         * constant. Pinned here anyway, because the equality is the whole basis
+         * for scoring the two sides together. */
+        if (st.dim != HYP_ASK_DIM) {
+            snprintf(msg, sizeof(msg),
+                     "escalate=true (%s=%s) is refused: the local index is %d wide and the "
+                     "provider is asked for %d — the two sides would not be the same width. "
+                     "This did NOT fall back to the local encoder.",
+                     HYP_CONFIG_ASK_ESC_MODE, HYP_CONFIG_ASK_ESC_MODE_QUERY, st.dim, HYP_ASK_DIM);
+            hyp_ask_encoder_destroy(esc_enc);
+            return ask_error(msg, project, question);
+        }
     }
 
     /* Language: explicit wins, derivation is the fallback, and NEITHER falls
@@ -4277,11 +4470,13 @@ static char *ask_run(hyp_mcp_server_t *srv, const char *args, bool force_json, f
                  "returns answers — just not the ones any measurement describes.",
                  lang_arg);
         free(lang_arg);
+        hyp_ask_encoder_destroy(esc_enc);
         return ask_error(msg, project, question);
     }
     free(lang_arg);
     const char *lang_name = hyp_ask_language_display(lang);
     if (!lang_name) {
+        hyp_ask_encoder_destroy(esc_enc);
         return ask_error("could not determine which language's instruct prefix to render: no "
                          "file in this project's graph maps to a known language. Pass "
                          "language=\"...\" explicitly (an extension like \"cpp\" or a display "
@@ -4296,17 +4491,62 @@ static char *ask_run(hyp_mcp_server_t *srv, const char *args, bool force_json, f
         return ask_error("out of memory encoding the question", project, question);
     }
     char encerr[ASK_MSG] = "";
-    /* The QUESTION must be encoded by the same model that built the index it is
-     * about to be scored against — that is the whole reason the two lanes carry
-     * separate encoders rather than sharing one. */
+    /* WHO ENCODES THE QUESTION. Index mode: the same model that built the
+     * escalation index — that is the whole reason the two lanes carry separate
+     * encoders rather than sharing one. Local: the linked backend.
+     *
+     * Query mode: the PROVIDER, at the local index's width (st.dim == 1024).
+     * That is the same operation on both sides, and it has to be for the
+     * scores to mean anything: voyage-4-large's output_dimension=1024 is the
+     * renormalised first 1024 of its own 2048 (min cosine 1.000000 against a
+     * local cut, §2.15 / ask_provider.c), and nano's stored 1024 is the
+     * renormalised first 1024 of ITS 2048 (ask_llama.c: "pooled 1024 ->
+     * projected 2048 -> normalise -> Matryoshka-truncate to HYP_ASK_DIM ->
+     * renormalise. THE ORDER IS THE MEASUREMENT"). Both sides Matryoshka-cut
+     * one shared 2048-d space to the same 1024 prefix. Mixing at 2048 measured
+     * a hair better (+0.00214 RR, p 3e-4, runs/XMODEL-PUBLIC), but the shipped
+     * table is 1024 and this step does not reopen that width. */
     int encrc = escalate ? hyp_ask_encode_query(esc_enc, question, lang_name, qvec)
                          : backend->encode_query(lang, question, qvec, encerr, sizeof(encerr));
     if (encrc != 0) {
-        char msg[ASK_MSG + HYP_SZ_128];
-        snprintf(msg, sizeof(msg), "could not encode the question: %s",
-                 encerr[0] ? encerr : "the encoder failed without a reason");
+        char msg[ASK_MSG + HYP_SZ_256];
+        if (escalate) {
+            /* The provider adapter logs the provider's sentence; what reaches
+             * the caller must still say WHICH encoder failed and that nothing
+             * answered in its place. */
+            snprintf(msg, sizeof(msg),
+                     "could not encode the question with the escalation model %s (the provider "
+                     "call failed — the log line ask.provider.encode_query carries its reason: "
+                     "quota, key, network or model name). This did NOT fall back to the local "
+                     "encoder.",
+                     hyp_ask_encoder_model_id(esc_enc));
+        } else {
+            snprintf(msg, sizeof(msg), "could not encode the question: %s",
+                     encerr[0] ? encerr : "the encoder failed without a reason");
+        }
         free(qvec);
+        hyp_ask_encoder_destroy(esc_enc);
         return ask_error(msg, project, question);
+    }
+
+    /* NAME THE LANE THAT ANSWERED, and both encoders, on every result. The
+     * agent holding the answer must be able to tell which of three different
+     * things it is holding without inferring it from cost or latency. */
+    const char *lane_name = esc_query_mode ? "escalation-query"
+                            : escalate     ? "escalation-index"
+                                           : "local";
+    char query_encoder[HYP_ASK_MODEL_ID_MAX];
+    snprintf(query_encoder, sizeof(query_encoder), "%s",
+             escalate ? hyp_ask_encoder_model_id(esc_enc) : st.backend_id);
+    char space_text[HYP_SZ_256];
+    if (esc_query_mode) {
+        snprintf(space_text, sizeof(space_text), "%s — %s; both sides Matryoshka-cut to %d",
+                 space_index ? space_index : "?",
+                 space_derived ? "derived from the index's model id (the index predates the stamp)"
+                               : "stamped on the index at build time",
+                 st.dim);
+    } else {
+        space_text[0] = '\0';
     }
 
     hyp_ask_hit_t *hits = NULL;
@@ -4348,6 +4588,14 @@ static char *ask_run(hyp_mcp_server_t *srv, const char *args, bool force_json, f
         yyjson_mut_val *root = yyjson_mut_obj(doc);
         yyjson_mut_doc_set_root(doc, root);
         yyjson_mut_obj_add_bool(doc, root, "available", true);
+        yyjson_mut_obj_add_str(doc, root, "lane", lane_name);
+        yyjson_mut_obj_add_strcpy(doc, root, "query_encoder", query_encoder);
+        yyjson_mut_obj_add_strcpy(doc, root, "index_encoder", st.model_id);
+        if (space_text[0]) {
+            yyjson_mut_obj_add_strcpy(doc, root, "space", space_text);
+        }
+        /* `model` predates the two-encoder disclosure and is the INDEX's model;
+         * kept so nothing that read it breaks, duplicated by index_encoder. */
         yyjson_mut_obj_add_strcpy(doc, root, "model", st.model_id);
         yyjson_mut_obj_add_strcpy(doc, root, "language", lang_name);
         yyjson_mut_obj_add_str(doc, root, "language_source",
@@ -4384,6 +4632,12 @@ static char *ask_run(hyp_mcp_server_t *srv, const char *args, bool force_json, f
         hyp_sb_t sb;
         hyp_sb_init(&sb);
         hyp_tree_scalar_bool(&sb, "available", true);
+        hyp_tree_scalar_str(&sb, "lane", lane_name);
+        hyp_tree_scalar_str(&sb, "query_encoder", query_encoder);
+        hyp_tree_scalar_str(&sb, "index_encoder", st.model_id);
+        if (space_text[0]) {
+            hyp_tree_scalar_str(&sb, "space", space_text);
+        }
         hyp_tree_scalar_str(&sb, "model", st.model_id);
         hyp_tree_scalar_str(&sb, "language", lang_name);
         hyp_tree_scalar_str(&sb, "language_source", lang_explicit ? "explicit" : "derived");
@@ -4470,8 +4724,6 @@ char *hyp_mcp_ask_view_overlay(hyp_mcp_server_t *srv, const char *args_json) {
     yyjson_mut_obj_add_strcpy(doc, root, "project", project ? project : "");
     yyjson_mut_obj_add_strcpy(doc, root, "question", question ? question : "");
     bool escalate = hyp_mcp_get_bool_arg(args_json, "escalate");
-    hyp_ask_lane_t lane = escalate ? HYP_ASK_LANE_ESCALATION : HYP_ASK_LANE_LOCAL;
-    yyjson_mut_obj_add_str(doc, root, "lane", hyp_ask_lane_name(lane));
 
     /* Unwrap the tool result: {"content":[{"type":"text","text":"..."}],
      * "isError":bool}. The text is the JSON the tool rendered. */
@@ -4497,6 +4749,40 @@ char *hyp_mcp_ask_view_overlay(hyp_mcp_server_t *srv, const char *args_json) {
         yyjson_mut_obj_add_strcpy(doc, root, "ask_text", inner ? inner : "");
     }
     yyjson_mut_obj_add_bool(doc, root, "ask_error", tool_error);
+
+    /* WHICH VECTOR FILE THE ANSWER WAS SCORED AGAINST — and so whose view to
+     * draw it in. The tool names its lane on every answer: `local`,
+     * `escalation-query` or `escalation-index`. Only escalation-INDEX searches
+     * the escalation file; query mode scores the provider's 1024-d question
+     * against the LOCAL table, so the local view is the right picture (same
+     * space, same width — that is the gate the tool itself applied). The
+     * tool's word is used when it answered; when it did not (nothing was
+     * searched), the configured mode is read the same way the tool reads it,
+     * so the view reported is the one the answer WOULD have been drawn in. */
+    yyjson_val *ask_lane_v = ask_root ? yyjson_obj_get(ask_root, "lane") : NULL;
+    const char *ask_lane =
+        ask_lane_v && yyjson_is_str(ask_lane_v) ? yyjson_get_str(ask_lane_v) : NULL;
+    hyp_ask_lane_t lane = HYP_ASK_LANE_LOCAL;
+    if (ask_lane) {
+        lane = strcmp(ask_lane, "escalation-index") == 0 ? HYP_ASK_LANE_ESCALATION
+                                                         : HYP_ASK_LANE_LOCAL;
+    } else if (escalate) {
+        const char *cache_root = hyp_resolve_cache_dir();
+        hyp_config_t *cfg = cache_root ? hyp_config_open(cache_root) : NULL;
+        const char *mode =
+            cfg ? hyp_config_get(cfg, HYP_CONFIG_ASK_ESC_MODE, HYP_CONFIG_ASK_ESC_MODE_DEFAULT)
+                : HYP_CONFIG_ASK_ESC_MODE_DEFAULT;
+        lane = strcmp(mode, HYP_CONFIG_ASK_ESC_MODE_INDEX) == 0 ? HYP_ASK_LANE_ESCALATION
+                                                                : HYP_ASK_LANE_LOCAL;
+        if (cfg) {
+            hyp_config_close(cfg);
+        }
+    }
+    /* `lane` is the tool's own word when it answered (so `escalation-query`
+     * flows through untouched); `vector_file_lane` is which file the view was
+     * read from. */
+    yyjson_mut_obj_add_strcpy(doc, root, "lane", ask_lane ? ask_lane : hyp_ask_lane_name(lane));
+    yyjson_mut_obj_add_str(doc, root, "vector_file_lane", hyp_ask_lane_name(lane));
 
     yyjson_val *avail = ask_root ? yyjson_obj_get(ask_root, "available") : NULL;
     bool answered = avail && yyjson_is_bool(avail) && yyjson_get_bool(avail) && !tool_error;

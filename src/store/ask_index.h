@@ -105,6 +105,13 @@ typedef struct {
     int dim;                               /* dimension recorded in the index, 0 when none */
     char model_id[HYP_ASK_MODEL_ID_MAX];   /* the index's model, "" when none */
     char backend_id[HYP_ASK_MODEL_ID_MAX]; /* the linked encoder's, "" when none */
+    /* The embedding space the index STAMPED at build time (ask_vectors.h,
+     * hyp_ask_space_id_for_model), copied verbatim; "" when the index predates
+     * the column, was built by a model whose space is unmeasured, or lives in
+     * the in-graph fixture tables. NOT resolved here: the ask handler derives
+     * a missing one from model_id through the same function and discloses that
+     * it did, so the answer says which of the two it trusted. */
+    char space_id[HYP_SZ_64];
 } hyp_ask_status_t;
 
 /* One ranked answer. Carries the SPAN, so `ask` can hand back

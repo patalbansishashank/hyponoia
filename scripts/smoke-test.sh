@@ -1452,7 +1452,7 @@ assert_tier_profile_set() {
   local directory="$2"
   local suffix="$3"
   local access="$4"
-  local spec slug tier file
+  local spec slug tier file has_ask
   for spec in \
     "hyponoia-scout|Tier 1" \
     "hyponoia|Tier 2" \
@@ -1474,6 +1474,25 @@ assert_tier_profile_set() {
       if ! grep -Fq 'source read/grep fallback' "$file" 2>/dev/null; then
         echo "FAIL 8aw: $label $tier direct profile lacks source fallback"
         exit 1
+      fi
+      # `ask` is on the analysis tiers and never on scout (src/mcp/tool_tiers.h).
+      # Checked wherever the dialect names tools at all (Junie names a server),
+      # in every dialect's identifier form: mcp__hyponoia__ask, mcp_hyponoia_ask,
+      # hyponoia/ask, @hyponoia/ask, hyponoia_ask, "ask".
+      if grep -qE '(mcp__hyponoia__|mcp_hyponoia_|@hyponoia/|hyponoia/|hyponoia_|")search_graph' "$file" 2>/dev/null; then
+        if grep -qE '(mcp__hyponoia__|mcp_hyponoia_|@hyponoia/|hyponoia/|hyponoia_|")ask("|\b)' "$file" 2>/dev/null; then
+          has_ask=1
+        else
+          has_ask=0
+        fi
+        if [ "$slug" = "hyponoia-scout" ] && [ "$has_ask" = "1" ]; then
+          echo "FAIL 8aw: $label scout profile requests ask; scout must stay the surface where every tool answers"
+          exit 1
+        fi
+        if [ "$slug" != "hyponoia-scout" ] && [ "$has_ask" = "0" ]; then
+          echo "FAIL 8aw: $label $tier profile does not request ask (the server's analysis profile offers it)"
+          exit 1
+        fi
       fi
     elif ! grep -q 'parent agent must supply' "$file" 2>/dev/null ||
          ! grep -q 'must not call or claim access to MCP' "$file" 2>/dev/null ||

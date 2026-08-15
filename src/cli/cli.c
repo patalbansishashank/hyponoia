@@ -1254,6 +1254,7 @@ static const char skill_content[] =
     "| What does X call? | `trace_path(direction=\"outbound\")` |\n"
     "| Full call context | `trace_path(direction=\"both\")` |\n"
     "| Find by name pattern | `search_graph(name_pattern=\"...\")` |\n"
+    "| Where does X happen? (natural language) | `ask(question=\"...\")` |\n"
     "| Dead code | `search_graph(max_degree=0, exclude_entry_points=true)` |\n"
     "| Cross-service edges | `query_graph` with Cypher |\n"
     "| Impact of local changes | `detect_changes()` |\n"
@@ -1350,6 +1351,8 @@ static const char codex_instructions_content[] =
     "Use the MCP tools to explore and understand the code:\n"
     "\n"
     "- `search_graph` — find functions, classes, routes by pattern\n"
+    "- `ask` — one natural-language question; ranked declarations with line ranges "
+    "(unavailable until `hyponoia embed` has run)\n"
     "- `trace_path` — trace who calls a function or what it calls\n"
     "- `get_code_snippet` — read function source code\n"
     "- `query_graph` — run Cypher queries for complex patterns\n"
@@ -2713,11 +2716,14 @@ static const char agent_instructions_content[] =
     "\n"
     "### Priority Order\n"
     "1. `search_graph` — find functions, classes, routes, variables by pattern\n"
-    "2. `trace_path` — trace who calls a function or what it calls\n"
-    "3. `get_code_snippet` — read specific function/class source code\n"
-    "4. `check_index_coverage` — validate candidate paths and missed ranges before claims\n"
-    "5. `query_graph` — run Cypher queries for complex patterns\n"
-    "6. `get_architecture` — high-level project summary\n"
+    "2. `ask` — one natural-language question about where behaviour lives; ranked "
+    "declarations with line ranges (analysis tiers; reports unavailable until "
+    "`hyponoia embed` has run)\n"
+    "3. `trace_path` — trace who calls a function or what it calls\n"
+    "4. `get_code_snippet` — read specific function/class source code\n"
+    "5. `check_index_coverage` — validate candidate paths and missed ranges before claims\n"
+    "6. `query_graph` — run Cypher queries for complex patterns\n"
+    "7. `get_architecture` — high-level project summary\n"
     "\n"
     "### Evidence tiers\n"
     "- **Scout (Tier 1):** quick positive lookup with few calls and targeted source checks. Mark "
@@ -6527,6 +6533,21 @@ int hyp_config_validate(const char *key, const char *value, char *err, size_t er
         }
         return 0;
     }
+    if (strcmp(key, HYP_CONFIG_ASK_ESC_MODE) == 0) {
+        /* Two words, refused otherwise: a misspelling that silently selected
+         * the default would change WHAT LEAVES THE MACHINE on the next
+         * escalated question, and nothing downstream would say so. */
+        if (strcmp(value, HYP_CONFIG_ASK_ESC_MODE_QUERY) == 0 ||
+            strcmp(value, HYP_CONFIG_ASK_ESC_MODE_INDEX) == 0) {
+            return 0;
+        }
+        snprintf(err, errlen,
+                 "%s must be '%s' (send only the question to the provider and score it against "
+                 "the local index — the default) or '%s' (query a second, API-built index from "
+                 "`hyponoia embed --escalation`); got '%s'",
+                 key, HYP_CONFIG_ASK_ESC_MODE_QUERY, HYP_CONFIG_ASK_ESC_MODE_INDEX, value);
+        return CLI_ERR;
+    }
     return 0;
 }
 
@@ -6595,8 +6616,16 @@ int hyp_cmd_config(int argc, char **argv) {
                "Model to call on that provider, e.g. voyage-4-large");
         printf("  %-25s  default=%-10s  %s\n", HYP_CONFIG_ASK_ESC_KEY_ENV, "none",
                "NAME of the env var holding the API key — never the key");
-        printf("\nEscalation is opt-in and never automatic. Build its index with\n"
-               "`hyponoia embed --escalation`, then ask for it per query.\n");
+        printf("  %-25s  default=%-10s  %s\n", HYP_CONFIG_ASK_ESC_MODE,
+               HYP_CONFIG_ASK_ESC_MODE_DEFAULT, "What ask(escalate=true) sends: query | index");
+        printf("\nEscalation is opt-in and never automatic: ask(escalate=true) per question.\n"
+               "  mode=query  sends ONLY the question to the provider and scores it against the\n"
+               "              local index. Needs the key and the local index, nothing else; the\n"
+               "              code never leaves the machine. Refused unless the local index and\n"
+               "              the escalation model share a measured embedding space (voyage-4).\n"
+               "  mode=index  queries a second, API-built index of the whole corpus; build it\n"
+               "              with `hyponoia embed --escalation` (spends tokens per declaration).\n"
+               "Neither mode ever falls back to the local answer: a refusal says so.\n");
         return 0;
     }
 
@@ -7533,6 +7562,89 @@ static hyp_graph_access_t hyp_tiered_profile_set_access(hyp_tiered_profile_set_t
                : HYP_GRAPH_ACCESS_HANDOFF;
 }
 
+/* Every rendering this installer has ever published for one profile file. An
+ * owned document is only replaced or removed when its bytes equal the current
+ * rendering or one of these, so the set has to be complete: the other access
+ * mode, the Codex rc.1 form, the pre-tier Verify text, and every earlier
+ * profile generation in both access modes (mcp/tool_tiers.h; a generation is
+ * a change to the tool set a tier requests). Missing one here would strand a
+ * user on the older profile with a "preserved modified profile" notice for a
+ * file they never touched. */
+enum { HYP_RELEASED_PROFILE_CAP = 16 };
+
+typedef struct {
+    const char *items[HYP_RELEASED_PROFILE_CAP];
+    char *owned[HYP_RELEASED_PROFILE_CAP];
+    size_t count;
+    size_t owned_count;
+} hyp_released_profiles_t;
+
+static void hyp_released_profiles_add(hyp_released_profiles_t *set, char *rendering) {
+    if (!rendering) {
+        return;
+    }
+    if (set->count >= HYP_RELEASED_PROFILE_CAP || set->owned_count >= HYP_RELEASED_PROFILE_CAP) {
+        free(rendering);
+        return;
+    }
+    set->owned[set->owned_count++] = rendering;
+    set->items[set->count++] = rendering;
+}
+
+static void hyp_released_profiles_collect(hyp_released_profiles_t *set,
+                                          hyp_tiered_profile_set_t profiles, hyp_graph_tier_t tier,
+                                          hyp_graph_access_t access) {
+    memset(set, 0, sizeof(*set));
+    hyp_graph_access_t alternate_access =
+        access == HYP_GRAPH_ACCESS_DIRECT ? HYP_GRAPH_ACCESS_HANDOFF : HYP_GRAPH_ACCESS_DIRECT;
+    hyp_released_profiles_add(
+        set,
+        hyp_render_graph_profile(profiles.dialect, tier, alternate_access, profiles.binary_path));
+    if (profiles.dialect == HYP_GRAPH_DIALECT_CODEX && access == HYP_GRAPH_ACCESS_DIRECT) {
+        hyp_released_profiles_add(set, hyp_render_graph_profile_codex_rc1(tier));
+    }
+    if (tier == HYP_GRAPH_TIER_VERIFY && profiles.legacy_verify_content &&
+        set->count < HYP_RELEASED_PROFILE_CAP) {
+        set->items[set->count++] = profiles.legacy_verify_content;
+    }
+    for (unsigned generation = 0U; generation < hyp_graph_profile_generation(); generation++) {
+        hyp_released_profiles_add(
+            set, hyp_render_graph_profile_generation(profiles.dialect, tier, access,
+                                                     profiles.binary_path, generation));
+        hyp_released_profiles_add(
+            set, hyp_render_graph_profile_generation(profiles.dialect, tier, alternate_access,
+                                                     profiles.binary_path, generation));
+    }
+}
+
+/* The prompt-only file some clients keep beside the agent definition (Vibe's
+ * prompts/<slug>.md): the pre-tier Verify text plus every earlier
+ * generation's prompt in both access modes. */
+static void hyp_released_prompts_collect(hyp_released_profiles_t *set, hyp_graph_tier_t tier,
+                                         hyp_graph_access_t access,
+                                         const char *legacy_verify_content) {
+    memset(set, 0, sizeof(*set));
+    hyp_graph_access_t alternate_access =
+        access == HYP_GRAPH_ACCESS_DIRECT ? HYP_GRAPH_ACCESS_HANDOFF : HYP_GRAPH_ACCESS_DIRECT;
+    if (tier == HYP_GRAPH_TIER_VERIFY && legacy_verify_content &&
+        set->count < HYP_RELEASED_PROFILE_CAP) {
+        set->items[set->count++] = legacy_verify_content;
+    }
+    for (unsigned generation = 0U; generation < hyp_graph_profile_generation(); generation++) {
+        hyp_released_profiles_add(set,
+                                  hyp_render_graph_prompt_generation(tier, access, generation));
+        hyp_released_profiles_add(
+            set, hyp_render_graph_prompt_generation(tier, alternate_access, generation));
+    }
+}
+
+static void hyp_released_profiles_free(hyp_released_profiles_t *set) {
+    for (size_t i = 0U; i < set->owned_count; i++) {
+        free(set->owned[i]);
+    }
+    memset(set, 0, sizeof(*set));
+}
+
 static void install_tiered_agent_profiles(hyp_tiered_profile_set_t profiles, bool dry_run) {
     hyp_graph_access_t access = hyp_tiered_profile_set_access(profiles);
     for (int value = 0; value < (int)HYP_GRAPH_TIER_COUNT; value++) {
@@ -7556,30 +7668,13 @@ static void install_tiered_agent_profiles(hyp_tiered_profile_set_t profiles, boo
             record_agent_config_error(false, profiles.label, "agent_render", path);
             continue;
         }
-        hyp_graph_access_t alternate_access =
-            access == HYP_GRAPH_ACCESS_DIRECT ? HYP_GRAPH_ACCESS_HANDOFF : HYP_GRAPH_ACCESS_DIRECT;
-        char *alternate = hyp_render_graph_profile(profiles.dialect, tier, alternate_access,
-                                                   profiles.binary_path);
-        char *codex_rc1 =
-            profiles.dialect == HYP_GRAPH_DIALECT_CODEX && access == HYP_GRAPH_ACCESS_DIRECT
-                ? hyp_render_graph_profile_codex_rc1(tier)
-                : NULL;
-        const char *released[3];
-        size_t released_count = 0U;
-        if (alternate) {
-            released[released_count++] = alternate;
-        }
-        if (codex_rc1) {
-            released[released_count++] = codex_rc1;
-        }
-        if (tier == HYP_GRAPH_TIER_VERIFY && profiles.legacy_verify_content) {
-            released[released_count++] = profiles.legacy_verify_content;
-        }
-        int result = prepare_config_parent(path)
-                         ? hyp_text_migrate_owned_document(path, current, released, released_count)
-                         : CLI_ERR;
-        free(codex_rc1);
-        free(alternate);
+        hyp_released_profiles_t released;
+        hyp_released_profiles_collect(&released, profiles, tier, access);
+        int result =
+            prepare_config_parent(path)
+                ? hyp_text_migrate_owned_document(path, current, released.items, released.count)
+                : CLI_ERR;
+        hyp_released_profiles_free(&released);
         free(current);
         if (result != CLI_OK) {
             if (result > CLI_OK) {
@@ -7611,28 +7706,11 @@ static void uninstall_tiered_agent_profiles(hyp_tiered_profile_set_t profiles, b
             record_agent_config_error(true, profiles.label, "agent_render", path);
             continue;
         }
-        hyp_graph_access_t alternate_access =
-            access == HYP_GRAPH_ACCESS_DIRECT ? HYP_GRAPH_ACCESS_HANDOFF : HYP_GRAPH_ACCESS_DIRECT;
-        char *alternate = hyp_render_graph_profile(profiles.dialect, tier, alternate_access,
-                                                   profiles.binary_path);
-        char *codex_rc1 =
-            profiles.dialect == HYP_GRAPH_DIALECT_CODEX && access == HYP_GRAPH_ACCESS_DIRECT
-                ? hyp_render_graph_profile_codex_rc1(tier)
-                : NULL;
-        const char *released[3];
-        size_t released_count = 0U;
-        if (alternate) {
-            released[released_count++] = alternate;
-        }
-        if (codex_rc1) {
-            released[released_count++] = codex_rc1;
-        }
-        if (tier == HYP_GRAPH_TIER_VERIFY && profiles.legacy_verify_content) {
-            released[released_count++] = profiles.legacy_verify_content;
-        }
-        int result = hyp_text_remove_owned_document_any(path, current, released, released_count);
-        free(codex_rc1);
-        free(alternate);
+        hyp_released_profiles_t released;
+        hyp_released_profiles_collect(&released, profiles, tier, access);
+        int result =
+            hyp_text_remove_owned_document_any(path, current, released.items, released.count);
+        hyp_released_profiles_free(&released);
         free(current);
         if (result < CLI_OK) {
             record_agent_config_error(true, profiles.label, "agent_uninstall", path);
@@ -7668,11 +7746,13 @@ static void install_tiered_profile_prompts(const char *label, const char *verify
             record_agent_config_error(false, label, "prompt_render", path);
             continue;
         }
-        const char *released[] = {legacy_verify_content};
-        size_t released_count = tier == HYP_GRAPH_TIER_VERIFY && legacy_verify_content ? 1U : 0U;
-        int result = prepare_config_parent(path)
-                         ? hyp_text_migrate_owned_document(path, current, released, released_count)
-                         : CLI_ERR;
+        hyp_released_profiles_t released;
+        hyp_released_prompts_collect(&released, tier, access, legacy_verify_content);
+        int result =
+            prepare_config_parent(path)
+                ? hyp_text_migrate_owned_document(path, current, released.items, released.count)
+                : CLI_ERR;
+        hyp_released_profiles_free(&released);
         free(current);
         if (result != CLI_OK) {
             if (result > CLI_OK) {
@@ -7705,9 +7785,11 @@ static void uninstall_tiered_profile_prompts(const char *label, const char *veri
             record_agent_config_error(true, label, "prompt_render", path);
             continue;
         }
-        const char *released[] = {legacy_verify_content};
-        size_t released_count = tier == HYP_GRAPH_TIER_VERIFY && legacy_verify_content ? 1U : 0U;
-        int result = hyp_text_remove_owned_document_any(path, current, released, released_count);
+        hyp_released_profiles_t released;
+        hyp_released_prompts_collect(&released, tier, access, legacy_verify_content);
+        int result =
+            hyp_text_remove_owned_document_any(path, current, released.items, released.count);
+        hyp_released_profiles_free(&released);
         free(current);
         if (result < CLI_OK) {
             record_agent_config_error(true, label, "prompt_uninstall", path);
