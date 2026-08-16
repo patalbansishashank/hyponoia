@@ -107,9 +107,10 @@ enum {
  * that changed on every commit would force the whole one-shot compile+link on
  * every commit. See Makefile.hyp's note next to LLAMA_VERSION_DEFINES for the
  * same objection to build-time entropy in a compile line. */
-#ifndef HYP_BUILD_SHA
-#define HYP_BUILD_SHA ""
-#endif
+/* Tested with #ifdef rather than against a defaulted "" — a runtime
+ * `if (source_sha[0])` over a default empty string is a branch the compiler
+ * (and cppcheck, which fails the lint gate on it) can prove is dead in every
+ * build that did not inject one, which is most of them. */
 
 /* Hex characters of the executable fingerprint shown to a human. Matches the
  * `%.12s` that `hyponoia daemon status` prints on its `build:` line, so a bug
@@ -128,11 +129,10 @@ enum {
  * record a source SHA of its own; every other caller reuses the process-wide
  * capture. */
 static void main_print_version(void) {
-    const char *source_sha = HYP_BUILD_SHA;
-    if (source_sha[0]) {
-        printf("hyponoia %s (%s)\n", HYP_VERSION, source_sha);
-        return;
-    }
+#ifdef HYP_BUILD_SHA
+    /* The build stamped its own source SHA, so nothing has to be read. */
+    printf("hyponoia %s (%s)\n", HYP_VERSION, HYP_BUILD_SHA);
+#else
     const char *fingerprint = hyp_index_supervisor_capture_build_fingerprint()
                                   ? hyp_index_supervisor_build_fingerprint()
                                   : NULL;
@@ -141,6 +141,7 @@ static void main_print_version(void) {
         return;
     }
     printf("hyponoia %s\n", HYP_VERSION);
+#endif
 }
 
 /* ── Globals for signal handling ────────────────────────────────── */
