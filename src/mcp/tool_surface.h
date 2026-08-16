@@ -404,10 +404,10 @@ typedef enum {
      * read is refreshed from that record as a PROJECTION of it. What the row                      \
      * no longer does is DESTROY the text it supersedes, which is what made it                     \
      * a second, mutable, last-writer-wins store of the one thing the record                       \
-     * contract exists to keep — the same shape as two UI keys for one concept,                   \
+     * contract exists to keep — the same shape as two UI keys for one concept,                  \
      * one level down at the data layer. Deprecation stays: no new memory                          \
      * surface may depend on this row, and test_tool_surface asserts it from                       \
-     * both directions — no memory argument arrives here, no ADR vocabulary                       \
+     * both directions — no memory argument arrives here, no ADR vocabulary                      \
      * leaves. src/memory/adr_records.h holds the fold and the attribution                         \
      * argument. The annotation profile stays as it is even though `destructive`                   \
      * reads pessimistically for a writer that destroys nothing: annotation                        \

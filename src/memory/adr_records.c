@@ -41,8 +41,7 @@ static int64_t adr_days_from_civil(int64_t year, int64_t month, int64_t day) {
 /* Inverse of adr_days_from_civil. */
 static void adr_civil_from_days(int64_t days, int64_t *year, int64_t *month, int64_t *day) {
     days += ADR_EPOCH_SHIFT_DAYS;
-    const int64_t era =
-        (days >= 0 ? days : days - (ADR_DAYS_PER_ERA - 1)) / ADR_DAYS_PER_ERA;
+    const int64_t era = (days >= 0 ? days : days - (ADR_DAYS_PER_ERA - 1)) / ADR_DAYS_PER_ERA;
     const int64_t doe = days - era * ADR_DAYS_PER_ERA;
     const int64_t yoe =
         (doe - doe / ADR_DAYS_PER_4YEARS + doe / 36524 - doe / (ADR_DAYS_PER_ERA - 1)) / 365;
@@ -88,8 +87,7 @@ bool hyp_adr_timestamp_to_ms(const char *iso, int64_t *out_ms) {
         !adr_digits(iso + 14, 2, &minute) || !adr_digits(iso + 17, 2, &second)) {
         return false;
     }
-    if (month < 1 || month > 12 || day < 1 || day > 31 || hour > 23 || minute > 59 ||
-        second > 60) {
+    if (month < 1 || month > 12 || day < 1 || day > 31 || hour > 23 || minute > 59 || second > 60) {
         return false;
     }
     /* A leap second lands on the following instant rather than being refused:
@@ -98,9 +96,8 @@ bool hyp_adr_timestamp_to_ms(const char *iso, int64_t *out_ms) {
         second = 59;
     }
     const int64_t days = adr_days_from_civil(year, month, day);
-    const int64_t seconds =
-        days * ADR_SECONDS_PER_DAY + hour * ADR_SECONDS_PER_HOUR + minute * ADR_SECONDS_PER_MINUTE +
-        second;
+    const int64_t seconds = days * ADR_SECONDS_PER_DAY + hour * ADR_SECONDS_PER_HOUR +
+                            minute * ADR_SECONDS_PER_MINUTE + second;
     const int64_t ms = seconds * ADR_MS_PER_SECOND;
     if (ms < HYP_RECORD_MIN_TIMESTAMP_MS || ms > HYP_RECORD_MAX_TIMESTAMP_MS) {
         return false;
@@ -127,11 +124,11 @@ bool hyp_adr_timestamp_from_ms(int64_t ms, char *buf, size_t bufsz) {
     int64_t month = 0;
     int64_t day = 0;
     adr_civil_from_days(days, &year, &month, &day);
-    int written = snprintf(buf, bufsz, "%04lld-%02lld-%02lldT%02lld:%02lld:%02lldZ",
-                          (long long)year, (long long)month, (long long)day,
-                          (long long)(rem / ADR_SECONDS_PER_HOUR),
-                          (long long)((rem % ADR_SECONDS_PER_HOUR) / ADR_SECONDS_PER_MINUTE),
-                          (long long)(rem % ADR_SECONDS_PER_MINUTE));
+    int written =
+        snprintf(buf, bufsz, "%04lld-%02lld-%02lldT%02lld:%02lld:%02lldZ", (long long)year,
+                 (long long)month, (long long)day, (long long)(rem / ADR_SECONDS_PER_HOUR),
+                 (long long)((rem % ADR_SECONDS_PER_HOUR) / ADR_SECONDS_PER_MINUTE),
+                 (long long)(rem % ADR_SECONDS_PER_MINUTE));
     return written == HYP_ADR_TIMESTAMP_LEN - 1;
 }
 
@@ -156,7 +153,7 @@ hyp_record_status_t hyp_adr_record_build(const char *project, const char *conten
     in.author = HYP_ADR_RECORD_AUTHOR;
     in.timestamp_ms = updated_at_ms;
     in.content = content;
-    in.anchor = NULL;  /* about a project, not about a span */
+    in.anchor = NULL; /* about a project, not about a span */
     in.origin = project;
     in.thread = NULL;
     in.parent = NULL;
@@ -167,8 +164,8 @@ hyp_record_status_t hyp_adr_record_build(const char *project, const char *conten
 /* Fold one already-read document. Shared by the single-project and
  * whole-store entry points so there is exactly one place that decides what a
  * folded ADR looks like. */
-static hyp_record_store_status_t adr_fold_document(hyp_record_store_t *records,
-                                                   const char *project, const hyp_adr_t *adr,
+static hyp_record_store_status_t adr_fold_document(hyp_record_store_t *records, const char *project,
+                                                   const hyp_adr_t *adr,
                                                    hyp_adr_fold_result_t *out) {
     out->documents++;
 
