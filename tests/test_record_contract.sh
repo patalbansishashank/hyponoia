@@ -181,8 +181,8 @@ impl_code = strip_comments(impl)
 #
 #   2a  the ASSEMBLY record.c compiles to — a clock CALL, however it was
 #       spelled, reached or hidden behind a macro;
-#   2b  the OUR-HEADER portion of the preprocessed TU — text the compiler
-#       actually saw, after macro expansion, in files this repo owns;
+#   2b  the record.c regions of the preprocessed TU — the text the compiler
+#       actually saw for this file, after macro expansion;
 #   2c  the INCLUDE SET of that TU — a header of ours that pulls <time.h> in,
 #       which is the transitive reach a text scan of record.c cannot observe.
 #
@@ -451,11 +451,22 @@ preimage += enc_str("parent") + enc_str(None)
 preimage += enc_str("redactions") + enc_u32(0)
 expected = hashlib.sha256(preimage).hexdigest()
 
-if expected not in suite:
+# PINNED means asserted, not mentioned. Searched with comments stripped, and
+# required to sit inside an ASSERT_STR_EQ against a derived id: a bare substring
+# search over the file is satisfied by the hash appearing in a comment, which is
+# the same defect the field controls above had — the golden vector's ASSERT could
+# be deleted, the hash left behind in the prose explaining it, and this guard
+# would still report the id pinned.
+suite_code = strip_comments(suite)
+golden_assert = re.search(
+    r"ASSERT_STR_EQ\s*\(\s*id\s*,\s*\"%s\"\s*\)" % re.escape(expected), suite_code)
+if not golden_assert:
     problems.append(
-        "tests/test_record.c does not pin the golden id %s. Either the canonical "
-        "encoding changed — which gives every record ever written a new id — or "
-        "the two descriptions of it have drifted apart." % expected)
+        "tests/test_record.c does not ASSERT the golden id %s (searched with "
+        "comments stripped, for an ASSERT_STR_EQ against a derived id). Either the "
+        "canonical encoding changed — which gives every record ever written a new "
+        "id — or the two descriptions of it have drifted apart, or the assertion "
+        "was removed and only the prose about it remains." % expected)
 
 if problems:
     for p in problems:

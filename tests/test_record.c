@@ -159,9 +159,13 @@ TEST(record_id_golden_vector) {
  * would hold one id and two payloads with no way out but picking one. Picking
  * one is last-writer-wins, which this contract does not have.
  *
- * tests/test_record_contract.sh derives the field list from record.h and fails
- * if any field lacks its marker below, so a tenth field cannot be added without
- * a control that proves the id notices it.
+ * tests/test_record_contract.sh derives the field list from record.h and reads
+ * the controls below OUT OF THIS FUNCTION'S BODY, comments stripped: a field
+ * counts as controlled only when some block here perturbs exactly that field,
+ * derives an id, and asserts the id moved. So a tenth field cannot be added
+ * without a control, and a control cannot be deleted by leaving its comment
+ * behind — which is what the marker-comment version of that check permitted.
+ * The `id-sensitivity:` comments are for a reader; they satisfy nothing.
  */
 TEST(record_id_commits_to_every_field) {
     hyp_record_input_t base = base_input();
