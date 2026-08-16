@@ -352,10 +352,15 @@ static const char *g5_precondition_gap(const g5_room_t *r) {
     if (g5_env_hyp_count() != 1) {
         return "a HYP_* environment variable other than HYP_CACHE_DIR is set";
     }
-    const char *resolved = hyp_workspace_cache_dir();
-    if (!resolved) {
+    /* Copied out immediately: the resolver hands back a pointer into one
+     * thread-local buffer, and everything below that asks the product another
+     * question about paths writes through it again. */
+    const char *live = hyp_workspace_cache_dir();
+    if (!live) {
         return "the product cannot resolve a cache directory";
     }
+    char resolved[HYP_SZ_4K];
+    (void)snprintf(resolved, sizeof(resolved), "%s", live);
     /* HYP_SZ_4K, not HYP_PATH_MAX: hyp_canonical_path is realpath() on POSIX,
      * which writes up to PATH_MAX whatever the caller's buffer says. */
     char want[HYP_SZ_4K];
@@ -387,7 +392,12 @@ static const char *g5_precondition_gap(const g5_room_t *r) {
     if (!hyp_model_ask_path(model, sizeof(model))) {
         return "the model path cannot be resolved";
     }
-    if (!hyp_path_within_root(want, model)) {
+    /* A string prefix, not hyp_path_within_root: containment there resolves
+     * links on BOTH paths and so answers false for a path that does not
+     * exist — which is precisely the state under test. The two strings come
+     * from the same cache resolver, so the prefix is exact rather than a
+     * heuristic. */
+    if (strncmp(model, resolved, strlen(resolved)) != 0) {
         return "the model path points outside the isolated cache";
     }
     if (hyp_model_ask_present()) {
