@@ -1,5 +1,5 @@
 /*
- * ask_prefix.h — The `ask` query-side instruct prefix (NEXT-STEPS.md §2.1).
+ * ask_prefix.h — the `ask` query-side instruct prefix.
  *
  * Documents are encoded bare; queries are encoded behind an instruct
  * prefix. That asymmetry is the mechanism — it is what lets a question
@@ -32,13 +32,13 @@
     "describes.\nQuery: "
 
 /* The name of the contract above, stamped on every index built under it and
- * gated on at read (NEXT-STEPS.md §2.10 step 3).
+ * gated on at read.
  *
  * It exists because the model id does not identify the vector space on its own.
  * The same weights fed differently produce incomparable vectors, and this is
  * measured, not hypothetical: the template above is worth +0.206 MRR@10 on the
- * frozen 60, pplx is DESTROYED by it, and §2.9 found the very same Qwen3
- * weights wanting it on one corpus and losing 2.7-3.3 NDCG@10 to it on another.
+ * frozen 60, another model is DESTROYED by it, and one set of weights has been
+ * measured wanting it on one corpus and losing 2.7-3.3 NDCG@10 to it on another.
  *
  * CHANGE THIS TOKEN WHENEVER THE TEMPLATE OR THE DOCUMENT SIDE CHANGES. That is
  * the whole mechanism: a stale index is then refused by name instead of being
@@ -48,7 +48,7 @@
 #define HYP_ASK_PREFIX_CONTRACT "nano-card-prompts-v1"
 
 /* voyage-4-nano's own two prompt strings, verbatim from its model card, and the
- * contract §2.8 and §2.9 measured it under (NEXT-STEPS.md §2.10 step 1).
+ * contract it was measured under.
  *
  * TWO DIFFERENCES FROM THE QWEN3 CONTRACT ABOVE, and both matter:
  *

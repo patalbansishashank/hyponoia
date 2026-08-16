@@ -7,8 +7,9 @@
  *
  *  - The module SCAFFOLDING (the node:child_process spawn bridge, header note,
  *    plugin surface) comes from the hash-verified hyp-integrations.json via
- *    integration_assets.h. It used to be compiled in as C string literals, but
- *    child-process-spawning script text inside a native binary is unnecessary
+ *    integration_assets.h, rather than as C string literals compiled into the
+ *    binary: child-process-spawning script text inside a native binary is
+ *    unnecessary
  *    mixed-content and attack surface with plausible static-classifier overlap.
  *    It therefore ships as independently inspectable data and is verified
  *    against the binary's embedded SHA-256 before use; this is not a claim of

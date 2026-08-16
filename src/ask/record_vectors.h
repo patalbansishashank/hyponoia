@@ -1,6 +1,6 @@
 /*
  * record_vectors.h — vectors for RECORD content, keyed on the content hash
- * alone (NEXT-STEPS §4, Phase 1, F1).
+ * alone.
  *
  * ═════════════════════════════════════════════════════════════════════════
  * WHY THE KEY IS A HASH OF `content` AND NEVER THE RECORD ID

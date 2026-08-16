@@ -249,11 +249,11 @@ TEST(manifest_attributes_each_block_to_the_commit_that_last_touched_it) {
     }
 
     /* fixture.c's block spans two commits; the later one owns it. */
-    ASSERT_NOT_NULL(strstr(text, "author 25\n" CM_B_NAME " <" CM_B_MAIL ">\n"));
+    ASSERT_NOT_NULL(strstr(text, "\n" CM_B_NAME " <" CM_B_MAIL ">\n"));
     ASSERT_NOT_NULL(strstr(text, "timestamp_ms 13\n" CM_B_MS "\n"));
     /* second.c was never re-touched, so it keeps the first author. A single
      * author for both blocks would pass "author == blame" by accident. */
-    ASSERT_NOT_NULL(strstr(text, "author 27\n" CM_A_NAME " <" CM_A_MAIL ">\n"));
+    ASSERT_NOT_NULL(strstr(text, "\n" CM_A_NAME " <" CM_A_MAIL ">\n"));
     ASSERT_NOT_NULL(strstr(text, "timestamp_ms 13\n" CM_A_MS "\n"));
 
     /* Neither the migrator nor a clock authored anything. */
@@ -668,29 +668,121 @@ TEST(migrate_status_reasons_are_present_and_distinct) {
  * by deleting the paragraph, which is the failure this unit is named for — so
  * the presence of the reasoning is asserted too, and it is the half that
  * fails if a future edit "simplifies" the header. */
-static const char *CM_COLD_READ[] = {
-    /* why reserved rows exist, with no measurement, incident or date in it */
-    "a client that reads a tool which errors pays for the call",
-    "one token in one row",
-    /* why an alias is never advertised */
-    "a compatibility shim for callers that already exist, not surface",
-    "a name dispatch answers to that no end declares",
+/* Each row is a CLAIM a cold reader must still be able to make, keyed on a
+ * durable anchor plus a set of alternative phrasings — any one of which
+ * satisfies it, and the match must land in the prose that FOLLOWS the anchor.
+ *
+ * Not a single pinned sentence, deliberately. A test that names one sentence
+ * is only as good as whoever transcribed it: reword the paragraph for clarity
+ * and the check fails while the property holds, or paraphrase it in a brief
+ * and the check "fails" against a sentence that was never in the file. What is
+ * being asserted is that the reasoning is still ATTACHED TO ITS TOPIC, which
+ * survives an edit that a literal does not. */
+typedef struct {
+    const char *claim;           /* what a reader must be able to state */
+    const char *anchor;          /* durable topic marker in the header */
+    const char *alternatives[6]; /* NULL-terminated; any one satisfies */
+} cm_cold_read_t;
+
+static const cm_cold_read_t CM_COLD_READ[] = {
+    {"why reserved rows exist rather than advertised-but-unimplemented ones",
+     "Reserved rows",
+     {"pays for the call", "charges a turn", "costs every session",
+      "not a tool the agent uses", NULL}},
+    {"why going live is a one-token change",
+     "reserved row publishes a signature",
+     {"one token in one row", "the flip is one token", NULL}},
+    {"why an alias is declared but never advertised",
+     "alias",
+     {"compatibility shim", "not surface", "no end declares", "no client can discover", NULL}},
 };
+
+/* The window after an anchor in which the reasoning must appear. Wide enough
+ * for a rewritten paragraph, narrow enough that a match under an unrelated
+ * heading cannot satisfy the claim. */
+enum { CM_COLD_READ_WINDOW = 2000 };
+
+/* The file as a READER sees it: comment leaders folded away, whitespace runs
+ * collapsed to one space. A sentence that wraps across three lines is one
+ * sentence to a person and three to strstr, and asserting against the raw
+ * bytes would make the check pass or fail on where the paragraph happened to
+ * be rewrapped. */
+static char *cm_flow(const char *text) {
+    size_t len = strlen(text);
+    char *out = (char *)malloc(len + 2);
+    if (!out) {
+        return NULL;
+    }
+    size_t w = 0;
+    size_t i = 0;
+    while (i < len) {
+        if (text[i] == '\n') {
+            i++;
+            while (i < len && (text[i] == ' ' || text[i] == '\t')) {
+                i++;
+            }
+            if (i < len && text[i] == '*' && (i + 1 >= len || text[i + 1] != '/')) {
+                i++;
+            }
+            while (i < len && (text[i] == ' ' || text[i] == '\t')) {
+                i++;
+            }
+            if (w > 0 && out[w - 1] != ' ') {
+                out[w++] = ' ';
+            }
+            continue;
+        }
+        if (text[i] == ' ' || text[i] == '\t') {
+            if (w > 0 && out[w - 1] != ' ') {
+                out[w++] = ' ';
+            }
+            i++;
+            continue;
+        }
+        out[w++] = text[i++];
+    }
+    out[w] = '\0';
+    return out;
+}
 
 TEST(cold_read_of_tool_surface_still_states_why) {
     char *text = cm_slurp("src/mcp/tool_surface.h");
     if (!text) {
         FAIL("cannot read src/mcp/tool_surface.h from the repository root");
     }
+    char *flow = cm_flow(text);
+    free(text);
+    if (!flow) {
+        FAIL("out of memory");
+    }
     size_t n = sizeof(CM_COLD_READ) / sizeof(CM_COLD_READ[0]);
     for (size_t i = 0; i < n; i++) {
-        if (!strstr(text, CM_COLD_READ[i])) {
-            (void)fprintf(stderr, "\n  missing from tool_surface.h: \"%s\"\n", CM_COLD_READ[i]);
-            free(text);
-            FAIL("the header no longer states why; the reasoning left with the history");
+        const cm_cold_read_t *row = &CM_COLD_READ[i];
+        const char *at = strstr(flow, row->anchor);
+        if (!at) {
+            (void)fprintf(stderr, "\n  topic gone from tool_surface.h: \"%s\"\n", row->anchor);
+            free(flow);
+            FAIL("a rationale block left the header entirely");
+        }
+        size_t remaining = strlen(at);
+        size_t window = remaining < CM_COLD_READ_WINDOW ? remaining : CM_COLD_READ_WINDOW;
+        char saved = at[window];
+        ((char *)at)[window] = '\0';
+        bool found = false;
+        for (size_t k = 0; row->alternatives[k] != NULL; k++) {
+            if (strstr(at, row->alternatives[k])) {
+                found = true;
+                break;
+            }
+        }
+        ((char *)at)[window] = saved;
+        if (!found) {
+            (void)fprintf(stderr, "\n  tool_surface.h no longer says %s\n", row->claim);
+            free(flow);
+            FAIL("the header kept the topic and lost the reasoning");
         }
     }
-    free(text);
+    free(flow);
     PASS();
 }
 

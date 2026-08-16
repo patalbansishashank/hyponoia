@@ -10,9 +10,9 @@
  * comment_migrate.h — comment prose into the decision store.
  *
  * The comment lint refuses history-shaped prose: a date, a commit SHA, a plan
- * section, "used to return NULL". Some of the best writing in this tree wears
- * exactly that costume, so the rule cannot be enforced by deletion — the
- * reasoning would be the thing lost, and it is the thing the rule exists to
+ * section, a note about what the code returned before. The best writing in this
+ * tree wears exactly that costume, so the rule cannot be enforced by deletion:
+ * the reasoning would be the thing lost, and it is the thing the rule exists to
  * protect. RELOCATE, DO NOT DELETE: the invariant and its reason are rewritten
  * in the present tense where the code is read, and the provenance — which
  * measurement, which incident, which plan section — becomes a record.
@@ -125,8 +125,7 @@ bool hyp_comment_migrate_origin(const char *blob, const char *path, int start_li
 
 /* The module address for `path` under `opts`. Out is "" on refusal. */
 hyp_comment_migrate_status_t hyp_comment_migrate_anchor(const hyp_comment_migrate_opts_t *opts,
-                                                        const char *path, char *out,
-                                                        size_t out_sz);
+                                                        const char *path, char *out, size_t out_sz);
 
 /* ── The command ────────────────────────────────────────────────────────── */
 

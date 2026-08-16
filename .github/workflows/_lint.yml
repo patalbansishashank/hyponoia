@@ -13,7 +13,14 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
+      # fetch-depth: 0 because the comment lint is forward-only — it diffs the
+      # branch against its target, and a shallow checkout has no merge-base to
+      # diff against. That gate REFUSES when it cannot verify rather than
+      # passing, so a shallow checkout here would turn every pull request red
+      # with "cannot verify" instead of with a finding.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
 
       # Tests must pass or fail — no SKIPs except genuinely platform-specific
       # ones (SKIP_PLATFORM / #ifdef). Fails the lint phase on any plain SKIP().

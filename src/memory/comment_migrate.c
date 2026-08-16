@@ -358,8 +358,7 @@ hyp_comment_migrate_status_t hyp_comment_migrate_run(const char *manifest_path,
         const hyp_record_t *rec = NULL;
         hyp_record_status_t rs = hyp_record_build(&in, &rec);
         if (rs != HYP_RECORD_OK) {
-            cm_say(err, err_sz, "item %zu (%s): %s", item_no, path,
-                   hyp_record_status_reason(rs));
+            cm_say(err, err_sz, "item %zu (%s): %s", item_no, path, hyp_record_status_reason(rs));
             free(r.buf);
             return HYP_COMMENT_MIGRATE_ERR_RECORD;
         }
@@ -434,8 +433,9 @@ int hyp_cmd_migrate_comments(int argc, char **argv) {
         }
         derived = hyp_project_name_from_path(cwd);
         if (!derived) {
-            (void)fprintf(stderr, "migrate-comments: no project slug derives from %s; pass "
-                                  "--repo\n",
+            (void)fprintf(stderr,
+                          "migrate-comments: no project slug derives from %s; pass "
+                          "--repo\n",
                           cwd);
             return 1;
         }
@@ -460,11 +460,11 @@ int hyp_cmd_migrate_comments(int argc, char **argv) {
     free(derived);
 
     if (st != HYP_COMMENT_MIGRATE_OK) {
-        (void)fprintf(stderr, "migrate-comments: %s%s%s\n",
-                      hyp_comment_migrate_status_reason(st), err[0] ? " — " : "", err);
+        (void)fprintf(stderr, "migrate-comments: %s%s%s\n", hyp_comment_migrate_status_reason(st),
+                      err[0] ? " — " : "", err);
         return 1;
     }
-    (void)printf("migrate-comments: %zu block%s — %zu appended, %zu already present\n",
-                 stats.items, stats.items == 1 ? "" : "s", stats.appended, stats.absorbed);
+    (void)printf("migrate-comments: %zu block%s — %zu appended, %zu already present\n", stats.items,
+                 stats.items == 1 ? "" : "s", stats.appended, stats.absorbed);
     return 0;
 }

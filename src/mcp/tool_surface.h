@@ -1,37 +1,24 @@
 /*
  * tool_surface.h — THE table of MCP tools. Every end reads this one.
  *
- * ─── What this replaces, and why the rename ────────────────────────────
+ * ─── One table, or there will be five ──────────────────────────────────
  *
- * This file was `tool_tiers.h`, and its own first line called itself "the one
- * table of which tools the restricted MCP profiles expose". It was one table
- * of TIER MEMBERSHIP, for 12 of the 16 registered tools, and three other
- * hand-written enumerations of the same tools sat beside it:
+ * Every fact about a tool is decided here and nowhere else. The alternative is
+ * not hypothetical arithmetic: a tool's registry entry, its client-visible
+ * annotations, its tier membership and the names dispatch answers to each want
+ * their own hand-written list, and once there are several, a tool present in
+ * one and absent from another is a state nothing can notice. An absence that
+ * somebody intended looks exactly like an absence somebody forgot, so a tool
+ * ends up callable by the server and requested by no generated agent profile,
+ * with every end passing its own tests.
  *
- *   1. TOOLS[]            (mcp.c)  the registry: name, title, description,
- *                                  input schema. 16 rows.
- *   2. TOOL_ANNOTATIONS[] (mcp.c)  the client-visible annotation hints, keyed
- *                                  by name, WITH A SILENT FALLBACK: a tool
- *                                  absent from it still shipped, advertising
- *                                  destructiveHint=true, openWorldHint=true.
- *   3. HYP_TOOL_TIERS     (here)   tier membership. 12 rows.
- *   4. dispatch_tool()    (mcp.c)  the if-chain that routes a call.
+ * So the table is the whole surface. Every row states every fact both ends
+ * need, every column is mandatory, and a fact recorded BESIDE this table is
+ * another list by another name:
  *
- * `index_repository`, `delete_project`, `manage_adr` and `ingest_traces` were
- * in (1) and absent from (3). Their absence was INTENDED and CHECKED BY
- * NOTHING — so a tool added to (1) and forgotten in (3) shipped silently off
- * every tier, callable by the full server and requested by no generated agent
- * profile. That is `ask` exactly, one level above where `ask` was fixed: the
- * fix closed the hole between two of the four lists and left the other two
- * open. The fourth site had not been counted.
- *
- * So the table is now the whole surface. Every row states every fact both ends
- * need, every column is mandatory, and nothing about a tool is decided
- * anywhere else:
- *
- *   - mcp.c expands it for the tier allowlist, for the annotations (the
- *     fallback is DELETED — a row cannot omit an annotation profile, it is a
- *     column), for what tools/list advertises, and for what dispatch accepts.
+ *   - mcp.c expands it for the tier allowlist, for the annotations (there is
+ *     no fallback — a row cannot omit an annotation profile, it is a column),
+ *     for what tools/list advertises, and for what dispatch accepts.
  *   - cli/agent_profiles.c expands it for the tool list every generated agent
  *     definition requests.
  *   - A _Static_assert pairs the row count against sizeof(TOOLS)/sizeof(*TOOLS),
@@ -40,26 +27,27 @@
  *     the tools/list a client reads and the profile file an agent loads, never
  *     either end's own static array.
  *
- * The rename is part of the fix. A header called `tool_tiers.h` is a header
- * about tiers; a table about tiers is a table the next tool fact gets added
- * BESIDE rather than INTO. That is how there came to be four.
+ * The file's name is part of that. A header named for tiers is a header about
+ * tiers, and a table about tiers is a table the next fact about a tool gets
+ * added beside rather than into.
+ *
+ * The incidents and the measurements behind the rules below are records in the
+ * decision store, anchored to this module. This header keeps what a reader
+ * needs to use the table correctly; asking the store returns the receipts.
  *
  * ─── Columns ───────────────────────────────────────────────────────────
  *
  *   X(name, alias, analysis, scout, generation, status, output_schema, annotations)
  *
  *   name           wire name, exactly as it appears in tools/list.
- *   alias          NULL, or a second name dispatch also accepts. FOUND WHILE
- *                  WRITING THIS TABLE, and it was the fifth undeclared list:
- *                  `trace_call_path` has been accepted by dispatch_tool for its
- *                  whole life, appears in TOOLS[] nowhere, in the tier table
- *                  nowhere, in tools/list nowhere — and is the name
- *                  src/cli/cli.c:5401 tells users to prefer. A tool the server
- *                  accepts that no end declares is the `ask` defect inverted,
- *                  and it was invisible for the same reason: nothing enumerated
- *                  the names dispatch answers to. An alias is never advertised
- *                  and never on a restricted profile — it is a compatibility
- *                  shim for callers that already exist, not surface — but it is
+ *   alias          NULL, or a second name dispatch also accepts. A name
+ *                  dispatch answers to that no end declares is a tool the
+ *                  server accepts and no client can discover — the same hole as
+ *                  a tool nothing dispatches, seen from the other side, and
+ *                  invisible for the same reason: nothing enumerates the names
+ *                  dispatch answers to. An alias is never advertised and never
+ *                  on a restricted profile — it is a compatibility shim for
+ *                  callers that already exist, not surface — but it is
  *                  DECLARED, and a test calls every one of them.
  *   analysis       1 if the `--tool-profile analysis` surface admits it.
  *   scout          1 if the `--tool-profile scout` surface admits it.
@@ -90,16 +78,18 @@
  *
  * ─── Reserved rows, and why not "advertised but not implemented" ───────
  *
- * A reserved row publishes a signature without shipping a tool. That is the
- * point of a Phase 0 contract: the row is COMPLETE — tier, generation,
+ * A reserved row publishes a signature without shipping a tool. That is what a
+ * published contract buys: the row is COMPLETE — tier, generation,
  * annotations, output promise — before it is reachable, so going live is one
  * token in one row and there is nothing left to remember.
  *
- * Advertising an unimplemented tool was rejected: a client that reads a tool
- * which errors is §3's blank-tool defect deliberately reintroduced, and §3.1
- * measured that a tool in the list is not a tool the agent uses even when it
- * WORKS (`ask`: 4/60 runs listed-only, 60/60 once the prompt taught it). A
- * tool that cannot answer would still cost every session the call.
+ * Advertising an unimplemented tool is rejected. A client that reads a tool
+ * which errors pays for the call and gets nothing back, on every session, for
+ * as long as the row is advertised. And the reverse of that trade is not
+ * available either: a tool in the list is not a tool the agent uses even when
+ * it works, because being listed is not being taught — so the cost of
+ * advertising early is charged immediately and the benefit arrives only when
+ * the prompt says when to reach for it.
  *
  * Two independent gates gulf a reserved row from a rendered one, and BOTH must
  * be crossed to ship it: `status` (here) and `generation` (below). Crossing one
@@ -147,7 +137,7 @@
  *    server performs it the prose is also wrong — it tells the agent to send
  *    an argument it should omit. The replacement says the opposite: leave
  *    `project` out, and read project/project_source in the answer.
- * 4  RESERVED, not yet shipped: the §4 workspace and memory surfaces
+ * 4  RESERVED, not yet shipped: the workspace and memory surfaces
  *    (`search_memory`, `workspace_status`). Tagging their rows 4 while
  *    HYP_PROFILE_GENERATION stays 3 is the second gate described above — the
  *    rows exist, carry their tiers, and render nowhere. Whoever flips their
@@ -239,17 +229,18 @@ typedef enum {
  *     server to invent a value for the case where the honest answer is that
  *     it does not know.
  *
- * ─── F3, the extension this schema is shaped for ──────────────────────
+ * ─── Two freshnesses, and the shape that carries them ─────────────────
  *
- * §4 F3 asks index_status to say "your code is current, your decisions are 40
- * records behind." An agent that believes it has current decisions while 40 are
- * missing will confidently explain why `foo` looked the way it did last week.
+ * index_status must be able to say "your code is current, your decisions are
+ * missing 40 records." An agent that believes it has current decisions while 40
+ * are missing will confidently explain why `foo` looked the way it did last
+ * week.
  * The two freshnesses are genuinely independent axes and not two views of one
  * store — Multica ships pgvector in its image with the extension never enabled
  * and zero vector columns, so it holds sessions it cannot search, and its record
  * count moves for reasons the code index never sees.
  *
- * SET DIFFERENCE, NOT LAG — and this corrects §4's own wording. "40 behind"
+ * SET DIFFERENCE, NOT LAG. "40 behind"
  * presumes a sequence, and the record contract has none: the store is an
  * id-keyed SET whose order is deliberately non-semantic, because any
  * machine-local ordinal breaks the union that makes sync free. There is no
@@ -258,8 +249,8 @@ typedef enum {
  * count. So the field is `missing`, and it means "records I do not have" — never
  * `behind`, which would be a number nothing can produce.
  *
- * F3 SHIPPED the two SIBLING objects. They are never merged into one status,
- * and neither is derived from the other:
+ * The two objects are SIBLINGS. They are never merged into one status, and
+ * neither is derived from the other:
  *
  *   "code":   { "status": "ready" | "empty" | "stale" | "unknown",
  *               "indexed_at": <iso8601>,       // absent if the store has none
@@ -338,24 +329,26 @@ typedef enum {
  *
  * X(kind, authorable)
  *
- * C2 owns the append-only record shape; this is the tool surface's view of it,
- * and when C2's header lands this macro MOVES THERE VERBATIM and this file
- * includes it. It lives here now so that `record_memory`'s accepted set and
- * its refusal message come from one place rather than from a literal in a JSON
- * schema string and a second literal in a handler.
+ * The record contract owns the append-only record shape; this is the tool
+ * surface's view of it. It lives here so that `record_memory`'s accepted set
+ * and its refusal message come from one place rather than from a literal in a
+ * JSON schema string and a second literal in a handler. It belongs beside the
+ * record contract, and moves there verbatim when something on this surface
+ * needs to include that header anyway.
  *
  * `transcript` is deliberately NOT authorable. Transcripts enter only through
- * a feed (§4 D1/D3/D5) and D4 audits ingest completeness against the feed's
- * own count(*) — that audit is the ONLY thing in the plan that can prove it
- * has everything, and an MCP writer able to forge a transcript message would
- * make its count meaningless. Refusing it is fail-closed: the tool names the
- * kinds it accepts rather than quietly writing the record under another label.
+ * a feed, and the ingest audit proves completeness by comparing what was stored
+ * against the feed's own count(*) — the only check in this system that can
+ * prove it has everything, and an MCP writer able to forge a transcript message
+ * would make its count meaningless. Refusing it is fail-closed: the tool names
+ * the kinds it accepts rather than quietly writing the record under another
+ * label.
  *
  * The input schema deliberately does NOT restate this list as a JSON enum. A
- * schema enum would be a second copy of the set, and the two would drift
- * exactly the way the four tool lists did. The schema types `kind` as a string
- * and says the rule; the refusal error names the accepted kinds, generated
- * from this macro.
+ * schema enum would be a second copy of the set, and two copies of a set drift
+ * — which is the argument for one table, applied one level down. The schema
+ * types `kind` as a string and says the rule; the refusal error names the
+ * accepted kinds, generated from this macro.
  */
 #define HYP_MEMORY_KINDS(X) \
     X("decision", true)     \
@@ -391,31 +384,31 @@ typedef enum {
     X("check_index_coverage", NULL, 1, 1, 0U, HYP_TOOL_LIVE, NULL, HYP_TOOL_ANN_STORE_READ)        \
                                                                                                    \
     /* ── Rows 12-15: live, on NO tier. Stated with two zeroes, not by being                   \
-     * absent. Every one of these four used to have no row at all, and their                       \
-     * absence was intended by someone and checked by nobody. */                                   \
+     * absent: an absent row says the same thing by accident, and nothing can                      \
+     * check an accident. */                                                                       \
     X("index_repository", NULL, 0, 0, 0U, HYP_TOOL_LIVE, NULL, HYP_TOOL_ANN_INDEX_WRITE)           \
     /* keeps `project` REQUIRED, alone among the 14 tools that take it: a                          \
      * destructive tool does not infer its target. */                                              \
     X("delete_project", NULL, 0, 0, 0U, HYP_TOOL_LIVE, NULL, HYP_TOOL_ANN_DESTRUCTIVE)             \
-    /* DEPRECATED by §4's decision store, and live and unchanged on the wire                      \
-     * until Track C's C7u migrates it. `mode:"update"` REPLACES THE ENTIRE                        \
-     * DOCUMENT — mutable, last-writer-wins, which is precisely what §4's C2                    \
-     * forbids ("No mutation of records. Append-only is what makes sync a                          \
-     * union"). Shipping an append-only decision store beside a mutable one is                     \
-     * the CBMUIPK shape at the data layer: two stores of the same thing, each                     \
-     * correct on its own terms. C7u's shape: every existing ADR folds into the                    \
-     * append-only store as kind=decision records with `origin` = the ADR's                        \
-     * project id and a NULL anchor — they are decisions someone made, not                       \
-     * junk to drop — and manage_adr(mode=update) then becomes a thin writer                     \
-     * over record_memory until it is retired. No §4 surface may depend on this                   \
-     * row; test_tool_surface asserts that. */                                                     \
+    /* DEPRECATED by the append-only decision store, and live and unchanged on                     \
+     * the wire until it is migrated. `mode:"update"` REPLACES THE ENTIRE                          \
+     * DOCUMENT — mutable, last-writer-wins, which is exactly what the record                    \
+     * contract forbids: no mutation of records, because append-only is what                       \
+     * makes sync a union. An append-only decision store beside a mutable one is                   \
+     * two stores of the same thing, each correct on its own terms and able to                     \
+     * disagree. The migration folds every existing ADR into the append-only                       \
+     * store as kind=decision records with `origin` = the ADR's project id and a                   \
+     * NULL anchor — they are decisions someone made, not junk to drop — and                   \
+     * manage_adr(mode=update) then becomes a thin writer over record_memory                       \
+     * until it is retired. No new surface may depend on this row;                                 \
+     * test_tool_surface asserts that. */                                                          \
     X("manage_adr", NULL, 0, 0, 0U, HYP_TOOL_DEPRECATED, NULL, HYP_TOOL_ANN_DOC_REPLACE)           \
     X("ingest_traces", NULL, 0, 0, 0U, HYP_TOOL_LIVE, NULL, HYP_TOOL_ANN_APPEND)                   \
                                                                                                    \
-    /* ── Rows 16-19: RESERVED. §4 Phase 1 signatures, published and frozen,                  \
-     * advertised nowhere and callable nowhere until their status flips. Each                      \
-     * row is already complete, so the flip is one token. See the prose block                      \
-     * below each name in this header for the argument and output contract. */                     \
+    /* ── Rows 16-19: RESERVED. Signatures published and frozen, advertised                    \
+     * nowhere and callable nowhere until their status flips. Each row is                          \
+     * already complete, so the flip is one token. See the prose block below                       \
+     * each name in this header for the argument and output contract. */                           \
     X("record_memory", NULL, 0, 0, HYP_PROFILE_GENERATION_WORKSPACE_MEMORY, HYP_TOOL_RESERVED,     \
       NULL, HYP_TOOL_ANN_APPEND)                                                                   \
     X("search_memory", NULL, 1, 0, HYP_PROFILE_GENERATION_WORKSPACE_MEMORY, HYP_TOOL_RESERVED,     \
@@ -431,7 +424,7 @@ typedef enum {
 #define HYP_TOOL_SURFACE_ROW_COUNT (0 HYP_TOOL_SURFACE(HYP_TOOL_SURFACE_ROW_COUNT_ONE))
 
 /* ══════════════════════════════════════════════════════════════════════
- *  THE RESERVED SIGNATURES — §4 Phase 1
+ *  THE RESERVED SIGNATURES
  *
  *  Argument shapes live in TOOLS[] beside every other input schema, because a
  *  reserved tool is a tool whose signature is published, not a tool kept in a
@@ -446,16 +439,17 @@ typedef enum {
  *      tool cannot know, it says so; it does not pick.
  *  (2) ABSENT means "look elsewhere". EMPTY means "there is nothing". Only one
  *      is ever true, and no output below is permitted to blur them.
- *  (3) NEVER A PLAUSIBLE NEIGHBOUR. §4 C4u: a false negative makes a decision
+ *  (3) NEVER A PLAUSIBLE NEIGHBOUR. A false negative makes a decision
  *      unfindable; a false positive attaches last month's reasoning to code
  *      that never had it, which is worse.
  *
- * ── record_memory ─────────────────────────────────── §4 C1u [C2] ────
+ * ── record_memory ────────────────────────────────────────────────────
  *
  *  The ONE writer. Kind-parameterised rather than one tool per record kind,
- *  because C2 makes decisions, verdicts, summaries, signals and transcript
- *  messages one record shape, and five writers would be five places to forget
- *  the sixth. Named `record_*` and not `manage_*` so that mutation is not
+ *  because the record contract makes decisions, verdicts, summaries, signals
+ *  and transcript messages one record shape, and five writers would be five
+ *  places to forget the sixth. Named `record_*` and not `manage_*` so mutation
+ *  is not
  *  representable in the signature: there is no mode that edits, because
  *  append-only is what makes sync a union.
  *
@@ -463,8 +457,8 @@ typedef enum {
  *                and the answer reports project_source. It is optional even
  *                though the write is durable, and that differs deliberately
  *                from delete_project: an append is recoverable and a delete is
- *                not, and §3.2 measured `required` costing a list_projects
- *                round trip in 120 of 120 runs.
+ *                not, and a required `project` costs a list_projects round trip
+ *                on every call — measured at 120 of 120 runs.
  *    kind        REQUIRED. One of the authorable kinds in HYP_MEMORY_KINDS.
  *                `transcript` is refused, fail-closed, naming the accepted
  *                set — see that macro for why a forgeable transcript writer
@@ -487,8 +481,8 @@ typedef enum {
  *                resolution and no merge UI.
  *    tags        OPTIONAL array of strings.
  *
- *  There is NO `author` argument and there must never be one. C2 derives a
- *  record id from content + author + timestamp; an author a caller can state
+ *  There is NO `author` argument and there must never be one. A record id is
+ *  derived from content + author + timestamp; an author a caller can state
  *  is an author a caller can forge, and provenance that can be forged is not
  *  provenance.
  *
@@ -496,10 +490,10 @@ typedef enum {
  *  written_at }. `anchor_status` is "attached" or "unanchored" — never
  *  "orphaned", because rule (3) forbids creating one.
  *
- * ── search_memory ─────────────────────────────────── §4 C2u [C2] ────
+ * ── search_memory ────────────────────────────────────────────────────
  *
- *  The ONE reader, over every kind. This is the surface §4 G2 tests: ask "why
- *  does foo do X?" and check that what actually happened comes back.
+ *  The ONE reader, over every kind. This is the surface retrieval is judged on:
+ *  ask "why does foo do X?" and check that what actually happened comes back.
  *
  *    project     OPTIONAL, resolved as everywhere else.
  *    kind        OPTIONAL. ABSENT means every kind — it does not mean none,
@@ -510,8 +504,8 @@ typedef enum {
  *                not a silently ignored argument, because an ignored filter
  *                returns a superset that reads exactly like a match.
  *    status      OPTIONAL: "attached" (default) | "orphaned" | "any".
- *                "orphaned" is how §4 C4u's orphans become VISIBLE. An orphan
- *                that no query can list is a silent drop by another name.
+ *                "orphaned" is how an orphaned anchor becomes VISIBLE. An
+ *                orphan no query can list is a silent drop by another name.
  *    since/until OPTIONAL timestamps.
  *    limit/offset, format  as elsewhere.
  *
@@ -527,18 +521,18 @@ typedef enum {
  *    anchor_status "ambiguous" + candidates[] + records ABSENT -> fail closed.
  *                                 No nearest neighbour is ever returned.
  *
- *  Truncation follows §3.3's disclosure convention: a truncated answer states
- *  what was withheld and how to get it, and says NOTHING when nothing was held
- *  back — `truncated`/`withheld`/`how` are absent, not false and zero.
+ *  Truncation follows this surface's disclosure convention: a truncated answer
+ *  states what was withheld and how to get it, and says NOTHING when nothing
+ *  was held back — `truncated`/`withheld`/`how` are absent, not false and zero.
  *
- * ── workspace_status ──────────────────── §4 A1/A6/A7 [C1] ───────────
+ * ── workspace_status ─────────────────────────────────────────────────
  *
  *  The workspace analogue of index_status, and NOT a second addressing scheme:
- *  §4 forbids "a workspace mode beside a repo mode", so this is a status view
+ *  there is no workspace mode beside a repo mode, so this is a status view
  *  over the one scheme, and there is deliberately no `list_workspaces`. The
  *  cheap listing stays in list_projects (which gains `workspace`, and
- *  `role`/`role_source` per project); A6's resolver precedence and A7's audit
- *  belong in a status surface, not stuffed into a listing.
+ *  `role`/`role_source` per project); the resolver's precedence and the role
+ *  audit belong in a status surface, not stuffed into a listing.
  *
  *    workspace   OPTIONAL, resolved by the same ladder as project: supplied ->
  *                the workspace of the working directory or nearest indexed
@@ -550,28 +544,29 @@ typedef enum {
  *  role, role_source, indexed } ], precedence: [...], contradictions: [...] }
  *
  *    role_source names WHICH derivation produced the role — the vendored
- *    checksum registry (A2), a gitignored path or DO NOT EDIT header (A3), the
- *    git remote (A4), the TOML, or the default. A role with no stated source
- *    is a guess wearing a fact's clothes. Unknown role defaults to
- *    `reference`: wrong-but-read-only is recoverable, wrong-but-editable means
- *    an agent rewrites a dependency.
+ *    checksum registry, a gitignored path or DO NOT EDIT header, the git
+ *    remote, the TOML, or the default. A role with no stated source is a guess
+ *    wearing a fact's clothes. Unknown role defaults to `reference`:
+ *    wrong-but-read-only is recoverable, wrong-but-editable means an agent
+ *    rewrites a dependency.
  *
- *    `precedence` is emitted BY THE RESOLVER, not written as prose in a doc,
- *    because §4 A6 asks for one resolver with a stated precedence and a stated
- *    precedence nothing computes is a comment.
+ *    `precedence` is emitted BY THE RESOLVER, not written as prose in a doc:
+ *    there is one resolver with a stated precedence, and a stated precedence
+ *    nothing computes is a comment.
  *
- *    contradictions ABSENT -> the A7 audit did not run.
+ *    contradictions ABSENT -> the role audit did not run.
  *    contradictions []     -> it ran and found none.
  *    Blurring those two turns "we did not look" into "there is nothing", which
- *    is the single most expensive substitution in this plan.
+ *    is the most expensive substitution on this surface.
  *
- * ── sync_memory ──────────────────────── §4 C6u / D3 / D4 ────────────
+ * ── sync_memory ──────────────────────────────────────────────────────
  *
- *  PROPOSED, and the one row here I would cut first: §4 asks for sync as a
- *  union of append-only records and for a feed interface, and neither says the
- *  trigger must be an MCP tool rather than `hyp sync` on the CLI. It is in the
- *  table because F3 reports a memory lag and reporting a lag with no reachable
- *  way to act on it is a dead end; delete the row if the CLI is the answer.
+ *  PROPOSED, and the row to cut first. Sync is a union of append-only records
+ *  behind a feed interface, and nothing about that requires the trigger to be
+ *  an MCP tool rather than `hyp sync` on the CLI. It is in the table because
+ *  index_status reports missing records, and reporting a shortfall with no
+ *  reachable way to act on it is a dead end; delete the row if the CLI is the
+ *  answer.
  *
  *    direction   REQUIRED: "pull" | "push" | "both". Required for the same
  *                reason delete_project keeps `project` required: an operation
@@ -580,12 +575,12 @@ typedef enum {
  *    dry_run     OPTIONAL, default false.
  *
  *  Returns: { feed, direction, pulled, pushed, local_total, upstream_total,
- *  complete } — D4's completeness audit, indexed count against the feed's own
- *  count(*), which is why §4 chose a pull: it is the only feed that can prove
- *  it has everything. `upstream_total` and `complete` are ABSENT when the
- *  feed could not be counted, by the same rule that governs memory.missing.
- *  A push that silently drops a session is invisible, and every count in this
- *  plan is a floor.
+ *  complete } — the completeness audit, stored count against the feed's own
+ *  count(*), which is why ingest pulls rather than accepting a push: a pull is
+ *  the only arrangement that can prove it has everything. `upstream_total` and
+ *  `complete` are ABSENT when the feed could not be counted, by the same rule
+ *  that governs memory.missing. A push that silently drops a session is
+ *  invisible, and every count here is a floor.
  *
  *  This is the only open-world row on the surface (HYP_TOOL_ANN_FEED_SYNC).
  *  Everything else Hyponoia advertises is local, and it should stay that way:
