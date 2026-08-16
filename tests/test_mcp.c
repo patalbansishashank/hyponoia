@@ -4364,7 +4364,7 @@ TEST(mcp_project_argument_is_optional_on_every_tool_but_delete_step2) {
 
     /* 16 tools take `project`; exactly one still demands it. */
     ASSERT_EQ(with_project, 16);
-    ASSERT_EQ(optional, 13);
+    ASSERT_EQ(optional, 15);
     ASSERT_EQ(required, 1);
     ASSERT_TRUE(strcmp(required_names, "delete_project") == 0);
     PASS();
