@@ -46,6 +46,7 @@ enum {
 #define SLEN(s) (sizeof(s) - 1)
 #include "mcp/mcp.h"
 #include "mcp/mcp_internal.h"
+#include "mcp/tool_tiers.h"
 #include "store/store.h"
 #include <sqlite3.h>
 #include "cypher/cypher.h"
@@ -59,6 +60,7 @@ enum {
 #include "cli/cli.h"
 #include "ask/ask_embed.h" /* hyp_ask_read_span */
 #include "ask/ask_llama.h"
+#include "ask/ask_view.h"     /* the 3-D view's overlay (NEXT-STEPS §3.1 step 5) */
 #include "ask/ask_provider.h" /* the escalation lane's encoder */
 #include "cli/model_fetch.h"
 #include "watcher/watcher.h"
@@ -312,35 +314,40 @@ char *hyp_mcp_text_result(const char *text, bool is_error) {
         }
     }
     if (!has_structured_content) {
-        /* Every advertised MCP tool declares an object outputSchema, so a
-         * conforming structuredContent object is mandatory even for compact
-         * TOON/plain-text and error results. What is NOT mandatory is putting
-         * the whole payload in it a second time.
+        /* A non-JSON payload gets NO structuredContent key at all.
          *
-         * It used to. For any result that is not a JSON object — which is every
-         * TOON answer, i.e. the large ones — structuredContent was
-         * {"text": <the entire payload>} sitting beside an identical
-         * content[0].text. Measured at 2.05x the payload on a 20k-node
-         * query_graph, so half of every reply was redundant bytes: half the
-         * usable transport budget, and double the tokens billed to every LLM
-         * caller (#1375).
+         * It used to be repeated verbatim as {"text": <the entire payload>}
+         * beside an identical content[0].text — 2.05x the payload on a 20k-node
+         * query_graph, i.e. half the transport budget and double the tokens for
+         * every LLM caller (#1375). Dropping that was right: structuredContent
+         * carries STRUCTURE, and a string rewrapped in a one-key object has
+         * none.
          *
-         * Nothing is lost by dropping it. structuredContent exists to carry
-         * STRUCTURE, and a string re-wrapped in a one-key object has none —
-         * a client parsing structuredContent.text learns exactly what
-         * content[0].text already told it. The empty object still satisfies
-         * outputSchema ({"type":"object","additionalProperties":true}), and the
-         * JSON branch above is untouched: when a tool really does return an
-         * object, callers still get it parsed.
+         * The mistake was replacing it with an EMPTY OBJECT. Paired with the
+         * blanket outputSchema this server used to advertise on every tool,
+         * that told clients "the result of this call is an object" and then
+         * handed them {}. A client that prefers structuredContent when a tool
+         * declares an output schema — which is exactly what the schema is for,
+         * and what Claude Code does — rendered every TOON answer as an empty
+         * result while the real payload sat unread in content[0].text.
+         * query_graph and ask, the two tools whose whole job is returning rows,
+         * both came back blank over MCP while the identical call through
+         * `hyponoia cli` returned everything.
+         *
+         * So: no schema is declared (see mcp_add_tool_def) and no empty object
+         * is emitted. Absent means "read content", which is the protocol's own
+         * default and cannot be misread. The JSON branch above is untouched:
+         * when a tool really does return an object it is still parsed into
+         * structuredContent, and clients still get it.
          *
          * Errors keep their payload. They are bounded and small, the duplication
          * costs nothing measurable, and structuredContent.error is the only
          * machine-readable form of a failure a client has. */
-        yyjson_mut_val *structured = yyjson_mut_obj(doc);
         if (is_error) {
+            yyjson_mut_val *structured = yyjson_mut_obj(doc);
             yyjson_mut_obj_add_str(doc, structured, "error", text ? text : "");
+            yyjson_mut_obj_add_val(doc, root, "structuredContent", structured);
         }
-        yyjson_mut_obj_add_val(doc, root, "structuredContent", structured);
     }
     yyjson_mut_obj_add_bool(doc, root, "isError", is_error);
 
@@ -499,7 +506,8 @@ static const tool_def_t TOOLS[] = {
      "and NO rows. That is not 'nothing matched' — ask never conflates the two, because "
      "'your codebase has no such code' is a claim about your code and 'the index is not "
      "built' is a claim about this tool. "
-     "RESPONSE: available, then the disclosures (model, language, truncation, population), "
+     "RESPONSE: available, then the disclosures (lane, query_encoder, index_encoder, model, "
+     "language, truncation, population), "
      "then rows carrying qn/label/file/lines/score — the SAME span shape search_graph "
      "returns, so an agent that can read one can read the other. A 'cut' column appears "
      "only when the index reports truncated declarations. format=\"json\" returns cols plus "
@@ -524,15 +532,23 @@ static const tool_def_t TOOLS[] = {
      "\"format\":{\"type\":\"string\",\"enum\":[\"tree\",\"json\"],\"default\":\"tree\","
      "\"description\":\"Response encoding. tree (default): compact text rows. json: cols + "
      "column-ordered row arrays (the SAME model, structured).\"},"
-     "\"escalate\":{\"type\":\"boolean\",\"default\":false,\"description\":\"Answer "
-     "from the OPTIONAL escalation index — a stronger hosted model — instead of the local "
-     "one. Off by default and NEVER chosen for you: the engine cannot tell whether you need "
-     "to be right, and every score threshold this project has set has died on a corpus "
-     "change. It costs tokens against a configured account and requires that index to have "
-     "been built (`hyponoia embed --escalation`). If it is unconfigured, unbuilt or built by "
-     "a different model, this RETURNS AN ERROR SAYING SO and does not quietly answer from "
-     "the local index — you would otherwise get the cheap answer while believing you had "
-     "the expensive one. The two indexes are separate and go stale independently.\"}},"
+     "\"escalate\":{\"type\":\"boolean\",\"default\":false,\"description\":\"Bring a "
+     "stronger hosted embedding model into THIS question. Off by default and NEVER chosen "
+     "for you: the engine cannot tell whether you need to be right, and every score "
+     "threshold this project has set has died on a corpus change. What it sends is set by "
+     "`ask.escalation.mode`: `query` (the DEFAULT) sends ONLY the ~30-token question, "
+     "encodes it with the hosted model and scores it against the LOCAL index already on "
+     "this machine — no second index, the code never leaves the machine, and it is refused "
+     "unless the local index and the hosted model share a MEASURED embedding space "
+     "(voyage-4 family only, until another is measured); `index` queries a second, "
+     "API-built index of the whole corpus (`hyponoia embed --escalation`) with the model "
+     "that built it. Both cost tokens against a configured account. If the lane is "
+     "unconfigured, its key is unset, its index is unbuilt or built by a different model, "
+     "or the two spaces are not provably the same, this RETURNS AN ERROR SAYING SO and does "
+     "not quietly answer from the local encoder — you would otherwise get the cheap answer "
+     "while believing you had the expensive one. Every answer names the lane that answered "
+     "(`lane`: local | escalation-query | escalation-index) and both encoders "
+     "(`query_encoder`, `index_encoder`).\"}},"
      "\"required\":[\"question\",\"project\"]}"},
 
     {"query_graph", "Query graph",
@@ -763,7 +779,14 @@ static const tool_def_t TOOLS[] = {
 
 static const int TOOL_COUNT = sizeof(TOOLS) / sizeof(TOOLS[0]);
 
-static const char MCP_TOOL_OUTPUT_SCHEMA[] = "{\"type\":\"object\",\"additionalProperties\":true}";
+/* No outputSchema is advertised. It used to be
+ * {"type":"object","additionalProperties":true} on every tool — a schema that
+ * constrains nothing, so it told a client precisely one thing: "structuredContent
+ * is the result of this call". Most tools answer in TOON, which is not a JSON
+ * object, so structuredContent was empty and clients that honoured the
+ * declaration read an empty result. A schema that conveys no shape is not free;
+ * it is a promise, and this one could not be kept. Declare one again only
+ * per-tool, and only for tools that genuinely return a JSON object. */
 
 typedef struct {
     const char *name;
@@ -826,7 +849,6 @@ static void mcp_add_tool_def(yyjson_mut_doc *doc, yyjson_mut_val *tools, int i) 
     yyjson_mut_obj_add_str(doc, tool, "description", TOOLS[i].description);
 
     mcp_add_json_schema(doc, tool, "inputSchema", TOOLS[i].input_schema);
-    mcp_add_json_schema(doc, tool, "outputSchema", MCP_TOOL_OUTPUT_SCHEMA);
 
     const tool_annotation_def_t *def = mcp_tool_annotations(TOOLS[i].name);
     yyjson_mut_val *annotations = yyjson_mut_obj(doc);
@@ -839,44 +861,42 @@ static void mcp_add_tool_def(yyjson_mut_doc *doc, yyjson_mut_val *tools, int i) 
     yyjson_mut_arr_add_val(tools, tool);
 }
 
+/* The restricted profiles' allowlists come from mcp/tool_tiers.h — the same
+ * table agent_profiles.c renders into every generated agent definition. The
+ * two ends used to keep separate lists; see that header for what it cost. */
+typedef struct {
+    const char *name;
+    bool analysis;
+    bool scout;
+} tool_tier_row_t;
+
+static const tool_tier_row_t TOOL_TIERS[] = {
+#define HYP_TOOL_TIER_ROW(name, analysis, scout, generation) {name, (analysis) != 0, (scout) != 0},
+    HYP_TOOL_TIERS(HYP_TOOL_TIER_ROW)
+#undef HYP_TOOL_TIER_ROW
+};
+
 static bool mcp_tool_allowed(hyp_mcp_tool_profile_t profile, const char *name) {
-    /* `ask` joins analysis but NOT scout. Scout's promise is a small surface
-     * whose every tool answers; a lane that can legitimately report
-     * unavailable belongs on the surface where an agent is already expected
-     * to reason about index state. */
-    static const char *const analysis_tools[] = {
-        "search_graph",         "ask",
-        "query_graph",          "trace_path",
-        "get_code_snippet",     "get_graph_schema",
-        "get_architecture",     "search_code",
-        "list_projects",        "index_status",
-        "check_index_coverage", "detect_changes",
-    };
-    static const char *const scout_tools[] = {
-        "search_graph",  "trace_path",   "get_code_snippet",     "get_architecture",
-        "list_projects", "index_status", "check_index_coverage",
-    };
     if (!name) {
         return false;
     }
     if (profile == HYP_MCP_TOOL_PROFILE_ALL) {
         return true;
     }
-    const char *const *allowed = NULL;
-    size_t allowed_count = 0U;
-    if (profile == HYP_MCP_TOOL_PROFILE_ANALYSIS) {
-        allowed = analysis_tools;
-        allowed_count = sizeof(analysis_tools) / sizeof(analysis_tools[0]);
-    } else if (profile == HYP_MCP_TOOL_PROFILE_SCOUT) {
-        allowed = scout_tools;
-        allowed_count = sizeof(scout_tools) / sizeof(scout_tools[0]);
+    if (profile != HYP_MCP_TOOL_PROFILE_ANALYSIS && profile != HYP_MCP_TOOL_PROFILE_SCOUT) {
+        return false;
     }
-    for (size_t i = 0U; i < allowed_count; i++) {
-        if (strcmp(name, allowed[i]) == 0) {
-            return true;
+    for (size_t i = 0U; i < sizeof(TOOL_TIERS) / sizeof(TOOL_TIERS[0]); i++) {
+        if (strcmp(name, TOOL_TIERS[i].name) == 0) {
+            return profile == HYP_MCP_TOOL_PROFILE_ANALYSIS ? TOOL_TIERS[i].analysis
+                                                            : TOOL_TIERS[i].scout;
         }
     }
     return false;
+}
+
+bool hyp_mcp_tool_profile_allows(hyp_mcp_tool_profile_t profile, const char *name) {
+    return mcp_tool_allowed(profile, name);
 }
 
 static const char *mcp_tool_profile_name(hyp_mcp_tool_profile_t profile) {
@@ -1323,7 +1343,10 @@ static const char MCP_ANALYSIS_SERVER_INSTRUCTIONS[] =
     "This is the analysis tool profile; graph and index mutation tools are unavailable. Use "
     "list_projects and index_status to select a current graph project, then use search_graph, "
     "trace_path, get_code_snippet, query_graph, get_architecture, and search_code for read-only "
-    "analysis. Call check_index_coverage for every cited path and for scopes behind negative or "
+    "analysis. Use ask for one natural-language question about where behaviour lives; it "
+    "returns ranked declarations with line ranges, and available:false with a remedy when the "
+    "semantic index has not been built, which is not the same as no matches. "
+    "Call check_index_coverage for every cited path and for scopes behind negative or "
     "exhaustive claims; read flagged ranges or skipped files directly. Coverage is best-effort, "
     "never proof of completeness. Check has_more or nextCursor and paginate when present. If the "
     "project is missing or stale, ask the parent agent to index or refresh it.";
@@ -4065,6 +4088,9 @@ static char *ask_emit_unavailable(const hyp_ask_status_t *st, const char *projec
         yyjson_mut_val *root = yyjson_mut_obj(doc);
         yyjson_mut_doc_set_root(doc, root);
         yyjson_mut_obj_add_bool(doc, root, "available", false);
+        /* Only the LOCAL lane answers unavailable in this shape; an escalated
+         * ask that cannot proceed is an error that says which lane and why. */
+        yyjson_mut_obj_add_str(doc, root, "lane", "local");
         yyjson_mut_obj_add_str(doc, root, "reason", ask_reason_token(st->avail));
         yyjson_mut_obj_add_strcpy(doc, root, "detail", detail);
         yyjson_mut_obj_add_strcpy(doc, root, "remedy", remedy);
@@ -4079,6 +4105,7 @@ static char *ask_emit_unavailable(const hyp_ask_status_t *st, const char *projec
     hyp_sb_t sb;
     hyp_sb_init(&sb);
     hyp_tree_scalar_bool(&sb, "available", false);
+    hyp_tree_scalar_str(&sb, "lane", "local");
     hyp_tree_scalar_str(&sb, "reason", ask_reason_token(st->avail));
     hyp_tree_scalar_str(&sb, "detail", detail);
     hyp_tree_scalar_str(&sb, "remedy", remedy);
@@ -4098,7 +4125,16 @@ static char *ask_error(const char *msg, char *project, char *question) {
 /* Defined below, with the rest of the project-root helpers. */
 static char *project_root_from_store(hyp_store_t *store, const char *project);
 
-static char *handle_ask(hyp_mcp_server_t *srv, const char *args) {
+/* The `ask` tool. `force_json` overrides the format argument; `qvec_out`, when
+ * non-NULL, receives the HYP_ASK_DIM-float QUESTION VECTOR the ranking was
+ * scored against (zeroed when no vector was produced). It exists for ONE
+ * caller — hyp_mcp_ask_view_overlay — so the 3-D view draws the question with
+ * the very vector that ranked, rather than re-encoding and hoping the two
+ * agree. handle_ask passes NULL and is otherwise identical. */
+static char *ask_run(hyp_mcp_server_t *srv, const char *args, bool force_json, float *qvec_out) {
+    if (qvec_out) {
+        memset(qvec_out, 0, (size_t)HYP_ASK_DIM * sizeof(float));
+    }
     char *project = get_project_arg(args);
     hyp_store_t *store = resolve_store(srv, project);
     REQUIRE_STORE(store, project);
@@ -4110,7 +4146,7 @@ static char *handle_ask(hyp_mcp_server_t *srv, const char *args) {
     }
 
     char *format_arg = hyp_mcp_get_string_arg(args, "format");
-    bool json = format_arg && strcmp(format_arg, "json") == 0;
+    bool json = force_json || (format_arg && strcmp(format_arg, "json") == 0);
     free(format_arg);
 
     /* Argument validation before availability: a malformed call is the
@@ -4162,8 +4198,25 @@ static char *handle_ask(hyp_mcp_server_t *srv, const char *args) {
      * on band width. The caller knows whether it needs to be right; the engine
      * cannot. */
     bool escalate = hyp_mcp_get_bool_arg(args, "escalate");
-    hyp_ask_lane_t lane = escalate ? HYP_ASK_LANE_ESCALATION : HYP_ASK_LANE_LOCAL;
+    /* WHICH escalation (NEXT-STEPS §3.1 step 3, ask.escalation.mode).
+     *
+     *   query  — send ONLY the question to the provider, score its vector
+     *            against the LOCAL index. No second index, no drift, no
+     *            corpus-sized bill; the code never leaves the machine. Gated on
+     *            a shared embedding SPACE, below. The default.
+     *   index  — the pre-existing lane: a second, API-built index of the whole
+     *            corpus, queried by the same model that built it.
+     *
+     * Query mode is licensed on QUALITY: nano documents scored by voyage-4-large
+     * questions beat nano/nano by +0.2087 MRR@10 on the vocabulary-gap frozen
+     * 60 (runs/XMODEL) and by +0.444% RR, p 5.5e-05, on 8,122 public
+     * CodeSearchNet-Go queries (runs/XMODEL-PUBLIC). Its case OVER index mode
+     * is OPERATIONAL, not a quality margin — index mode replicates at scale
+     * too, and the two are indistinguishable there (p 0.62). */
+    bool esc_query_mode = false;
+    hyp_ask_lane_t lane = HYP_ASK_LANE_LOCAL;
     hyp_ask_encoder_t *esc_enc = NULL;
+    const hyp_ask_provider_t *esc_provider = NULL;
     if (escalate) {
         /* Not `cache_dir`: this file already has a static cache_dir(char *,
          * size_t) at line 1948, and shadowing it reads as a call site. */
@@ -4172,52 +4225,105 @@ static char *handle_ask(hyp_mcp_server_t *srv, const char *args) {
         char provider[64];
         char model[128];
         char key_env[128];
+        char mode[HYP_SZ_32];
         snprintf(provider, sizeof(provider), "%s",
                  cfg ? hyp_config_get(cfg, HYP_CONFIG_ASK_ESC_PROVIDER, "") : "");
         snprintf(model, sizeof(model), "%s",
                  cfg ? hyp_config_get(cfg, HYP_CONFIG_ASK_ESC_MODEL, "") : "");
         snprintf(key_env, sizeof(key_env), "%s",
                  cfg ? hyp_config_get(cfg, HYP_CONFIG_ASK_ESC_KEY_ENV, "") : "");
+        snprintf(mode, sizeof(mode), "%s",
+                 cfg ? hyp_config_get(cfg, HYP_CONFIG_ASK_ESC_MODE, HYP_CONFIG_ASK_ESC_MODE_DEFAULT)
+                     : HYP_CONFIG_ASK_ESC_MODE_DEFAULT);
         if (cfg) {
             hyp_config_close(cfg);
         }
+        if (strcmp(mode, HYP_CONFIG_ASK_ESC_MODE_QUERY) == 0) {
+            esc_query_mode = true;
+        } else if (strcmp(mode, HYP_CONFIG_ASK_ESC_MODE_INDEX) != 0) {
+            /* `config set` validates this key, but the database can be written
+             * by an older binary or by hand. An unrecognised mode decides WHAT
+             * LEAVES THE MACHINE, so it is refused, not defaulted. */
+            char msg[ASK_MSG];
+            snprintf(msg, sizeof(msg),
+                     "escalate=true was asked for but %s is '%s', which is neither '%s' nor "
+                     "'%s'. This did NOT fall back to the local index or to either mode: the "
+                     "mode decides whether the question or the whole corpus is sent to the "
+                     "provider, so it is not guessed. Fix it with `hyponoia config set %s %s`.",
+                     HYP_CONFIG_ASK_ESC_MODE, mode, HYP_CONFIG_ASK_ESC_MODE_QUERY,
+                     HYP_CONFIG_ASK_ESC_MODE_INDEX, HYP_CONFIG_ASK_ESC_MODE,
+                     HYP_CONFIG_ASK_ESC_MODE_DEFAULT);
+            return ask_error(msg, project, question);
+        }
+        lane = esc_query_mode ? HYP_ASK_LANE_LOCAL : HYP_ASK_LANE_ESCALATION;
         char eerr[ASK_MSG] = "";
         esc_enc = hyp_ask_provider_encoder_create(provider, model, key_env, eerr, sizeof(eerr));
         if (!esc_enc) {
             /* NEVER A SILENT FALLBACK. Answering from the local index here
              * would hand back the cheap answer to someone who asked for the
              * expensive one and say nothing — the ambiguous-empty-result
-             * failure in new clothes. */
+             * failure in new clothes. The remedy differs by mode: query mode
+             * needs the key and the local index and NOTHING ELSE — telling
+             * someone to build an escalation index they will never search
+             * would send them off to spend money on the wrong thing. */
             char msg[ASK_MSG + HYP_SZ_256];
-            snprintf(msg, sizeof(msg),
-                     "escalate=true was asked for and the escalation lane is not usable: %s. "
-                     "This did NOT fall back to the local index — you asked for the escalation "
-                     "answer and would have received a different one without being told. "
-                     "Configure it with `hyponoia config set ask.escalation.provider|model|"
-                     "key_env`, then build the index with `hyponoia embed --escalation`.",
-                     eerr[0] ? eerr : "it is not configured");
+            if (esc_query_mode) {
+                snprintf(msg, sizeof(msg),
+                         "escalate=true was asked for and the escalation encoder is not usable: "
+                         "%s. This did NOT fall back to the local encoder — you asked for the "
+                         "escalated answer and would have received a different one without "
+                         "being told. In %s=%s the provider encodes ONLY the question and it "
+                         "is scored against the local index you already have; nothing else is "
+                         "built or sent. Configure it with `hyponoia config set "
+                         "ask.escalation.provider|model|key_env` (key_env is the NAME of the "
+                         "environment variable holding the key) and re-run.",
+                         eerr[0] ? eerr : "it is not configured", HYP_CONFIG_ASK_ESC_MODE,
+                         HYP_CONFIG_ASK_ESC_MODE_QUERY);
+            } else {
+                snprintf(msg, sizeof(msg),
+                         "escalate=true was asked for and the escalation lane is not usable: %s. "
+                         "This did NOT fall back to the local index — you asked for the "
+                         "escalation answer and would have received a different one without "
+                         "being told. Configure it with `hyponoia config set "
+                         "ask.escalation.provider|model|key_env`, then build the index with "
+                         "`hyponoia embed --escalation`.",
+                         eerr[0] ? eerr : "it is not configured");
+            }
             return ask_error(msg, project, question);
         }
+        /* Non-NULL whenever the encoder was created; kept for the dim_mode gate. */
+        esc_provider = hyp_ask_provider_by_name(provider);
     }
 
     hyp_ask_status_t st;
-    /* Hold the index to the identity of the encoder that will QUERY it, which
-     * for the escalation lane is the hosted model and not the linked one. */
-    hyp_ask_index_status_lane(store, project, lane,
-                              escalate ? hyp_ask_encoder_model_id(esc_enc) : NULL,
-                              escalate ? hyp_ask_encoder_prefix_contract(esc_enc) : NULL, &st);
+    /* Hold the index to the identity of the encoder that BUILT it. For the
+     * escalation INDEX lane that is the hosted model, not the linked one. For
+     * query mode the index being scored is the LOCAL one, so it is held to the
+     * local model's identity exactly as an ordinary ask is — the hosted model
+     * is the QUERY side and is gated separately, on space, below. */
+    bool esc_index_mode = escalate && !esc_query_mode;
+    hyp_ask_index_status_lane(
+        store, project, lane, esc_index_mode ? hyp_ask_encoder_model_id(esc_enc) : NULL,
+        esc_index_mode ? hyp_ask_encoder_prefix_contract(esc_enc) : NULL, &st);
     /* THE WEIGHTS, BEFORE THE INDEX. hyp_ask_index_status answers about the
      * store and the linked encoder; whether that encoder's 639 MB of weights
      * are on disk is the fetcher's question and is asked here, where the CLI
      * layer is already reachable. Order matters: someone with neither weights
      * nor index must be told to fetch the model, because the embed pass that
-     * builds the index is the thing that needs it. */
+     * builds the index is the thing that needs it.
+     *
+     * NOT for either escalation mode. Index mode never touches the local
+     * weights. Query mode does not either: the question is encoded by the
+     * provider, and the local index it is scored against was built by those
+     * weights EARLIER — their presence today is irrelevant to reading it. A
+     * machine that built its index, then lost or never re-fetched the model,
+     * can still ask escalated questions; only a plain ask needs the weights. */
     if (!escalate && (st.avail == HYP_ASK_NO_INDEX || st.avail == HYP_ASK_AVAILABLE) &&
         hyp_ask_llama_backend_installed() && !hyp_model_ask_present()) {
         st.avail = HYP_ASK_NO_WEIGHTS;
     }
     if (st.avail != HYP_ASK_AVAILABLE) {
-        if (escalate) {
+        if (esc_index_mode) {
             /* Same rule as above: an unbuilt or mismatched ESCALATION index is
              * reported as itself, never served from the local one. */
             char msg[ASK_MSG + HYP_SZ_256];
@@ -4233,10 +4339,118 @@ static char *handle_ask(hyp_mcp_server_t *srv, const char *args) {
             hyp_ask_encoder_destroy(esc_enc);
             return ask_error(msg, project, question);
         }
+        if (esc_query_mode) {
+            /* Query mode scores the LOCAL index; without one there is nothing
+             * to score and NOTHING to fall back to. Said as itself, with the
+             * local lane's own remedy, and never as an empty ranking. */
+            char detail[ASK_MSG];
+            char remedy[ASK_MSG];
+            if (st.avail == HYP_ASK_NO_BACKEND) {
+                /* The local lane's sentence for this state — "a question cannot
+                 * be turned into a vector at all" — is false here: the provider
+                 * can encode it. What is missing is the LOCAL model's identity,
+                 * which is what the local index is held to; unverified, it is
+                 * not scored. */
+                snprintf(detail, sizeof(detail),
+                         "this build links no local encoder, so which model built the local "
+                         "index cannot be verified, and an unverified index is not scored.");
+                snprintf(remedy, sizeof(remedy),
+                         "Use a build with the embedding backend, or %s=%s, whose index is built "
+                         "and queried by the provider alone.",
+                         HYP_CONFIG_ASK_ESC_MODE, HYP_CONFIG_ASK_ESC_MODE_INDEX);
+            } else {
+                ask_unavailable_text(&st, project, detail, sizeof(detail), remedy, sizeof(remedy));
+            }
+            char msg[ASK_MSG * 3];
+            snprintf(msg, sizeof(msg),
+                     "escalate=true (%s=%s) encodes the question with %s and scores it against "
+                     "the LOCAL index, and the local index is not usable (%s): %s This did NOT "
+                     "fall back to anything — there is no answer without that index. %s",
+                     HYP_CONFIG_ASK_ESC_MODE, HYP_CONFIG_ASK_ESC_MODE_QUERY,
+                     hyp_ask_encoder_model_id(esc_enc), ask_reason_token(st.avail), detail, remedy);
+            hyp_ask_encoder_destroy(esc_enc);
+            return ask_error(msg, project, question);
+        }
         char *result = ask_emit_unavailable(&st, project, json);
         free(project);
         free(question);
         return result;
+    }
+
+    /* ── THE SPACE GATE (query mode only) ────────────────────────────
+     *
+     * A cosine between two models' vectors means something ONLY if they live in
+     * the same embedding space, and cross-space failure is SILENT: score a
+     * Qwen3 index against a voyage query and nothing errors — the ranking comes
+     * back ordinary-looking and wrong, which for a tool an agent trusts is the
+     * worst failure available. So the gate is a space id, not the prefix
+     * contract (that answers "same prompts", the wrong invariant here), and it
+     * refuses the unknown as firmly as the different. */
+    const char *space_index = NULL;
+    bool space_derived = false;
+    if (esc_query_mode) {
+        const char *esc_model_id = hyp_ask_encoder_model_id(esc_enc);
+        const char *space_query = hyp_ask_space_id_for_model(esc_model_id);
+        /* The stamp the index carries, if its builder wrote one; otherwise the
+         * same function over the model id it recorded — and the answer SAYS
+         * which, so an old index is not mistaken for a labelled one. */
+        space_derived = st.space_id[0] == '\0';
+        space_index = space_derived ? hyp_ask_space_id_for_model(st.model_id) : st.space_id;
+        char msg[ASK_MSG * 2];
+        if (esc_provider && esc_provider->dim_mode == HYP_ASK_DIM_REEMBEDS) {
+            /* A re-embedding head is a DIFFERENT SPACE AT A DIFFERENT WIDTH:
+             * "1024" from it is not the renormalised prefix of its 2048, so
+             * scoring it against a matrix another model truncated to 1024 is
+             * cross-space no matter what the family name says. Nothing in the
+             * table is tagged this way today; this is the branch that makes the
+             * tag load-bearing the day a row is. */
+            snprintf(msg, sizeof(msg),
+                     "escalate=true (%s=%s) is refused: provider '%s' re-embeds into a separate "
+                     "output head at each dimension (dim_mode REEMBEDS), so its %d-wide query "
+                     "vector is not in the space of the local index's %d-wide document vectors "
+                     "even within one model family. Cross-space scoring returns confidently-"
+                     "ranked garbage with no error. This did NOT fall back to the local encoder. "
+                     "Use %s=%s (a second index built AND queried by that provider) instead.",
+                     HYP_CONFIG_ASK_ESC_MODE, HYP_CONFIG_ASK_ESC_MODE_QUERY, esc_provider->name,
+                     st.dim, st.dim, HYP_CONFIG_ASK_ESC_MODE, HYP_CONFIG_ASK_ESC_MODE_INDEX);
+            hyp_ask_encoder_destroy(esc_enc);
+            return ask_error(msg, project, question);
+        }
+        if (!space_index || !space_query || strcmp(space_index, space_query) != 0) {
+            snprintf(msg, sizeof(msg),
+                     "escalate=true (%s=%s) is refused: the local index was built by '%s' "
+                     "(embedding space: %s%s) and the escalation model is '%s' (embedding "
+                     "space: %s). Scoring a question from one embedding space against vectors "
+                     "from another returns confidently-ranked garbage with no error — the worst "
+                     "failure mode for a tool an agent trusts — so it is refused unless BOTH "
+                     "spaces are known and identical. Only the voyage-4 family (nano, lite, "
+                     "large, 4) is measured to share a space; voyage-code-3 and Qwen3 are "
+                     "measured NOT to, and unmeasured families are refused rather than assumed. "
+                     "This did NOT fall back to the local encoder. Either set "
+                     "ask.escalation.model to a voyage-4 model, or set %s=%s to build a "
+                     "separate index with the configured model.",
+                     HYP_CONFIG_ASK_ESC_MODE, HYP_CONFIG_ASK_ESC_MODE_QUERY, st.model_id,
+                     space_index ? space_index : "unknown/unmeasured",
+                     space_derived ? ", derived from the index's model id"
+                                   : ", stamped on the index",
+                     esc_model_id, space_query ? space_query : "unknown/unmeasured",
+                     HYP_CONFIG_ASK_ESC_MODE, HYP_CONFIG_ASK_ESC_MODE_INDEX);
+            hyp_ask_encoder_destroy(esc_enc);
+            return ask_error(msg, project, question);
+        }
+        /* The provider adapter asks for HYP_ASK_DIM; the status gate has already
+         * held the local index to the local backend's dim, which is the same
+         * constant. Pinned here anyway, because the equality is the whole basis
+         * for scoring the two sides together. */
+        if (st.dim != HYP_ASK_DIM) {
+            snprintf(msg, sizeof(msg),
+                     "escalate=true (%s=%s) is refused: the local index is %d wide and the "
+                     "provider is asked for %d — the two sides would not be the same width. "
+                     "This did NOT fall back to the local encoder.",
+                     HYP_CONFIG_ASK_ESC_MODE, HYP_CONFIG_ASK_ESC_MODE_QUERY, st.dim, HYP_ASK_DIM);
+            hyp_ask_encoder_destroy(esc_enc);
+            return ask_error(msg, project, question);
+        }
     }
 
     /* Language: explicit wins, derivation is the fallback, and NEITHER falls
@@ -4256,11 +4470,13 @@ static char *handle_ask(hyp_mcp_server_t *srv, const char *args) {
                  "returns answers — just not the ones any measurement describes.",
                  lang_arg);
         free(lang_arg);
+        hyp_ask_encoder_destroy(esc_enc);
         return ask_error(msg, project, question);
     }
     free(lang_arg);
     const char *lang_name = hyp_ask_language_display(lang);
     if (!lang_name) {
+        hyp_ask_encoder_destroy(esc_enc);
         return ask_error("could not determine which language's instruct prefix to render: no "
                          "file in this project's graph maps to a known language. Pass "
                          "language=\"...\" explicitly (an extension like \"cpp\" or a display "
@@ -4275,22 +4491,72 @@ static char *handle_ask(hyp_mcp_server_t *srv, const char *args) {
         return ask_error("out of memory encoding the question", project, question);
     }
     char encerr[ASK_MSG] = "";
-    /* The QUESTION must be encoded by the same model that built the index it is
-     * about to be scored against — that is the whole reason the two lanes carry
-     * separate encoders rather than sharing one. */
+    /* WHO ENCODES THE QUESTION. Index mode: the same model that built the
+     * escalation index — that is the whole reason the two lanes carry separate
+     * encoders rather than sharing one. Local: the linked backend.
+     *
+     * Query mode: the PROVIDER, at the local index's width (st.dim == 1024).
+     * That is the same operation on both sides, and it has to be for the
+     * scores to mean anything: voyage-4-large's output_dimension=1024 is the
+     * renormalised first 1024 of its own 2048 (min cosine 1.000000 against a
+     * local cut, §2.15 / ask_provider.c), and nano's stored 1024 is the
+     * renormalised first 1024 of ITS 2048 (ask_llama.c: "pooled 1024 ->
+     * projected 2048 -> normalise -> Matryoshka-truncate to HYP_ASK_DIM ->
+     * renormalise. THE ORDER IS THE MEASUREMENT"). Both sides Matryoshka-cut
+     * one shared 2048-d space to the same 1024 prefix. Mixing at 2048 measured
+     * a hair better (+0.00214 RR, p 3e-4, runs/XMODEL-PUBLIC), but the shipped
+     * table is 1024 and this step does not reopen that width. */
     int encrc = escalate ? hyp_ask_encode_query(esc_enc, question, lang_name, qvec)
                          : backend->encode_query(lang, question, qvec, encerr, sizeof(encerr));
     if (encrc != 0) {
-        char msg[ASK_MSG + HYP_SZ_128];
-        snprintf(msg, sizeof(msg), "could not encode the question: %s",
-                 encerr[0] ? encerr : "the encoder failed without a reason");
+        char msg[ASK_MSG + HYP_SZ_256];
+        if (escalate) {
+            /* The provider adapter logs the provider's sentence; what reaches
+             * the caller must still say WHICH encoder failed and that nothing
+             * answered in its place. */
+            snprintf(msg, sizeof(msg),
+                     "could not encode the question with the escalation model %s (the provider "
+                     "call failed — the log line ask.provider.encode_query carries its reason: "
+                     "quota, key, network or model name). This did NOT fall back to the local "
+                     "encoder.",
+                     hyp_ask_encoder_model_id(esc_enc));
+        } else {
+            snprintf(msg, sizeof(msg), "could not encode the question: %s",
+                     encerr[0] ? encerr : "the encoder failed without a reason");
+        }
         free(qvec);
+        hyp_ask_encoder_destroy(esc_enc);
         return ask_error(msg, project, question);
+    }
+
+    /* NAME THE LANE THAT ANSWERED, and both encoders, on every result. The
+     * agent holding the answer must be able to tell which of three different
+     * things it is holding without inferring it from cost or latency. */
+    const char *lane_name = esc_query_mode ? "escalation-query"
+                            : escalate     ? "escalation-index"
+                                           : "local";
+    char query_encoder[HYP_ASK_MODEL_ID_MAX];
+    snprintf(query_encoder, sizeof(query_encoder), "%s",
+             escalate ? hyp_ask_encoder_model_id(esc_enc) : st.backend_id);
+    char space_text[HYP_SZ_256];
+    if (esc_query_mode) {
+        snprintf(space_text, sizeof(space_text), "%s — %s; both sides Matryoshka-cut to %d",
+                 space_index ? space_index : "?",
+                 space_derived ? "derived from the index's model id (the index predates the stamp)"
+                               : "stamped on the index at build time",
+                 st.dim);
+    } else {
+        space_text[0] = '\0';
     }
 
     hyp_ask_hit_t *hits = NULL;
     int hit_count = 0;
     int rc = hyp_ask_index_search_lane(store, project, lane, qvec, search_limit, &hits, &hit_count);
+    if (qvec_out) {
+        /* Handed out AFTER the search, so the caller holds exactly the vector
+         * the hits below were scored against — no second encode. */
+        memcpy(qvec_out, qvec, (size_t)HYP_ASK_DIM * sizeof(float));
+    }
     free(qvec);
     hyp_ask_encoder_destroy(esc_enc);
     if (rc != HYP_STORE_OK) {
@@ -4322,6 +4588,14 @@ static char *handle_ask(hyp_mcp_server_t *srv, const char *args) {
         yyjson_mut_val *root = yyjson_mut_obj(doc);
         yyjson_mut_doc_set_root(doc, root);
         yyjson_mut_obj_add_bool(doc, root, "available", true);
+        yyjson_mut_obj_add_str(doc, root, "lane", lane_name);
+        yyjson_mut_obj_add_strcpy(doc, root, "query_encoder", query_encoder);
+        yyjson_mut_obj_add_strcpy(doc, root, "index_encoder", st.model_id);
+        if (space_text[0]) {
+            yyjson_mut_obj_add_strcpy(doc, root, "space", space_text);
+        }
+        /* `model` predates the two-encoder disclosure and is the INDEX's model;
+         * kept so nothing that read it breaks, duplicated by index_encoder. */
         yyjson_mut_obj_add_strcpy(doc, root, "model", st.model_id);
         yyjson_mut_obj_add_strcpy(doc, root, "language", lang_name);
         yyjson_mut_obj_add_str(doc, root, "language_source",
@@ -4358,6 +4632,12 @@ static char *handle_ask(hyp_mcp_server_t *srv, const char *args) {
         hyp_sb_t sb;
         hyp_sb_init(&sb);
         hyp_tree_scalar_bool(&sb, "available", true);
+        hyp_tree_scalar_str(&sb, "lane", lane_name);
+        hyp_tree_scalar_str(&sb, "query_encoder", query_encoder);
+        hyp_tree_scalar_str(&sb, "index_encoder", st.model_id);
+        if (space_text[0]) {
+            hyp_tree_scalar_str(&sb, "space", space_text);
+        }
         hyp_tree_scalar_str(&sb, "model", st.model_id);
         hyp_tree_scalar_str(&sb, "language", lang_name);
         hyp_tree_scalar_str(&sb, "language_source", lang_explicit ? "explicit" : "derived");
@@ -4396,6 +4676,361 @@ static char *handle_ask(hyp_mcp_server_t *srv, const char *args) {
     free(project);
     free(question);
     return result;
+}
+
+static char *handle_ask(hyp_mcp_server_t *srv, const char *args) {
+    return ask_run(srv, args, false, NULL);
+}
+
+/* ── The 3-D view's query overlay (NEXT-STEPS §3.1 step 5) ─────────
+ *
+ * Runs the `ask` tool — the SAME code path, the same encoder, the same
+ * search — and then places the question and its ranked answer into the
+ * persisted 3-space of the project's vector file (ask_view.h). The neighbours
+ * in the overlay are the tool's own rows, in the tool's own order, read back
+ * out of the tool's own JSON: nothing here re-ranks, and a test asserts that
+ * `hits[i].qualified_name == ask.rows[i][0]` for every i so the two ends
+ * cannot drift apart without a red run.
+ *
+ * Shape:
+ *   { "project", "question",
+ *     "ask":   <the ask tool's JSON result, verbatim, whatever it said>,
+ *     "view":  { "available", "method", "dim", "rows", "variance_kept",
+ *                "eigen": [3], "fitted_at", "stale", "reason"? },
+ *     "query": { "x","y","z" }            — absent when there is no view,
+ *     "hits":  [ { "rank", "qualified_name", "node_id", "label", "file",
+ *                  "lines", "score", "projected", "x","y","z" } ],
+ *     "caveat": HYP_ASK_VIEW_CAVEAT }
+ *
+ * "ask" is always present so a client sees exactly what the tool would have
+ * said, including every unavailable state; "query"/"hits" are only claims
+ * when a view exists — an absent key means "look at ask", never "nothing". */
+char *hyp_mcp_ask_view_overlay(hyp_mcp_server_t *srv, const char *args_json) {
+    if (!srv || !args_json) {
+        return NULL;
+    }
+    float *qvec = (float *)calloc(HYP_ASK_DIM, sizeof(float));
+    if (!qvec) {
+        return NULL;
+    }
+    char *tool_result = ask_run(srv, args_json, true, qvec);
+
+    yyjson_mut_doc *doc = yyjson_mut_doc_new(NULL);
+    yyjson_mut_val *root = yyjson_mut_obj(doc);
+    yyjson_mut_doc_set_root(doc, root);
+
+    char *project = get_project_arg(args_json);
+    char *question = hyp_mcp_get_string_arg(args_json, "question");
+    yyjson_mut_obj_add_strcpy(doc, root, "project", project ? project : "");
+    yyjson_mut_obj_add_strcpy(doc, root, "question", question ? question : "");
+    bool escalate = hyp_mcp_get_bool_arg(args_json, "escalate");
+
+    /* Unwrap the tool result: {"content":[{"type":"text","text":"..."}],
+     * "isError":bool}. The text is the JSON the tool rendered. */
+    yyjson_doc *env = tool_result ? yyjson_read(tool_result, strlen(tool_result), 0) : NULL;
+    yyjson_val *env_root = env ? yyjson_doc_get_root(env) : NULL;
+    yyjson_val *is_err = env_root ? yyjson_obj_get(env_root, "isError") : NULL;
+    bool tool_error = is_err && yyjson_is_bool(is_err) && yyjson_get_bool(is_err);
+    yyjson_val *content = env_root ? yyjson_obj_get(env_root, "content") : NULL;
+    yyjson_val *first = content ? yyjson_arr_get(content, 0) : NULL;
+    yyjson_val *text = first ? yyjson_obj_get(first, "text") : NULL;
+    const char *inner = text && yyjson_is_str(text) ? yyjson_get_str(text) : NULL;
+    yyjson_doc *ask_doc = NULL;
+    yyjson_val *ask_root = NULL;
+    if (inner) {
+        ask_doc = yyjson_read(inner, strlen(inner), 0);
+        ask_root = ask_doc ? yyjson_doc_get_root(ask_doc) : NULL;
+    }
+    if (ask_root && yyjson_is_obj(ask_root)) {
+        yyjson_mut_obj_add_val(doc, root, "ask", yyjson_val_mut_copy(doc, ask_root));
+    } else {
+        /* An error, or the unavailable prose the tool renders as TOON. Carry
+         * the text as-is under "ask_text" so nothing the tool said is lost. */
+        yyjson_mut_obj_add_strcpy(doc, root, "ask_text", inner ? inner : "");
+    }
+    yyjson_mut_obj_add_bool(doc, root, "ask_error", tool_error);
+
+    /* WHICH VECTOR FILE THE ANSWER WAS SCORED AGAINST — and so whose view to
+     * draw it in. The tool names its lane on every answer: `local`,
+     * `escalation-query` or `escalation-index`. Only escalation-INDEX searches
+     * the escalation file; query mode scores the provider's 1024-d question
+     * against the LOCAL table, so the local view is the right picture (same
+     * space, same width — that is the gate the tool itself applied). The
+     * tool's word is used when it answered; when it did not (nothing was
+     * searched), the configured mode is read the same way the tool reads it,
+     * so the view reported is the one the answer WOULD have been drawn in. */
+    yyjson_val *ask_lane_v = ask_root ? yyjson_obj_get(ask_root, "lane") : NULL;
+    const char *ask_lane =
+        ask_lane_v && yyjson_is_str(ask_lane_v) ? yyjson_get_str(ask_lane_v) : NULL;
+    hyp_ask_lane_t lane = HYP_ASK_LANE_LOCAL;
+    if (ask_lane) {
+        lane = strcmp(ask_lane, "escalation-index") == 0 ? HYP_ASK_LANE_ESCALATION
+                                                         : HYP_ASK_LANE_LOCAL;
+    } else if (escalate) {
+        const char *cache_root = hyp_resolve_cache_dir();
+        hyp_config_t *cfg = cache_root ? hyp_config_open(cache_root) : NULL;
+        const char *mode =
+            cfg ? hyp_config_get(cfg, HYP_CONFIG_ASK_ESC_MODE, HYP_CONFIG_ASK_ESC_MODE_DEFAULT)
+                : HYP_CONFIG_ASK_ESC_MODE_DEFAULT;
+        lane = strcmp(mode, HYP_CONFIG_ASK_ESC_MODE_INDEX) == 0 ? HYP_ASK_LANE_ESCALATION
+                                                                : HYP_ASK_LANE_LOCAL;
+        if (cfg) {
+            hyp_config_close(cfg);
+        }
+    }
+    /* `lane` is the tool's own word when it answered (so `escalation-query`
+     * flows through untouched); `vector_file_lane` is which file the view was
+     * read from. */
+    yyjson_mut_obj_add_strcpy(doc, root, "lane", ask_lane ? ask_lane : hyp_ask_lane_name(lane));
+    yyjson_mut_obj_add_str(doc, root, "vector_file_lane", hyp_ask_lane_name(lane));
+
+    yyjson_val *avail = ask_root ? yyjson_obj_get(ask_root, "available") : NULL;
+    bool answered = avail && yyjson_is_bool(avail) && yyjson_get_bool(avail) && !tool_error;
+    yyjson_val *rows = ask_root ? yyjson_obj_get(ask_root, "rows") : NULL;
+
+    yyjson_mut_val *view_obj = yyjson_mut_obj(doc);
+    /* Open ONLY an existing file: the store's open creates on absence, and an
+     * overlay request for an un-embedded project must not mint an empty index
+     * that later reads as "built and empty". */
+    char vpath[HYP_SZ_4K];
+    bool have_file = project && hyp_ask_vectors_path_lane(project, lane, vpath, sizeof(vpath)) &&
+                     hyp_file_exists(vpath);
+    hyp_ask_vectors_t *v = have_file ? hyp_ask_vectors_open_lane(project, lane) : NULL;
+    hyp_ask_view_t view;
+    memset(&view, 0, sizeof(view));
+    int vrc = v ? hyp_ask_view_load(v, &view) : HYP_ASK_VEC_NOT_FOUND;
+    if (vrc == HYP_ASK_VEC_OK) {
+        double kept = view.total_var > 0.0
+                          ? (view.eigen[0] + view.eigen[1] + view.eigen[2]) / view.total_var
+                          : 0.0;
+        yyjson_mut_obj_add_bool(doc, view_obj, "available", true);
+        yyjson_mut_obj_add_strcpy(doc, view_obj, "method", view.method ? view.method : "");
+        yyjson_mut_obj_add_int(doc, view_obj, "dim", view.dim);
+        yyjson_mut_obj_add_int(doc, view_obj, "rows", view.rows);
+        yyjson_mut_obj_add_real(doc, view_obj, "variance_kept", kept);
+        yyjson_mut_val *eig = yyjson_mut_arr(doc);
+        for (int k = 0; k < HYP_ASK_VIEW_K; k++) {
+            yyjson_mut_arr_add_real(doc, eig, view.eigen[k]);
+        }
+        yyjson_mut_obj_add_val(doc, view_obj, "eigen", eig);
+        yyjson_mut_obj_add_real(doc, view_obj, "total_var", view.total_var);
+        yyjson_mut_obj_add_strcpy(doc, view_obj, "fitted_at", view.fitted_at ? view.fitted_at : "");
+        yyjson_mut_obj_add_bool(doc, view_obj, "stale", hyp_ask_view_is_stale(v, &view));
+        yyjson_mut_obj_add_bool(doc, view_obj, "deterministic", true);
+        yyjson_mut_obj_add_str(doc, view_obj, "refit",
+                               "after every embed pass, over the whole table; or "
+                               "`hyponoia embed --project <p> --fit-view`");
+    } else {
+        yyjson_mut_obj_add_bool(doc, view_obj, "available", false);
+        yyjson_mut_obj_add_str(doc, view_obj, "reason",
+                               vrc == HYP_ASK_VEC_INCOMPATIBLE
+                                   ? "a view exists but this binary does not read its method"
+                                   : "no 3-D view has been fitted for this index");
+        yyjson_mut_obj_add_str(doc, view_obj, "remedy", "hyponoia embed --project <p> --fit-view");
+    }
+    yyjson_mut_obj_add_val(doc, root, "view", view_obj);
+
+    if (vrc == HYP_ASK_VEC_OK && answered) {
+        float q3[HYP_ASK_VIEW_K];
+        hyp_ask_view_project(&view, qvec, q3);
+        yyjson_mut_val *qo = yyjson_mut_obj(doc);
+        yyjson_mut_obj_add_real(doc, qo, "x", (double)q3[0]);
+        yyjson_mut_obj_add_real(doc, qo, "y", (double)q3[1]);
+        yyjson_mut_obj_add_real(doc, qo, "z", (double)q3[2]);
+        yyjson_mut_obj_add_val(doc, root, "query", qo);
+    }
+    if (vrc == HYP_ASK_VEC_OK && answered && rows && yyjson_is_arr(rows)) {
+        /* Column order is the tool's: qn, label, file, lines, score[, cut].
+         * Read by position from the tool's own `cols` so a column reorder
+         * there is a red run here, not a silent shift. */
+        yyjson_val *cols = yyjson_obj_get(ask_root, "cols");
+        int c_qn = -1;
+        int c_label = -1;
+        int c_file = -1;
+        int c_lines = -1;
+        int c_score = -1;
+        if (cols && yyjson_is_arr(cols)) {
+            size_t ci = 0;
+            size_t cmax = 0;
+            yyjson_val *cv = NULL;
+            yyjson_arr_foreach(cols, ci, cmax, cv) {
+                const char *cn = yyjson_is_str(cv) ? yyjson_get_str(cv) : "";
+                if (strcmp(cn, "qn") == 0) {
+                    c_qn = (int)ci;
+                } else if (strcmp(cn, "label") == 0) {
+                    c_label = (int)ci;
+                } else if (strcmp(cn, "file") == 0) {
+                    c_file = (int)ci;
+                } else if (strcmp(cn, "lines") == 0) {
+                    c_lines = (int)ci;
+                } else if (strcmp(cn, "score") == 0) {
+                    c_score = (int)ci;
+                }
+            }
+        }
+        yyjson_mut_val *hits = yyjson_mut_arr(doc);
+        size_t ri = 0;
+        size_t rmax = 0;
+        yyjson_val *row = NULL;
+        int rank = 0;
+        yyjson_arr_foreach(rows, ri, rmax, row) {
+            rank++;
+            yyjson_mut_val *h = yyjson_mut_obj(doc);
+            yyjson_mut_obj_add_int(doc, h, "rank", rank);
+            yyjson_val *qn_v = c_qn >= 0 ? yyjson_arr_get(row, (size_t)c_qn) : NULL;
+            const char *qn = qn_v && yyjson_is_str(qn_v) ? yyjson_get_str(qn_v) : "";
+            yyjson_mut_obj_add_strcpy(doc, h, "qualified_name", qn);
+            yyjson_val *lv = c_label >= 0 ? yyjson_arr_get(row, (size_t)c_label) : NULL;
+            yyjson_mut_obj_add_strcpy(doc, h, "label",
+                                      lv && yyjson_is_str(lv) ? yyjson_get_str(lv) : "");
+            yyjson_val *fv = c_file >= 0 ? yyjson_arr_get(row, (size_t)c_file) : NULL;
+            yyjson_mut_obj_add_strcpy(doc, h, "file",
+                                      fv && yyjson_is_str(fv) ? yyjson_get_str(fv) : "");
+            yyjson_val *lnv = c_lines >= 0 ? yyjson_arr_get(row, (size_t)c_lines) : NULL;
+            yyjson_mut_obj_add_strcpy(doc, h, "lines",
+                                      lnv && yyjson_is_str(lnv) ? yyjson_get_str(lnv) : "");
+            yyjson_val *sv = c_score >= 0 ? yyjson_arr_get(row, (size_t)c_score) : NULL;
+            yyjson_mut_obj_add_real(doc, h, "score",
+                                    sv && yyjson_is_num(sv) ? yyjson_get_num(sv) : 0.0);
+            float p3[HYP_ASK_VIEW_K];
+            int64_t node_id = 0;
+            bool present = false;
+            int lrc = (vrc == HYP_ASK_VEC_OK && v)
+                          ? hyp_ask_view_lookup(v, qn, p3, &node_id, &present)
+                          : HYP_ASK_VEC_NOT_FOUND;
+            yyjson_mut_obj_add_int(doc, h, "node_id", node_id);
+            yyjson_mut_obj_add_bool(doc, h, "projected", lrc == HYP_ASK_VEC_OK);
+            if (lrc == HYP_ASK_VEC_OK) {
+                yyjson_mut_obj_add_real(doc, h, "x", (double)p3[0]);
+                yyjson_mut_obj_add_real(doc, h, "y", (double)p3[1]);
+                yyjson_mut_obj_add_real(doc, h, "z", (double)p3[2]);
+            }
+            yyjson_mut_arr_append(hits, h);
+        }
+        yyjson_mut_obj_add_val(doc, root, "hits", hits);
+    }
+    yyjson_mut_obj_add_str(doc, root, "caveat", HYP_ASK_VIEW_CAVEAT);
+
+    if (vrc == HYP_ASK_VEC_OK) {
+        hyp_ask_view_free(&view);
+    }
+    if (v) {
+        hyp_ask_vectors_close(v);
+    }
+    if (ask_doc) {
+        yyjson_doc_free(ask_doc);
+    }
+    if (env) {
+        yyjson_doc_free(env);
+    }
+    free(tool_result);
+    free(project);
+    free(question);
+    free(qvec);
+    char *out = yy_doc_to_str(doc);
+    yyjson_mut_doc_free(doc);
+    return out;
+}
+
+/* The cloud: every projected declaration of a project's vector file, for the
+ * UI to draw the question against. Same "view" object as the overlay, plus
+ * "points" and the count of rows that have no coordinates yet. */
+char *hyp_mcp_ask_view_points_json(const char *project, bool escalation) {
+    if (!project || !project[0]) {
+        return NULL;
+    }
+    hyp_ask_lane_t lane = escalation ? HYP_ASK_LANE_ESCALATION : HYP_ASK_LANE_LOCAL;
+    yyjson_mut_doc *doc = yyjson_mut_doc_new(NULL);
+    yyjson_mut_val *root = yyjson_mut_obj(doc);
+    yyjson_mut_doc_set_root(doc, root);
+    yyjson_mut_obj_add_strcpy(doc, root, "project", project);
+    yyjson_mut_obj_add_str(doc, root, "lane", hyp_ask_lane_name(lane));
+
+    char path[HYP_SZ_4K];
+    bool have_file =
+        hyp_ask_vectors_path_lane(project, lane, path, sizeof(path)) && hyp_file_exists(path);
+    hyp_ask_vectors_t *v = have_file ? hyp_ask_vectors_open_lane(project, lane) : NULL;
+    hyp_ask_view_t view;
+    memset(&view, 0, sizeof(view));
+    int vrc = v ? hyp_ask_view_load(v, &view) : HYP_ASK_VEC_NOT_FOUND;
+    yyjson_mut_val *view_obj = yyjson_mut_obj(doc);
+    if (!have_file) {
+        yyjson_mut_obj_add_bool(doc, view_obj, "available", false);
+        yyjson_mut_obj_add_str(doc, view_obj, "reason", "no vector index for this project");
+        yyjson_mut_obj_add_str(doc, view_obj, "remedy", "hyponoia embed --project <p>");
+    } else if (vrc == HYP_ASK_VEC_OK) {
+        double kept = view.total_var > 0.0
+                          ? (view.eigen[0] + view.eigen[1] + view.eigen[2]) / view.total_var
+                          : 0.0;
+        yyjson_mut_obj_add_bool(doc, view_obj, "available", true);
+        yyjson_mut_obj_add_strcpy(doc, view_obj, "method", view.method ? view.method : "");
+        yyjson_mut_obj_add_int(doc, view_obj, "dim", view.dim);
+        yyjson_mut_obj_add_int(doc, view_obj, "rows", view.rows);
+        yyjson_mut_obj_add_real(doc, view_obj, "variance_kept", kept);
+        yyjson_mut_val *eig = yyjson_mut_arr(doc);
+        for (int k = 0; k < HYP_ASK_VIEW_K; k++) {
+            yyjson_mut_arr_add_real(doc, eig, view.eigen[k]);
+        }
+        yyjson_mut_obj_add_val(doc, view_obj, "eigen", eig);
+        yyjson_mut_obj_add_real(doc, view_obj, "total_var", view.total_var);
+        yyjson_mut_obj_add_strcpy(doc, view_obj, "fitted_at", view.fitted_at ? view.fitted_at : "");
+        yyjson_mut_obj_add_real(doc, view_obj, "fit_ms", view.fit_ms);
+        yyjson_mut_obj_add_int(doc, view_obj, "iterations", view.iterations);
+        yyjson_mut_obj_add_bool(doc, view_obj, "stale", hyp_ask_view_is_stale(v, &view));
+        yyjson_mut_obj_add_bool(doc, view_obj, "deterministic", true);
+        yyjson_mut_obj_add_str(doc, view_obj, "refit",
+                               "after every embed pass, over the whole table; or "
+                               "`hyponoia embed --project <p> --fit-view`");
+        hyp_ask_vec_meta_t meta;
+        if (hyp_ask_vectors_get_meta(v, &meta) == HYP_ASK_VEC_OK) {
+            yyjson_mut_obj_add_strcpy(doc, view_obj, "model", meta.model_id ? meta.model_id : "");
+            yyjson_mut_obj_add_strcpy(doc, view_obj, "index_built_at",
+                                      meta.built_at ? meta.built_at : "");
+            hyp_ask_vec_meta_free(&meta);
+        }
+    } else {
+        yyjson_mut_obj_add_bool(doc, view_obj, "available", false);
+        yyjson_mut_obj_add_str(doc, view_obj, "reason",
+                               vrc == HYP_ASK_VEC_INCOMPATIBLE
+                                   ? "a view exists but this binary does not read its method"
+                                   : "no 3-D view has been fitted for this index");
+        yyjson_mut_obj_add_str(doc, view_obj, "remedy", "hyponoia embed --project <p> --fit-view");
+    }
+    yyjson_mut_obj_add_val(doc, root, "view", view_obj);
+
+    if (vrc == HYP_ASK_VEC_OK) {
+        hyp_ask_view_point_t *pts = NULL;
+        int n = 0;
+        int64_t gaps = 0;
+        yyjson_mut_val *arr = yyjson_mut_arr(doc);
+        if (hyp_ask_view_points(v, &pts, &n, &gaps) == HYP_ASK_VEC_OK) {
+            for (int i = 0; i < n; i++) {
+                yyjson_mut_val *p = yyjson_mut_obj(doc);
+                yyjson_mut_obj_add_int(doc, p, "id", pts[i].node_id);
+                yyjson_mut_obj_add_strcpy(doc, p, "qn",
+                                          pts[i].qualified_name ? pts[i].qualified_name : "");
+                yyjson_mut_obj_add_strcpy(doc, p, "label", pts[i].label ? pts[i].label : "");
+                yyjson_mut_obj_add_strcpy(doc, p, "file", pts[i].file_path ? pts[i].file_path : "");
+                yyjson_mut_obj_add_int(doc, p, "start_line", pts[i].start_line);
+                yyjson_mut_obj_add_int(doc, p, "end_line", pts[i].end_line);
+                yyjson_mut_obj_add_real(doc, p, "x", (double)pts[i].x);
+                yyjson_mut_obj_add_real(doc, p, "y", (double)pts[i].y);
+                yyjson_mut_obj_add_real(doc, p, "z", (double)pts[i].z);
+                yyjson_mut_arr_append(arr, p);
+            }
+            hyp_ask_view_points_free(pts, n);
+        }
+        yyjson_mut_obj_add_val(doc, root, "points", arr);
+        yyjson_mut_obj_add_int(doc, root, "unprojected", gaps);
+        hyp_ask_view_free(&view);
+    }
+    if (v) {
+        hyp_ask_vectors_close(v);
+    }
+    yyjson_mut_obj_add_str(doc, root, "caveat", HYP_ASK_VIEW_CAVEAT);
+    char *out = yy_doc_to_str(doc);
+    yyjson_mut_doc_free(doc);
+    return out;
 }
 
 static char *handle_query_graph(hyp_mcp_server_t *srv, const char *args) {

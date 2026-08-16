@@ -40,6 +40,14 @@ Make passthrough (VAR=VAL, forwarded verbatim):
                   product build must not wipe build/c's test-runner (e.g.
                   build/smoke for the local ladder smoke).
   STATIC=1        Fully static portable build (Alpine/musl leg).
+  HYP_ASK_GPU=vulkan STATIC=0
+                  GPU variant: Vulkan `ask`/`embed` lane, DYNAMICALLY linked
+                  against libvulkan.so.1 (mutually exclusive with STATIC=1;
+                  Makefile.hyp refuses the pair). Needs Vulkan-Headers,
+                  SPIRV-Headers and glslc at build time — system packages
+                  are auto-detected, or pass VULKAN_INCLUDE= SPIRV_INCLUDE=
+                  GLSLC=. CI's build-linux-gpu job ships it as
+                  hyponoia-ui-linux-amd64-gpu, beside the static archive.
   EXTRA_CFLAGS= EXTRA_LDFLAGS=   Sanitizer soak builds (see _soak.yml).
 
 Environment:

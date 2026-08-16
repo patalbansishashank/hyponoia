@@ -450,21 +450,27 @@ if d.get("isError"):
     print("skip"); raise SystemExit
 content = d.get("content") or []
 text = content[0].get("text", "") if content else ""
+has_sc = "structuredContent" in d
 sc = d.get("structuredContent")
-if not isinstance(sc, dict):
-    print("no-structured"); raise SystemExit
 try:
     payload_is_object = isinstance(json.loads(text), dict)
 except Exception:
     payload_is_object = False
 if payload_is_object:
     print("skip"); raise SystemExit
-print("dup" if sc.get("text") == text and text else "ok")
+# Non-JSON payload. The key must be ABSENT, not present-and-empty: an empty
+# object reads as "the answer is nothing" to any client that prefers
+# structuredContent, which is what silently blanked query_graph and ask.
+if has_sc and isinstance(sc, dict) and not sc:
+    print("empty-structured"); raise SystemExit
+if has_sc and isinstance(sc, dict) and sc.get("text") == text and text:
+    print("dup"); raise SystemExit
+print("ok")
 ')
   case "$VERDICT" in
     dup) echo "FAIL: $(echo "$TOOL_ARGS" | cut -d" " -f1) repeats its payload in structuredContent (#1375)"; DUP_TOOLS=$((DUP_TOOLS+1)) ;;
     ok) DUP_CHECKED=$((DUP_CHECKED+1)) ;;
-    no-structured) echo "FAIL: $(echo "$TOOL_ARGS" | cut -d" " -f1) has no structuredContent object (outputSchema requires one)"; DUP_TOOLS=$((DUP_TOOLS+1)) ;;
+    empty-structured) echo "FAIL: $(echo "$TOOL_ARGS" | cut -d" " -f1) sends an EMPTY structuredContent beside a non-JSON payload — clients that prefer it render an empty result while the answer sits unread in content"; DUP_TOOLS=$((DUP_TOOLS+1)) ;;
   esac
 done
 if [ "$DUP_TOOLS" -ne 0 ]; then
@@ -1446,7 +1452,7 @@ assert_tier_profile_set() {
   local directory="$2"
   local suffix="$3"
   local access="$4"
-  local spec slug tier file
+  local spec slug tier file has_ask
   for spec in \
     "hyponoia-scout|Tier 1" \
     "hyponoia|Tier 2" \
@@ -1468,6 +1474,25 @@ assert_tier_profile_set() {
       if ! grep -Fq 'source read/grep fallback' "$file" 2>/dev/null; then
         echo "FAIL 8aw: $label $tier direct profile lacks source fallback"
         exit 1
+      fi
+      # `ask` is on the analysis tiers and never on scout (src/mcp/tool_tiers.h).
+      # Checked wherever the dialect names tools at all (Junie names a server),
+      # in every dialect's identifier form: mcp__hyponoia__ask, mcp_hyponoia_ask,
+      # hyponoia/ask, @hyponoia/ask, hyponoia_ask, "ask".
+      if grep -qE '(mcp__hyponoia__|mcp_hyponoia_|@hyponoia/|hyponoia/|hyponoia_|")search_graph' "$file" 2>/dev/null; then
+        if grep -qE '(mcp__hyponoia__|mcp_hyponoia_|@hyponoia/|hyponoia/|hyponoia_|")ask("|\b)' "$file" 2>/dev/null; then
+          has_ask=1
+        else
+          has_ask=0
+        fi
+        if [ "$slug" = "hyponoia-scout" ] && [ "$has_ask" = "1" ]; then
+          echo "FAIL 8aw: $label scout profile requests ask; scout must stay the surface where every tool answers"
+          exit 1
+        fi
+        if [ "$slug" != "hyponoia-scout" ] && [ "$has_ask" = "0" ]; then
+          echo "FAIL 8aw: $label $tier profile does not request ask (the server's analysis profile offers it)"
+          exit 1
+        fi
       fi
     elif ! grep -q 'parent agent must supply' "$file" 2>/dev/null ||
          ! grep -q 'must not call or claim access to MCP' "$file" 2>/dev/null ||

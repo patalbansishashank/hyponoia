@@ -203,7 +203,11 @@ $(error STATIC=1 and HYP_ASK_GPU=vulkan are mutually exclusive: the Vulkan \
 backend needs libvulkan.so.1 resolved at runtime, so the binary cannot be \
 fully static. Choose one — `STATIC=1 HYP_ASK_GPU=none` for the one-file \
 install story with a CPU-only `ask` lane (~15x slower to index, same \
-vectors), or drop STATIC=1 for the GPU lane. See vendored/llama.cpp/NOTICE)
+vectors), or build the GPU variant with STATIC=0: \
+`scripts/build.sh --with-ui HYP_ASK_GPU=vulkan STATIC=0` (CI ships it as \
+hyponoia-ui-linux-amd64-gpu, dynamically linked against libvulkan.so.1, \
+next to — never instead of — the static portable archive). \
+See vendored/llama.cpp/NOTICE)
 endif
 endif
 
@@ -407,7 +411,7 @@ SEMANTIC_SRCS = src/semantic/semantic.c src/semantic/ast_profile.c src/semantic/
 # the structural index keeps exactly the speed it has.
 ASK_SRCS = src/ask/ask_batch.c src/ask/ask_encoder.c src/ask/ask_vectors.c \
            src/ask/ask_embed.c src/ask/ask_cmd.c src/ask/ask_llama.c \
-           src/ask/ask_provider.c
+           src/ask/ask_provider.c src/ask/ask_view.c
 
 # nomic-embed-code pretrained vectors (assembler blob)
 UNIXCODER_BLOB_SRC = vendored/nomic/code_vectors_blob.S
@@ -641,13 +645,29 @@ LLAMA_LINK_LIBS =
 LLAMA_SHADER_DIR =
 
 ifeq ($(HYP_ASK_GPU),vulkan)
-# Vulkan-Headers are not on this machine's include path (/usr/include/vulkan
-# does not exist) and are not vendored: they are a BUILD-time dependency like a
-# compiler, not code we ship. Point VULKAN_INCLUDE at a Vulkan-Headers/include.
+# Vulkan-Headers and SPIRV-Headers are BUILD-time dependencies like a compiler,
+# not code we ship, so they are not vendored. Resolution order, per header set:
+#   1. an explicit VULKAN_INCLUDE= / SPIRV_INCLUDE= on the make command line;
+#   2. the system include root when the distro packages are installed
+#      (Debian/Ubuntu: libvulkan-dev -> /usr/include/vulkan/vulkan.h,
+#       spirv-headers -> /usr/include/spirv/unified1/spirv.hpp — what the CI
+#       build-linux-gpu job installs);
+#   3. the developer-cache checkout that the original T2 measurement used.
+# The probe is on the one file each header set is included for, so a partial
+# install (vulkan.h without vulkan.hpp, say) still fails at the compile of
+# ggml-vulkan.cpp with the real missing-header name rather than a stale path.
+HYP_SYS_INCLUDE ?= /usr/include
+ifneq (,$(wildcard $(HYP_SYS_INCLUDE)/vulkan/vulkan.h))
+VULKAN_INCLUDE ?= $(HYP_SYS_INCLUDE)
+else
 VULKAN_INCLUDE ?= $(HOME)/.cache/hyp-t2/Vulkan-Headers/include
-# SPIRV-Headers, likewise build-time only: ggml-vulkan.cpp includes
-# <spirv/unified1/spirv.hpp> to name SPIR-V capabilities.
+endif
+# ggml-vulkan.cpp includes <spirv/unified1/spirv.hpp> to name SPIR-V capabilities.
+ifneq (,$(wildcard $(HYP_SYS_INCLUDE)/spirv/unified1/spirv.hpp))
+SPIRV_INCLUDE ?= $(HYP_SYS_INCLUDE)
+else
 SPIRV_INCLUDE ?= $(HOME)/.cache/hyp-t2/spirv-install/include
+endif
 GLSLC ?= glslc
 LLAMA_GGML_VK_SRC = $(LLAMA_DIR)/ggml/src/ggml-vulkan/ggml-vulkan.cpp
 LLAMA_VK_SHADER_SRC = $(LLAMA_DIR)/ggml/src/ggml-vulkan/vulkan-shaders
@@ -954,7 +974,7 @@ PP_OBJ_TSAN = $(BUILD_DIR)/tsan_preprocessor.o
 
 # ── Targets ──────────────────────────────────────────────────────
 
-.PHONY: test test-par test-repro test-foundation test-tsan test-daemon-smoke hyp hyp-with-ui frontend ui-pack clean-c lint lint-tidy lint-cppcheck lint-format security
+.PHONY: test test-par test-repro test-foundation test-tsan test-daemon-smoke test-ask-batching hyp hyp-with-ui frontend ui-pack clean-c lint lint-tidy lint-cppcheck lint-format security
 
 $(BUILD_DIR):
 	mkdir -p $(BUILD_DIR)
@@ -1220,6 +1240,23 @@ test-tsan: $(BUILD_DIR)/test-runner-tsan
 # silently skipping an occupied one. Deterministic C tests cover Windows IPC.
 test-daemon-smoke: $(BUILD_DIR)/hyponoia
 	cd $(CURDIR) && HYP_DAEMON_SMOKE_REQUIRE_RUN=1 python3 tests/test_daemon_smoke.py $(BUILD_DIR)/hyponoia
+
+# The `ask` lane's batching invariant, against the REAL model: every document's
+# vector must not depend on what shared its forward pass. The stub cannot show
+# this — it hashes each text on its own — and the pass's own output cannot
+# either, which is how ragged batches through llama.cpp's per-sequence KV
+# streams shipped vectors at cosine 0.71 to the same texts encoded alone
+# (src/ask/ask_llama.c, cp.kv_unified). Gated on the weights being present:
+# with no model on this machine it SKIPS and says so, it never passes vacuously.
+# `hyponoia embed --verify-batching` is the check; --device cpu so it needs
+# nothing but the weights; HYP_ASK_VERIFY_TEXTS=<file> swaps in real code.
+ASK_MODEL_FILE = $(or $(HYP_CACHE_DIR),$(HOME)/.cache/hyponoia)/models/voyage-4-nano-q8_0.gguf
+test-ask-batching: $(BUILD_DIR)/hyponoia
+	@if [ -f "$(ASK_MODEL_FILE)" ]; then \
+	    cd $(CURDIR) && $(BUILD_DIR)/hyponoia embed --verify-batching --device cpu --max-docs 16; \
+	else \
+	    echo "test-ask-batching: SKIP — $(ASK_MODEL_FILE) is not on this machine (hyponoia fetch-model)"; \
+	fi
 
 # ── Production binary ────────────────────────────────────────────
 

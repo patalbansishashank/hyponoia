@@ -19,6 +19,10 @@
 #include "test_framework.h"
 #include "test_helpers.h"
 
+#include <ask/ask_vectors.h>
+#include <ask/ask_view.h>
+#include <cli/cli.h>              /* hyp_config_*, HYP_CONFIG_ASK_ESC_* */
+#include <foundation/compat_fs.h> /* hyp_file_exists */
 #include <mcp/mcp.h>
 #include <semantic/ask_embed.h>
 #include <semantic/ask_lang.h>
@@ -725,6 +729,421 @@ TEST(ask_requires_a_question) {
     PASS();
 }
 
+/* ── Escalation: which lane answered, and the refusals (§3.1 step 3) ── */
+
+/* A second double whose model id is IN the measured voyage-4 space. Same
+ * vectors, same axis trick — only the identity differs, which is exactly the
+ * thing the space gate reads. */
+static const hyp_ask_backend_t g_fake_backend_voyage4 = {
+    .model_id = "voyage-4-nano-Q8_0@test-double",
+    .dim = HYP_ASK_DIM,
+    .window_tokens = 32768,
+    .encode_query = fake_encode_query,
+    .encode_documents = fake_encode_documents,
+    .truncates = NULL,
+};
+
+/* An isolated cache directory holding ONLY the config this test writes: the
+ * handler reads ask.escalation.* from <cache>/_config.db and looks for vector
+ * files under <cache>/vectors/, so pointing HYP_CACHE_DIR here keeps the real
+ * machine's config (and its real key variable name) out of the test. */
+typedef struct {
+    char *dir;
+    char *saved_cache;
+} esc_cache_t;
+
+static bool esc_cache_begin(esc_cache_t *c) {
+    /* th_mktempdir hands back a static buffer; copy it, because TH_PATH and a
+     * second th_mktempdir would overwrite it under us. */
+    const char *made = th_mktempdir("hyp-ask-esc");
+    c->dir = made ? hyp_strdup(made) : NULL;
+    if (!c->dir) {
+        return false;
+    }
+    const char *saved = getenv("HYP_CACHE_DIR");
+    c->saved_cache = saved ? hyp_strdup(saved) : NULL;
+    hyp_setenv("HYP_CACHE_DIR", c->dir, 1);
+    return true;
+}
+
+static void esc_cache_end(esc_cache_t *c) {
+    if (c->saved_cache) {
+        hyp_setenv("HYP_CACHE_DIR", c->saved_cache, 1);
+        free(c->saved_cache);
+    } else {
+        hyp_unsetenv("HYP_CACHE_DIR");
+    }
+    if (c->dir) {
+        th_cleanup(c->dir);
+        free(c->dir);
+    }
+    c->dir = NULL;
+    c->saved_cache = NULL;
+}
+
+/* Write escalation config through the real config layer, mode included. NULL
+ * leaves a key unset. `raw_mode` bypasses validation on purpose, for the test
+ * that hands the handler a value `config set` would have refused. */
+static void esc_cache_configure(const esc_cache_t *c, const char *provider, const char *model,
+                                const char *key_env, const char *raw_mode) {
+    hyp_config_t *cfg = hyp_config_open(c->dir);
+    if (!cfg) {
+        return;
+    }
+    if (provider) {
+        hyp_config_set(cfg, HYP_CONFIG_ASK_ESC_PROVIDER, provider);
+    }
+    if (model) {
+        hyp_config_set(cfg, HYP_CONFIG_ASK_ESC_MODEL, model);
+    }
+    if (key_env) {
+        hyp_config_set(cfg, HYP_CONFIG_ASK_ESC_KEY_ENV, key_env);
+    }
+    if (raw_mode) {
+        hyp_config_set(cfg, HYP_CONFIG_ASK_ESC_MODE, raw_mode);
+    }
+    hyp_config_close(cfg);
+}
+
+#define ESC_TEST_KEY_VAR "HYP_TEST_ASK_ESCALATION_KEY_VAR"
+
+/* A project with one node and NO vector fixture at all — neither lane built. */
+static hyp_mcp_server_t *ask_srv_bare(void) {
+    hyp_mcp_server_t *srv = hyp_mcp_server_new(NULL);
+    if (!srv) {
+        return NULL;
+    }
+    hyp_store_t *st = hyp_mcp_server_store(srv);
+    hyp_mcp_server_set_project(srv, "bare");
+    hyp_store_upsert_project(st, "bare", "/tmp/bare");
+    hyp_node_t n = {.project = "bare",
+                    .label = "Function",
+                    .name = "f",
+                    .qualified_name = "bare.f",
+                    .file_path = "a.c",
+                    .start_line = 1,
+                    .end_line = 2};
+    hyp_store_upsert_node(st, &n);
+    return srv;
+}
+
+/* Every answer names the lane that produced it and BOTH encoders, in both
+ * encodings, so an agent holding the answer knows what it is holding. */
+TEST(ask_local_answers_carry_lane_and_both_encoders) {
+    fake_reset();
+    ASSERT_EQ(hyp_ask_backend_install(&g_fake_backend), 0);
+    hyp_mcp_server_t *srv = ask_srv_with_nodes("askproj");
+    ASSERT_NOT_NULL(srv);
+
+    char *resp = ask_call(srv, "{\"project\":\"askproj\",\"question\":\"GOLD\"}");
+    char *inner = ask_inner_text(resp);
+    ASSERT_NOT_NULL(inner);
+    ASSERT_NOT_NULL(strstr(inner, "lane: local"));
+    ASSERT_NOT_NULL(strstr(inner, "query_encoder: test-double/axis-1024"));
+    ASSERT_NOT_NULL(strstr(inner, "index_encoder: test-double/axis-1024"));
+    /* No space disclosure on the local lane: one model on both sides. */
+    ASSERT_NULL(strstr(inner, "space:"));
+    free(inner);
+    free(resp);
+
+    resp = ask_call(srv, "{\"project\":\"askproj\",\"question\":\"GOLD\",\"format\":\"json\"}");
+    inner = ask_inner_text(resp);
+    ASSERT_NOT_NULL(inner);
+    yyjson_doc *doc = yyjson_read(inner, strlen(inner), 0);
+    ASSERT_NOT_NULL(doc);
+    yyjson_val *root = yyjson_doc_get_root(doc);
+    ASSERT_STR_EQ(yyjson_get_str(yyjson_obj_get(root, "lane")), "local");
+    ASSERT_STR_EQ(yyjson_get_str(yyjson_obj_get(root, "query_encoder")), "test-double/axis-1024");
+    ASSERT_STR_EQ(yyjson_get_str(yyjson_obj_get(root, "index_encoder")), "test-double/axis-1024");
+    ASSERT_NULL(yyjson_obj_get(root, "space"));
+    yyjson_doc_free(doc);
+    free(inner);
+    free(resp);
+
+    /* And the unavailable answer says which lane could not answer. */
+    hyp_ask_backend_install(NULL);
+    resp = ask_call(srv, "{\"project\":\"askproj\",\"question\":\"GOLD\"}");
+    inner = ask_inner_text(resp);
+    ASSERT_NOT_NULL(inner);
+    ASSERT_NOT_NULL(strstr(inner, "available: false"));
+    ASSERT_NOT_NULL(strstr(inner, "lane: local"));
+    free(inner);
+    free(resp);
+
+    hyp_mcp_server_free(srv);
+    PASS();
+}
+
+/* escalate=true with nothing configured: an ERROR that says it did not fall
+ * back, points at the config keys, and — because the default mode is query —
+ * does NOT send the caller off to build an escalation index. The local
+ * encoder must not have been asked anything. */
+TEST(ask_escalate_unconfigured_refuses_and_does_not_fall_back) {
+    fake_reset();
+    esc_cache_t cache;
+    ASSERT_TRUE(esc_cache_begin(&cache));
+    ASSERT_EQ(hyp_ask_backend_install(&g_fake_backend), 0);
+    hyp_mcp_server_t *srv = ask_srv_with_nodes("askproj");
+    ASSERT_NOT_NULL(srv);
+
+    char *resp = ask_call(srv, "{\"project\":\"askproj\",\"question\":\"GOLD\",\"escalate\":true}");
+    ASSERT_NOT_NULL(resp);
+    ASSERT_TRUE(ask_is_error(resp));
+    char *inner = ask_inner_text(resp);
+    ASSERT_NOT_NULL(inner);
+    ASSERT_NOT_NULL(strstr(inner, "did NOT fall back"));
+    ASSERT_NOT_NULL(strstr(inner, "ask.escalation.provider"));
+    ASSERT_NOT_NULL(strstr(inner, "ask.escalation.mode=query"));
+    /* Query mode needs no escalation index; telling someone to build one
+     * would send them to spend money on the wrong thing. */
+    ASSERT_NULL(strstr(inner, "embed --escalation"));
+    ASSERT_NULL(strstr(inner, "results:"));
+    ASSERT_EQ(g_fake_query_calls, 0);
+    free(inner);
+    free(resp);
+    hyp_mcp_server_free(srv);
+    hyp_ask_backend_install(NULL);
+    esc_cache_end(&cache);
+    PASS();
+}
+
+/* Configured, key variable unset: the refusal names THE VARIABLE — never a
+ * value — and did not fall back. */
+TEST(ask_escalate_query_mode_refuses_without_key_naming_the_variable) {
+    fake_reset();
+    esc_cache_t cache;
+    ASSERT_TRUE(esc_cache_begin(&cache));
+    hyp_unsetenv(ESC_TEST_KEY_VAR);
+    esc_cache_configure(&cache, "voyage", "voyage-4-large", ESC_TEST_KEY_VAR, NULL);
+    ASSERT_EQ(hyp_ask_backend_install(&g_fake_backend_voyage4), 0);
+    hyp_mcp_server_t *srv = ask_srv_with_nodes("askproj");
+    ASSERT_NOT_NULL(srv);
+    sqlite3 *db = hyp_store_get_db(hyp_mcp_server_store(srv));
+    ask_fixture_put_meta(db, "askproj", "voyage-4-nano-Q8_0@test-double", HYP_ASK_DIM, "none", 0,
+                         3);
+
+    char *resp = ask_call(srv, "{\"project\":\"askproj\",\"question\":\"GOLD\",\"escalate\":true}");
+    ASSERT_NOT_NULL(resp);
+    ASSERT_TRUE(ask_is_error(resp));
+    char *inner = ask_inner_text(resp);
+    ASSERT_NOT_NULL(inner);
+    ASSERT_NOT_NULL(strstr(inner, ESC_TEST_KEY_VAR));
+    ASSERT_NOT_NULL(strstr(inner, "did NOT fall back"));
+    ASSERT_NOT_NULL(strstr(inner, "ONLY the question"));
+    ASSERT_NULL(strstr(inner, "results:"));
+    ASSERT_EQ(g_fake_query_calls, 0);
+    free(inner);
+    free(resp);
+    hyp_mcp_server_free(srv);
+    hyp_ask_backend_install(NULL);
+    esc_cache_end(&cache);
+    PASS();
+}
+
+/* THE SPACE GATE. The local index was built by a model whose space is
+ * unmeasured; the escalation model is voyage-4-large. Nothing is scored, the
+ * refusal names both model ids and both spaces and says why, and no request
+ * left the machine (the key is a placeholder — a leak here would be a curl to
+ * the real endpoint, which the test would notice as a provider error). */
+TEST(ask_escalate_query_mode_refuses_when_the_index_space_is_unknown) {
+    fake_reset();
+    esc_cache_t cache;
+    ASSERT_TRUE(esc_cache_begin(&cache));
+    hyp_setenv(ESC_TEST_KEY_VAR, "not-a-real-key-placeholder", 1);
+    esc_cache_configure(&cache, "voyage", "voyage-4-large", ESC_TEST_KEY_VAR, NULL);
+    ASSERT_EQ(hyp_ask_backend_install(&g_fake_backend), 0);
+    hyp_mcp_server_t *srv = ask_srv_with_nodes("askproj");
+    ASSERT_NOT_NULL(srv);
+
+    char *resp = ask_call(srv, "{\"project\":\"askproj\",\"question\":\"GOLD\",\"escalate\":true}");
+    ASSERT_NOT_NULL(resp);
+    ASSERT_TRUE(ask_is_error(resp));
+    char *inner = ask_inner_text(resp);
+    ASSERT_NOT_NULL(inner);
+    ASSERT_NOT_NULL(strstr(inner, "test-double/axis-1024"));     /* the index's model */
+    ASSERT_NOT_NULL(strstr(inner, "voyage/voyage-4-large"));     /* the escalation model */
+    ASSERT_NOT_NULL(strstr(inner, "unknown/unmeasured"));        /* the index's space */
+    ASSERT_NOT_NULL(strstr(inner, "embedding space: voyage-4")); /* the query's space */
+    ASSERT_NOT_NULL(strstr(inner, "confidently-ranked garbage"));
+    ASSERT_NOT_NULL(strstr(inner, "did NOT fall back"));
+    /* The in-graph fixture carries no stamp, so the space was DERIVED and the
+     * refusal says so rather than passing it off as a labelled index. */
+    ASSERT_NOT_NULL(strstr(inner, "derived from the index's model id"));
+    /* The placeholder must never be echoed. */
+    ASSERT_NULL(strstr(inner, "not-a-real-key-placeholder"));
+    ASSERT_NULL(strstr(inner, "results:"));
+    ASSERT_EQ(g_fake_query_calls, 0);
+    free(inner);
+    free(resp);
+    hyp_mcp_server_free(srv);
+    hyp_ask_backend_install(NULL);
+    hyp_unsetenv(ESC_TEST_KEY_VAR);
+    esc_cache_end(&cache);
+    PASS();
+}
+
+/* The other direction: the index IS in voyage-4, the escalation model is not
+ * (voyage-code-3 — same vendor, one generation back, measured NOT shared).
+ * Refused, naming both. */
+TEST(ask_escalate_query_mode_refuses_a_space_mismatch_naming_both_spaces) {
+    fake_reset();
+    esc_cache_t cache;
+    ASSERT_TRUE(esc_cache_begin(&cache));
+    hyp_setenv(ESC_TEST_KEY_VAR, "not-a-real-key-placeholder", 1);
+    esc_cache_configure(&cache, "voyage", "voyage-code-3", ESC_TEST_KEY_VAR, "query");
+    ASSERT_EQ(hyp_ask_backend_install(&g_fake_backend_voyage4), 0);
+    hyp_mcp_server_t *srv = ask_srv_with_nodes("askproj");
+    ASSERT_NOT_NULL(srv);
+    sqlite3 *db = hyp_store_get_db(hyp_mcp_server_store(srv));
+    ask_fixture_put_meta(db, "askproj", "voyage-4-nano-Q8_0@test-double", HYP_ASK_DIM, "none", 0,
+                         3);
+
+    char *resp = ask_call(srv, "{\"project\":\"askproj\",\"question\":\"GOLD\",\"escalate\":true}");
+    ASSERT_NOT_NULL(resp);
+    ASSERT_TRUE(ask_is_error(resp));
+    char *inner = ask_inner_text(resp);
+    ASSERT_NOT_NULL(inner);
+    ASSERT_NOT_NULL(strstr(inner, "voyage-4-nano-Q8_0@test-double"));
+    ASSERT_NOT_NULL(strstr(inner, "embedding space: voyage-4"));
+    ASSERT_NOT_NULL(strstr(inner, "voyage/voyage-code-3"));
+    ASSERT_NOT_NULL(strstr(inner, "embedding space: unknown/unmeasured"));
+    ASSERT_NOT_NULL(strstr(inner, "did NOT fall back"));
+    ASSERT_NULL(strstr(inner, "results:"));
+    ASSERT_EQ(g_fake_query_calls, 0);
+    free(inner);
+    free(resp);
+    hyp_mcp_server_free(srv);
+    hyp_ask_backend_install(NULL);
+    hyp_unsetenv(ESC_TEST_KEY_VAR);
+    esc_cache_end(&cache);
+    PASS();
+}
+
+/* Query mode scores the LOCAL index. When there is none, that is said as
+ * itself with the local lane's remedy — not as an empty ranking, and not as
+ * "build the escalation index", which query mode would never read. */
+TEST(ask_escalate_query_mode_without_a_local_index_says_so) {
+    fake_reset();
+    esc_cache_t cache;
+    ASSERT_TRUE(esc_cache_begin(&cache));
+    hyp_setenv(ESC_TEST_KEY_VAR, "not-a-real-key-placeholder", 1);
+    esc_cache_configure(&cache, "voyage", "voyage-4-large", ESC_TEST_KEY_VAR, NULL);
+    ASSERT_EQ(hyp_ask_backend_install(&g_fake_backend_voyage4), 0);
+    hyp_mcp_server_t *srv = ask_srv_bare();
+    ASSERT_NOT_NULL(srv);
+
+    char *resp =
+        ask_call(srv, "{\"project\":\"bare\",\"question\":\"anything\",\"escalate\":true}");
+    ASSERT_NOT_NULL(resp);
+    ASSERT_TRUE(ask_is_error(resp));
+    char *inner = ask_inner_text(resp);
+    ASSERT_NOT_NULL(inner);
+    ASSERT_NOT_NULL(strstr(inner, "no_semantic_index"));
+    ASSERT_NOT_NULL(strstr(inner, "LOCAL index"));
+    ASSERT_NOT_NULL(strstr(inner, "did NOT fall back"));
+    ASSERT_NULL(strstr(inner, "embed --escalation"));
+    ASSERT_NULL(strstr(inner, "results:"));
+    ASSERT_EQ(g_fake_query_calls, 0);
+    free(inner);
+    free(resp);
+    hyp_mcp_server_free(srv);
+    hyp_ask_backend_install(NULL);
+    hyp_unsetenv(ESC_TEST_KEY_VAR);
+    esc_cache_end(&cache);
+    PASS();
+}
+
+/* Index mode is the pre-existing lane and behaves as it did: an unbuilt
+ * escalation index is refused with the build command, never served locally.
+ * The space gate does not apply — both sides of that index are one model. */
+TEST(ask_escalate_index_mode_still_refuses_an_unbuilt_escalation_index) {
+    fake_reset();
+    esc_cache_t cache;
+    ASSERT_TRUE(esc_cache_begin(&cache));
+    hyp_setenv(ESC_TEST_KEY_VAR, "not-a-real-key-placeholder", 1);
+    esc_cache_configure(&cache, "voyage", "voyage-code-3", ESC_TEST_KEY_VAR, "index");
+    ASSERT_EQ(hyp_ask_backend_install(&g_fake_backend), 0);
+    hyp_mcp_server_t *srv = ask_srv_bare();
+    ASSERT_NOT_NULL(srv);
+
+    char *resp = ask_call(srv, "{\"project\":\"bare\",\"question\":\"GOLD\",\"escalate\":true}");
+    ASSERT_NOT_NULL(resp);
+    ASSERT_TRUE(ask_is_error(resp));
+    char *inner = ask_inner_text(resp);
+    ASSERT_NOT_NULL(inner);
+    ASSERT_NOT_NULL(strstr(inner, "escalation index is not built for this project"));
+    ASSERT_NOT_NULL(strstr(inner, "embed --escalation --project bare"));
+    ASSERT_NOT_NULL(strstr(inner, "did NOT fall back"));
+    ASSERT_NULL(strstr(inner, "embedding space"));
+    ASSERT_NULL(strstr(inner, "results:"));
+    ASSERT_EQ(g_fake_query_calls, 0);
+    free(inner);
+    free(resp);
+    hyp_mcp_server_free(srv);
+    hyp_ask_backend_install(NULL);
+    hyp_unsetenv(ESC_TEST_KEY_VAR);
+    esc_cache_end(&cache);
+    PASS();
+}
+
+/* A mode the validator never saw (written by hand or by an older binary) is
+ * refused naming both legal values — it decides what leaves the machine, so it
+ * is not guessed. */
+TEST(ask_escalate_refuses_an_unrecognised_mode) {
+    fake_reset();
+    esc_cache_t cache;
+    ASSERT_TRUE(esc_cache_begin(&cache));
+    esc_cache_configure(&cache, "voyage", "voyage-4-large", ESC_TEST_KEY_VAR, "both");
+    ASSERT_EQ(hyp_ask_backend_install(&g_fake_backend), 0);
+    hyp_mcp_server_t *srv = ask_srv_with_nodes("askproj");
+    ASSERT_NOT_NULL(srv);
+
+    char *resp = ask_call(srv, "{\"project\":\"askproj\",\"question\":\"GOLD\",\"escalate\":true}");
+    ASSERT_NOT_NULL(resp);
+    ASSERT_TRUE(ask_is_error(resp));
+    char *inner = ask_inner_text(resp);
+    ASSERT_NOT_NULL(inner);
+    ASSERT_NOT_NULL(strstr(inner, "'both'"));
+    ASSERT_NOT_NULL(strstr(inner, "'query'"));
+    ASSERT_NOT_NULL(strstr(inner, "'index'"));
+    ASSERT_NOT_NULL(strstr(inner, "did NOT fall back"));
+    ASSERT_EQ(g_fake_query_calls, 0);
+    free(inner);
+    free(resp);
+    hyp_mcp_server_free(srv);
+    hyp_ask_backend_install(NULL);
+    esc_cache_end(&cache);
+    PASS();
+}
+
+/* THE TWO ENDS. The tool description an agent reads must name both modes, the
+ * default, and the three lane values the answer carries — otherwise the
+ * server can do something the client was never told exists. */
+TEST(ask_schema_describes_both_escalation_modes_and_the_lane_values) {
+    const char *schema = hyp_mcp_tool_input_schema("ask");
+    ASSERT_NOT_NULL(schema);
+    yyjson_doc *doc = yyjson_read(schema, strlen(schema), 0);
+    ASSERT_NOT_NULL(doc);
+    yyjson_val *props = yyjson_obj_get(yyjson_doc_get_root(doc), "properties");
+    yyjson_val *esc = props ? yyjson_obj_get(props, "escalate") : NULL;
+    ASSERT_NOT_NULL(esc);
+    ASSERT_STR_EQ(yyjson_get_str(yyjson_obj_get(esc, "type")), "boolean");
+    ASSERT_FALSE(yyjson_get_bool(yyjson_obj_get(esc, "default")));
+    const char *d = yyjson_get_str(yyjson_obj_get(esc, "description"));
+    ASSERT_NOT_NULL(d);
+    ASSERT_NOT_NULL(strstr(d, "ask.escalation.mode"));
+    ASSERT_NOT_NULL(strstr(d, "`query` (the DEFAULT)"));
+    ASSERT_NOT_NULL(strstr(d, "`index`"));
+    ASSERT_NOT_NULL(strstr(d, "ONLY the ~30-token question"));
+    ASSERT_NOT_NULL(strstr(d, "voyage-4"));
+    ASSERT_NOT_NULL(strstr(d, "escalation-query"));
+    ASSERT_NOT_NULL(strstr(d, "escalation-index"));
+    ASSERT_NOT_NULL(strstr(d, "query_encoder"));
+    ASSERT_NOT_NULL(strstr(d, "index_encoder"));
+    yyjson_doc_free(doc);
+    PASS();
+}
+
 /* ── Registration and schema ─────────────────────────────────────── */
 
 /* §2 cost a measurement round to `search_graph --help` documenting an
@@ -788,7 +1207,263 @@ TEST(ask_is_a_separate_tool_and_semantic_query_is_unchanged) {
     PASS();
 }
 
+/* ── The 3-D view's query overlay: TWO ENDS MUST AGREE ──────────────
+ *
+ * The overlay's neighbours must be the `ask` tool's own ranked rows — the
+ * same list, in the same order — not a recomputation that could disagree.
+ * This test builds a REAL vector file (the production store, under an
+ * isolated cache dir), fits the view, calls the tool through the MCP envelope
+ * as a client would, calls the overlay as the UI would, and asserts the two
+ * agree row for row. It also pins the caveat: the sentence that says the
+ * distances are not real must be in the JSON, verbatim. */
+static const char *json_str_at(yyjson_val *obj, const char *key) {
+    yyjson_val *v = obj ? yyjson_obj_get(obj, key) : NULL;
+    return v && yyjson_is_str(v) ? yyjson_get_str(v) : NULL;
+}
+
+TEST(ask_view_overlay_neighbours_are_the_tools_own_rows) {
+    fake_reset();
+    ASSERT_EQ(hyp_ask_backend_install(&g_fake_backend), 0);
+    char *dir = th_mktempdir("hyp-askview-overlay");
+    ASSERT_NOT_NULL(dir);
+    char *old_cache = getenv("HYP_CACHE_DIR") ? hyp_strdup(getenv("HYP_CACHE_DIR")) : NULL;
+    ASSERT_EQ(hyp_setenv("HYP_CACHE_DIR", dir, 1), 0);
+
+    const char *project = "askview";
+    hyp_mcp_server_t *srv = ask_srv_with_nodes(project);
+    /* Everything below the fixture is captured first and asserted after the
+     * environment is restored, so a failing assert cannot leak HYP_CACHE_DIR
+     * into every later suite in this process. */
+    bool built = false;
+    bool fitted = false;
+    char *tool_json = NULL;
+    char *overlay = NULL;
+    char *cloud = NULL;
+    if (srv) {
+        hyp_ask_vectors_t *v = hyp_ask_vectors_open(project);
+        if (v && hyp_ask_vectors_begin_build(v, g_fake_backend.model_id, "", HYP_ASK_DIM,
+                                             g_fake_backend.window_tokens, "g1", "test double",
+                                             false) == HYP_ASK_VEC_OK) {
+            static float vecs[3][HYP_ASK_DIM];
+            fake_axis_vector("GOLD", vecs[0]);
+            fake_axis_vector("other-1", vecs[1]);
+            fake_axis_vector("other-2", vecs[2]);
+            hyp_ask_vec_row_t rows[3];
+            memset(rows, 0, sizeof(rows));
+            rows[0].qualified_name = "askview.writer.orderSections";
+            rows[0].node_id = 1;
+            rows[0].label = "Function";
+            rows[0].file_path = "src/writer.c";
+            rows[0].start_line = 120;
+            rows[0].end_line = 168;
+            rows[0].lang = "C";
+            rows[0].content_hash = "h-gold";
+            rows[0].vector = vecs[0];
+            rows[1] = rows[0];
+            rows[1].qualified_name = "askview.writer.emit";
+            rows[1].node_id = 2;
+            rows[1].label = "Method";
+            rows[1].start_line = 200;
+            rows[1].end_line = 240;
+            rows[1].content_hash = "h-1";
+            rows[1].vector = vecs[1];
+            rows[2] = rows[0];
+            rows[2].qualified_name = "askview.reader.Reader";
+            rows[2].node_id = 3;
+            rows[2].label = "Class";
+            rows[2].file_path = "src/reader.c";
+            rows[2].start_line = 10;
+            rows[2].end_line = 90;
+            rows[2].content_hash = "h-2";
+            rows[2].vector = vecs[2];
+            built = hyp_ask_vectors_put(v, rows, 3) == HYP_ASK_VEC_OK &&
+                    hyp_ask_vectors_finish_build(v, true) == HYP_ASK_VEC_OK;
+            fitted = built && hyp_ask_view_fit(v, NULL) == HYP_ASK_VEC_OK;
+        }
+        if (v) {
+            hyp_ask_vectors_close(v);
+        }
+        if (fitted) {
+            /* END ONE: the tool, through the MCP envelope, as a client sees it. */
+            char *resp = ask_call(
+                srv,
+                "{\"project\":\"askview\",\"question\":\"GOLD\",\"limit\":3,\"format\":\"json\"}");
+            tool_json = ask_inner_text(resp);
+            free(resp);
+            /* END TWO: the overlay, as the UI's /api/embed-view/ask serves it. */
+            overlay =
+                hyp_mcp_ask_view_overlay(srv, "{\"project\":\"askview\",\"question\":\"GOLD\","
+                                              "\"limit\":3}");
+            cloud = hyp_mcp_ask_view_points_json(project, false);
+        }
+        hyp_mcp_server_free(srv);
+    }
+    hyp_ask_backend_install(NULL);
+    if (old_cache) {
+        (void)hyp_setenv("HYP_CACHE_DIR", old_cache, 1);
+    } else {
+        (void)hyp_unsetenv("HYP_CACHE_DIR");
+    }
+    free(old_cache);
+    th_cleanup(dir);
+
+    ASSERT_NOT_NULL(srv);
+    ASSERT_TRUE(built);
+    ASSERT_TRUE(fitted);
+    ASSERT_NOT_NULL(tool_json);
+    ASSERT_NOT_NULL(overlay);
+    ASSERT_NOT_NULL(cloud);
+
+    yyjson_doc *td = yyjson_read(tool_json, strlen(tool_json), 0);
+    yyjson_doc *od = yyjson_read(overlay, strlen(overlay), 0);
+    yyjson_doc *cd = yyjson_read(cloud, strlen(cloud), 0);
+    ASSERT_NOT_NULL(td);
+    ASSERT_NOT_NULL(od);
+    ASSERT_NOT_NULL(cd);
+    yyjson_val *troot = yyjson_doc_get_root(td);
+    yyjson_val *oroot = yyjson_doc_get_root(od);
+    yyjson_val *croot = yyjson_doc_get_root(cd);
+
+    /* The tool answered from the REAL vector file (population 3, available). */
+    yyjson_val *tavail = yyjson_obj_get(troot, "available");
+    ASSERT_TRUE(tavail && yyjson_get_bool(tavail));
+    yyjson_val *trows = yyjson_obj_get(troot, "rows");
+    ASSERT_NOT_NULL(trows);
+    ASSERT_EQ((int)yyjson_arr_size(trows), 3);
+    /* Gold first — the only row on the question's axis. */
+    yyjson_val *r0 = yyjson_arr_get(trows, 0);
+    ASSERT_STR_EQ(yyjson_get_str(yyjson_arr_get(r0, 0)), "askview.writer.orderSections");
+
+    /* The overlay carries the tool's own answer verbatim... */
+    yyjson_val *oask = yyjson_obj_get(oroot, "ask");
+    ASSERT_NOT_NULL(oask);
+    yyjson_val *oask_rows = yyjson_obj_get(oask, "rows");
+    ASSERT_NOT_NULL(oask_rows);
+    ASSERT_EQ((int)yyjson_arr_size(oask_rows), 3);
+    /* ...a fitted view... */
+    yyjson_val *oview = yyjson_obj_get(oroot, "view");
+    ASSERT_NOT_NULL(oview);
+    yyjson_val *oview_avail = yyjson_obj_get(oview, "available");
+    ASSERT_TRUE(oview_avail && yyjson_get_bool(oview_avail));
+    ASSERT_STR_EQ(json_str_at(oview, "method"), HYP_ASK_VIEW_METHOD);
+    yyjson_val *ostale = yyjson_obj_get(oview, "stale");
+    ASSERT_TRUE(ostale && !yyjson_get_bool(ostale));
+    /* ...the question placed in it... */
+    yyjson_val *oq = yyjson_obj_get(oroot, "query");
+    ASSERT_NOT_NULL(oq);
+    ASSERT_TRUE(yyjson_is_num(yyjson_obj_get(oq, "x")));
+    ASSERT_TRUE(yyjson_is_num(yyjson_obj_get(oq, "y")));
+    ASSERT_TRUE(yyjson_is_num(yyjson_obj_get(oq, "z")));
+    /* ...and hits that ARE the tool's rows, rank for rank, both against the
+     * embedded copy and against the SEPARATE tool call a client made. */
+    yyjson_val *hits = yyjson_obj_get(oroot, "hits");
+    ASSERT_NOT_NULL(hits);
+    ASSERT_EQ((int)yyjson_arr_size(hits), 3);
+    for (int i = 0; i < 3; i++) {
+        yyjson_val *h = yyjson_arr_get(hits, (size_t)i);
+        yyjson_val *client_row = yyjson_arr_get(trows, (size_t)i);
+        yyjson_val *embedded_row = yyjson_arr_get(oask_rows, (size_t)i);
+        const char *hqn = json_str_at(h, "qualified_name");
+        ASSERT_NOT_NULL(hqn);
+        ASSERT_STR_EQ(hqn, yyjson_get_str(yyjson_arr_get(client_row, 0)));
+        ASSERT_STR_EQ(hqn, yyjson_get_str(yyjson_arr_get(embedded_row, 0)));
+        ASSERT_EQ((int)yyjson_get_int(yyjson_obj_get(h, "rank")), i + 1);
+        ASSERT_TRUE(yyjson_get_bool(yyjson_obj_get(h, "projected")));
+        ASSERT_TRUE(yyjson_is_num(yyjson_obj_get(h, "x")));
+        /* Same score the client saw. */
+        ASSERT_FLOAT_EQ((float)yyjson_get_num(yyjson_obj_get(h, "score")),
+                        (float)yyjson_get_num(yyjson_arr_get(client_row, 4)), 1e-6F);
+    }
+    /* A hit's coordinates are the cloud's coordinates for the same row: one
+     * projection on disk, read from two routes. */
+    yyjson_val *h0 = yyjson_arr_get(hits, 0);
+    yyjson_val *points = yyjson_obj_get(croot, "points");
+    ASSERT_NOT_NULL(points);
+    ASSERT_EQ((int)yyjson_arr_size(points), 3);
+    bool matched = false;
+    size_t pi = 0;
+    size_t pmax = 0;
+    yyjson_val *pt = NULL;
+    yyjson_arr_foreach(points, pi, pmax, pt) {
+        const char *pqn = json_str_at(pt, "qn");
+        if (pqn && strcmp(pqn, "askview.writer.orderSections") == 0) {
+            matched = true;
+            ASSERT_FLOAT_EQ((float)yyjson_get_num(yyjson_obj_get(pt, "x")),
+                            (float)yyjson_get_num(yyjson_obj_get(h0, "x")), 0.0F);
+            ASSERT_FLOAT_EQ((float)yyjson_get_num(yyjson_obj_get(pt, "y")),
+                            (float)yyjson_get_num(yyjson_obj_get(h0, "y")), 0.0F);
+            ASSERT_FLOAT_EQ((float)yyjson_get_num(yyjson_obj_get(pt, "z")),
+                            (float)yyjson_get_num(yyjson_obj_get(h0, "z")), 0.0F);
+        }
+    }
+    ASSERT_TRUE(matched);
+    /* THE CAVEAT, on both payloads, verbatim. */
+    ASSERT_STR_EQ(json_str_at(oroot, "caveat"), HYP_ASK_VIEW_CAVEAT);
+    ASSERT_STR_EQ(json_str_at(croot, "caveat"), HYP_ASK_VIEW_CAVEAT);
+    ASSERT_NOT_NULL(strstr(HYP_ASK_VIEW_CAVEAT, "not real"));
+
+    yyjson_doc_free(td);
+    yyjson_doc_free(od);
+    yyjson_doc_free(cd);
+    free(tool_json);
+    free(overlay);
+    free(cloud);
+    PASS();
+}
+
+/* Without a view, the overlay still carries the tool's answer and says why
+ * there is no picture — an absent "query" means "look at ask", never "the
+ * question landed nowhere". And it must not mint a vector file for a project
+ * that has none. */
+TEST(ask_view_overlay_without_a_view_says_so_and_creates_nothing) {
+    fake_reset();
+    ASSERT_EQ(hyp_ask_backend_install(&g_fake_backend), 0);
+    char *dir = th_mktempdir("hyp-askview-none");
+    ASSERT_NOT_NULL(dir);
+    char *old_cache = getenv("HYP_CACHE_DIR") ? hyp_strdup(getenv("HYP_CACHE_DIR")) : NULL;
+    ASSERT_EQ(hyp_setenv("HYP_CACHE_DIR", dir, 1), 0);
+    hyp_mcp_server_t *srv = ask_srv_with_nodes("askproj");
+    char *overlay =
+        srv ? hyp_mcp_ask_view_overlay(srv, "{\"project\":\"askproj\",\"question\":\"GOLD\"}")
+            : NULL;
+    char vpath[HYP_SZ_4K];
+    bool minted = hyp_ask_vectors_path("askproj", vpath, sizeof(vpath)) && hyp_file_exists(vpath);
+    if (srv) {
+        hyp_mcp_server_free(srv);
+    }
+    hyp_ask_backend_install(NULL);
+    if (old_cache) {
+        (void)hyp_setenv("HYP_CACHE_DIR", old_cache, 1);
+    } else {
+        (void)hyp_unsetenv("HYP_CACHE_DIR");
+    }
+    free(old_cache);
+    th_cleanup(dir);
+    ASSERT_NOT_NULL(overlay);
+    ASSERT_FALSE(minted);
+    yyjson_doc *od = yyjson_read(overlay, strlen(overlay), 0);
+    ASSERT_NOT_NULL(od);
+    yyjson_val *root = yyjson_doc_get_root(od);
+    /* The tool answered (from the in-graph fixture) — its answer is here. */
+    yyjson_val *ask = yyjson_obj_get(root, "ask");
+    ASSERT_NOT_NULL(ask);
+    ASSERT_TRUE(yyjson_get_bool(yyjson_obj_get(ask, "available")));
+    /* No view: said, with the remedy; no query, no hits. */
+    yyjson_val *view = yyjson_obj_get(root, "view");
+    ASSERT_NOT_NULL(view);
+    ASSERT_FALSE(yyjson_get_bool(yyjson_obj_get(view, "available")));
+    ASSERT_NOT_NULL(strstr(json_str_at(view, "remedy"), "--fit-view"));
+    ASSERT_NULL(yyjson_obj_get(root, "query"));
+    ASSERT_NULL(yyjson_obj_get(root, "hits"));
+    ASSERT_STR_EQ(json_str_at(root, "caveat"), HYP_ASK_VIEW_CAVEAT);
+    yyjson_doc_free(od);
+    free(overlay);
+    PASS();
+}
+
 SUITE(ask) {
+    RUN_TEST(ask_view_overlay_neighbours_are_the_tools_own_rows);
+    RUN_TEST(ask_view_overlay_without_a_view_says_so_and_creates_nothing);
     RUN_TEST(ask_backend_none_by_default);
     RUN_TEST(ask_backend_install_and_uninstall);
     RUN_TEST(ask_backend_rejects_malformed);
@@ -812,6 +1487,15 @@ SUITE(ask) {
     RUN_TEST(ask_skips_vectors_of_the_wrong_width);
     RUN_TEST(ask_rejects_an_array_and_points_at_semantic_query);
     RUN_TEST(ask_requires_a_question);
+    RUN_TEST(ask_local_answers_carry_lane_and_both_encoders);
+    RUN_TEST(ask_escalate_unconfigured_refuses_and_does_not_fall_back);
+    RUN_TEST(ask_escalate_query_mode_refuses_without_key_naming_the_variable);
+    RUN_TEST(ask_escalate_query_mode_refuses_when_the_index_space_is_unknown);
+    RUN_TEST(ask_escalate_query_mode_refuses_a_space_mismatch_naming_both_spaces);
+    RUN_TEST(ask_escalate_query_mode_without_a_local_index_says_so);
+    RUN_TEST(ask_escalate_index_mode_still_refuses_an_unbuilt_escalation_index);
+    RUN_TEST(ask_escalate_refuses_an_unrecognised_mode);
+    RUN_TEST(ask_schema_describes_both_escalation_modes_and_the_lane_values);
     RUN_TEST(ask_schema_declares_what_the_help_promises);
     RUN_TEST(ask_is_a_separate_tool_and_semantic_query_is_unchanged);
 }

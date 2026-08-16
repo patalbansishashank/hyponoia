@@ -335,6 +335,30 @@ double hyp_ask_compute_mib_for_ubatch(int n_ubatch) {
     return (double)n_ubatch * HYP_ASK_COMPUTE_MIB_PER_UBATCH;
 }
 
+uint64_t hyp_ask_attn_scores_bytes(int n_seq, int seq_len, int n_head) {
+    if (n_seq < 1 || seq_len < 1 || n_head < 1) {
+        return 0;
+    }
+    uint64_t n_tokens = (uint64_t)n_seq * (uint64_t)seq_len;
+    uint64_t pad = (uint64_t)HYP_ASK_LLAMA_CTX_PAD;
+    uint64_t n_kv = (n_tokens + pad - 1) / pad * pad;
+    return n_kv * n_tokens * (uint64_t)n_head * (uint64_t)sizeof(float);
+}
+
+int hyp_ask_max_seq_for_tensor_cap(int n_seq, int seq_len, int n_head, uint64_t max_tensor_bytes) {
+    if (n_seq < 1) {
+        return 1;
+    }
+    if (max_tensor_bytes == 0 || seq_len < 1 || n_head < 1) {
+        return n_seq;
+    }
+    int m = n_seq;
+    while (m > 1 && hyp_ask_attn_scores_bytes(m, seq_len, n_head) > max_tensor_bytes) {
+        m--;
+    }
+    return m;
+}
+
 int hyp_ask_ubatch_for(int n_batch, double compute_budget_mib) {
     if (n_batch < 1) {
         return 1;

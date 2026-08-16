@@ -24,7 +24,14 @@ local artifact-flow smoke lane.
 
   goos       linux | darwin | windows
   goarch     arch label used verbatim in the archive name (amd64, arm64,
-             arm64-portable, ...)
+             arm64-portable, ...). The LINKAGE flavour rides this label, as
+             the "-portable" (fully static) suffix already does: the Vulkan
+             GPU variant is packaged as `linux amd64-gpu --variant ui` and
+             yields hyponoia-ui-linux-amd64-gpu.tar.gz — same members as every
+             other ui archive; only the binary differs (HYP_ASK_GPU=vulkan
+             STATIC=0, dynamically linked against libvulkan.so.1). Every
+             such label MUST also appear in scripts/ci/extract-release-archives.sh
+             UNIX_TARGETS, whose exact-set gate rejects an unknown archive.
   --variant  standard (default) | ui — selects the archive NAME prefix; the
              matching binary must already have been built (--with-ui for ui).
              UI archives add exactly one root-level hyp-ui-<sha256>.pack.

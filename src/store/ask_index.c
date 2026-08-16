@@ -85,6 +85,7 @@ static bool ask_status_from_vector_file(const char *project, hyp_ask_lane_t lane
     }
 
     ask_copy(out->model_id, sizeof(out->model_id), meta.model_id);
+    ask_copy(out->space_id, sizeof(out->space_id), meta.space_id);
     out->dim = meta.dim;
     out->n_vectors = (int)meta.row_count;
     /* Only the exact word counts as "dropped". An unrecognised value — a

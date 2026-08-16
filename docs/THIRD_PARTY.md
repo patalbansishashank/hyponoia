@@ -160,8 +160,10 @@ the local model):
   `engine/hyponoia/runs/ESCALATION/`.
 
 The optional **escalation lane** sends text to a hosted API instead, and ships
-no weights at all. It is off by default, refuses rather than falling back, and
-is covered by whichever provider's terms the user has chosen to accept.
+no weights at all. In its default `query` mode that text is only the question;
+in `index` mode it is every declaration, once, to build a second index. It is
+off by default, refuses rather than falling back, and is covered by whichever
+provider's terms the user has chosen to accept.
 
 ## Hybrid LSP — Reference Language Servers
 

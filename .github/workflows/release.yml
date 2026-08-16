@@ -269,12 +269,14 @@ jobs:
           gh release download "$VERSION" --dir "$ARCHIVE_DIR" --repo "$GITHUB_REPOSITORY" --pattern '*.tar.gz' --pattern '*.zip'
           # RETIRED-PLATFORM(macos)/RETIRED-PLATFORM(windows-arm64): 8 UI archives
           # became 5 (4 runtime files each) — see docs/MAINTAINERS.md "Retired platforms".
+          # GPU-VARIANT: +1 for hyponoia-ui-linux-amd64-gpu (_build.yml
+          # build-linux-gpu), so 5 became 6 (6 * 4 = 24 runtime files).
           scripts/ci/extract-release-archives.sh "$ARCHIVE_DIR" binaries \
             --archive-scope=ui \
-            --expect-archives=5 \
-            --expect-binaries=5 \
-            --expect-packs=5 \
-            --expect-runtime-files=20
+            --expect-archives=6 \
+            --expect-binaries=6 \
+            --expect-packs=6 \
+            --expect-runtime-files=24
 
       - name: Security audits on all unique extracted release objects
         run: |

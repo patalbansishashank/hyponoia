@@ -155,12 +155,14 @@ jobs:
         run: |
           # RETIRED-PLATFORM(macos)/RETIRED-PLATFORM(windows-arm64): 8 UI archives
           # became 5 (4 runtime files each) — see docs/MAINTAINERS.md "Retired platforms".
+          # GPU-VARIANT: +1 for hyponoia-ui-linux-amd64-gpu (_build.yml
+          # build-linux-gpu), so 5 became 6 (6 * 4 = 24 runtime files).
           scripts/ci/extract-release-archives.sh "$RUNNER_TEMP/release-archives" binaries \
             --archive-scope=ui \
-            --expect-archives=5 \
-            --expect-binaries=5 \
-            --expect-packs=5 \
-            --expect-runtime-files=20
+            --expect-archives=6 \
+            --expect-binaries=6 \
+            --expect-packs=6 \
+            --expect-runtime-files=24
 
       - name: VirusTotal scan
         uses: crazy-max/ghaction-virustotal@936d8c5c00afe97d3d9a1af26d017cfdf26800a2 # v5.0.0

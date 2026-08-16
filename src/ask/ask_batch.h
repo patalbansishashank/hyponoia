@@ -59,9 +59,19 @@ enum {
      *
      * Qwen3's optimum was 8 because 16 cost it throughput (24.09 -> 16.37).
      * nano is 12 layers against 28 and half the KV per token, so a wider batch
-     * fits where it did not before. 24 is not a memory ceiling but the ragged
-     * non-causal assert — see the equal-length note in ask_llama.c — so 16 is
-     * both the measured peak and the last value that runs. */
+     * fits where it did not before.
+     *
+     * THE "24 -> assert" ROW WAS MISREAD, and the misreading cost a week. It
+     * was called the ragged non-causal assert and treated as a ceiling on
+     * this constant. It was neither. It was n_batch (then a fixed 8,192) not
+     * dividing by n_seq: 8192 % 16 = 0 runs, 8192 % 24 = 8 aborts, inside
+     * llama.cpp's graph_reserve, before a single token — and it aborted just
+     * the same at n_seq = 3 with three 2,408-token rows, which no value of
+     * this constant could have prevented. n_batch is now the batch's own token
+     * count and divisible by n_seq by construction (see the n_batch note in
+     * ask_llama.c), so this number is once again ONLY a throughput knob and
+     * "the last value that runs" is no longer a property it has. 16 stays
+     * because it is the measured peak; re-measure before moving it. */
     HYP_ASK_MAX_DOCS = 16,
 
     /* voyage-4-nano's context window. The encoder reports its own; this is the
@@ -281,6 +291,46 @@ int hyp_ask_ubatch_for(int n_batch, double compute_budget_mib);
 
 /* MiB the compute buffer will occupy at `n_ubatch`. */
 double hyp_ask_compute_mib_for_ubatch(int n_ubatch);
+
+/* ── The ONE tensor that decides where a pass runs ─────────────────
+ *
+ * The compute buffer above is a TOTAL, and the total is not what the Vulkan
+ * backend checks. It checks every op's tensors one at a time
+ * (ggml-vulkan.cpp ggml_backend_vk_device_supports_op, "reject any tensors
+ * larger than the max buffer size") and any op with a single tensor above the
+ * device's max buffer size is REFUSED by the device, so ggml_backend_sched
+ * assigns it to the CPU backend — whose compute buffer llama-context.cpp
+ * deliberately places in the device's HOST buffer type ("Vulkan_Host"). The
+ * graph then runs its attention on the CPU with the rest of the graph on the
+ * GPU and the activations crossing PCIe. Measured on an RX 6900 XT: 2 docs,
+ * 5,266 tokens, 4,946 tok/s with a 3,685 MiB Vulkan0 compute buffer; 3 docs,
+ * 7,904 tokens, 734 tok/s with 5,278 MiB in Vulkan_Host. Same graph, one
+ * tensor over the line.
+ *
+ * With flash attention off — the encoder path materialises the scores — that
+ * tensor is KQ = [n_kv, n_tokens, n_head] in f32, where n_tokens is the whole
+ * ubatch (non-causal cannot split) and n_kv is n_ctx rounded up to llama.cpp's
+ * cache granularity. It is QUADRATIC in the pass length, which is why the
+ * linear compute law above cannot see the cliff. This is that tensor's size. */
+
+/* llama.cpp rounds n_ctx up to a multiple of this before sizing the cache
+ * (llama-context.cpp: `cparams.n_ctx = GGML_PAD(cparams.n_ctx, 256)`), and the
+ * reserved KQ has n_kv = that padded n_ctx. Its constant, quoted, not ours. */
+enum { HYP_ASK_LLAMA_CTX_PAD = 256 };
+
+/* Bytes of the f32 attention-scores tensor a pass of `n_seq` sequences at
+ * `seq_len` reserves under a model with `n_head` query heads, when the context
+ * is built as this backend builds it (n_ubatch = n_batch = n_ctx = n_seq x
+ * seq_len). Zero for a degenerate shape. */
+uint64_t hyp_ask_attn_scores_bytes(int n_seq, int seq_len, int n_head);
+
+/* The most sequences of `seq_len` (never more than `n_seq`, never fewer than
+ * 1) whose scores tensor stays within `max_tensor_bytes` — the device's own
+ * per-buffer ceiling as ggml reports it, not a constant. A cap of 0 means
+ * "unknown, do not narrow" and returns n_seq unchanged. One sequence is always
+ * admitted: alone is the smallest pass there is, and a document that is over
+ * the line by itself is still encoded, just slowly. */
+int hyp_ask_max_seq_for_tensor_cap(int n_seq, int seq_len, int n_head, uint64_t max_tensor_bytes);
 
 /* Price a (n_seq_max, seq_len) pair against a VRAM ceiling.
  *

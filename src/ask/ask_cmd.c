@@ -15,6 +15,7 @@
 #include "semantic/ask_embed.h" /* HYP_ASK_MODEL_ID_MAX */
 #include "cli/model_fetch.h"
 #include "ask/ask_vectors.h"
+#include "ask/ask_view.h"
 #include "ask/ask_provider.h"
 #include "cli/cli.h"
 #include "foundation/platform.h"
@@ -44,6 +45,15 @@ static void ask_embed_usage(void) {
            "  --project <name>       Indexed project to embed. Required.\n"
            "  --repo-path <path>     Source root. Default: the graph's recorded root.\n"
            "  --status               Report the stored index and exit.\n"
+           "  --fit-view             Only (re)fit the 3-D view of the existing index —\n"
+           "                         PCA, deterministic, seconds — and exit. Encodes\n"
+           "                         nothing. Every full pass fits it anyway; this is\n"
+           "                         for an index built by a binary that predates it.\n"
+           "  --verify-batching      Encode a fixture alone and in groups of --max-docs and\n"
+           "                         compare; PASS means a vector does not depend on what\n"
+           "                         shared its forward pass. No project needed, nothing\n"
+           "                         written. HYP_ASK_VERIFY_TEXTS=<file> (NUL-separated)\n"
+           "                         substitutes real declarations for the fixture.\n"
            "  --force                Re-encode even byte-identical declarations.\n"
            "  --allow-model-change   Discard vectors from a different model/dim/window.\n"
            "  --limit <n>            Stop after n declarations (partial index).\n"
@@ -65,6 +75,13 @@ static void ask_embed_usage(void) {
            "  --device auto|gpu|cpu  Which device to encode on. Default auto: GPU when\n"
            "                         one can be used safely, else CPU. `gpu` refuses\n"
            "                         rather than falling back silently.\n"
+           "  --escalation           Build the ESCALATION lane's own index (a second file)\n"
+           "                         through the configured hosted provider instead of the\n"
+           "                         local model. Sends every declaration to the provider\n"
+           "                         and spends tokens per declaration. Only ask.escalation\n"
+           "                         .mode=index searches it; the default mode (query) sends\n"
+           "                         only the question and scores the LOCAL index, so it\n"
+           "                         does not need this pass at all.\n"
            "  --stub                 Use the deterministic stub encoder.\n"
            "  --stub-no-truncation-report\n"
            "                         Stub that cannot report token counts, so the\n"
@@ -80,6 +97,178 @@ static void ask_embed_usage(void) {
            "quality at all.\n",
            HYP_ASK_TOKEN_BUDGET, HYP_ASK_MAX_DOCS, HYP_ASK_GPU_DOCS_PER_SEC,
            HYP_ASK_CPU_DOCS_PER_SEC, HYP_ASK_STUB_MODEL_ID);
+}
+
+/* ── --verify-batching ──────────────────────────────────────────── */
+
+/* Sixteen declarations of DIFFERENT token lengths, so the batches this check
+ * forms are ragged the way a real length-sorted group is. Not sorted: a fixed,
+ * unsorted order is what makes "which position in the batch went wrong" a
+ * readable answer. */
+static const char *const ASK_VERIFY_FIXTURE[] = {
+    "int add(int a, int b) { return a + b; }",
+    "static void clear(char *p, size_t n) {\n    memset(p, 0, n);\n}",
+    "def parse(line):\n    return [int(x) for x in line.split(',') if x]",
+    "struct node { struct node *next; int key; };",
+    "bool is_prime(unsigned n) {\n    if (n < 2) return false;\n    for (unsigned d = 2; d * d <= "
+    "n; d++)\n"
+    "        if (n % d == 0) return false;\n    return true;\n}",
+    "class Stack {\npublic:\n    void push(int v) { data.push_back(v); }\n    int pop() { int v = "
+    "data.back(); data.pop_back(); return v; }\nprivate:\n    std::vector<int> data;\n};",
+    "fn main() { println!(\"hello\"); }",
+    "/* Reads the whole file into a heap buffer; caller frees. Returns NULL on any "
+    "error and leaves errno set by the failing call. */\nchar *slurp(const char *path);",
+    "SELECT name, count(*) FROM users GROUP BY name HAVING count(*) > 1;",
+    "template <typename T> T max_of(T a, T b) { return a < b ? b : a; }",
+    "void ObjFile::parseSymbols(ArrayRef<Elf_Sym> syms) {\n    for (const Elf_Sym &s : syms)\n"
+    "        symbols.push_back(make<Symbol>(s));\n}",
+    "x = 1",
+    "async function fetchJson(url) {\n    const r = await fetch(url);\n    if (!r.ok) throw new "
+    "Error(r.statusText);\n    return r.json();\n}",
+    "#define ARRAY_LEN(a) (sizeof(a) / sizeof((a)[0]))",
+    "func (s *Server) Close() error {\n\ts.mu.Lock()\n\tdefer s.mu.Unlock()\n\treturn "
+    "s.listener.Close()\n}",
+    "enum Color { RED, GREEN, BLUE };",
+};
+enum {
+    ASK_VERIFY_FIXTURE_COUNT = (int)(sizeof(ASK_VERIFY_FIXTURE) / sizeof(ASK_VERIFY_FIXTURE[0]))
+};
+
+/* Texts for the check: HYP_ASK_VERIFY_TEXTS names a NUL-separated file when a
+ * measurement wants real declarations; otherwise the fixture above. Returns the
+ * count; `*out_buf` (may be NULL) is the caller's to free. */
+static int ask_verify_texts(const char ***out_texts, char **out_buf) {
+    *out_buf = NULL;
+    const char *path = getenv("HYP_ASK_VERIFY_TEXTS");
+    if (!path || !path[0]) {
+        const char **t = malloc(sizeof(*t) * (size_t)ASK_VERIFY_FIXTURE_COUNT);
+        if (!t) {
+            return -1;
+        }
+        for (int i = 0; i < ASK_VERIFY_FIXTURE_COUNT; i++) {
+            t[i] = ASK_VERIFY_FIXTURE[i];
+        }
+        *out_texts = t;
+        return ASK_VERIFY_FIXTURE_COUNT;
+    }
+    FILE *f = fopen(path, "rb");
+    if (!f) {
+        (void)fprintf(stderr, "embed --verify-batching: cannot open %s\n", path);
+        return -1;
+    }
+    size_t cap = 1 << 16;
+    size_t len = 0;
+    char *buf = malloc(cap + 1);
+    while (buf) {
+        size_t got = fread(buf + len, 1, cap - len, f);
+        len += got;
+        if (len < cap) {
+            break;
+        }
+        cap *= 2;
+        char *nb = realloc(buf, cap + 1);
+        if (!nb) {
+            free(buf);
+            buf = NULL;
+        } else {
+            buf = nb;
+        }
+    }
+    (void)fclose(f);
+    if (!buf) {
+        return -1;
+    }
+    buf[len] = '\0';
+    int n = 0;
+    for (size_t i = 0; i < len; i++) {
+        if (buf[i] == '\0') {
+            n++;
+        }
+    }
+    if (len > 0 && buf[len - 1] != '\0') {
+        n++; /* unterminated last text */
+    }
+    const char **t = malloc(sizeof(*t) * (size_t)(n > 0 ? n : 1));
+    if (!t) {
+        free(buf);
+        return -1;
+    }
+    int k = 0;
+    size_t start = 0;
+    for (size_t i = 0; i <= len && k < n; i++) {
+        if (i == len || buf[i] == '\0') {
+            t[k++] = buf + start;
+            start = i + 1;
+        }
+    }
+    *out_texts = t;
+    *out_buf = buf;
+    return n;
+}
+
+static int ask_cmd_verify_batching(hyp_ask_encoder_t *enc, int group) {
+    const char **texts = NULL;
+    char *buf = NULL;
+    int n = ask_verify_texts(&texts, &buf);
+    if (n <= 0) {
+        free(texts);
+        free(buf);
+        return 1;
+    }
+    if (group <= 0) {
+        group = HYP_ASK_MAX_DOCS;
+    }
+    hyp_ask_batch_row_t *rows = calloc((size_t)n, sizeof(*rows));
+    hyp_ask_batch_check_t chk;
+    printf("embed --verify-batching: %d text(s), alone then in groups of %d, on %s\n", n, group,
+           hyp_ask_encoder_device_note(enc));
+    /* THE BAR, SET FROM MEASUREMENT ON BOTH SIDES.
+     *
+     * The failure this exists to catch (a ragged batch through per-sequence
+     * KV streams, see ask_llama.c) put every row but the shortest at cosine
+     * 0.49-0.91 to the same text alone. The lane's own arithmetic floor is
+     * NOT 1.0: the same 96 declarations encoded ALONE on the CPU and ALONE on
+     * the GPU agree at mean 0.999924, min 0.999873, and a correctly batched
+     * pass sits at exactly that floor (mean 0.999919, min 0.999868, CPU and
+     * GPU alike). Q8_0 weights, f16 K/V and a tiled attention kernel differ
+     * in the last bits per device and per tile alignment, and Q8 activation
+     * quantisation turns those bits into ~1e-4 of cosine; disabling flash
+     * attention put 11 of 16 rows at exactly 1.000000, which is what shows
+     * the residual is arithmetic and not a leak. So the bar is 0.999: an
+     * order of magnitude above the floor's worst deficit (1.3e-4) and two
+     * below the failure's best (9e-2). Four nines would fail alone-vs-alone
+     * across devices, which is what the index/query split does every day. */
+    const float threshold = 0.999F;
+    int rc =
+        rows ? hyp_ask_encoder_check_batching(enc, texts, n, group, threshold, rows, &chk) : -1;
+    if (rc != 0) {
+        (void)fprintf(stderr, "embed --verify-batching: the encoder failed; nothing compared\n");
+        free(rows);
+        free(texts);
+        free(buf);
+        return 1;
+    }
+    for (int i = 0; i < n; i++) {
+        int len = hyp_ask_encoder_token_length(enc, texts[i]);
+        printf("  row %3d  group %2d  pos %2d  tokens %5d  own %.6f  best_other %.6f (row %d)%s\n",
+               i, i / group, i % group, len, (double)rows[i].own, (double)rows[i].best_other,
+               rows[i].best_other_idx,
+               rows[i].own < threshold
+                   ? (rows[i].best_other_idx >= 0 && rows[i].best_other > rows[i].own
+                          ? "  <- MISASSIGNED"
+                          : "  <- CONTAMINATED")
+                   : "");
+    }
+    printf("  passes %d  min own-cosine %.6f (row %d)  below %.4f: %d  misassigned: %d\n",
+           chk.groups, (double)chk.min_own, chk.min_own_row, (double)threshold, chk.below,
+           chk.misassigned);
+    bool ok = chk.below == 0 && chk.misassigned == 0;
+    printf("  verdict: %s — a document's vector %s on what shared its forward pass\n",
+           ok ? "PASS" : "FAIL", ok ? "does not depend" : "DEPENDS");
+    free(rows);
+    free(texts);
+    free(buf);
+    return ok ? 0 : 1;
 }
 
 static int ask_cmd_status(const char *project) {
@@ -113,6 +302,19 @@ static int ask_cmd_status(const char *project) {
     printf("ask index for '%s':\n", project);
     printf("  format           %d\n", m.format);
     printf("  model            %s\n", m.model_id ? m.model_id : "?");
+    /* The embedding SPACE, as stamped; when the index predates the stamp, the
+     * same function over its model id — said as such, because ask(escalate=
+     * true) in query mode gates on exactly this and will say the same thing. */
+    const char *derived_space = hyp_ask_space_id_for_model(m.model_id);
+    if (m.space_id && m.space_id[0]) {
+        printf("  space            %s (stamped at build time)\n", m.space_id);
+    } else if (derived_space) {
+        printf("  space            %s (derived from the model id; the index predates the stamp)\n",
+               derived_space);
+    } else {
+        printf("  space            unmeasured — ask(escalate=true) in query mode will refuse "
+               "this index\n");
+    }
     printf("  dim              %d\n", m.dim);
     printf("  window           %d tokens\n", m.window_tokens);
     printf("  rows             %lld\n", (long long)m.row_count);
@@ -139,10 +341,70 @@ static int ask_cmd_status(const char *project) {
         printf("  %s\n", line);
         hyp_ask_trunc_free(&tr);
     }
+    /* The 3-D view, said the same way the rest of the index is: fitted or not,
+     * and if fitted, against which seal — because a view fitted before the
+     * last pass is a picture of a matrix that no longer exists. */
+    hyp_ask_view_t view;
+    int vrc = hyp_ask_view_load(v, &view);
+    if (vrc == HYP_ASK_VEC_OK) {
+        double kept = view.total_var > 0.0
+                          ? (view.eigen[0] + view.eigen[1] + view.eigen[2]) / view.total_var
+                          : 0.0;
+        printf("  3-D view         %s over %lld rows, %.1f%% of variance kept, fitted %s%s\n",
+               view.method ? view.method : "?", (long long)view.rows, kept * 100.0,
+               view.fitted_at ? view.fitted_at : "?",
+               hyp_ask_view_is_stale(v, &view)
+                   ? " — STALE: the index was re-sealed since; run --fit-view"
+                   : "");
+        hyp_ask_view_free(&view);
+    } else {
+        printf("  3-D view         not fitted — `hyponoia embed --project %s --fit-view`\n",
+               project);
+    }
     hyp_ask_vectors_close(v);
     return 0;
 }
 
+/* `--fit-view`: (re)fit the 3-D view over an existing index and stop. */
+static int ask_cmd_fit_view(const char *project, const char *vectors_db_path) {
+    hyp_ask_vectors_t *v = vectors_db_path ? hyp_ask_vectors_open_path(project, vectors_db_path)
+                                           : hyp_ask_vectors_open(project);
+    if (!v) {
+        (void)fprintf(stderr, "embed --fit-view: cannot open the vector store for '%s'\n", project);
+        return 1;
+    }
+    hyp_ask_view_t view;
+    int rc = hyp_ask_view_fit(v, &view);
+    if (rc == HYP_ASK_VEC_NOT_FOUND) {
+        (void)fprintf(stderr,
+                      "embed --fit-view: no index for '%s' — nothing to fit. Run "
+                      "`hyponoia embed --project %s` first.\n",
+                      project, project);
+        hyp_ask_vectors_close(v);
+        return 4;
+    }
+    if (rc != HYP_ASK_VEC_OK) {
+        (void)fprintf(stderr, "embed --fit-view: %s\n", hyp_ask_vectors_error(v));
+        hyp_ask_vectors_close(v);
+        return 1;
+    }
+    double kept = view.total_var > 0.0
+                      ? (view.eigen[0] + view.eigen[1] + view.eigen[2]) / view.total_var
+                      : 0.0;
+    printf("embed --fit-view: project=%s method=%s\n", project, view.method ? view.method : "?");
+    printf("  rows             %lld x %d\n", (long long)view.rows, view.dim);
+    printf("  variance kept    %.2f%%  (axes %.4g / %.4g / %.4g of trace %.4g)\n", kept * 100.0,
+           view.eigen[0], view.eigen[1], view.eigen[2], view.total_var);
+    printf("  iterations       %d\n", view.iterations);
+    printf("  fit              %.1f ms\n", view.fit_ms);
+    printf("  fitted against   %s\n", view.fitted_against && view.fitted_against[0]
+                                          ? view.fitted_against
+                                          : "(unsealed index)");
+    printf("  NOTE             %s\n", HYP_ASK_VIEW_CAVEAT);
+    hyp_ask_view_free(&view);
+    hyp_ask_vectors_close(v);
+    return 0;
+}
 
 /* What the GPU can be asked for on this machine, priced BEFORE anything is
  * allocated.
@@ -161,8 +423,17 @@ static void ask_report_device_plan(hyp_ask_device_pref_t pref) {
     if (pref != HYP_ASK_DEVICE_CPU) {
         double total = 0.0;
         double used = 0.0;
-        if (!hyp_ask_device_vram_mib(&total, &used)) {
-            printf("  GPU: no device exposes its VRAM to this process, so a ceiling cannot be\n"
+        char gpu_name[128];
+        /* SAME QUESTION, SAME ORDER as hyp_ask_llama_encoder_create: the
+         * backend first, sysfs second. This report used to ask ONLY the AMD
+         * sysfs reader, so on an Intel or NVIDIA card it printed "no device
+         * exposes its VRAM ... falling back to CPU" and the encoder, one line
+         * later, used the GPU. A pre-flight that can disagree with the run it
+         * precedes is worse than none. */
+        bool readable = hyp_ask_llama_probe_device(gpu_name, sizeof(gpu_name), &total, &used) ||
+                        hyp_ask_device_vram_mib(&total, &used);
+        if (!readable) {
+            printf("  GPU: no device exposes its memory to this process, so a ceiling cannot be\n"
                    "       CHECKED — and it must never be assumed. %s\n",
                    pref == HYP_ASK_DEVICE_GPU
                        ? "--device gpu will REFUSE rather than guess."
@@ -220,6 +491,8 @@ int hyp_cmd_embed(int argc, char **argv) {
     hyp_ask_embed_opts_t opts;
     memset(&opts, 0, sizeof(opts));
     bool status_only = false;
+    bool fit_view_only = false;
+    bool verify_batching = false;
     bool use_stub = false;
     bool stub_reports_truncation = true;
     bool escalation = false;
@@ -251,6 +524,10 @@ int hyp_cmd_embed(int argc, char **argv) {
             opts.vectors_db_path = argv[++i];
         } else if (strcmp(a, "--status") == 0) {
             status_only = true;
+        } else if (strcmp(a, "--fit-view") == 0) {
+            fit_view_only = true;
+        } else if (strcmp(a, "--verify-batching") == 0) {
+            verify_batching = true;
         } else if (strcmp(a, "--force") == 0) {
             opts.force = true;
         } else if (strcmp(a, "--allow-model-change") == 0) {
@@ -297,13 +574,54 @@ int hyp_cmd_embed(int argc, char **argv) {
         }
     }
 
-    if (!opts.project) {
+    if (!opts.project && !verify_batching) {
         (void)fprintf(stderr, "embed: --project is required\n\n");
         ask_embed_usage();
         return 2;
     }
     if (status_only) {
         return ask_cmd_status(opts.project);
+    }
+    if (fit_view_only) {
+        /* Needs no encoder and no weights: it reads vectors that already
+         * exist. Decided before every backend check for that reason. */
+        return ask_cmd_fit_view(opts.project, opts.vectors_db_path);
+    }
+    if (verify_batching && !escalation) {
+        /* No project, no index, nothing written: the encoder alone, asked the
+         * one question the pass's output cannot answer about itself. */
+        hyp_ask_encoder_t *enc = NULL;
+        if (use_stub) {
+            enc = hyp_ask_encoder_stub_create(HYP_ASK_DIM_DEFAULT, HYP_ASK_MODEL_WINDOW,
+                                              stub_reports_truncation);
+        } else if (!hyp_ask_llama_compiled_in()) {
+            (void)fprintf(stderr,
+                          "embed --verify-batching: no inference backend compiled in (%s)\n",
+                          hyp_ask_llama_build_note());
+            return 3;
+        } else if (!hyp_model_ask_present() || !hyp_model_spec_present(hyp_model_ask_proj_spec())) {
+            (void)fprintf(stderr,
+                          "embed --verify-batching: the ask lane's model is not on this machine; "
+                          "run `%s`\n",
+                          HYP_MODEL_ASK_COMMAND);
+            return 3;
+        } else {
+            char err[512];
+            err[0] = '\0';
+            enc = hyp_ask_llama_encoder_create(opts.device_pref, err, sizeof(err));
+            if (!enc) {
+                (void)fprintf(stderr, "embed --verify-batching: %s\n",
+                              err[0] ? err : "the embedding backend could not be started");
+                return 1;
+            }
+        }
+        if (!enc) {
+            (void)fprintf(stderr, "embed --verify-batching: could not create the encoder\n");
+            return 1;
+        }
+        int vrc = ask_cmd_verify_batching(enc, opts.max_docs);
+        hyp_ask_encoder_destroy(enc);
+        return vrc;
     }
     /* THE TWO UNAVAILABLE STATES, SAID SEPARATELY. "No encoder in this build"
      * is fixed by a different binary; "the weights are not on this machine" is
@@ -337,14 +655,31 @@ int hyp_cmd_embed(int argc, char **argv) {
         char provider[64];
         char model[128];
         char key_env[128];
+        char mode[HYP_SZ_32];
         (void)snprintf(provider, sizeof(provider), "%s",
                        cfg ? hyp_config_get(cfg, HYP_CONFIG_ASK_ESC_PROVIDER, "") : "");
         (void)snprintf(model, sizeof(model), "%s",
                        cfg ? hyp_config_get(cfg, HYP_CONFIG_ASK_ESC_MODEL, "") : "");
         (void)snprintf(key_env, sizeof(key_env), "%s",
                        cfg ? hyp_config_get(cfg, HYP_CONFIG_ASK_ESC_KEY_ENV, "") : "");
+        (void)snprintf(
+            mode, sizeof(mode), "%s",
+            cfg ? hyp_config_get(cfg, HYP_CONFIG_ASK_ESC_MODE, HYP_CONFIG_ASK_ESC_MODE_DEFAULT)
+                : HYP_CONFIG_ASK_ESC_MODE_DEFAULT);
         if (cfg) {
             hyp_config_close(cfg);
+        }
+        if (strcmp(mode, HYP_CONFIG_ASK_ESC_MODE_INDEX) != 0) {
+            /* Said once and then honoured: the pass is explicit, so it runs.
+             * But someone in the default mode who types this has very likely
+             * misread what escalation costs, and a corpus-sized bill is the
+             * wrong way to find out. */
+            printf("embed --escalation: NOTE — %s is '%s', and in that mode ask(escalate=true) "
+                   "sends only the question and scores it against the LOCAL index. The index "
+                   "this pass builds is searched only when %s=%s. Proceeding because you asked "
+                   "explicitly.\n",
+                   HYP_CONFIG_ASK_ESC_MODE, mode, HYP_CONFIG_ASK_ESC_MODE,
+                   HYP_CONFIG_ASK_ESC_MODE_INDEX);
         }
         char err[512];
         esc_enc = hyp_ask_provider_encoder_create(provider, model, key_env, err, sizeof(err));
@@ -478,6 +813,14 @@ int hyp_cmd_embed(int argc, char **argv) {
     printf("  padded slots       %lld  (largest single rectangle %lld)\n",
            (long long)rep.padded_slots, (long long)rep.max_rect);
     printf("  elapsed            %.0f ms\n", rep.elapsed_ms);
+    if (rep.view_fitted) {
+        printf("  3-D view           %s over %lld rows in %.0f ms, %.1f%% of variance kept "
+               "(a picture, not a metric)\n",
+               HYP_ASK_VIEW_METHOD, (long long)rep.view_rows, rep.view_fit_ms,
+               rep.view_variance_kept * 100.0);
+    } else {
+        printf("  3-D view           not fitted (see the log; the index itself is complete)\n");
+    }
     if (rep.partial) {
         printf("  PARTIAL: --limit stopped the run, so this index does not cover the corpus\n");
     }

@@ -92,6 +92,84 @@ them.
 Every answer discloses the model, the language whose prefix was rendered,
 whether any declaration was truncated, and the population searched.
 
+## Which agents can call it
+
+The generated agent profiles (`hyponoia`, `hyponoia-auditor`) and the
+`--tool-profile analysis` server both offer `ask`; `hyponoia-scout` and
+`--tool-profile scout` do not. Scout's promise is a small surface where every
+tool answers, and `ask` can legitimately answer `available: false`, so it lives
+on the tier where an agent is already expected to reason about index state. The
+two ends — what the server permits and what the profiles request — are rendered
+from one table, `src/mcp/tool_tiers.h`, so they cannot drift apart again; until
+they were, v0.3.0 shipped a server that permitted `ask` and profiles that never
+requested it. An unrestricted server (no `--tool-profile`, which is what
+`hyponoia install` registers for Claude Code's main session) always offers it.
+
+Being in the tools list is not the same as being used. Measured with sonnet-5
+on the frozen 60 questions over lld/ELF, 60 runs a column: with `ask` merely
+listed, the agent called it in 4 of 60 runs and tokens per correct answer moved
+−2.9% (CI [−507, +263] tokens/question — a null). With one sentence in the
+profile body saying when to use it, it called `ask` in 60 of 60, tokens per
+correct answer fell 25.5% (CI [−1,547, −657]), with the best accuracy of the
+columns and no capped runs. So the analysis-tier prompt now says: for a
+natural-language question about what code does, call `ask` first with the
+question as one string, read its top 2–3 rows and verify with
+`get_code_snippet`; `available: false` is a statement about the index, not the
+code. The same sentence states how the project name is derived (the indexed
+root's absolute path, leading slash dropped, other separators as `-`), because
+every measured run had been spending its first call on `list_projects` to
+learn it. Scout's prompt is unchanged.
+
+## Escalation: a stronger model for one question
+
+`ask(escalate=true)` brings a hosted embedding model into a single question.
+It is off by default and **never chosen for you** — every score threshold this
+project has set has died on a corpus change, so the engine does not decide
+when you need to be right. Configure a provider once (`ask.escalation.provider`,
+`.model`, `.key_env` — the *name* of the variable holding the key, never the
+key) and then choose per call.
+
+What an escalated question sends is `ask.escalation.mode`:
+
+| mode | what leaves the machine | index it scores | gate |
+|---|---|---|---|
+| **`query`** (default) | the question — ~30 tokens | the **local** index you already have | both sides must share a **measured** embedding space |
+| `index` | every declaration, once (`hyponoia embed --escalation`) | a second, API-built index | none needed: one model built and queries it |
+
+**Query mode** is the cheap side to buy — a question against a corpus of
+millions — and it keeps the code on the machine. It is licensed on quality:
+nano documents scored by `voyage-4-large` questions beat nano on both sides by
++0.2087 MRR@10 on the 60 vocabulary-gap questions and by +0.444% reciprocal
+rank (p = 5.5e-05) on 8,122 public CodeSearchNet-Go queries. Its case *over*
+index mode is operational, not a quality margin: index mode replicates at that
+scale too, and the two are statistically indistinguishable there (p = 0.62).
+So the default is the mode with no second index, no drift between two indexes,
+no corpus-sized bill, and nothing but the question sent anywhere.
+
+**The gate is a space identity, not the prefix contract.** A cosine between two
+models' vectors means something only if they live in the same embedding space,
+and cross-space failure is silent — score a Qwen3 index against a voyage query
+and nothing errors; the ranking comes back ordinary-looking and wrong, the worst
+failure available to a tool an agent trusts. So the index stamps the space its
+document encoder lives in, and query mode refuses unless that space and the
+hosted model's are **both known and identical**. The allowlist is measured, not
+copied from a vendor page: the voyage-4 family (`nano`, `lite`, `large`, `4`)
+shares one space — self-retrieval acc@1 0.985–0.995 in both directions —
+while eight negative controls (a random rotation, Qwen3, `voyage-code-3`) all
+correctly said no at the 0.005 chance floor. `voyage-code-3` — same vendor,
+one generation back — is *not* in the space; Jina and Gemini are unmeasured
+and therefore refused. The refusal names both model ids and both spaces.
+
+**Nothing falls back silently.** An unconfigured lane, an unset key variable,
+an unbuilt index or a space that cannot be proven shared is an error that says
+so — never a quiet answer from the local encoder that leaves you believing you
+had the expensive one. Every answer carries `lane` (`local`,
+`escalation-query` or `escalation-index`), `query_encoder` and
+`index_encoder`, so the agent holding it knows what it is holding.
+
+The record is `engine/hyponoia/runs/XMODEL/` (the frozen 60 and the space
+probe) and `engine/hyponoia/runs/XMODEL-PUBLIC/` (the 8,122-query replication).
+
 ## What it scores
 
 Measured on **CoIR's CosQA** — 500 public queries, 20,604 documents, scored
@@ -157,6 +235,30 @@ ours loses badly. That is a real boundary, not a defect — and it is the reason
 `ask` also refuses a question longer than 4,096 characters. It encodes a
 *question*, not a document.
 
+## Seeing where a question landed
+
+The graph UI has an **Embeddings** view: every embedded declaration, projected
+from the model's 1,024 dimensions to three by PCA, and — after a question —
+where the question's vector landed and which declarations `ask` ranked, with
+their ranks. The neighbours drawn are the `ask` tool's own rows, in its own
+order, read back out of its own JSON; nothing is re-ranked for the picture, and
+a test holds the two ends together.
+
+**Distances in that view are not real.** Three axes keep about a quarter of the
+variance on lld/ELF (26.1%) and discard the rest; the ranking was computed by
+cosine in the full space, never in the picture. The view says so on its face.
+It is a diagnostic — a way to *look* at the vocabulary-gap regime, which until
+now was only ever a statistic — not a measurement.
+
+The projection is deterministic (PCA has no seed: same rows in, same bits out —
+verified bit-for-bit on 4,072 rows) and is re-fitted over the whole table at
+the end of every `hyponoia embed` pass, so adding declarations moves every dot;
+the view records which index seal it was fitted against and reports itself
+STALE when the index has been re-sealed since. `hyponoia embed --project <p>
+--fit-view` fits it over an existing index without encoding anything. The
+record is `engine/hyponoia/runs/EMBED-VIEW/`. Deep link:
+`/?tab=graph&project=<p>&view=embed&q=<question>`.
+
 ## The reranker that used to be here
 
 §2.2 added a cross-encoder that re-read the top N candidates, on the strength
@@ -198,7 +300,7 @@ rank-fusion lever had already named as its prerequisite.
 | | |
 |---|---|
 | model | `voyage-4-nano`, Q8_0 GGUF (355 MB) **plus** an 8 MB projection head, fetched once |
-| embedding | 36.7 declarations/s on this GPU — measured, see below |
+| embedding | 34.9 declarations/s on this GPU — measured, see below |
 | query | ~0.28 s warm, dominated by encoding the question |
 | index | float32, dim 1024, one row per declaration |
 
@@ -218,8 +320,22 @@ verified. Applying that head after llama.cpp pools is exact rather than
 approximate: it is a linear map and the pooler is a mean, so the two commute.
 
 The GPU path is opt-in at build time (`make HYP_ASK_GPU=vulkan`) and needs a
-Vulkan SDK. The default build is CPU-only and portable. Only the `embed` pass
-is affected; `ask` itself is unchanged either way.
+Vulkan SDK; since `v0.3.1` it is also published as its own release archive,
+because the standard Linux builds are static and `-lvulkan` is not. The default
+build is CPU-only and portable. Only the `embed` pass is affected; `ask` itself
+is unchanged either way, and it encodes the question on the CPU in both builds —
+one short forward pass, where a GPU context would cost more than it saves.
+
+**Batching is verified, not assumed.** 34.9 declarations/s is the current number
+on the same 4,072; the 36.7 above it was measured when every batch was cut into
+equal-token-length runs, which was correct but rarely batched more than one
+document. Removing that cut on the belief that llama.cpp masks ragged batches by
+itself produced vectors in which only the SHORTEST row of each batch was right:
+llama.cpp's default per-sequence KV streams split a ragged batch by length, so a
+bidirectional pass sees the head of every longer row without its tail. A unified
+KV buffer makes ragged batching exact, and `hyponoia embed --verify-batching`
+encodes a fixture alone and in groups and fails if any vector depends on what
+shared its forward pass. Run it after any change to the encoder path.
 
 ## Why this model and not another
 

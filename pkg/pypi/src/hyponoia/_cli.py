@@ -363,7 +363,7 @@ def _version() -> str:
         # Must track pyproject.toml's version: _download() composes the release
         # URL from this, so a stale fallback 404s whenever importlib.metadata
         # cannot see the installed distribution.
-        return "0.3.0"
+        return "0.3.1"
 
 
 def _os_name() -> str:

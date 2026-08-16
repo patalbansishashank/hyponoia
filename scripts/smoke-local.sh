@@ -260,3 +260,15 @@ env \
     SMOKE_ARCH="$ARCH" \
     SMOKE_REQUIRE_UI="$REQUIRE_UI" \
     "$ROOT/scripts/smoke-test.sh" "$BINARY"
+
+# What an MCP CLIENT reads back, over the real stdio protocol. smoke-test.sh
+# checks the CLI envelope, which shares hyp_mcp_text_result and so catches the
+# same shape — but only this speaks the protocol, performs the handshake, and
+# reads tools/list, which is where the outputSchema half of the defect lives.
+# Every unit test asserted what the server EMITS; none asked what a client
+# READS, and three tools shipped blank because of it.
+if command -v python3 >/dev/null 2>&1; then
+    python3 "$ROOT/scripts/ci/mcp-client-view.py" "$BINARY"
+else
+    echo "SKIP: mcp-client-view needs python3"
+fi

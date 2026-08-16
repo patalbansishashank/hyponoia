@@ -1,6 +1,6 @@
 # Maintainer: patalbansishashank <https://github.com/patalbansishashank>
 pkgname=hyponoia
-pkgver=0.3.0
+pkgver=0.3.1
 pkgrel=1
 pkgdesc="Code context engine for AI coding agents — indexes repositories into a queryable graph and returns exact code spans instead of whole files"
 arch=('x86_64' 'aarch64')
@@ -13,12 +13,14 @@ conflicts=("$pkgname")
 source_x86_64=("${pkgname}-${pkgver}-linux-amd64.tar.gz::https://github.com/patalbansishashank/hyponoia/releases/download/v${pkgver}/hyponoia-ui-linux-amd64.tar.gz")
 source_aarch64=("${pkgname}-${pkgver}-linux-arm64.tar.gz::https://github.com/patalbansishashank/hyponoia/releases/download/v${pkgver}/hyponoia-ui-linux-arm64.tar.gz")
 
-# Checksums are placeholders until v0.3.0 publishes. They were upstream's,
-# for a v0.8.1 release this fork never cut; a plausible-but-wrong hash fails
-# at install time with a mismatch nobody can attribute, so they are zeroed
-# until the real values are copied from the release's checksums.txt.
-sha256sums_x86_64=('baecf99e5ad46976d75a96ffd2a71a145e68b09710a2b32f983a4202afc73d60')
-sha256sums_aarch64=('5fa1342d7ebfb00e32048fcf39bf21a7314a0a07af3a7e045a46ecea0303b720')
+# Checksums are placeholders until v0.3.1 publishes. The values here were the
+# real v0.3.0 hashes; against a v0.3.1 URL they are worse than blank, because a
+# plausible-but-wrong hash fails at install time with a mismatch nobody can
+# attribute to a cause. They are zeroed until the real values are copied from
+# the release's checksums.txt — the same rule that retired upstream's v0.8.1
+# hashes when this fork cut its own line.
+sha256sums_x86_64=('0000000000000000000000000000000000000000000000000000000000000000')
+sha256sums_aarch64=('0000000000000000000000000000000000000000000000000000000000000000')
 
 package() {
     install -Dm755 "${srcdir}/hyponoia" \

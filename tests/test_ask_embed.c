@@ -16,6 +16,7 @@
 
 #include <store/store.h>
 
+#include <math.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -725,7 +726,177 @@ TEST(ask_embed_zero_work_is_not_reported_as_success) {
     PASS();
 }
 
+/* ── The batched-versus-alone self-check ───────────────────────── */
+
+/* Sixteen texts of different byte lengths, so the stub's byte-based token
+ * counts make the group ragged the way a real length-sorted group is. */
+static const char *const CHECK_TEXTS[] = {
+    "a",
+    "bb",
+    "ccc",
+    "dddd",
+    "eeeee",
+    "ffffff",
+    "ggggggg",
+    "hhhhhhhh",
+    "iiiiiiiii",
+    "jjjjjjjjjj",
+    "kkkkkkkkkkk",
+    "llllllllllll",
+    "mmmmmmmmmmmmm",
+    "nnnnnnnnnnnnnn",
+    "ooooooooooooooo",
+    "pppppppppppppppp",
+};
+enum { CHECK_TEXTS_N = (int)(sizeof(CHECK_TEXTS) / sizeof(CHECK_TEXTS[0])) };
+
+TEST(ask_encoder_check_batching_passes_a_batch_independent_encoder) {
+    /* The stub hashes each text on its own: what shares its forward pass
+     * cannot reach it, so alone and batched are bit-identical, and the check
+     * must say so — every row at exactly 1.0, nothing misassigned. */
+    hyp_ask_encoder_t *enc = hyp_ask_encoder_stub_create(16, 32768, true);
+    ASSERT_NOT_NULL(enc);
+    hyp_ask_batch_row_t rows[CHECK_TEXTS_N];
+    hyp_ask_batch_check_t chk;
+    ASSERT_EQ(
+        hyp_ask_encoder_check_batching(enc, CHECK_TEXTS, CHECK_TEXTS_N, 16, 0.999F, rows, &chk), 0);
+    ASSERT_EQ(chk.n, CHECK_TEXTS_N);
+    ASSERT_EQ(chk.groups, 1);
+    ASSERT_EQ(chk.below, 0);
+    ASSERT_EQ(chk.misassigned, 0);
+    ASSERT_FLOAT_EQ((double)chk.min_own, 1.0, 1e-6);
+    for (int i = 0; i < CHECK_TEXTS_N; i++) {
+        ASSERT_FLOAT_EQ((double)rows[i].own, 1.0, 1e-6);
+        ASSERT_TRUE(rows[i].best_other < rows[i].own);
+    }
+    /* Groups of 5 over 16 texts: 4 forward passes, last one of a single row
+     * whose best_other is then -1 (nobody shared its pass). */
+    ASSERT_EQ(
+        hyp_ask_encoder_check_batching(enc, CHECK_TEXTS, CHECK_TEXTS_N, 5, 0.999F, rows, &chk), 0);
+    ASSERT_EQ(chk.groups, 4);
+    ASSERT_EQ(chk.below, 0);
+    ASSERT_EQ(rows[CHECK_TEXTS_N - 1].best_other_idx, -1);
+    hyp_ask_encoder_destroy(enc);
+    PASS();
+}
+
+/* An encoder double that is WRONG in the two ways the check tells apart.
+ *
+ * mode 1 (contaminated): in a group of more than one, every row but the
+ *   shortest text is blended with the group — the exact shape of the
+ *   split_equal failure the check was written for (ask_llama.c, cp.kv_unified).
+ * mode 2 (misassigned): in a group of more than one, the first two rows are
+ *   swapped — a seq_id/slot mapping bug. Alone, both modes are correct. */
+typedef struct {
+    int mode;
+} wrong_enc_t;
+
+static void wrong_axis(const char *text, float *out) {
+    unsigned long h = 5381;
+    for (const unsigned char *p = (const unsigned char *)text; *p; p++) {
+        h = h * 33u + *p;
+    }
+    memset(out, 0, 16 * sizeof(float));
+    out[h % 16u] = 1.0f;
+}
+
+static int wrong_encode_documents(void *self, const char *const *texts, int count, float *out) {
+    wrong_enc_t *w = (wrong_enc_t *)self;
+    for (int i = 0; i < count; i++) {
+        wrong_axis(texts[i], out + (size_t)i * 16);
+    }
+    if (count < 2) {
+        return 0;
+    }
+    if (w->mode == 1) {
+        int shortest = 0;
+        for (int i = 1; i < count; i++) {
+            if (strlen(texts[i]) < strlen(texts[shortest])) {
+                shortest = i;
+            }
+        }
+        for (int i = 0; i < count; i++) {
+            if (i == shortest) {
+                continue;
+            }
+            float *row = out + (size_t)i * 16;
+            /* Half its own axis, half the neighbour's: cosine to itself
+             * drops to ~0.71, to nothing else above that. */
+            float other[16];
+            wrong_axis(texts[(i + 1) % count], other);
+            double norm = 0.0;
+            for (int d = 0; d < 16; d++) {
+                row[d] = 0.5f * row[d] + 0.5f * other[d];
+                norm += (double)row[d] * (double)row[d];
+            }
+            norm = sqrt(norm);
+            for (int d = 0; d < 16; d++) {
+                row[d] = (float)((double)row[d] / norm);
+            }
+        }
+    } else {
+        float tmp[16];
+        memcpy(tmp, out, sizeof(tmp));
+        memcpy(out, out + 16, sizeof(tmp));
+        memcpy(out + 16, tmp, sizeof(tmp));
+    }
+    return 0;
+}
+
+static int wrong_dim(void *self) {
+    (void)self;
+    return 16;
+}
+
+TEST(ask_encoder_check_batching_catches_contamination_and_misassignment) {
+    hyp_ask_encoder_vt_t vt;
+    memset(&vt, 0, sizeof(vt));
+    vt.dim = wrong_dim;
+    vt.encode_documents = wrong_encode_documents;
+    wrong_enc_t w;
+    hyp_ask_encoder_t enc;
+    enc.vt = &vt;
+    enc.self = &w;
+    hyp_ask_batch_row_t rows[CHECK_TEXTS_N];
+    hyp_ask_batch_check_t chk;
+
+    /* Contamination: every row but the shortest is below the bar, none is
+     * closer to another text than to itself. This is the fingerprint the
+     * ragged split left on real code — the shortest row alone was right. */
+    w.mode = 1;
+    ASSERT_EQ(
+        hyp_ask_encoder_check_batching(&enc, CHECK_TEXTS, CHECK_TEXTS_N, 16, 0.999F, rows, &chk),
+        0);
+    ASSERT_EQ(chk.below, CHECK_TEXTS_N - 1);
+    ASSERT_EQ(chk.misassigned, 0);
+    ASSERT_TRUE(chk.min_own < 0.999F);
+    ASSERT_FLOAT_EQ((double)rows[0].own, 1.0, 1e-6); /* "a" is the shortest */
+    ASSERT_TRUE(rows[1].own < 0.999F);
+
+    /* Misassignment: two rows carry each other's vector — own cosine 0,
+     * best_other 1.0 pointing at the swapped partner. */
+    w.mode = 2;
+    ASSERT_EQ(
+        hyp_ask_encoder_check_batching(&enc, CHECK_TEXTS, CHECK_TEXTS_N, 16, 0.999F, rows, &chk),
+        0);
+    ASSERT_EQ(chk.misassigned, 2);
+    ASSERT_EQ(chk.below, 2);
+    ASSERT_EQ(rows[0].best_other_idx, 1);
+    ASSERT_EQ(rows[1].best_other_idx, 0);
+    ASSERT_FLOAT_EQ((double)rows[0].best_other, 1.0, 1e-6);
+
+    /* Alone, the same double is correct — which is precisely why the pass's
+     * own output could not reveal the bug, and this comparison can. */
+    ASSERT_EQ(
+        hyp_ask_encoder_check_batching(&enc, CHECK_TEXTS, CHECK_TEXTS_N, 1, 0.999F, rows, &chk), 0);
+    ASSERT_EQ(chk.below, 0);
+    ASSERT_EQ(chk.misassigned, 0);
+    PASS();
+}
+
 SUITE(ask_embed) {
+    RUN_TEST(ask_encoder_check_batching_passes_a_batch_independent_encoder);
+    RUN_TEST(ask_encoder_check_batching_catches_contamination_and_misassignment);
     RUN_TEST(ask_embed_span_is_verbatim_source_lines);
     RUN_TEST(ask_embed_span_normalises_crlf_and_keeps_no_trailing_newline);
     RUN_TEST(ask_embed_content_hash_is_stable_and_32_hex);

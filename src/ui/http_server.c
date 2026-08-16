@@ -1620,6 +1620,90 @@ static void handle_layout(hyp_http_conn_t *c, const hyp_http_req_t *req) {
     }
 }
 
+/* ── The 3-D view of the `ask` lane (NEXT-STEPS §3.1 step 5) ───────
+ *
+ * Two routes, deliberately BESIDE /api/layout rather than inside it: the
+ * layout JSON is what every existing UI reads and its schema is unchanged; the
+ * cloud is a second, optional payload the same size again, fetched only when
+ * the view is opened.
+ *
+ *   GET  /api/embed-view?project=<p>[&lane=escalation]
+ *        → { view:{available,method,dim,rows,variance_kept,eigen,fitted_at,
+ *             stale,...}, points:[{id,qn,label,file,start_line,end_line,x,y,z}],
+ *             unprojected, caveat }
+ *   POST /api/embed-view/ask   {project, question, limit?, language?, escalate?}
+ *        → { ask:<the ask tool's own JSON>, view:{...}, query:{x,y,z},
+ *             hits:[{rank,qualified_name,node_id,label,file,lines,score,x,y,z}],
+ *             caveat }
+ *
+ * The POST is a protected route (JSON content type required, same-origin
+ * checked) exactly like /api/index — it runs the query encoder, which is not
+ * something a stray form post should be able to trigger. */
+static void handle_embed_view_points(hyp_http_conn_t *c, const hyp_http_req_t *req) {
+    char project[256] = {0};
+    char lane[32] = {0};
+    if (!hyp_http_query_param(req->query, "project", project, (int)sizeof(project)) ||
+        project[0] == '\0') {
+        hyp_http_replyf(c, 400, g_cors_json, "{\"error\":\"missing project parameter\"}");
+        return;
+    }
+    if (!hyp_validate_project_name(project)) {
+        hyp_http_replyf(c, 400, g_cors_json, "{\"error\":\"invalid project name\"}");
+        return;
+    }
+    bool escalation = hyp_http_query_param(req->query, "lane", lane, (int)sizeof(lane)) &&
+                      strcmp(lane, "escalation") == 0;
+    char *json = hyp_mcp_ask_view_points_json(project, escalation);
+    if (!json) {
+        hyp_http_replyf(c, 500, g_cors_json, "{\"error\":\"embed view failed\"}");
+        return;
+    }
+    hyp_http_replyf(c, 200, g_cors_json, "%s", json);
+    free(json);
+}
+
+static void handle_embed_view_ask(hyp_http_server_t *srv, hyp_http_conn_t *c,
+                                  const hyp_http_req_t *req) {
+    if (req->body_len == 0 || req->body_len > 16384 || !req->body) {
+        hyp_http_replyf(c, 400, g_cors_json, "{\"error\":\"invalid body\"}");
+        return;
+    }
+    yyjson_doc *doc = yyjson_read(req->body, req->body_len, 0);
+    if (!doc) {
+        hyp_http_replyf(c, 400, g_cors_json, "{\"error\":\"invalid json\"}");
+        return;
+    }
+    yyjson_val *root = yyjson_doc_get_root(doc);
+    yyjson_val *v_proj = yyjson_obj_get(root, "project");
+    yyjson_val *v_q = yyjson_obj_get(root, "question");
+    bool ok = v_proj && yyjson_is_str(v_proj) &&
+              hyp_validate_project_name(yyjson_get_str(v_proj)) && v_q && yyjson_is_str(v_q) &&
+              yyjson_get_str(v_q)[0] != '\0';
+    yyjson_doc_free(doc);
+    if (!ok) {
+        hyp_http_replyf(c, 400, g_cors_json,
+                        "{\"error\":\"project (a valid project name) and question are required\"}");
+        return;
+    }
+    /* A NUL-terminated copy: the transport's body is length-delimited and the
+     * tool's argument parser takes a C string. */
+    char *args = malloc(req->body_len + 1);
+    if (!args) {
+        hyp_http_replyf(c, 500, g_cors_json, "{\"error\":\"out of memory\"}");
+        return;
+    }
+    memcpy(args, req->body, req->body_len);
+    args[req->body_len] = '\0';
+    char *json = hyp_mcp_ask_view_overlay(srv->mcp, args);
+    free(args);
+    if (!json) {
+        hyp_http_replyf(c, 500, g_cors_json, "{\"error\":\"embed view ask failed\"}");
+        return;
+    }
+    hyp_http_replyf(c, 200, g_cors_json, "%s", json);
+    free(json);
+}
+
 /* ── Handle JSON-RPC request ──────────────────────────────────── */
 
 static yyjson_val *json_unique_member(yyjson_val *object, const char *name) {
@@ -1844,6 +1928,16 @@ static void dispatch_request(hyp_http_server_t *srv, hyp_http_conn_t *c,
     /* GET /api/layout → 3D graph layout */
     if (is_get && hyp_http_path_match(req->path, "/api/layout*")) {
         handle_layout(c, req);
+        return;
+    }
+
+    /* The `ask` lane's 3-D view: the cloud, and a question placed in it. */
+    if (is_post && hyp_http_path_match(req->path, "/api/embed-view/ask")) {
+        handle_embed_view_ask(srv, c, req);
+        return;
+    }
+    if (is_get && hyp_http_path_match(req->path, "/api/embed-view*")) {
+        handle_embed_view_points(c, req);
         return;
     }
 

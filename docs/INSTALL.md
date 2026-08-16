@@ -4,11 +4,13 @@ Getting the binary onto your machine and your agent talking to it.
 
 [← README](../README.md)
 
-> **Where the project actually is.** `v0.3.0` is published and is the first
-> release carrying binaries — the one-liners and release archives below work.
-> The **package managers do not yet**: Homebrew, Scoop, Chocolatey, AUR and
-> winget manifests are in-tree with real checksums but have not been submitted
-> to their registries, so install from the script or the archive for now.
+> **Where the project actually is.** `v0.3.1` is the current release — the
+> one-liners and release archives below work, and it is the first release whose
+> Linux x86-64 build is also published with GPU (Vulkan) embedding as a separate
+> archive. The **package managers do not yet**: Homebrew, Scoop, Chocolatey, AUR
+> and winget manifests are in-tree but their checksums are zeroed until the real
+> values are copied from this release's `checksums.txt`, and none has been
+> submitted to its registry — so install from the script or the archive for now.
 > **[Building from source](#build-from-source)** remains supported everywhere,
 > and is the only path on macOS.
 
@@ -41,7 +43,7 @@ build/c/test-runner --list-suites   # what is available
 
 ---
 
-*The direct downloads and the install scripts below are live as of `v0.3.0`. The
+*The direct downloads and the install scripts below are live as of `v0.3.1`. The
 package-manager entries are not yet submitted to their registries — see the note
 at the top.*
 

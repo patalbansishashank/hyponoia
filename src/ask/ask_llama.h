@@ -58,6 +58,21 @@ bool hyp_ask_llama_compiled_in(void);
  * style reporting. Never NULL. */
 const char *hyp_ask_llama_build_note(void);
 
+/* The accelerator the encoder WOULD choose, and its memory, asked of the
+ * backend — the same question hyp_ask_llama_encoder_create asks, exposed so a
+ * pre-flight report cannot disagree with the run it precedes.
+ *
+ * ask_cmd's plan report used to call only the AMD sysfs reader. On an Intel or
+ * NVIDIA card that returned false, so the report printed "no device exposes its
+ * VRAM ... falling back to CPU" — and then the encoder, which asks ggml, used
+ * the GPU anyway. Two answers to one question, on the same screen.
+ *
+ * Returns true and fills the outputs when an accelerator is present AND its
+ * memory is readable. name may be NULL. Never touches sysfs; the caller may
+ * fall back to hyp_ask_device_vram_mib on false, exactly as the encoder does. */
+bool hyp_ask_llama_probe_device(char *name, size_t name_sz, double *out_total_mib,
+                                double *out_used_mib);
+
 /* Create an encoder over the fetched weights.
  *
  * `pref` is the REQUEST. What the encoder could honour is reported through
