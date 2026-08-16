@@ -287,6 +287,15 @@ bash "$ROOT/tests/test_transcript_contract.sh"
 echo "=== Step 0w: one FQN derivation, and its differential is wired (A11) ==="
 bash "$ROOT/tests/test_fqn_contract.sh"
 
+# G6. Ratcheted: the current count is pinned, a NEW unwired module or a new
+# command enumeration fails the build naming it, and the header states the exit
+# condition. Runs here, before the compiler, because both of its checks are
+# static — the third check (schema arguments) is a C test in the tool_surface
+# suite, and the help half of check B needs a binary, so it runs again at Step
+# 5f with one.
+echo "=== Step 0y: nothing ships unwired — modules and commands (G6) ==="
+bash "$ROOT/tests/test_wired_contract.sh"
+
 # Verify compiler supports target arch
 verify_compiler "$CC"
 
@@ -375,6 +384,14 @@ if [ "${OS:-}" = "windows" ]; then
     HYP_READINESS_BIN="$HYP_READINESS_BIN.exe"
 fi
 python3 "$ROOT/tests/test_daemon_open_readiness.py" "$HYP_READINESS_BIN"
+
+# Step 5f: the help half of G6's command check, against the binary a user runs.
+# `allow-root` and `daemon` were reachable and in no help output for as long as
+# print_help was a third enumeration of the commands, and no test could see it
+# because every test read the table. This reads stdout. Reuses the prod binary
+# built in Step 5, so it costs one exec.
+echo "=== Step 5f: every documented command appears in the binary's own --help (G6) ==="
+HYP_TEST_BINARY="$WATCHDOG_BINARY" bash "$ROOT/tests/test_wired_contract.sh"
 
 # Step 6: security-strings URL allow-list regression. The MSYS2 CLANG64 toolchain
 # bakes its package-tracker URL into the static Windows .exe; the binary string
