@@ -195,7 +195,12 @@ static void ob_cache_end(ob_cache_t *c) {
 
 /* ── Fixture repo ────────────────────────────────────────────────── */
 
-/* Two functions whose span text the answer test reproduces byte for byte. */
+/* alpha's span, written ONCE and used to build the fixture file, so the text
+ * the indexer sees and the text this file calls "alpha's span" cannot drift
+ * apart. The B4 answer test asks a question that is the JSON escaping of this
+ * — the one spelling that cannot be shared, since a JSON string literal is not
+ * a C one — and it asserts a cosine above 0.99 on the top row, which is the
+ * assertion that fails loudly if the two ever stop matching. */
 #define OB_FIXTURE_ALPHA "int alpha(void) {\n    return 1;\n}"
 
 static char *ob_fixture_repo(void) {
@@ -205,12 +210,10 @@ static char *ob_fixture_repo(void) {
         return NULL;
     }
     if (th_write_file(TH_PATH(dir, "src/x.c"),
-                      "int alpha(void) {\n"
-                      "    return 1;\n"
-                      "}\n"
-                      "int beta(void) {\n"
-                      "    return 2;\n"
-                      "}\n") != 0 ||
+                      OB_FIXTURE_ALPHA "\n"
+                                       "int beta(void) {\n"
+                                       "    return 2;\n"
+                                       "}\n") != 0 ||
         th_write_file(TH_PATH(dir, "src/y.c"), "int gamma(void) {\n    return 3;\n}\n") != 0) {
         th_cleanup(dir);
         free(dir);
