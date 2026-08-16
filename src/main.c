@@ -36,6 +36,7 @@
 #include "ask/ask_provider.h" /* key custody: whose environment this process is */
 #include "cli/cli.h"
 #include "cli/model_fetch.h"
+#include "cli/onboard.h"
 #include "cli/progress_sink.h"
 #include "foundation/constants.h"
 
@@ -954,6 +955,9 @@ static void print_help(void) {
     printf("  hyponoia uninstall [-y|-n] [--dry-run]\n");
     printf("  hyponoia update [-y|-n]\n");
     printf("  hyponoia config <list|get|set|reset>\n");
+    printf("  hyponoia onboard [dir] [--answers <file>] [--yes]\n"
+           "                                      Probe this machine and corpus, propose a\n"
+           "                                      workspace, ask only what only you know\n");
     printf("  hyponoia embed --project <name> [--status]\n"
            "                                      Opt-in second pass: per-declaration\n"
            "                                      vectors for the `ask` lane\n");
@@ -1140,6 +1144,11 @@ static int handle_subcommand(int argc, char **argv, hyp_project_lock_manager_t *
         }
         if (strcmp(argv[i], "config") == 0) {
             return hyp_cmd_config(argc - i - SKIP_ONE, argv + i + SKIP_ONE);
+        }
+        /* §4 Track B: probe, propose, confirm — never interrogate. Decides
+         * and records; deliberately does NOT start the index it prices. */
+        if (strcmp(argv[i], "onboard") == 0) {
+            return hyp_cmd_onboard(argc - i - SKIP_ONE, argv + i + SKIP_ONE);
         }
         /* The `ask` lane's opt-in second pass. Deliberately NOT a flag on
          * index_repository: keeping it a separate invocation is what makes

@@ -683,6 +683,7 @@ extern void suite_agent_clients(void);
 extern void suite_agent_profiles(void);
 extern void suite_tool_surface(void);
 extern void suite_config_json_like(void);
+extern void suite_onboard(void);
 extern void suite_config_toml_edit(void);
 extern void suite_config_yaml_edit(void);
 extern void suite_config_text_edit(void);
@@ -996,6 +997,7 @@ int main(int argc, char **argv) {
     RUN_SELECTED_SUITE(config_text_edit);
     RUN_SELECTED_SUITE(activation_transaction);
     RUN_SELECTED_SUITE(model_fetch);
+    RUN_SELECTED_SUITE(onboard);
 
     /* System info + worker pool (parallelism) */
     RUN_SELECTED_SUITE(system_info);
