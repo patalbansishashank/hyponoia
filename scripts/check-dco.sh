@@ -11,6 +11,7 @@ set -euo pipefail
 # bot-authored commits (author name ending in [bot]).
 
 RANGE="${1:?usage: check-dco.sh <commit-range>}"
+ROOT_DIR="$(git rev-parse --show-toplevel)"
 
 FAIL=0
 CHECKED=0
@@ -26,8 +27,17 @@ while IFS= read -r sha; do
     esac
     CHECKED=$((CHECKED + 1))
     author_email=$(git log -1 --format='%ae' "$sha")
-    trailers=$(git log -1 --format='%(trailers:key=Signed-off-by,valueonly)' "$sha")
-    if ! printf '%s' "$trailers" | grep -qiF "<$author_email>"; then
+    # One implementation, shared with the commit-msg hook. These were two
+    # definitions of "signed" — a line match here, git's trailer block there —
+    # and they agreed until a blank line before Co-Authored-By pushed
+    # Signed-off-by out of the trailer block, passing one gate and failing the
+    # other.
+    msg_file=$(mktemp)
+    git log -1 --format='%B' "$sha" > "$msg_file"
+    signed=0
+    "$ROOT_DIR/scripts/dco-signed.sh" "$author_email" "$msg_file" || signed=1
+    rm -f "$msg_file"
+    if [ "$signed" -ne 0 ]; then
         echo "BLOCKED: $sha lacks a Signed-off-by matching its author:"
         git log -1 --format='  author: %an <%ae>%n  subject: %s' "$sha"
         echo "  fix: git commit --amend -s   (or: git rebase --signoff <base>)"
