@@ -20,10 +20,24 @@
  * Not a directory of numbered decision documents. ONE markdown document per
  * project, capped at HYP_ADR_MAX_LENGTH, living in a single `project_summaries`
  * row keyed by project name, with sections a convention names (PURPOSE, STACK,
- * ARCHITECTURE, PATTERNS, TRADEOFFS, PHILOSOPHY) and nothing enforces. Two
- * writers reach it — the MCP tool `manage_adr(mode:"update")` and the UI's
- * `POST /api/adr` — and both wrote the same UPSERT, replacing the whole
- * document. The row carries `created_at` and `updated_at` and no author column.
+ * ARCHITECTURE, PATTERNS, TRADEOFFS, PHILOSOPHY) and nothing enforces. The row
+ * carries `created_at` and `updated_at` and NO AUTHOR COLUMN.
+ *
+ * THREE writers reach it, not the two an audit of the MCP surface finds:
+ *
+ *   1. the MCP tool, `manage_adr(mode:"update")`;
+ *   2. the UI, `POST /api/adr`;
+ *   3. PUBLICATION. A rebuild writes a fresh database and renames it over the
+ *      live one, so the ADR row has to be copied across or it is lost. That
+ *      copy is a write, it went through the same capturing UPSERT as the other
+ *      two, and it therefore restamped the instant on every index run — a
+ *      writer nothing was looking for, in the field the id depends on.
+ *
+ * The first two both replaced the whole document, destroying every earlier
+ * text. That is a decision store: mutable, last-writer-wins, and lossy by
+ * construction. Placing the append-only record set beside it would give one
+ * concept two stores that can disagree, which is the failure shape this plan
+ * has already shipped once at the UI layer, at the data layer instead.
  *
  * That is a decision store: mutable, last-writer-wins, and one where every
  * earlier text is destroyed by the write that supersedes it. Placing the
