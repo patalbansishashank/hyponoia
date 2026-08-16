@@ -832,6 +832,7 @@ TEST_PIPELINE_SRCS = tests/test_registry.c tests/test_pipeline.c tests/test_cros
 
 TEST_MEMORY_SRCS = tests/test_anchor.c tests/test_comment_migrate.c tests/test_sync.c tests/test_adr_records.c tests/test_anchor_reindex.c tests/test_orphan.c tests/test_orphan_corpus.c tests/test_g1_replay.c tests/test_g2_retrieval.c
 TEST_PIPELINE_SRCS += tests/test_fqn_differential.c
+TEST_MEMORY_SRCS += tests/test_g3_controls.c
 
 TEST_WATCHER_SRCS = tests/test_watcher.c
 
