@@ -352,6 +352,21 @@ void hyp_ask_vec_meta_free(hyp_ask_vec_meta_t *m);
 int hyp_ask_vectors_check_compatible(hyp_ask_vectors_t *v, const char *model_id,
                                      const char *prefix_contract, int dim, int window_tokens);
 
+/* The stamp gate itself, shared: compare a STORED (model_id, prefix_contract,
+ * dim, window) stamp against an OFFERED one. HYP_ASK_VEC_OK when every
+ * comparable field matches, HYP_ASK_VEC_INCOMPATIBLE otherwise, with `err`
+ * naming both sides. NULL/"" on either model or contract means "cannot say"
+ * and is never compared as a match OR a mismatch; dim and window compare only
+ * when the offered value is > 0.
+ *
+ * ONE function on purpose. The record-vector store (record_vectors.h) refuses
+ * shipped vectors on exactly this gate, and hyp_ask_vectors_check_compatible
+ * calls it too, so what the two stores refuse can only drift if this function
+ * changes — which is the visible place for it to happen. */
+int hyp_ask_stamp_check(const char *stored_model_id, const char *stored_contract, int stored_dim,
+                        int stored_window, const char *model_id, const char *prefix_contract,
+                        int dim, int window_tokens, char *err, size_t errlen);
+
 /* ── Writing ───────────────────────────────────────────────────── */
 
 /* Begin a build. `wipe_incompatible` true drops every existing row when the

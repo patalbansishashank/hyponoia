@@ -734,6 +734,7 @@ extern void suite_semantic(void);
 extern void suite_ask(void);
 extern void suite_ask_batch(void);
 extern void suite_ask_vectors(void);
+extern void suite_record_vectors(void);
 extern void suite_ask_provider(void);
 extern void suite_ask_embed(void);
 extern void suite_ast_profile(void);
@@ -1031,6 +1032,8 @@ int main(int argc, char **argv) {
     /* `ask` lane: the batch rule, the vector store, the opt-in embed pass */
     RUN_SELECTED_SUITE(ask_batch);
     RUN_SELECTED_SUITE(ask_vectors);
+    /* §4 F1: record-content vectors, content-hash keyed, shippable */
+    RUN_SELECTED_SUITE(record_vectors);
     RUN_SELECTED_SUITE(ask_provider);
     RUN_SELECTED_SUITE(ask_embed);
     RUN_SELECTED_SUITE(simhash);
