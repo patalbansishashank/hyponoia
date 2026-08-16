@@ -1,0 +1,16 @@
+static void release_request_store(hyp_mcp_server_t *srv) {
+    if (!srv || !srv->owns_store || !srv->store || !hyp_store_db_path(srv->store)) {
+        return;
+    }
+    hyp_store_close(srv->store);
+    srv->store = NULL;
+    free(srv->current_project);
+    srv->current_project = NULL;
+    /* The close above frees a connection's worth of page cache. Ask the
+     * allocator to hand those pages back now, which keeps a long-lived daemon
+     * flat across thousands of request-scoped stores (#581). This only became
+     * meaningful once the Windows interposer made the pages mimalloc's: an
+     * earlier attempt aimed at the CRT heap instead and could not release
+     * them. POSIX already purges on free, so this is a no-op there. */
+    hyp_mem_collect();
+}
