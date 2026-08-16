@@ -411,7 +411,7 @@ typedef enum {
      * destructive tool does not infer its target. */                                              \
     X("delete_project", NULL, 0, 0, 0U, HYP_TOOL_LIVE, NULL, HYP_TOOL_ANN_DESTRUCTIVE)             \
     /* DEPRECATED by the append-only decision store, and live and unchanged on                     \
-     * the wire. `mode:"update"` writes THROUGH that store: the document becomes                  \
+     * the wire. `mode:"update"` writes THROUGH that store: the document becomes                   \
      * a kind=decision record whose `origin` is the ADR's project id and whose                     \
      * anchor is NULL, and the project_summaries row the UI and `mode:"get"`                       \
      * read is refreshed from that record as a PROJECTION of it. What the row                      \
