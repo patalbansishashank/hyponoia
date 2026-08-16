@@ -156,7 +156,7 @@ struct hyp_pipeline {
     atomic_int *cancelled;
     bool persistence; /* write .hyponoia/graph.db.zst after indexing */
 
-    /* How many repositories the workspace this run belongs to contains (§4 A8).
+    /* How many repositories the workspace this run belongs to contains.
      * 0 = never declared. See hyp_pipeline_set_workspace_member_count. */
     int workspace_member_count;
 

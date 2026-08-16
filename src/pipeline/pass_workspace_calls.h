@@ -8,8 +8,8 @@
 
 /*
  * pass_workspace_calls.h — the PLUGIN CASE: a direct source-level call from one
- * workspace member into another. NEXT-STEPS §4 Phase 1, unit A8. Built on A1's
- * workspace registry and contract C1 (identity.h).
+ * workspace member into another. Built on the workspace registry in store.h and
+ * the address contract in identity.h.
  *
  * ═════════════════════════════════════════════════════════════════════════
  * WHY THIS IS NOT pass_cross_repo, AND WHY THE EDGE TYPE IS NEW
@@ -134,7 +134,28 @@
  * EDIT that member, which is a separate question from whether the code runs.
  */
 
-/* ── The recorded evidence: names shared by writer and reader ────────
+/* ═════════════════════════════════════════════════════════════════════════
+ * BOTH ENDS OR NEITHER — what wiring this up requires
+ * ═════════════════════════════════════════════════════════════════════════
+ *
+ * This unit has two ends and they are useless apart, so whoever builds the
+ * multi-member index driver owns BOTH:
+ *
+ *   1. Before indexing each member, call
+ *      hyp_pipeline_set_workspace_member_count() with the workspace's member
+ *      count. Without it nothing is recorded and this pass has nothing to read.
+ *   2. After every member's graph is in the one workspace store, call
+ *      hyp_workspace_calls_match(). Without it the recorded crossings sit in
+ *      the graph unresolved.
+ *
+ * Doing (1) alone adds nodes nobody reads. Doing (2) alone answers zero,
+ * truthfully and uselessly. There is no venue that calls either one today:
+ * a full index publishes by renaming a freshly built staging database over the
+ * destination, so no code path yet puts two members in one store at all. The
+ * matching half is built, tested against four real repositories, and waiting
+ * for the assembly half.
+ *
+ * ── The recorded evidence: names shared by writer and reader ────────
  *
  * These live here, in one place, because the index-time passes write them and
  * this pass reads them. Two copies of a tag string is two things to drift, and
@@ -187,8 +208,8 @@ enum {
 };
 
 typedef struct {
-    char caller_qn[HYP_WS_QN_BUF];  /* the call site that could not be resolved */
-    char callee[HYP_WS_NAME_BUF];   /* the name it called */
+    char caller_qn[HYP_WS_QN_BUF];    /* the call site that could not be resolved */
+    char callee[HYP_WS_NAME_BUF];     /* the name it called */
     char members[HYP_WS_MEMBERS_BUF]; /* the slugs that answered, comma-separated */
 } hyp_workspace_ambiguity_t;
 

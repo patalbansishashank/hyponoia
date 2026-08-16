@@ -87,7 +87,7 @@ bool hyp_pipeline_set_project_name(hyp_pipeline_t *p, const char *name);
 /* Get the index mode (HYP_MODE_FULL, HYP_MODE_MODERATE, HYP_MODE_FAST). */
 int hyp_pipeline_get_mode(const hyp_pipeline_t *p);
 
-/* ── Workspace membership (§4 Phase 1, unit A8) ─────────────────────
+/* ── Workspace membership ───────────────────────────────────────────
  *
  * Declare that this run indexes ONE member of a workspace containing
  * `member_count` repositories. THE CALLER SUPPLIES IT; the pipeline never reads
@@ -109,8 +109,8 @@ int hyp_pipeline_get_mode(const hyp_pipeline_t *p);
  * facts they otherwise drop on the floor — a callee that resolved to nothing in
  * this member, and an import specifier that named no file in it — as
  * workspace-scoped rendezvous nodes for hyp_workspace_calls_match() to resolve
- * once every member is in one store. With 0 or 1 they record nothing and the
- * graph is byte-identical to what it was before A8, which is deliberate:
+ * once every member is in one store. With 0 or 1 they record nothing, and the
+ * graph of a lone repository is unchanged by any of this — which is the point:
  * otherwise every printf() in every repository would mint a node.
  *
  * Values below 1 are stored as 0. */

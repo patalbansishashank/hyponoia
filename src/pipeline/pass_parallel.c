@@ -1234,9 +1234,9 @@ static int create_imports_edges(hyp_pipeline_ctx_t *ctx, const HYPFileResult *re
             hyp_gbuf_insert_edge(ctx->gbuf, source_node->id, target->id, "IMPORTS", imp_props);
             count++;
         } else if (!target && hyp_pipeline_ctx_records_workspace_evidence(ctx)) {
-            /* §4 A8, mirroring pass_definitions.c create_import_edges_for_file
-             * exactly. This function runs on the single-threaded side and
-             * writes ctx->gbuf directly, so no per-worker buffer is involved. */
+            /* Mirrors pass_definitions.c create_import_edges_for_file exactly.
+             * This function runs on the single-threaded side and writes
+             * ctx->gbuf directly, so no per-worker buffer is involved. */
             hyp_pipeline_record_unresolved_import(ctx->gbuf, source_node->id, imp->module_path);
         }
     }
@@ -1431,7 +1431,8 @@ typedef struct {
     _Atomic uint64_t time_ns_rc_emit;       /* emit_service_edge */
     _Atomic uint64_t time_ns_rc_source;     /* find_source_node */
 
-    /* §4 A8's gate, evaluated ONCE on the single-threaded side so a worker
+    /* The workspace-evidence gate, evaluated ONCE on the single-threaded side
+     * so a worker
      * reads a bool instead of chasing a pipeline pointer across threads.
      * hyp_pipeline_ctx_records_workspace_evidence is the only thing that
      * decides it, here and in the sequential path. */
@@ -2511,7 +2512,7 @@ static void resolve_file_calls(resolve_ctx_t *rc, resolve_worker_state_t *ws, HY
                                                  HYP_SVC_HTTP, u);
                 }
             }
-            /* §4 A8, at the SAME condition and through the SAME writer as the
+            /* At the SAME condition and through the SAME writer as the
              * sequential path (pass_calls.c resolve_single_call): a callee this
              * member's registry cannot name at all is what a call into a
              * sibling member looks like from here. The node lands in the

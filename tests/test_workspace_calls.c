@@ -1,6 +1,6 @@
 /*
- * test_workspace_calls.c — NEXT-STEPS §4 Phase 1, unit A8: a direct
- * source-level call from one workspace member into another.
+ * test_workspace_calls.c — a direct source-level call from one workspace
+ * member into another: the plugin case.
  *
  * ── WHAT MAKES THIS FIXTURE WORTH ANYTHING ──────────────────────────────────
  *
@@ -28,9 +28,9 @@
  *
  * A call is dropped by two different resolvers depending on how many files the
  * repository has — pass_calls.c below 50, pass_parallel.c above it. Both record
- * the crossing now, and wsc_both_resolution_paths_agree runs the SAME fixture
- * through both and asserts the same edge, because "it works on my fixture" has
- * meant "it works on the path my fixture happened to take" here before.
+ * the crossing, and wsc_both_resolution_paths_agree runs the SAME fixture
+ * through both, because a green fixture otherwise only says "it works on the
+ * path this fixture happens to take".
  */
 #include "test_framework.h"
 #include "test_helpers.h"

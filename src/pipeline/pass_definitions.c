@@ -477,7 +477,7 @@ static int create_import_edges_for_file(hyp_pipeline_ctx_t *ctx, const HYPFileRe
             hyp_gbuf_insert_edge(ctx->gbuf, source_node->id, target->id, "IMPORTS", imp_props);
             count++;
         } else if (!target && hyp_pipeline_ctx_records_workspace_evidence(ctx)) {
-            /* §4 A8: the specifier names no file in THIS member, which is what
+            /* The specifier names no file in THIS member, which is what
              * an include of a sibling member's header looks like from here.
              * Recorded rather than dropped; the parallel path
              * (create_imports_edges) records the same fact at the same

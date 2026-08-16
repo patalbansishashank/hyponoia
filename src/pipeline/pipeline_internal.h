@@ -768,7 +768,8 @@ const char *hyp_pipeline_repo_path(const hyp_pipeline_t *p);
 atomic_int *hyp_pipeline_cancelled_ptr(hyp_pipeline_t *p);
 int hyp_pipeline_workspace_member_count(const hyp_pipeline_t *p);
 
-/* §4 A8's gate, as ONE predicate. True only when this run indexes one member of
+/* The workspace-evidence gate, as ONE predicate. True only when this run
+ * indexes one member of
  * a workspace that has somewhere else to look; every site that records
  * cross-member evidence asks this and nothing else, so the sequential and the
  * parallel resolution paths cannot disagree about it. Derived from

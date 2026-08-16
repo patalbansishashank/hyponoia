@@ -1,6 +1,6 @@
 /*
  * pass_workspace_calls.c — resolve a direct source-level call from one
- * workspace member into another (NEXT-STEPS §4 Phase 1, unit A8).
+ * workspace member into another — the plugin case.
  *
  * The rationale, the edge type, the two signals and the fail-closed rule are
  * all in pass_workspace_calls.h. This file is the mechanism.
@@ -84,8 +84,7 @@ int64_t hyp_pipeline_record_unresolved_call(hyp_gbuf_t *gbuf, int64_t caller_id,
     if (written <= 0 || (size_t)written >= sizeof(qn)) {
         return 0;
     }
-    int64_t ext_id =
-        hyp_gbuf_upsert_node(gbuf, HYP_WS_LABEL_EXTERN, callee, qn, "", 0, 0, "{}");
+    int64_t ext_id = hyp_gbuf_upsert_node(gbuf, HYP_WS_LABEL_EXTERN, callee, qn, "", 0, 0, "{}");
     if (ext_id <= 0 || ext_id == caller_id) {
         return 0;
     }
@@ -167,13 +166,14 @@ static bool ws_collect_specifiers(struct sqlite3 *db, const char *project, const
         return true;
     }
     sqlite3_stmt *st = NULL;
-    if (sqlite3_prepare_v2(db,
-                           "SELECT inc.qualified_name FROM nodes f "
-                           "JOIN edges e ON e.source_id = f.id AND e.type = '" HYP_WS_EDGE_UNRESOLVED_IMPORT "' "
-                           "JOIN nodes inc ON inc.id = e.target_id "
-                           "WHERE f.project = ?1 AND f.file_path = ?2 AND f.label = 'File' "
-                           "ORDER BY inc.id",
-                           HYP_NOT_FOUND, &st, NULL) != SQLITE_OK) {
+    if (sqlite3_prepare_v2(
+            db,
+            "SELECT inc.qualified_name FROM nodes f "
+            "JOIN edges e ON e.source_id = f.id AND e.type = '" HYP_WS_EDGE_UNRESOLVED_IMPORT "' "
+            "JOIN nodes inc ON inc.id = e.target_id "
+            "WHERE f.project = ?1 AND f.file_path = ?2 AND f.label = 'File' "
+            "ORDER BY inc.id",
+            HYP_NOT_FOUND, &st, NULL) != SQLITE_OK) {
         return false;
     }
     bool ok = sqlite3_bind_text(st, 1, project, HYP_NOT_FOUND, SQLITE_STATIC) == SQLITE_OK &&
@@ -208,8 +208,8 @@ static bool ws_collect_specifiers(struct sqlite3 *db, const char *project, const
  * suffix-matches one of the caller's unresolved specifiers? Writes the matched
  * file into `answer` — it is the evidence recorded on the edge, not a
  * constraint on the target. Returns 1 yes, 0 no, -1 on a query failure. */
-static int ws_member_declared(struct sqlite3 *db, const char *member,
-                              const ws_specifiers_t *specs, ws_answer_t *answer) {
+static int ws_member_declared(struct sqlite3 *db, const char *member, const ws_specifiers_t *specs,
+                              ws_answer_t *answer) {
     sqlite3_stmt *st = NULL;
     if (sqlite3_prepare_v2(db,
                            "SELECT file_path FROM nodes "
@@ -239,7 +239,10 @@ static int ws_member_declared(struct sqlite3 *db, const char *member,
                 result = 1;
             }
         }
-        if (result == 0 && step_rc != SQLITE_DONE) {
+        /* A cap reached without deciding is NOT "no match" — it is "I stopped
+         * looking", and reading the second as the first is how a bound turns
+         * into a silently wrong answer. */
+        if (result == 0 && (step_rc != SQLITE_DONE || rows >= WS_MAX_FILE_ROWS)) {
             result = -1;
         }
     }
@@ -370,7 +373,10 @@ static bool ws_resolve_member(hyp_store_t *store, struct sqlite3 *db, const char
         r->candidates++;
 
         if (!cache_valid || strcmp(cached_file, caller_file) != 0) {
-            if (!ws_collect_specifiers(db, caller_project, caller_file, &specs)) {
+            /* An overflowed specifier list is a truncated question, and a
+             * truncated question cannot produce a trustworthy refusal either. */
+            if (!ws_collect_specifiers(db, caller_project, caller_file, &specs) ||
+                specs.overflowed) {
                 ok = false;
                 break;
             }
@@ -515,9 +521,8 @@ hyp_workspace_calls_result_t hyp_workspace_calls_match(hyp_store_t *store) {
     /* Idempotence: the previous generation goes before this one is written, so
      * a re-run over an unchanged store lands on an identical graph. */
     for (int i = 0; i < repo_count; i++) {
-        if (repos[i].slug &&
-            hyp_store_delete_edges_by_type(store, repos[i].slug, HYP_WS_EDGE_CROSS_MEMBER) !=
-                HYP_STORE_OK) {
+        if (repos[i].slug && hyp_store_delete_edges_by_type(
+                                 store, repos[i].slug, HYP_WS_EDGE_CROSS_MEMBER) != HYP_STORE_OK) {
             r.failed = true;
             hyp_store_free_workspace_repos(repos, repo_count);
             return r;

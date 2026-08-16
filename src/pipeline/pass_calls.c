@@ -581,7 +581,7 @@ static int resolve_single_call(hyp_pipeline_ctx_t *ctx, HYPCall *call,
                 return SKIP_ONE;
             }
         }
-        /* §4 A8: this member's registry has no answer at all, which is exactly
+        /* This member's registry has no answer at all, which is exactly
          * the shape of a call into a SIBLING member of the workspace. Record it
          * so pass_workspace_calls can resolve it once every member is in one
          * store; before this the fact was dropped here and nothing downstream
