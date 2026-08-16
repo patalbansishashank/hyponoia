@@ -62,6 +62,21 @@ static hyp_store_t *adr_fixture_store(const char *project, const char *content,
     return store;
 }
 
+/* The id a document MUST fold to, derived here from the same facts the row
+ * holds. Comparing against this rather than against a second fold is what makes
+ * "the instant comes from the row" a deterministic assertion: two folds a
+ * millisecond apart can agree by accident, and a test that can pass for the
+ * wrong reason is the failure mode a control exists to catch. */
+static void adr_expected_id(const char *project, const char *content, int64_t ms,
+                            char out[HYP_RECORD_ID_LEN + 1]) {
+    const hyp_record_t *rec = NULL;
+    out[0] = '\0';
+    if (hyp_adr_record_build(project, content, ms, &rec) == HYP_RECORD_OK) {
+        snprintf(out, HYP_RECORD_ID_LEN + 1, "%s", rec->id);
+        hyp_record_free(rec);
+    }
+}
+
 static hyp_record_store_t *adr_fixture_records(const char *tmp, const char *leaf) {
     char dir[512];
     (void)snprintf(dir, sizeof(dir), "%s/%s", tmp, leaf);
@@ -200,6 +215,16 @@ TEST(adr_records_folding_twice_yields_one_record_set) {
     ASSERT_EQ(first.present, 0);
     ASSERT_EQ(first.refused, 0);
 
+    /* The one record is the one the row's own instant produces. Asserted
+     * against an independently derived id, not against a second fold. */
+    char expected[HYP_RECORD_ID_LEN + 1];
+    adr_expected_id("proj", ADR_DOC_ONE, ADR_T_2026, expected);
+    ASSERT_TRUE(expected[0] != '\0');
+    const hyp_record_t *stored = NULL;
+    ASSERT_EQ(hyp_record_store_get(records, expected, &stored), HYP_RECORD_STORE_OK);
+    ASSERT_NOT_NULL(stored);
+    hyp_record_free(stored);
+
     char digest_after_first[HYP_RECORD_ID_LEN + 1];
     ASSERT_EQ(hyp_record_store_digest(records, digest_after_first), HYP_RECORD_STORE_OK);
 
@@ -245,6 +270,24 @@ TEST(adr_records_two_machines_fold_to_the_same_records) {
 
     ASSERT_EQ(hyp_adr_fold_store(store_a, records_a, NULL), HYP_RECORD_STORE_OK);
     ASSERT_EQ(hyp_adr_fold_store(store_b, records_b, NULL), HYP_RECORD_STORE_OK);
+
+    /* Each machine holds THE record the row's instant produces — checked
+     * against an id derived from the row, so a fold that read a clock fails
+     * here whether or not the two machines happened to read the same
+     * millisecond. Comparing the two stores to each other alone would let a
+     * clock-reading fold pass by coincidence. */
+    char expected[HYP_RECORD_ID_LEN + 1];
+    adr_expected_id("proj", ADR_DOC_ONE, ADR_T_2026, expected);
+    ASSERT_TRUE(expected[0] != '\0');
+    const hyp_record_t *in_a = NULL;
+    const hyp_record_t *in_b = NULL;
+    ASSERT_EQ(hyp_record_store_get(records_a, expected, &in_a), HYP_RECORD_STORE_OK);
+    ASSERT_EQ(hyp_record_store_get(records_b, expected, &in_b), HYP_RECORD_STORE_OK);
+    ASSERT_NOT_NULL(in_a);
+    ASSERT_NOT_NULL(in_b);
+    ASSERT_TRUE(hyp_record_equal(in_a, in_b));
+    hyp_record_free(in_a);
+    hyp_record_free(in_b);
 
     char digest_a[HYP_RECORD_ID_LEN + 1];
     char digest_b[HYP_RECORD_ID_LEN + 1];
