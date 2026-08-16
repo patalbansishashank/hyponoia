@@ -647,6 +647,7 @@ extern void suite_cross_repo(void);
 extern void suite_index_resilience(void);
 extern void suite_fqn(void);
 extern void suite_identity(void);
+extern void suite_anchor(void);
 extern void suite_route_canon(void);
 extern void suite_path_alias(void);
 extern void suite_watcher(void);
@@ -938,6 +939,7 @@ int main(int argc, char **argv) {
     RUN_SELECTED_SUITE(index_resilience);
     RUN_SELECTED_SUITE(fqn);
     RUN_SELECTED_SUITE(identity);
+    RUN_SELECTED_SUITE(anchor);
     RUN_SELECTED_SUITE(route_canon);
     RUN_SELECTED_SUITE(path_alias);
 
