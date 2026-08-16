@@ -411,18 +411,7 @@ typedef enum {
      * destructive tool does not infer its target. */                                              \
     X("delete_project", NULL, 0, 0, 0U, HYP_TOOL_LIVE, NULL, HYP_TOOL_ANN_DESTRUCTIVE)             \
     /* DEPRECATED by the append-only decision store, and live and unchanged on                     \
-     * the wire until it is migrated. `mode:"update"` REPLACES THE ENTIRE                          \
-     * DOCUMENT — mutable, last-writer-wins, which is exactly what the record                    \
-     * contract forbids: no mutation of records, because append-only is what                       \
-     * makes sync a union. An append-only decision store beside a mutable one is                   \
-     * two stores of the same thing, each correct on its own terms and able to                     \
-     * disagree. The migration folds every existing ADR into the append-only                       \
-     * store as kind=decision records with `origin` = the ADR's project id and a                   \
-     * NULL anchor — they are decisions someone made, not junk to drop — and                   \
-     * manage_adr(mode=update) then becomes a thin writer over record_memory                       \
-     * until it is retired. No new surface may depend on this row;                                 \
-     * test_tool_surface asserts that. */                                                          \
-     * the wire. `mode:"update"` writes THROUGH that store: the document becomes                   \
+     * the wire. `mode:"update"` writes THROUGH that store: the document becomes                  \
      * a kind=decision record whose `origin` is the ADR's project id and whose                     \
      * anchor is NULL, and the project_summaries row the UI and `mode:"get"`                       \
      * read is refreshed from that record as a PROJECTION of it. What the row                      \
