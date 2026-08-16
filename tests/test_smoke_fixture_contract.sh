@@ -337,14 +337,30 @@ require(
     "grep -Fq '=== soak-test: PASSED ==='" in soak_legs,
     "the canonical soak entry must completion-guard every leg on the soak summary",
 )
+# pr-smoke's matrix is [ubuntu-latest]. It once also declared a macOS and a
+# Windows step, guarded by `if: matrix.os == ...` values the matrix never
+# produced, so neither could run — and both rotted where nobody could see it:
+# each still invoked smoke-local.sh in its default `standard` mode against a
+# release that publishes only -ui archives, which is the bug that kept pr.yml
+# red from 2026-08-14. They are gone. macOS is a RETIRED platform; Windows is
+# built by _build.yml and smoked by _smoke.yml, and
+# tests/test_windows_bundle_contract.sh asserts that there rather than here.
+# So this pins ONE Ubuntu smoke, in the ui variant that actually ships.
+pr_smoke_local_calls = re.findall(r"scripts/smoke-local\.sh[^\n]*", pr_workflow)
 require(
-    pr_workflow.count("scripts/smoke-local.sh") >= 2,
-    "PR Ubuntu and macOS smoke steps must run smoke-local.sh",
+    len(pr_smoke_local_calls) == 1,
+    "PR smoke must run smoke-local.sh exactly once — one reachable Ubuntu leg, "
+    f"found {len(pr_smoke_local_calls)}",
 )
 require(
-    "SMOKE_ARCH=amd64" in pr_workflow
-    and "test-infrastructure/vm/vm-smoke.sh" in pr_workflow,
-    "PR Windows smoke must call vm-smoke.sh with SMOKE_ARCH=amd64",
+    all(call.rstrip().endswith(" ui") for call in pr_smoke_local_calls),
+    "the PR smoke must stage the ui variant, because the release publishes only "
+    "-ui archives and install.sh refuses --standard by name",
+)
+require(
+    "vm-smoke.sh" not in pr_workflow.split("pr-smoke:")[-1].split("\n  ci-ok:")[0],
+    "pr.yml must not invoke vm-smoke.sh: no reachable job can run it, and an "
+    "unreachable copy drifts out of step with _smoke.yml's real Windows leg",
 )
 smoke_test = read("scripts/smoke-test.sh")
 require(
@@ -403,6 +419,60 @@ require(
     and '$Destination.new-$PID' not in windows_installer
     and '$InstallerDest.new' not in windows_installer,
     "install.ps1 must reserve an unpredictable sibling temp exclusively for the updater only",
+)
+
+# The GPU archive is published for linux-amd64 alone. Every other combination
+# must be refused BY NAME rather than resolved into the CPU archive: a user who
+# asked for the GPU build and silently got the CPU one would find out by
+# watching embed throughput, which is not a discovery path.
+require(
+    "--gpu)          GPU_CHOICE=\"gpu\"" in unix_installer
+    and "--cpu)          GPU_CHOICE=\"cpu\"" in unix_installer,
+    "install.sh must accept --gpu and an explicit --cpu override",
+)
+require(
+    'ARCHIVE="hyponoia-ui-${OS}-${ARCH}${LINKAGE}.${EXT}"' in unix_installer
+    and 'LINKAGE="-gpu"' in unix_installer
+    and 'PORTABLE="-portable"' in unix_installer,
+    "install.sh must compose the GPU archive name from the same label the release "
+    "packager uses",
+)
+require(
+    "error: no GPU archive is published for ${OS}-${ARCH}." in unix_installer
+    and "error: this release publishes no GPU archive." in unix_installer
+    and "will not fall back to the CPU archive" in unix_installer,
+    "install.sh must refuse --gpu by name off linux-amd64 and on a release whose "
+    "checksums.txt lists no GPU archive",
+)
+require(
+    "libvulkan.so.1" in unix_installer
+    and "gpu_vulkan_loader_present" in unix_installer
+    and "warning: no Vulkan loader" in unix_installer
+    and "'ask'" in unix_installer,
+    "install.sh must warn (not refuse) on a missing Vulkan loader and say the GPU "
+    "serves the embed pass only",
+)
+require(
+    'VARIANT_MARKER="$INSTALL_DIR/hyp-install-variant"' in unix_installer
+    and "$GPU_INHERITED" in unix_installer
+    and 'echo "  variant: $VARIANT_LABEL (from $ARCHIVE)"' in unix_installer,
+    "install.sh must record the installed flavour beside the binary, reuse it when "
+    "run flagless as the updater, and report which variant landed",
+)
+checksum_fetch = unix_installer.find('download_file "$CHECKSUM_URL"')
+archive_fetch = unix_installer.find('download_file "$URL" "$DLDIR/$ARCHIVE" true')
+require(
+    0 <= checksum_fetch < archive_fetch,
+    "install.sh must fetch checksums.txt before the archive, so --gpu refuses by name "
+    "instead of 404-ing part-way through a 50 MB transfer",
+)
+# No Windows GPU archive is published, and install.ps1 ignores unknown
+# arguments, so an unhandled --gpu there would install the CPU build and say
+# nothing. Refuse it by name for exactly as long as that stays true.
+require(
+    '$arg -eq "--gpu"' in windows_installer
+    and "no GPU archive is published for Windows" in windows_installer,
+    "install.ps1 must refuse --gpu by name while no Windows GPU archive is published",
 )
 
 cli_source = read("src/cli/cli.c")
@@ -477,8 +547,20 @@ require(
     "Phase 14 must assert update leaves the binary byte-identical",
 )
 
+# Search the DETECTOR LINE, not the whole workflow. Searching the whole file
+# let this pass by accident: "test-infrastructure/vm/vm-smoke" was satisfied by
+# the deleted Windows RUN STEP rather than by the path filter, so removing an
+# unreachable step failed a check about change detection. The filter writes the
+# pair as an alternation — test-infrastructure/vm/(vm-smoke\.sh|...) — so the
+# needles below are matched against the filter with its grouping removed.
+detector_line = next(
+    (line for line in pr_workflow.splitlines() if "grep -qE" in line and "src/" in line),
+    "",
+)
+require(bool(detector_line), "pr.yml must carry a product-change path filter")
+detector_flat = detector_line.replace("(", "").replace(")", "").replace("|", " ")
 for changed_path in (
-    "install\\.(sh|ps1)",
+    "install\\.sh",
     "scripts/smoke-local",
     "scripts/smoke-fixture-server",
     "scripts/gen-third-party-notices",
@@ -486,7 +568,7 @@ for changed_path in (
     "windows-user-path-guard",
 ):
     require(
-        changed_path in pr_workflow,
+        changed_path in detector_flat,
         f"PR product-change detector must include {changed_path}",
     )
 require(
@@ -841,6 +923,267 @@ if os.name != "nt" and helper.is_file():
                 except subprocess.TimeoutExpired:
                     fixture_server.kill()
                     fixture_server.wait(timeout=3)
+
+# install.sh --gpu, end to end against local fixtures. v0.3.1 published
+# hyponoia-ui-linux-amd64-gpu.tar.gz and no installer could select it, so
+# installing it meant untarring by hand. These cases pin the whole selector:
+# it installs the GPU archive through the same checksum verification as every
+# other variant, it refuses by name when a release does not publish one, and
+# the flavour survives the flagless re-run that `hyponoia update` asks for.
+if os.name != "nt" and helper.is_file():
+    with tempfile.TemporaryDirectory(prefix="hyp-gpu-installer-contract-") as gpu_temp:
+        gpu_root = pathlib.Path(gpu_temp)
+        gpu_stage = gpu_root / "stage"
+        gpu_fake_bin = gpu_root / "fake-bin"
+        gpu_home = gpu_root / "home"
+        for directory in (gpu_stage, gpu_fake_bin, gpu_home):
+            directory.mkdir()
+
+        gpu_candidate = gpu_stage / "hyponoia"
+        gpu_candidate.write_text(
+            "#!/usr/bin/env bash\n"
+            "set -euo pipefail\n"
+            "case \"${1:-}\" in\n"
+            "  --version) echo 'hyponoia fixture';;\n"
+            "  install)\n"
+            "    install_dir=''\n"
+            "    for arg in \"$@\"; do\n"
+            "      case \"$arg\" in --dir=*) install_dir=${arg#--dir=};; esac\n"
+            "    done\n"
+            "    test -n \"$install_dir\"\n"
+            "    cp \"$0\" \"$install_dir/hyponoia\"\n"
+            "    chmod 755 \"$install_dir/hyponoia\";;\n"
+            "  *) exit 2;;\n"
+            "esac\n",
+            encoding="utf-8",
+        )
+        gpu_candidate.chmod(0o755)
+        (gpu_stage / "hyp-integrations.json").write_bytes(b"{}\n")
+        (gpu_stage / "LICENSE").write_bytes(b"fixture license\n")
+        (gpu_stage / "THIRD_PARTY_NOTICES.md").write_bytes(b"fixture notices\n")
+        gpu_pack_bytes = b"fixture gpu ui asset pack\n"
+        gpu_pack_name = f"hyp-ui-{hashlib.sha256(gpu_pack_bytes).hexdigest()}.pack"
+        (gpu_stage / gpu_pack_name).write_bytes(gpu_pack_bytes)
+
+        # The GPU archive is an ordinary six-member UI archive; only the
+        # linkage of the binary inside it differs. Building both names from one
+        # staging directory is the point: install.sh must accept the GPU one
+        # through exactly the member-set validation the CPU one passes.
+        def stage_gpu_archive(destination: pathlib.Path) -> str:
+            with tarfile.open(destination, "w:gz") as archive:
+                for member in (
+                    "hyponoia",
+                    "hyp-integrations.json",
+                    "LICENSE",
+                    "THIRD_PARTY_NOTICES.md",
+                    gpu_pack_name,
+                ):
+                    archive.add(gpu_stage / member, arcname=member)
+                archive.add(root / "install.sh", arcname="install.sh")
+            return hashlib.sha256(destination.read_bytes()).hexdigest()
+
+        cpu_archive_name = "hyponoia-ui-linux-amd64-portable.tar.gz"
+        gpu_archive_name = "hyponoia-ui-linux-amd64-gpu.tar.gz"
+
+        both_fixture = gpu_root / "fixture-both"
+        cpu_only_fixture = gpu_root / "fixture-cpu-only"
+        corrupt_fixture = gpu_root / "fixture-corrupt"
+        for directory in (both_fixture, cpu_only_fixture, corrupt_fixture):
+            directory.mkdir()
+
+        manifest = ""
+        for archive_name in (cpu_archive_name, gpu_archive_name):
+            manifest += f"{stage_gpu_archive(both_fixture / archive_name)}  {archive_name}\n"
+        (both_fixture / "checksums.txt").write_text(manifest, encoding="ascii")
+
+        # A release with no GPU leg is a real state: the GPU build is one
+        # optional matrix entry and can be dropped without failing the release.
+        cpu_only_digest = stage_gpu_archive(cpu_only_fixture / cpu_archive_name)
+        (cpu_only_fixture / "checksums.txt").write_text(
+            f"{cpu_only_digest}  {cpu_archive_name}\n", encoding="ascii"
+        )
+
+        stage_gpu_archive(corrupt_fixture / gpu_archive_name)
+        (corrupt_fixture / "checksums.txt").write_text(
+            f"{'0' * 64}  {gpu_archive_name}\n", encoding="ascii"
+        )
+
+        gpu_fake_uname = gpu_fake_bin / "uname"
+        gpu_fake_uname.write_text(
+            "#!/bin/sh\n"
+            "case \"${1:-}\" in\n"
+            "  -s) echo Linux;;\n"
+            "  -m) echo x86_64;;\n"
+            "  *) echo Linux;;\n"
+            "esac\n",
+            encoding="utf-8",
+        )
+        gpu_fake_uname.chmod(0o755)
+
+        def serve_fixture(directory: pathlib.Path, label: str):
+            port_path = directory / "port"
+            log_path = directory / "server.log"
+            handle = log_path.open("wb")
+            server = subprocess.Popen(
+                [
+                    sys.executable,
+                    str(helper),
+                    "--directory",
+                    str(directory),
+                    "--port-file",
+                    str(port_path),
+                ],
+                stdout=handle,
+                stderr=subprocess.STDOUT,
+            )
+            handle.close()
+            served_port = 0
+            fixture_deadline = time.monotonic() + 30
+            while time.monotonic() < fixture_deadline:
+                if port_path.is_file():
+                    try:
+                        port_text = port_path.read_text(encoding="ascii").strip()
+                    except OSError:
+                        port_text = ""
+                    if port_text:
+                        served_port = int(port_text)
+                        break
+                if server.poll() is not None:
+                    break
+                time.sleep(0.02)
+            require(served_port > 0, f"{label} fixture server did not publish a port")
+            return server, served_port
+
+        def stop_fixture(server) -> None:
+            server.terminate()
+            try:
+                server.wait(timeout=3)
+            except subprocess.TimeoutExpired:
+                server.kill()
+                server.wait(timeout=3)
+
+        def run_gpu_installer(served_port: int, install_dir: pathlib.Path, *flags):
+            environment = os.environ.copy()
+            environment["HOME"] = str(gpu_home)
+            environment["PATH"] = str(gpu_fake_bin) + os.pathsep + environment.get("PATH", "")
+            environment["HYP_DOWNLOAD_URL"] = f"http://127.0.0.1:{served_port}"
+            return subprocess.run(
+                [
+                    str(bash_executable),
+                    str(root / "install.sh"),
+                    f"--dir={install_dir}",
+                    "--skip-config",
+                    *flags,
+                ],
+                env=environment,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                timeout=120,
+                check=False,
+            )
+
+        gpu_install_dir = gpu_root / "installed-gpu"
+        gpu_install_dir.mkdir()
+        gpu_marker = gpu_install_dir / "hyp-install-variant"
+
+        both_server, both_port = serve_fixture(both_fixture, "gpu selector")
+        try:
+            if both_port > 0:
+                selected = run_gpu_installer(both_port, gpu_install_dir, "--gpu")
+                require(
+                    selected.returncode == 0
+                    and f"archive: {gpu_archive_name}" in selected.stdout
+                    and "variant: ui + GPU (Vulkan)" in selected.stdout
+                    and "Checksum verified." in selected.stdout
+                    and (gpu_install_dir / "hyponoia").is_file(),
+                    "install.sh --gpu must verify and install the published GPU archive: "
+                    + selected.stdout.strip(),
+                )
+                require(
+                    gpu_marker.is_file()
+                    and gpu_marker.read_text(encoding="ascii").strip() == "gpu",
+                    "install.sh --gpu must record the flavour beside the binary",
+                )
+                require(
+                    f"variant: ui + GPU (Vulkan) (from {gpu_archive_name})"
+                    in selected.stdout,
+                    "install.sh must report which variant landed, not only which was asked for",
+                )
+
+                # `hyponoia update` prints `bash <dir>/install.sh` with no flags.
+                # That run must not quietly reinstall the CPU build over a GPU one.
+                inherited = run_gpu_installer(both_port, gpu_install_dir)
+                require(
+                    inherited.returncode == 0
+                    and f"archive: {gpu_archive_name}" in inherited.stdout
+                    and "GPU reused from the install already in" in inherited.stdout,
+                    "a flagless re-run (the update path) must reuse the recorded GPU flavour: "
+                    + inherited.stdout.strip(),
+                )
+
+                # ... and the recorded flavour must still be escapable on purpose.
+                downgraded = run_gpu_installer(both_port, gpu_install_dir, "--cpu")
+                require(
+                    downgraded.returncode == 0
+                    and f"archive: {cpu_archive_name}" in downgraded.stdout
+                    and f"variant: ui (CPU) (from {cpu_archive_name})" in downgraded.stdout
+                    and not gpu_marker.exists(),
+                    "--cpu must install the CPU archive and clear the recorded GPU flavour: "
+                    + downgraded.stdout.strip(),
+                )
+        finally:
+            stop_fixture(both_server)
+
+        cpu_only_server, cpu_only_port = serve_fixture(cpu_only_fixture, "gpu refusal")
+        try:
+            if cpu_only_port > 0:
+                refused_dir = gpu_root / "refused"
+                refused_dir.mkdir()
+                refused = run_gpu_installer(cpu_only_port, refused_dir, "--gpu")
+                require(
+                    refused.returncode != 0
+                    and "error: this release publishes no GPU archive." in refused.stdout
+                    and "will not fall back to the CPU archive" in refused.stdout
+                    and "libvulkan.so.1" in refused.stdout
+                    and not (refused_dir / "hyponoia").exists(),
+                    "install.sh --gpu must refuse a release with no GPU archive by name, "
+                    "and install nothing: " + refused.stdout.strip(),
+                )
+
+                # A recorded GPU install on a release that no longer publishes one
+                # degrades loudly instead of bricking every future update, and the
+                # marker cannot outlive the install it describes.
+                stale_dir = gpu_root / "stale-marker"
+                stale_dir.mkdir()
+                (stale_dir / "hyp-install-variant").write_text("gpu\n", encoding="ascii")
+                stale = run_gpu_installer(cpu_only_port, stale_dir)
+                require(
+                    stale.returncode == 0
+                    and "records a GPU install, but this release publishes" in stale.stdout
+                    and f"variant: ui (CPU) (from {cpu_archive_name})" in stale.stdout
+                    and not (stale_dir / "hyp-install-variant").exists(),
+                    "an inherited GPU flavour must degrade loudly and clear its marker when "
+                    "the release publishes no GPU archive: " + stale.stdout.strip(),
+                )
+        finally:
+            stop_fixture(cpu_only_server)
+
+        corrupt_server, corrupt_port = serve_fixture(corrupt_fixture, "gpu checksum")
+        try:
+            if corrupt_port > 0:
+                corrupt_dir = gpu_root / "corrupt-install"
+                corrupt_dir.mkdir()
+                mismatched = run_gpu_installer(corrupt_port, corrupt_dir, "--gpu")
+                require(
+                    mismatched.returncode != 0
+                    and "CHECKSUM MISMATCH" in mismatched.stdout
+                    and not (corrupt_dir / "hyponoia").exists(),
+                    "the GPU archive must pass the same mandatory checksum verification as "
+                    "every other variant: " + mismatched.stdout.strip(),
+                )
+        finally:
+            stop_fixture(corrupt_server)
 
 # The complete canonical-matrix extraction, pack parsing, association retention,
 # byte-exact deduplication and fail-closed malformed-pack cases run above via

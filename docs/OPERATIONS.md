@@ -26,6 +26,7 @@ hyponoia config reset auto_index              # reset to default
 |----------|---------|-------------|
 | `HYP_ALLOWED_ROOT` | *(unset)* | Confine `index_repository` to paths within this directory. When set, a `repo_path` that resolves (after symlink / `..` resolution) outside this root is refused, and the same check now applies to the graph UI's `POST /api/index` route rather than only to the MCP tool. Unset imposes no *containment* restriction — but see the always-on limits below, which apply whether or not this is set. Useful when the server may be driven by an untrusted caller, e.g. agentic or multi-tenant deployments. |
 | `HYP_CACHE_DIR` | `~/.cache/hyponoia` | Override the database storage directory. All project indexes and config are stored here. One account can use only one canonical cache root at a time; close active HYP sessions/commands before switching it. |
+| `HYP_DAEMON_RUNTIME_PARENT` | *(unset)* | Run this build's daemon under a private rendezvous instead of the account-wide one, so it can coexist with an already-running build. Requires a non-default `HYP_CACHE_DIR`. See [Running a second build beside the active one](#running-a-second-build-beside-the-active-one). |
 | `HYP_DIAGNOSTICS` | `false` | Set to `1` or `true` to enable the shared daemon's periodic `snapshot.json` and retained `trajectory.ndjson` below a fresh owner-private directory in the system temp directory. Exact paths are logged by `diagnostics.start`. |
 | `HYP_DOWNLOAD_URL` | *(GitHub releases)* | Override the download URL for updates. Used for testing or self-hosted deployments. |
 | `HYP_LOG_LEVEL` | `info` | Set the minimum log level. Accepted values (case-insensitive): `debug`, `info`, `warn`, `error`, `none` — or their numeric equivalents `0`–`4` matching the internal enum. Thin-frontend messages go to that session's stderr; detached daemon events go to `${HYP_CACHE_DIR}/logs/hyp-daemon.log`. Stdout is reserved for MCP JSON-RPC. |
@@ -39,6 +40,75 @@ Environment used by daemon-owned components—such as diagnostics, daemon loggin
 ## Store indexes in a custom directory
 export HYP_CACHE_DIR=~/my-projects/hyp-data
 ```
+
+## Running a second build beside the active one
+
+HYP coordinates through **one rendezvous directory per account** —
+`/tmp/hyp-daemon-<uid>/` on Linux and macOS — holding the daemon socket, the
+version-cohort record, and the project mutation leases. Inside it, exactly one
+build is admitted. A second build is refused, by design:
+
+```
+hyponoia: HYP could not start because a conflicting HYP process is active
+(build; active version 0.3.1, build 5949f2d7…; requested version dev, build 98d04a55…).
+Close all HYP sessions and commands, then retry.
+```
+
+The refusal is protecting a **cache**, not a socket. Two builds admitted at
+once would interleave writes into one set of SQLite databases, and the project
+leases that serialise those writes live in the rendezvous directory, so two
+rendezvous directories over one cache serialise nothing at all.
+
+That is also the whole rule for escaping it: **give the second build its own
+cache, and it may have its own rendezvous.**
+
+```bash
+export HYP_DAEMON_RUNTIME_PARENT=/tmp/hyp-isolated
+export HYP_CACHE_DIR=/tmp/hyp-isolated/cache
+./build/c/hyponoia daemon start        # coexists with the installed daemon
+./build/c/hyponoia daemon status
+./build/c/hyponoia cli search_graph --name-pattern '.*'
+./build/c/hyponoia daemon stop         # retires only this build's daemon
+```
+
+Every command that reaches the daemon reads both variables, including the
+detached daemon child, so setting them once in a shell (or in an MCP server's
+`env` block) is enough. `daemon stop` under them retires only the isolated
+daemon; the account-wide one is untouched.
+
+What the two variables mean:
+
+- **`HYP_DAEMON_RUNTIME_PARENT`** is where the private rendezvous tree is
+  created. It is created mode `0700` and owned by you, and every existing
+  ancestor must already be owned by you (or by root) and must not be group- or
+  world-writable — the same rule the account-wide `/tmp` directory satisfies.
+  The daemon socket is a unix-domain path with a hard 108-byte limit
+  (104 on the BSDs), so the parent may be at most ~48 bytes; a longer one is
+  refused by name rather than failing later as "secure daemon endpoint could
+  not be created". `/tmp/hyp-isolated` and `$XDG_RUNTIME_DIR/hyp` both fit.
+- **`HYP_CACHE_DIR`** must not resolve to the account default
+  (`~/.cache/hyponoia`). If it does, the isolation is refused outright:
+
+  ```
+  hyponoia: HYP_DAEMON_RUNTIME_PARENT is set, but HYP_CACHE_DIR still resolves
+  to the account default (/home/you/.cache/hyponoia). An isolated rendezvous
+  over the shared cache would run two daemons against one store, which is the
+  corruption the cohort guard exists to prevent. Point HYP_CACHE_DIR at a
+  directory this build owns, then retry.
+  ```
+
+The private directory is named from a digest of the canonical cache root —
+`<parent>/hyp-scope-<12 hex>/hyp-daemon-<uid>/`. That is what makes the escape
+safe rather than merely convenient: the rendezvous is a **function of the
+cache**, so any two processes pointed at one cache still land in one rendezvous
+and still meet the guard, no matter which parent each of them named. Several
+isolated runs can therefore share one `HYP_DAEMON_RUNTIME_PARENT` and stay
+separated by their caches alone.
+
+The build fingerprint is deliberately **not** part of that name. Keying the
+meeting place by build is precisely how two builds would stop meeting while
+still writing to one store; it stays what the cohort *compares* once two
+processes have met.
 
 ## Custom File Extensions
 
@@ -72,7 +142,9 @@ SQLite databases stored at `~/.cache/hyponoia/`. Persists across restarts (WAL m
 
 | Problem | Fix |
 |---------|-----|
-| `/mcp` doesn't show the server | Check `.mcp.json` path is absolute. Restart agent. Test: `echo '{}' \| /path/to/binary` should output JSON. |
+| `/mcp` doesn't show the server | Check `.mcp.json` path is absolute. Restart agent. Test: `echo '{}' \| /path/to/binary` should output JSON. **An agent whose HYP server fails to start keeps running with no tools and does not always say so** — check the agent's MCP status before trusting an answer that never cites the graph. |
+| `conflicting HYP process is active` / `uses a different cache directory` | Another build's daemon holds the account. Either close it (`hyponoia daemon stop`), or run this build isolated — see [Running a second build beside the active one](#running-a-second-build-beside-the-active-one). |
+| `install refused before any file was changed` | The directory chain above the binary you are installing is group- or world-writable, which install refuses so no other account can substitute the file mid-copy. The message names the exact directory and mode. Copy the binary into a directory you own privately and install from there. |
 | `index_repository` fails | Pass absolute path: `index_repository(repo_path="/absolute/path")` |
 | `trace_path` returns 0 results | Use `search_graph(name_pattern=".*PartialName.*")` first to find the exact name. |
 | Queries return wrong project results | Add `project="name"` parameter. Use `list_projects` to see names. |

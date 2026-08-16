@@ -33,6 +33,7 @@
 #include "mcp/index_supervisor.h"
 #include "ask/ask_cmd.h"
 #include "ask/ask_llama.h"
+#include "ask/ask_provider.h" /* key custody: whose environment this process is */
 #include "cli/cli.h"
 #include "cli/model_fetch.h"
 #include "cli/progress_sink.h"
@@ -101,12 +102,65 @@ enum {
 #define HYP_VERSION "dev"
 #endif
 
+/* Optional, injected by scripts/build.sh --build-sha. Deliberately not a git
+ * call inside the Makefile: BUILD_CONFIG_SIG carries CFLAGS_EXTRA, so a SHA
+ * that changed on every commit would force the whole one-shot compile+link on
+ * every commit. See Makefile.hyp's note next to LLAMA_VERSION_DEFINES for the
+ * same objection to build-time entropy in a compile line. */
+/* Tested with #ifdef rather than against a defaulted "" — a runtime
+ * `if (source_sha[0])` over a default empty string is a branch the compiler
+ * (and cppcheck, which fails the lint gate on it) can prove is dead in every
+ * build that did not inject one, which is most of them. */
+
+/* Hex characters of the executable fingerprint shown to a human. Matches the
+ * `%.12s` that `hyponoia daemon status` prints on its `build:` line, so a bug
+ * report and a running daemon can be compared by eye. */
+#define MAIN_VERSION_BUILD_HEX 12
+
+/* `hyponoia --version` used to print "hyponoia dev" and nothing else, so a bug
+ * report from any build that CI did not stamp could not be tied to a tree at
+ * all. The daemon has always known exactly which bytes it is running -- the
+ * SHA-256 of its own executable image -- and prints it in `daemon status`.
+ * This prints the SAME identifier, so the two are comparable, and stays one
+ * line because scripts/smoke-test.sh phase 4c requires exactly one.
+ *
+ * The hash costs one full read of the executable (~0.2 s for the shipped
+ * ~340 MB image, warm). That is paid only here and only when the build did not
+ * record a source SHA of its own; every other caller reuses the process-wide
+ * capture. */
+static void main_print_version(void) {
+#ifdef HYP_BUILD_SHA
+    /* The build stamped its own source SHA, so nothing has to be read. */
+    printf("hyponoia %s (%s)\n", HYP_VERSION, HYP_BUILD_SHA);
+#else
+    const char *fingerprint = hyp_index_supervisor_capture_build_fingerprint()
+                                  ? hyp_index_supervisor_build_fingerprint()
+                                  : NULL;
+    if (fingerprint && fingerprint[0]) {
+        printf("hyponoia %s (%.*s)\n", HYP_VERSION, MAIN_VERSION_BUILD_HEX, fingerprint);
+        return;
+    }
+    printf("hyponoia %s\n", HYP_VERSION);
+#endif
+}
+
 /* ── Globals for signal handling ────────────────────────────────── */
 
 static atomic_int g_shutdown = 0;
 static hyp_daemon_runtime_client_t *g_daemon_client = NULL;
 
 static uint64_t main_deadline_after(uint32_t timeout_ms);
+
+/* This process's own id, for a human-readable disclosure. Same shape as
+ * host.c's host_current_process_id — that one is static to the daemon host and
+ * this is needed before the host is entered. */
+static uint64_t main_current_process_id(void) {
+#ifdef _WIN32
+    return (uint64_t)GetCurrentProcessId();
+#else
+    return (uint64_t)getpid();
+#endif
+}
 
 static bool main_session_context(const char *preferred_root, char root_out[MAIN_PATH_CAP],
                                  char allowed_out[MAIN_PATH_CAP], const char **allowed_out_ptr);
@@ -1055,7 +1109,7 @@ static int handle_subcommand(int argc, char **argv, hyp_project_lock_manager_t *
             return hyp_cmd_verify_runtime_assets();
         }
         if (strcmp(argv[i], "--version") == 0) {
-            printf("hyponoia %s\n", HYP_VERSION);
+            main_print_version();
             return 0;
         }
         if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) {
@@ -2074,6 +2128,50 @@ static void main_daemon_ctl_print_ui_configuration(void) {
     }
 }
 
+/* THE SPENDING SURFACE, WHERE SOMEONE WOULD GO LOOKING FOR IT
+ * (NEXT-STEPS §3.2 step 5). A daemon reads the escalation key out of the
+ * environment it was started with, so it can spend on behalf of clients that
+ * never held the key. Whether it MAY is `ask.escalation.daemon_key`, and that
+ * lives in the config database — machine-global, readable from here — so this
+ * line needs nothing from the daemon's own status wire, which stays the
+ * bounded 121-byte control probe it was designed to be.
+ *
+ * Printed only when a key variable is configured at all. Escalation is opt-in
+ * and most installs never touch it; a permanent line about a key that does not
+ * exist is noise, and noise in a status block is how the interesting line gets
+ * skipped. */
+static void main_daemon_ctl_print_escalation_key_custody(void) {
+    const char *cache_dir = hyp_resolve_cache_dir();
+    hyp_config_t *cfg = cache_dir ? hyp_config_open(cache_dir) : NULL;
+    if (!cfg) {
+        return;
+    }
+    char key_env[128];
+    char policy[HYP_SZ_32];
+    (void)snprintf(key_env, sizeof(key_env), "%s",
+                   hyp_config_get(cfg, HYP_CONFIG_ASK_ESC_KEY_ENV, ""));
+    (void)snprintf(
+        policy, sizeof(policy), "%s",
+        hyp_config_get(cfg, HYP_CONFIG_ASK_ESC_DAEMON_KEY, HYP_CONFIG_ASK_ESC_DAEMON_KEY_DEFAULT));
+    hyp_config_close(cfg);
+    if (!key_env[0]) {
+        return;
+    }
+    if (strcmp(policy, HYP_CONFIG_ASK_ESC_DAEMON_KEY_ALLOW) == 0) {
+        printf("  escalation key: %s=%s — this daemon reads $%s from ITS OWN environment when a "
+               "client asks an escalated question, so any local process of this user account "
+               "that can reach it can spend against that account without holding the key. Stop "
+               "it with `hyponoia config set %s %s`.\n",
+               HYP_CONFIG_ASK_ESC_DAEMON_KEY, HYP_CONFIG_ASK_ESC_DAEMON_KEY_ALLOW, key_env,
+               HYP_CONFIG_ASK_ESC_DAEMON_KEY, HYP_CONFIG_ASK_ESC_DAEMON_KEY_REFUSE);
+    } else {
+        printf("  escalation key: %s=%s — this daemon will not read $%s on a client's behalf; "
+               "ask(escalate=true) through it is refused. `hyponoia embed --escalation` and any "
+               "process holding the key itself are unaffected.\n",
+               HYP_CONFIG_ASK_ESC_DAEMON_KEY, HYP_CONFIG_ASK_ESC_DAEMON_KEY_REFUSE, key_env);
+    }
+}
+
 static void main_daemon_ctl_open_browser(int port) {
     char url[64];
     (void)snprintf(url, sizeof(url), "http://127.0.0.1:%d", port);
@@ -2208,6 +2306,7 @@ static int main_run_daemon_ctl(int argc, char **argv, const hyp_daemon_ipc_endpo
         main_daemon_ctl_print_clients(status.client_pids, status.client_count,
                                       status.committed_clients);
         main_daemon_ctl_print_ui_configuration();
+        main_daemon_ctl_print_escalation_key_custody();
         return EXIT_SUCCESS;
     }
 
@@ -2597,6 +2696,20 @@ int main(int argc, char **argv) {
     hyp_http_server_set_binary_path(executable_path);
 
     if (role == HYP_DAEMON_PROCESS_WORKER) {
+        /* A supervised worker was forked by the daemon's supervisor, so its
+         * environment is the DAEMON's, not the asking client's — the same
+         * classification, reached a different way. No worker path reads an
+         * escalation key today (a worker only ever runs the index tool;
+         * `embed --escalation` is a direct CLI command), so this changes
+         * nothing now. It is here because the RULE is "did this process get
+         * its environment from the party that is asking", and a rule applied
+         * to one of its two cases is an enumeration waiting to be wrong. */
+        char worker_key_holder[128];
+        (void)snprintf(worker_key_holder, sizeof(worker_key_holder),
+                       "a hyponoia index worker (pid %llu) started by the daemon, with the "
+                       "daemon's environment",
+                       (unsigned long long)main_current_process_id());
+        hyp_ask_provider_declare_shared_key_custody(worker_key_holder);
         hyp_index_worker_invocation_t invocation;
         hyp_index_worker_argv_status_t worker_status =
             hyp_index_worker_parse_process_argv(argc, argv, &invocation);
@@ -2633,6 +2746,9 @@ int main(int argc, char **argv) {
             }
             (void)fprintf(stderr, "HYP index worker could not start: %s\n",
                           formatted ? message : "exact-build admission failed");
+            if (worker_cohort_status == HYP_VERSION_COHORT_CONFLICT) {
+                (void)fprintf(stderr, "hyponoia: %s\n", hyp_daemon_conflict_escape_hint());
+            }
             goto worker_cleanup;
         }
 
@@ -2744,6 +2860,30 @@ int main(int argc, char **argv) {
 
     if (role == HYP_DAEMON_PROCESS_DAEMON) {
         setup_signal_handlers();
+        /* THIS PROCESS'S ENVIRONMENT IS NOT ITS CALLERS' (NEXT-STEPS §3.2
+         * step 5). Declared here, at the one place a daemon is born, rather
+         * than per MCP session: `environ` was fixed at exec and belongs to the
+         * shell that started this daemon, while the sessions, the CLI tool
+         * invocations and the graph UI's HTTP routes it is about to serve all
+         * belong to other processes. Everything downstream that would read an
+         * escalation key out of the environment now knows it would be
+         * spending someone else's, and refuses unless
+         * ask.escalation.daemon_key says otherwise.
+         *
+         * Before any thread starts, which is what makes the state safe to read
+         * from a request thread without a lock. */
+        char key_holder[128];
+        char started[32];
+        time_t started_at = time(NULL);
+        struct tm started_tm;
+        if (hyp_gmtime_r(&started_at, &started_tm) == NULL ||
+            strftime(started, sizeof(started), "%Y-%m-%dT%H:%M:%SZ", &started_tm) == 0) {
+            (void)snprintf(started, sizeof(started), "an unrecorded time");
+        }
+        (void)snprintf(key_holder, sizeof(key_holder),
+                       "the hyponoia daemon (pid %llu, holding it since %s)",
+                       (unsigned long long)main_current_process_id(), started);
+        hyp_ask_provider_declare_shared_key_custody(key_holder);
         hyp_daemon_host_config_t host_config = {
             .endpoint = endpoint,
             .identity = identity,
@@ -2791,6 +2931,9 @@ int main(int argc, char **argv) {
         }
         (void)fprintf(stderr, "hyponoia: %s\n",
                       formatted ? message : "client exact-build admission failed");
+        if (client_cohort_status == HYP_VERSION_COHORT_CONFLICT) {
+            (void)fprintf(stderr, "hyponoia: %s\n", hyp_daemon_conflict_escape_hint());
+        }
         if (role == HYP_DAEMON_PROCESS_HOOK_CLIENT &&
             client_cohort_status == HYP_VERSION_COHORT_CONFLICT) {
             main_hook_report_conflicted_daemon(hook_dialect);

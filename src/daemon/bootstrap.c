@@ -6,8 +6,10 @@
 #include "daemon/ipc.h"
 #include "daemon/service.h"
 #include "foundation/compat.h"
+#include "foundation/compat_fs.h"
 #include "foundation/constants.h"
 #include "foundation/platform.h"
+#include "foundation/sha256.h"
 
 #include <limits.h>
 #include <stdint.h>
@@ -28,6 +30,7 @@
 #include <signal.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+#include <sys/un.h>
 #include <sys/wait.h>
 #include <unistd.h>
 #ifdef __APPLE__
@@ -41,6 +44,10 @@ enum {
     BOOTSTRAP_RETRY_NS = 1000000,
     BOOTSTRAP_COORDINATION_CLEANUP_MS = 500,
     BOOTSTRAP_PATH_CAP = 4096,
+    /* Hex characters of the cache digest that names an isolated rendezvous.
+     * 48 bits over a handful of per-run cache roots; the rest of the budget
+     * belongs to the caller's parent path, which sun_path bounds hard. */
+    BOOTSTRAP_ISOLATION_SCOPE_HEX = 12,
 };
 
 static bool bootstrap_arg_is(const char *arg, const char *expected) {
@@ -229,6 +236,175 @@ bool hyp_daemon_process_role_requires_client(hyp_daemon_process_role_t role) {
     return role == HYP_DAEMON_PROCESS_MCP_CLIENT || role == HYP_DAEMON_PROCESS_HOOK_CLIENT;
 }
 
+/* ── The supported isolation escape ───────────────────────────────────────
+ *
+ * The rendezvous is account-wide on purpose. Every HYP process for one uid
+ * meets under ONE directory, and the version cohort inside it admits exactly
+ * one build. That guard is not bureaucracy: the socket, the cohort record and
+ * the project mutation leases all live in that directory, and they are what
+ * stop two builds from interleaving writes into one SQLite cache.
+ *
+ * What it lacked was an exit. A second build could not run AT ALL while a
+ * first one was alive, and an MCP server that cannot start does not fail
+ * loudly — it leaves its client running tool-less and silent. The only escape
+ * was HYP_TEST_DAEMON_RUNTIME_PARENT, compiled in only under
+ * HYP_ENABLE_TEST_SEAMS, so "work around it" meant "build a different binary".
+ *
+ * HYP_DAEMON_RUNTIME_PARENT is the escape a normal build gets, and it keeps
+ * the protection by making the rendezvous A FUNCTION OF THE CACHE ROOT: the
+ * directory created under the caller's parent is named by a digest of the
+ * canonical HYP_CACHE_DIR. Two processes on one cache still land on one
+ * rendezvous and still meet the cohort guard; two processes on two caches
+ * share no socket, no cohort record and no lease file.
+ *
+ * The build fingerprint is deliberately NOT a rendezvous input. Keying the
+ * meeting place by build is exactly how two builds would stop meeting while
+ * still writing to one store — it is the corruption the guard exists to
+ * prevent, spelled as a feature. The fingerprint stays what the cohort
+ * COMPARES once two processes have met.
+ *
+ * For the same reason isolation is refused outright while the cache still
+ * resolves to the account default: a private socket over the shared store is
+ * the one combination that loses data.
+ */
+static bool bootstrap_default_cache_dir(char *out, size_t out_size) {
+    const char *home = hyp_get_home_dir();
+    if (!home || !home[0]) {
+        return false;
+    }
+    int written = snprintf(out, out_size, "%s/.cache/hyponoia", home);
+    if (written <= 0 || (size_t)written >= out_size) {
+        return false;
+    }
+    hyp_normalize_path_sep(out);
+    return true;
+}
+
+static bool bootstrap_isolation_cache_is_account_default(const char *canonical_cache) {
+    char configured[BOOTSTRAP_PATH_CAP];
+    char canonical_default[BOOTSTRAP_PATH_CAP];
+    if (!bootstrap_default_cache_dir(configured, sizeof(configured))) {
+        return false;
+    }
+    if (hyp_canonical_path(configured, canonical_default, sizeof(canonical_default))) {
+        hyp_normalize_path_sep(canonical_default);
+        if (strcmp(canonical_default, canonical_cache) == 0) {
+            return true;
+        }
+    }
+    return strcmp(configured, canonical_cache) == 0;
+}
+
+/* Resolve the cache the way main_build_identity does, so the digest names the
+ * same root the cohort record will later carry. */
+static bool bootstrap_isolation_canonical_cache(char *out, size_t out_size) {
+    char configured[BOOTSTRAP_PATH_CAP];
+    const char *cache = hyp_resolve_cache_dir();
+    if (!cache || !cache[0]) {
+        return false;
+    }
+    int written = snprintf(configured, sizeof(configured), "%s", cache);
+    if (written <= 0 || (size_t)written >= sizeof(configured)) {
+        return false;
+    }
+    bool ready = hyp_canonical_path(configured, out, out_size) != 0;
+    if (!ready && hyp_mkdir_p(configured, 0700)) {
+        ready = hyp_canonical_path(configured, out, out_size) != 0;
+    }
+    if (!ready || !hyp_is_dir(out)) {
+        return false;
+    }
+    hyp_normalize_path_sep(out);
+    return true;
+}
+
+#ifndef _WIN32
+/* The endpoint will build <scope>/hyp-daemon-<euid>/hyp-<key>.sock and bind it
+ * through a sockaddr_un, whose sun_path is 108 bytes on Linux and 104 on the
+ * BSDs. Overrunning it fails deep inside the endpoint with nothing but
+ * "secure daemon endpoint could not be created", so the bound is checked here,
+ * where the caller's own parent can be named back to them. */
+static bool bootstrap_isolation_socket_path_fits(const char *scope_parent, size_t *maximum_out) {
+    struct sockaddr_un probe;
+    size_t leaf = strlen("/hyp-daemon-") + strlen("/hyp-") + (HYP_DAEMON_KEY_SIZE - 1U) +
+                  strlen(".sock") + 1U;
+    char uid_text[32];
+    int uid_written = snprintf(uid_text, sizeof(uid_text), "%lu", (unsigned long)geteuid());
+    if (uid_written <= 0 || (size_t)uid_written >= sizeof(uid_text)) {
+        return false;
+    }
+    leaf += (size_t)uid_written;
+    if (leaf >= sizeof(probe.sun_path)) {
+        return false;
+    }
+    size_t maximum = sizeof(probe.sun_path) - leaf;
+    if (maximum_out) {
+        *maximum_out = maximum;
+    }
+    return strlen(scope_parent) <= maximum;
+}
+#endif
+
+/* Returns the directory to hand the endpoint as its parent, or false with a
+ * named reason already written to stderr. */
+static bool bootstrap_isolated_parent(const char *requested_parent, char *out, size_t out_size) {
+    char canonical_cache[BOOTSTRAP_PATH_CAP];
+    if (!bootstrap_isolation_canonical_cache(canonical_cache, sizeof(canonical_cache))) {
+        (void)fprintf(stderr,
+                      "hyponoia: HYP_DAEMON_RUNTIME_PARENT is set, but the cache directory could "
+                      "not be resolved. Set HYP_CACHE_DIR to an absolute owner-writable path "
+                      "and retry.\n");
+        return false;
+    }
+    if (bootstrap_isolation_cache_is_account_default(canonical_cache)) {
+        (void)fprintf(stderr,
+                      "hyponoia: HYP_DAEMON_RUNTIME_PARENT is set, but HYP_CACHE_DIR still "
+                      "resolves to the account default (%s). An isolated rendezvous over the "
+                      "shared cache would run two daemons against one store, which is the "
+                      "corruption the cohort guard exists to prevent. Point HYP_CACHE_DIR at a "
+                      "directory this build owns, then retry.\n",
+                      canonical_cache);
+        return false;
+    }
+
+    char digest[HYP_SHA256_HEX_LEN + 1];
+    hyp_sha256_hex(canonical_cache, strlen(canonical_cache), digest);
+
+    size_t parent_length = strlen(requested_parent);
+    bool has_separator = parent_length > 0 && (requested_parent[parent_length - 1] == '/' ||
+                                               requested_parent[parent_length - 1] == '\\');
+    int written = snprintf(out, out_size, "%s%shyp-scope-%.*s", requested_parent,
+                           has_separator ? "" : "/", (int)BOOTSTRAP_ISOLATION_SCOPE_HEX, digest);
+    if (written <= 0 || (size_t)written >= out_size) {
+        (void)fprintf(stderr, "hyponoia: HYP_DAEMON_RUNTIME_PARENT is too long to hold an isolated "
+                              "rendezvous directory.\n");
+        return false;
+    }
+#ifndef _WIN32
+    size_t maximum = 0;
+    if (!bootstrap_isolation_socket_path_fits(out, &maximum)) {
+        (void)fprintf(stderr,
+                      "hyponoia: HYP_DAEMON_RUNTIME_PARENT is too long. The daemon socket is a "
+                      "unix-domain path and the whole path must fit in %zu bytes, which leaves "
+                      "at most %zu bytes for the parent; \"%s\" needs %zu. Choose a shorter "
+                      "directory, for example /tmp/hyp-isolated.\n",
+                      sizeof(((struct sockaddr_un *)0)->sun_path), maximum, requested_parent,
+                      strlen(out));
+        return false;
+    }
+#endif
+    if (!hyp_daemon_ipc_private_directory_secure(out)) {
+        (void)fprintf(stderr,
+                      "hyponoia: HYP_DAEMON_RUNTIME_PARENT could not be prepared as an "
+                      "owner-only rendezvous. \"%s\" must be an absolute path whose existing "
+                      "ancestors are owned by this account and are not group- or "
+                      "world-writable; the leaf is created mode 0700 when absent.\n",
+                      out);
+        return false;
+    }
+    return true;
+}
+
 hyp_daemon_ipc_endpoint_t *hyp_daemon_bootstrap_endpoint_new(const char *runtime_parent) {
     char key[HYP_DAEMON_KEY_SIZE];
     if (!hyp_daemon_rendezvous_key(key)) {
@@ -254,6 +430,24 @@ hyp_daemon_ipc_endpoint_t *hyp_daemon_bootstrap_endpoint_new(const char *runtime
                                          sizeof(seam_parent), NULL);
     }
 #endif
+    /* Read HERE, for the same reason the seam above is: this is the one
+     * constructor every daemon-coordinated path goes through, so covering it
+     * covers `hyponoia`, `hyponoia cli <tool>`, `daemon start|status|stop` and
+     * the detached daemon child (which inherits the environment) by
+     * construction, with no caller left attached to the account-wide
+     * namespace. An explicit argument still wins. */
+    char isolated_parent[BOOTSTRAP_PATH_CAP];
+    if (!runtime_parent) {
+        char requested[HYP_SZ_1K];
+        const char *isolation =
+            hyp_safe_getenv("HYP_DAEMON_RUNTIME_PARENT", requested, sizeof(requested), NULL);
+        if (isolation && isolation[0]) {
+            if (!bootstrap_isolated_parent(isolation, isolated_parent, sizeof(isolated_parent))) {
+                return NULL;
+            }
+            runtime_parent = isolated_parent;
+        }
+    }
     return hyp_daemon_ipc_endpoint_new(key, runtime_parent);
 }
 
@@ -361,6 +555,9 @@ static hyp_daemon_bootstrap_status_t bootstrap_finish_probe(
                              "stop` retires it");
         if (ops->visible_diagnostic) {
             ops->visible_diagnostic(ops->context, result->message);
+            /* Second line, not appended: result->message is the rendezvous
+             * wire field and is already sized for two fingerprints. */
+            ops->visible_diagnostic(ops->context, hyp_daemon_conflict_escape_hint());
         }
         return result->status;
     }
@@ -433,6 +630,14 @@ hyp_daemon_bootstrap_status_t hyp_daemon_bootstrap_execute_with_ops(
         }
         if (ops->visible_diagnostic) {
             ops->visible_diagnostic(ops->context, result_out->message);
+            if (cohort_status == HYP_VERSION_COHORT_CONFLICT) {
+                /* The cohort guard is the one that actually refuses a second
+                 * build, so it is the one that most needs to name its own
+                 * escape. Sent as a second line rather than appended:
+                 * result_out->message is the rendezvous wire field and is
+                 * already sized for two 64-character fingerprints. */
+                ops->visible_diagnostic(ops->context, hyp_daemon_conflict_escape_hint());
+            }
         }
         if (cohort) {
             ops->cohort_release(ops->context, cohort);

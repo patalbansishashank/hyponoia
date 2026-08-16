@@ -19,6 +19,7 @@
 #include "test_framework.h"
 #include "test_helpers.h"
 
+#include <ask/ask_provider.h> /* key custody (§3.2 step 5) */
 #include <ask/ask_vectors.h>
 #include <ask/ask_view.h>
 #include <cli/cli.h>              /* hyp_config_*, HYP_CONFIG_ASK_ESC_* */
@@ -729,6 +730,564 @@ TEST(ask_requires_a_question) {
     PASS();
 }
 
+/* ══════════════════════════════════════════════════════════════════
+ *  ONE CALL, AND THE LINES NAMED (NEXT-STEPS.md §3.2 step 1)
+ *
+ *  Every assertion below reads THE CLIENT'S VIEW — the text a client would
+ *  render out of result.content[0], or result.structuredContent when the tool
+ *  answered in JSON. That rule is the whole reason 505ee69d exists: four tests
+ *  once asserted what the server emitted and all four passed against three
+ *  tools that rendered blank.
+ * ══════════════════════════════════════════════════════════════════ */
+
+/* result.structuredContent, or NULL when the key is ABSENT. Absent is a
+ * first-class answer here — it is how the tool says "the payload is text, read
+ * content" — so this must distinguish it from an empty object. */
+static yyjson_doc *ask_structured(const char *response) {
+    yyjson_doc *doc = response ? yyjson_read(response, strlen(response), 0) : NULL;
+    yyjson_val *root = doc ? yyjson_doc_get_root(doc) : NULL;
+    yyjson_val *result = root ? yyjson_obj_get(root, "result") : NULL;
+    yyjson_val *sc = result ? yyjson_obj_get(result, "structuredContent") : NULL;
+    yyjson_doc *out = NULL;
+    if (sc) {
+        char *text = yyjson_val_write(sc, 0, NULL);
+        if (text) {
+            out = yyjson_read(text, strlen(text), 0);
+            free(text);
+        }
+    }
+    yyjson_doc_free(doc);
+    return out;
+}
+
+/* ask_call + ask_inner_text in one, freeing the envelope. Every test below
+ * reads only the payload; nesting the two leaks the envelope, and LeakSanitizer
+ * is part of this suite's gate. */
+static char *ask_text(hyp_mcp_server_t *srv, const char *arguments_json) {
+    char *resp = ask_call(srv, arguments_json);
+    char *inner = ask_inner_text(resp);
+    free(resp);
+    return inner;
+}
+
+/* A vector at an EXACT cosine to the question's axis, so a fixture can pin a
+ * ranking ORDER rather than only a winner. The one-hot double scores 1.0 or
+ * 0.0 and nothing between, which leaves ties whose order no test should lean
+ * on. cos*e_q + sqrt(1-cos^2)*e_other is a unit vector whose cosine with e_q
+ * is exactly cos. */
+static void ask_fixture_put_vector_cos(sqlite3 *db, const char *project, int64_t node_id,
+                                       const char *query_text, double cos) {
+    float qv[HYP_ASK_DIM];
+    fake_axis_vector(query_text, qv);
+    int qaxis = 0;
+    for (int i = 0; i < HYP_ASK_DIM; i++) {
+        if (qv[i] != 0.0f) {
+            qaxis = i;
+            break;
+        }
+    }
+    float vec[HYP_ASK_DIM];
+    memset(vec, 0, sizeof(vec));
+    vec[qaxis] = (float)cos;
+    vec[(qaxis + 1) % HYP_ASK_DIM] = (float)sqrt(1.0 - cos * cos);
+    sqlite3_stmt *st = NULL;
+    sqlite3_prepare_v2(db,
+                       "INSERT OR REPLACE INTO ask_vectors(project,node_id,vec,truncated)"
+                       " VALUES(?1,?2,?3,0)",
+                       -1, &st, NULL);
+    sqlite3_bind_text(st, 1, project, -1, SQLITE_TRANSIENT);
+    sqlite3_bind_int64(st, 2, node_id);
+    sqlite3_bind_blob(st, 3, vec, (int)sizeof(vec), SQLITE_TRANSIENT);
+    sqlite3_step(st);
+    sqlite3_finalize(st);
+}
+
+/* `n` lines, each `width` bytes wide and self-identifying, so an assertion can
+ * name the exact line it expects to see and the exact line it expects not to. */
+static char *ask_fixture_make_source(int n, int width) {
+    if (width < 24) {
+        width = 24;
+    }
+    char *buf = (char *)malloc((size_t)n * (size_t)(width + 1) + 1);
+    if (!buf) {
+        return NULL;
+    }
+    size_t w = 0;
+    for (int i = 1; i <= n; i++) {
+        int k = snprintf(buf + w, (size_t)width + 1, "/* line %04d ", i);
+        while (k < width - 2) {
+            buf[w + k] = 'x';
+            k++;
+        }
+        buf[w + k] = '*';
+        buf[w + k + 1] = '/';
+        w += (size_t)width;
+        buf[w++] = '\n';
+    }
+    buf[w] = '\0';
+    return buf;
+}
+
+/* Three declarations over two REAL files, at pinned cosines 1.0 / 0.9 / 0.8:
+ *
+ *   rank 1  writer.orderSections  src/writer.c   10-13   4 lines  — fits whole
+ *   rank 2  writer.emit           src/writer.c   40-100  61 lines — over the cap
+ *   rank 3  reader.Reader         src/reader.c   5-8     4 lines  — no text: the
+ *                                                                   top 2 only
+ *
+ * `width` sets how wide every source line is, which is what decides whether
+ * rank 2 is cut by the LINE cap (narrow) or the BYTE cap (wide).
+ *
+ * The double hashes the WHOLE question to one axis, so the vectors have to be
+ * built against the exact string the test will ask. ask_real_rescore re-aims
+ * them when a test asks more than one. */
+static int64_t g_real_ids[3];
+
+static void ask_real_rescore(sqlite3 *db, const char *project, const char *question) {
+    ask_fixture_put_vector_cos(db, project, g_real_ids[0], question, 1.0);
+    ask_fixture_put_vector_cos(db, project, g_real_ids[1], question, 0.9);
+    ask_fixture_put_vector_cos(db, project, g_real_ids[2], question, 0.8);
+}
+
+static hyp_mcp_server_t *ask_srv_with_real_files(const char *project, const char *root, int width,
+                                                 const char *question) {
+    char *writer = ask_fixture_make_source(120, width);
+    char *reader = ask_fixture_make_source(40, width);
+    if (!writer || !reader) {
+        free(writer);
+        free(reader);
+        return NULL;
+    }
+    int ok = th_write_file(TH_PATH(root, "src/writer.c"), writer) == 0 &&
+             th_write_file(TH_PATH(root, "src/reader.c"), reader) == 0;
+    free(writer);
+    free(reader);
+    if (!ok) {
+        return NULL;
+    }
+
+    hyp_mcp_server_t *srv = hyp_mcp_server_new(NULL);
+    if (!srv) {
+        return NULL;
+    }
+    hyp_store_t *st = hyp_mcp_server_store(srv);
+    hyp_mcp_server_set_project(srv, project);
+    hyp_store_upsert_project(st, project, root);
+
+    hyp_node_t a = {.project = project,
+                    .label = "Function",
+                    .name = "orderSections",
+                    .qualified_name = "askreal.writer.orderSections",
+                    .file_path = "src/writer.c",
+                    .start_line = 10,
+                    .end_line = 13};
+    hyp_node_t b = {.project = project,
+                    .label = "Method",
+                    .name = "emit",
+                    .qualified_name = "askreal.writer.emit",
+                    .file_path = "src/writer.c",
+                    .start_line = 40,
+                    .end_line = 100};
+    hyp_node_t c = {.project = project,
+                    .label = "Class",
+                    .name = "Reader",
+                    .qualified_name = "askreal.reader.Reader",
+                    .file_path = "src/reader.c",
+                    .start_line = 5,
+                    .end_line = 8};
+    g_real_ids[0] = hyp_store_upsert_node(st, &a);
+    g_real_ids[1] = hyp_store_upsert_node(st, &b);
+    g_real_ids[2] = hyp_store_upsert_node(st, &c);
+
+    sqlite3 *db = hyp_store_get_db(st);
+    ask_fixture_create_tables(db);
+    ask_real_rescore(db, project, question);
+    ask_fixture_put_meta(db, project, "test-double/axis-1024", HYP_ASK_DIM, "none", 0, 3);
+    return srv;
+}
+
+/* THE test §3.2 step 1 exists for: the answer carries the code, so the agent
+ * does not spend a second turn on get_code_snippet to see it. */
+TEST(ask_carries_the_span_text_for_the_top_candidates) {
+    fake_reset();
+    ASSERT_EQ(hyp_ask_backend_install(&g_fake_backend), 0);
+    char *root = th_mktempdir("hyp-ask-span");
+    ASSERT_NOT_NULL(root);
+    char *root_copy = hyp_strdup(root);
+    hyp_mcp_server_t *srv = ask_srv_with_real_files("askreal", root_copy, 32, "GOLD");
+    ASSERT_NOT_NULL(srv);
+
+    char *resp = ask_call(srv, "{\"project\":\"askreal\",\"question\":\"GOLD\"}");
+    ASSERT_NOT_NULL(resp);
+    char *inner = ask_inner_text(resp);
+    ASSERT_NOT_NULL(inner);
+
+    /* The block, and the caps it declares. */
+    ASSERT_NOT_NULL(strstr(inner, "\nsource: 2  ("));
+    ASSERT_NOT_NULL(strstr(inner, "capped at 40 lines / 1600 bytes each"));
+
+    /* Rank 1 arrives WHOLE, and the actual lines are there. */
+    ASSERT_NOT_NULL(strstr(inner, "#1 askreal.writer.orderSections src/writer.c:10-13 — whole, "
+                                  "4 lines"));
+    ASSERT_NOT_NULL(strstr(inner, "/* line 0010 "));
+    ASSERT_NOT_NULL(strstr(inner, "/* line 0013 "));
+    ASSERT_NULL(strstr(inner, "/* line 0014 ")); /* and not one line more */
+    ASSERT_NULL(strstr(inner, "/* line 0009 "));
+
+    /* Rank 3 is a ROW but carries no text: rank 3 held no gold at all on the
+     * pinned corpus, so it is not worth its bytes. */
+    ASSERT_NOT_NULL(strstr(inner, "askreal.reader.Reader"));
+    ASSERT_NULL(strstr(inner, "#3 "));
+
+    /* TOON is not JSON, so a client is told to read `content` by the ABSENCE
+     * of structuredContent — not by an empty object standing in for it. */
+    ASSERT_NULL(ask_structured(resp));
+
+    free(inner);
+    free(resp);
+    free(root_copy);
+    hyp_mcp_server_free(srv);
+    th_rmtree(root);
+    hyp_ask_backend_install(NULL);
+    PASS();
+}
+
+/* A span over the cap is CUT, and the cut NAMES THE FULL RANGE. A silently
+ * shortened declaration is the same failure as a silently empty result: the
+ * caller cannot tell from the outside that it is holding half of something. */
+TEST(ask_a_cut_span_names_its_full_range_and_the_call_that_completes_it) {
+    fake_reset();
+    ASSERT_EQ(hyp_ask_backend_install(&g_fake_backend), 0);
+    char *root = th_mktempdir("hyp-ask-cut");
+    ASSERT_NOT_NULL(root);
+    char *root_copy = hyp_strdup(root);
+    hyp_mcp_server_t *srv = ask_srv_with_real_files("askreal", root_copy, 32, "GOLD");
+    ASSERT_NOT_NULL(srv);
+
+    char *resp = ask_call(srv, "{\"project\":\"askreal\",\"question\":\"GOLD\"}");
+    char *inner = ask_inner_text(resp);
+    ASSERT_NOT_NULL(inner);
+
+    /* 40-100 is 61 lines; the line cap is 40, so lines 40-79 are shown and the
+     * header says BOTH ranges and how many of how many. */
+    ASSERT_NOT_NULL(
+        strstr(inner, "#2 askreal.writer.emit src/writer.c:40-79 of 40-100 — CUT at 40 of 61 "
+                      "lines"));
+    ASSERT_NOT_NULL(strstr(inner, "/* line 0040 "));
+    ASSERT_NOT_NULL(strstr(inner, "/* line 0079 "));
+    ASSERT_NULL(strstr(inner, "/* line 0080 "));
+    /* And the answer names the call that gets the rest. */
+    ASSERT_NOT_NULL(strstr(inner, "get_code_snippet"));
+    /* The ROW still carries the declaration's true range, unchanged. */
+    ASSERT_NOT_NULL(strstr(inner, "askreal.writer.emit Method src/writer.c 40-100"));
+
+    free(inner);
+    free(resp);
+    free(root_copy);
+    hyp_mcp_server_free(srv);
+    th_rmtree(root);
+    hyp_ask_backend_install(NULL);
+    PASS();
+}
+
+/* The point of the whole step is TOKENS, so the block is bounded by bytes and
+ * not only by lines: 40 lines of 200-byte C++ is 8 KB, and two of them is a
+ * whole-file answer wearing a cap. */
+TEST(ask_the_source_block_is_bounded_in_bytes_not_only_lines) {
+    fake_reset();
+    ASSERT_EQ(hyp_ask_backend_install(&g_fake_backend), 0);
+    char *root = th_mktempdir("hyp-ask-bound");
+    ASSERT_NOT_NULL(root);
+    char *root_copy = hyp_strdup(root);
+    /* 200-byte lines: 40 of them is 8000 bytes, five times the per-span cap. */
+    hyp_mcp_server_t *srv = ask_srv_with_real_files("askreal", root_copy, 200, "GOLD");
+    ASSERT_NOT_NULL(srv);
+
+    char *resp = ask_call(srv, "{\"project\":\"askreal\",\"question\":\"GOLD\"}");
+    char *inner = ask_inner_text(resp);
+    ASSERT_NOT_NULL(inner);
+
+    /* Total answer stays small enough to be one call's worth of context: the
+     * disclosures are ~700 bytes and the pool is 3200. */
+    size_t total = strlen(inner);
+    ASSERT_TRUE(total < 5000);
+    /* Rank 1 is 4 lines of 200 = 800 bytes, under the per-span cap, so it is
+     * whole; rank 2 is cut by BYTES well before its 40th line. */
+    ASSERT_NOT_NULL(strstr(inner, "#1 askreal.writer.orderSections src/writer.c:10-13 — whole"));
+    ASSERT_NOT_NULL(strstr(inner, "#2 askreal.writer.emit src/writer.c:40-"));
+    ASSERT_NOT_NULL(strstr(inner, " of 40-100 — CUT at "));
+    ASSERT_NULL(strstr(inner, "/* line 0079 "));
+
+    free(inner);
+    free(resp);
+    free(root_copy);
+    hyp_mcp_server_free(srv);
+    th_rmtree(root);
+    hyp_ask_backend_install(NULL);
+    PASS();
+}
+
+/* include_source=false is the caller who wants coordinates only, and it must
+ * actually cost less — the whole argument for the flag is bytes. */
+TEST(ask_include_source_false_returns_coordinates_only_and_costs_less) {
+    fake_reset();
+    ASSERT_EQ(hyp_ask_backend_install(&g_fake_backend), 0);
+    char *root = th_mktempdir("hyp-ask-nosrc");
+    ASSERT_NOT_NULL(root);
+    char *root_copy = hyp_strdup(root);
+    hyp_mcp_server_t *srv = ask_srv_with_real_files("askreal", root_copy, 32, "GOLD");
+    ASSERT_NOT_NULL(srv);
+
+    char *with = ask_text(srv, "{\"project\":\"askreal\",\"question\":\"GOLD\"}");
+    char *without =
+        ask_text(srv, "{\"project\":\"askreal\",\"question\":\"GOLD\",\"include_source\":false}");
+    ASSERT_NOT_NULL(with);
+    ASSERT_NOT_NULL(without);
+
+    ASSERT_NULL(strstr(without, "\nsource:"));
+    ASSERT_NULL(strstr(without, "/* line 0010 "));
+    ASSERT_TRUE(strlen(without) < strlen(with));
+    /* The rows and every disclosure are unchanged — only the text is gone. */
+    ASSERT_NOT_NULL(strstr(without, "askreal.writer.orderSections Function src/writer.c 10-13"));
+    ASSERT_NOT_NULL(strstr(without, "population: 3"));
+    ASSERT_NOT_NULL(strstr(without, "whole_file_spans:"));
+    ASSERT_NOT_NULL(strstr(without, "truncation:"));
+
+    free(with);
+    free(without);
+    free(root_copy);
+    hyp_mcp_server_free(srv);
+    th_rmtree(root);
+    hyp_ask_backend_install(NULL);
+    PASS();
+}
+
+/* A span that cannot be read says WHY, in the place the text would have been.
+ * Omitting it silently would leave a caller unable to tell "this declaration
+ * is short" from "this file is gone". */
+TEST(ask_says_why_a_span_could_not_be_read_rather_than_omitting_it) {
+    fake_reset();
+    ASSERT_EQ(hyp_ask_backend_install(&g_fake_backend), 0);
+    char *root = th_mktempdir("hyp-ask-gone");
+    ASSERT_NOT_NULL(root);
+    char *root_copy = hyp_strdup(root);
+    hyp_mcp_server_t *srv = ask_srv_with_real_files("askreal", root_copy, 32, "GOLD");
+    ASSERT_NOT_NULL(srv);
+    /* The index is now stale for writer.c, which is the ordinary case: an edit
+     * landed and the pass has not re-run. */
+    th_unlink_force(TH_PATH(root_copy, "src/writer.c"));
+
+    char *resp = ask_call(srv, "{\"project\":\"askreal\",\"question\":\"GOLD\"}");
+    char *inner = ask_inner_text(resp);
+    ASSERT_NOT_NULL(inner);
+    ASSERT_NOT_NULL(
+        strstr(inner, "#1 askreal.writer.orderSections src/writer.c:10-13 — NOT READ:"));
+    ASSERT_NOT_NULL(strstr(inner, "the index is stale for this declaration"));
+    /* Still an answer, not an error: the ranking is intact. */
+    ASSERT_FALSE(ask_is_error(resp));
+    ASSERT_NOT_NULL(strstr(inner, "available: true"));
+
+    free(inner);
+    free(resp);
+    free(root_copy);
+    hyp_mcp_server_free(srv);
+    th_rmtree(root);
+    hyp_ask_backend_install(NULL);
+    PASS();
+}
+
+/* format=json: the client reads structuredContent, and the source arrives as
+ * structure rather than as prose it has to scrape. */
+TEST(ask_json_source_reaches_the_client_as_structuredcontent) {
+    fake_reset();
+    ASSERT_EQ(hyp_ask_backend_install(&g_fake_backend), 0);
+    char *root = th_mktempdir("hyp-ask-json");
+    ASSERT_NOT_NULL(root);
+    char *root_copy = hyp_strdup(root);
+    hyp_mcp_server_t *srv = ask_srv_with_real_files("askreal", root_copy, 32, "GOLD");
+    ASSERT_NOT_NULL(srv);
+
+    char *resp =
+        ask_call(srv, "{\"project\":\"askreal\",\"question\":\"GOLD\",\"format\":\"json\"}");
+    ASSERT_NOT_NULL(resp);
+    yyjson_doc *sc = ask_structured(resp);
+    ASSERT_NOT_NULL(sc); /* present, because the payload IS a JSON object */
+    yyjson_val *root_val = yyjson_doc_get_root(sc);
+
+    yyjson_val *src = yyjson_obj_get(root_val, "source");
+    ASSERT_NOT_NULL(src);
+    ASSERT_TRUE(yyjson_is_arr(src));
+    ASSERT_EQ(yyjson_arr_size(src), 2U);
+
+    yyjson_val *e0 = yyjson_arr_get(src, 0);
+    ASSERT_EQ(yyjson_get_int(yyjson_obj_get(e0, "rank")), 1);
+    ASSERT_STR_EQ(yyjson_get_str(yyjson_obj_get(e0, "qn")), "askreal.writer.orderSections");
+    ASSERT_STR_EQ(yyjson_get_str(yyjson_obj_get(e0, "file")), "src/writer.c");
+    ASSERT_STR_EQ(yyjson_get_str(yyjson_obj_get(e0, "lines")), "10-13");
+    ASSERT_STR_EQ(yyjson_get_str(yyjson_obj_get(e0, "shown")), "10-13");
+    ASSERT_FALSE(yyjson_get_bool(yyjson_obj_get(e0, "truncated")));
+    const char *text = yyjson_get_str(yyjson_obj_get(e0, "text"));
+    ASSERT_NOT_NULL(text);
+    ASSERT_NOT_NULL(strstr(text, "/* line 0010 "));
+    ASSERT_NOT_NULL(strstr(text, "/* line 0013 "));
+    ASSERT_NULL(strstr(text, "/* line 0014 "));
+
+    yyjson_val *e1 = yyjson_arr_get(src, 1);
+    ASSERT_STR_EQ(yyjson_get_str(yyjson_obj_get(e1, "lines")), "40-100");
+    ASSERT_STR_EQ(yyjson_get_str(yyjson_obj_get(e1, "shown")), "40-79");
+    ASSERT_TRUE(yyjson_get_bool(yyjson_obj_get(e1, "truncated")));
+
+    /* The rows contract is untouched: arrays matching cols, not envelopes. */
+    yyjson_val *cols = yyjson_obj_get(root_val, "cols");
+    yyjson_val *rows = yyjson_obj_get(root_val, "rows");
+    ASSERT_EQ(yyjson_arr_size(cols), 5U);
+    ASSERT_EQ(yyjson_arr_size(rows), 3U);
+    ASSERT_EQ(yyjson_arr_size(yyjson_arr_get(rows, 0)), 5U);
+
+    yyjson_doc_free(sc);
+    free(resp);
+    free(root_copy);
+    hyp_mcp_server_free(srv);
+    th_rmtree(root);
+    hyp_ask_backend_install(NULL);
+    PASS();
+}
+
+/* The exactness marker. It is a FACT ABOUT TWO STRINGS — the question spells
+ * the declaration's name — and never a score band: §2.4 closed margin gates by
+ * measurement and this step does not reopen them. */
+TEST(ask_exact_marks_a_name_the_question_spelled_and_is_absent_otherwise) {
+    fake_reset();
+    ASSERT_EQ(hyp_ask_backend_install(&g_fake_backend), 0);
+    char *root = th_mktempdir("hyp-ask-exact");
+    ASSERT_NOT_NULL(root);
+    char *root_copy = hyp_strdup(root);
+    hyp_mcp_server_t *srv = ask_srv_with_real_files("askreal", root_copy, 32, "GOLD");
+    ASSERT_NOT_NULL(srv);
+
+    /* Nothing in "GOLD" spells orderSections, emit or Reader: NO column at
+     * all, and no prose about it either. A wall of `false` would read as a
+     * verdict, and it would cost bytes to say nothing. */
+    char *quiet = ask_text(srv, "{\"project\":\"askreal\",\"question\":\"GOLD\"}");
+    ASSERT_NOT_NULL(quiet);
+    ASSERT_NOT_NULL(strstr(quiet, "(cols: qn label file lines score)"));
+    ASSERT_NULL(strstr(quiet, "exact"));
+
+    /* Spell the name and the column appears, true on exactly that row. The
+     * double hashes the whole question, so the vectors are re-aimed at the new
+     * string first — the ranking under test is the same one either way. */
+    sqlite3 *db = hyp_store_get_db(hyp_mcp_server_store(srv));
+    ask_real_rescore(db, "askreal", "GOLD orderSections");
+    char *loud = ask_text(srv, "{\"project\":\"askreal\",\"question\":\"GOLD orderSections\"}");
+    ASSERT_NOT_NULL(loud);
+    ASSERT_NOT_NULL(strstr(loud, " score exact)"));
+    ASSERT_NOT_NULL(strstr(loud, "exact_marker:"));
+    ASSERT_NOT_NULL(strstr(loud, "not a confidence and not a score"));
+    const char *row = strstr(loud, "askreal.writer.orderSections Function");
+    ASSERT_NOT_NULL(row);
+    const char *eol = strchr(row, '\n');
+    ASSERT_NOT_NULL(eol);
+    ASSERT_TRUE(strstr(row, " true") != NULL && strstr(row, " true") < eol);
+    /* And the rows that were not spelled are marked false, not omitted. */
+    const char *other = strstr(loud, "askreal.reader.Reader Class");
+    ASSERT_NOT_NULL(other);
+    const char *oeol = strchr(other, '\n');
+    ASSERT_TRUE(strstr(other, " false") != NULL && strstr(other, " false") < oeol);
+
+    /* A substring is NOT a naming: "Readers" must not mark Reader. */
+    ask_real_rescore(db, "askreal", "GOLD Readers");
+    char *sub = ask_text(srv, "{\"project\":\"askreal\",\"question\":\"GOLD Readers\"}");
+    ASSERT_NOT_NULL(sub);
+    ASSERT_NULL(strstr(sub, "exact"));
+
+    free(quiet);
+    free(loud);
+    free(sub);
+    free(root_copy);
+    hyp_mcp_server_free(srv);
+    th_rmtree(root);
+    hyp_ask_backend_install(NULL);
+    PASS();
+}
+
+/* Source lives inside a backtick fence, so source that CONTAINS a backtick
+ * fence must not close it early — a markdown file, a doc comment or a C++ raw
+ * string would otherwise split the answer in half at the client, silently. The
+ * fence grows past anything in the text, which is CommonMark's own rule. */
+TEST(ask_a_fence_in_the_source_cannot_close_the_block_early) {
+    fake_reset();
+    ASSERT_EQ(hyp_ask_backend_install(&g_fake_backend), 0);
+    char *root = th_mktempdir("hyp-ask-fence");
+    ASSERT_NOT_NULL(root);
+    char *root_copy = hyp_strdup(root);
+    hyp_mcp_server_t *srv = ask_srv_with_real_files("askreal", root_copy, 32, "GOLD");
+    ASSERT_NOT_NULL(srv);
+    /* Rewrite writer.c so the top hit's span (lines 10-13) is itself a fenced
+     * markdown block. The node's range is unchanged. */
+    ASSERT_EQ(th_write_file(TH_PATH(root_copy, "src/writer.c"),
+                            "1\n2\n3\n4\n5\n6\n7\n8\n9\n"
+                            "```c\nint x = 1;\n```\ntrailer\n"
+                            "15\n16\n17\n18\n19\n20\n"),
+              0);
+
+    char *inner = ask_text(srv, "{\"project\":\"askreal\",\"question\":\"GOLD\"}");
+    ASSERT_NOT_NULL(inner);
+    /* A four-backtick fence, because the text holds a three-backtick run at a
+     * line start. The inner ``` survives verbatim. */
+    ASSERT_NOT_NULL(strstr(inner, "\n````\n```c\nint x = 1;\n```\ntrailer\n````\n"));
+
+    free(inner);
+    free(root_copy);
+    hyp_mcp_server_free(srv);
+    th_rmtree(root);
+    hyp_ask_backend_install(NULL);
+    PASS();
+}
+
+/* The default is 3 rows, not 10 — rows 4-10 carried a fifth of the measured
+ * answers and most of the bytes. `limit` stays honourable for a caller that
+ * wants the tail, and the source block does NOT grow with it. */
+TEST(ask_default_limit_is_three_and_limit_is_still_honoured) {
+    fake_reset();
+    ASSERT_EQ(hyp_ask_backend_install(&g_fake_backend), 0);
+    hyp_mcp_server_t *srv = ask_srv_with_nodes("askproj");
+    ASSERT_NOT_NULL(srv);
+    sqlite3 *db = hyp_store_get_db(hyp_mcp_server_store(srv));
+    /* Six more declarations so "3" is a cap and not just the population. */
+    for (int i = 0; i < 6; i++) {
+        char qn[64];
+        char name[32];
+        snprintf(qn, sizeof(qn), "askproj.filler.f%d", i);
+        snprintf(name, sizeof(name), "f%d", i);
+        hyp_node_t n = {.project = "askproj",
+                        .label = "Function",
+                        .name = name,
+                        .qualified_name = qn,
+                        .file_path = "src/filler.c",
+                        .start_line = 1 + i,
+                        .end_line = 2 + i};
+        int64_t id = hyp_store_upsert_node(hyp_mcp_server_store(srv), &n);
+        ask_fixture_put_vector_cos(db, "askproj", id, "GOLD", 0.5);
+    }
+    ask_fixture_put_meta(db, "askproj", "test-double/axis-1024", HYP_ASK_DIM, "none", 0, 9);
+
+    char *def = ask_text(srv, "{\"project\":\"askproj\",\"question\":\"GOLD\"}");
+    ASSERT_NOT_NULL(def);
+    ASSERT_NOT_NULL(strstr(def, "results: 3  (cols:"));
+
+    char *wide = ask_text(srv, "{\"project\":\"askproj\",\"question\":\"GOLD\",\"limit\":9}");
+    ASSERT_NOT_NULL(wide);
+    ASSERT_NOT_NULL(strstr(wide, "results: 9  (cols:"));
+    /* Nine rows, still at most two spans: the source cap is not the row cap. */
+    ASSERT_NULL(strstr(wide, "#3 "));
+
+    free(def);
+    free(wide);
+    hyp_mcp_server_free(srv);
+    hyp_ask_backend_install(NULL);
+    PASS();
+}
+
 /* ── Escalation: which lane answered, and the refusals (§3.1 step 3) ── */
 
 /* A second double whose model id is IN the measured voyage-4 space. Same
@@ -805,6 +1364,18 @@ static void esc_cache_configure(const esc_cache_t *c, const char *provider, cons
     hyp_config_close(cfg);
 }
 
+/* May a shared, long-lived server read the key for a client (§3.2 step 5).
+ * Separate from the setter above because the tests that use it need to change
+ * this one value between two calls without rewriting the rest of the lane. */
+static void esc_cache_configure_daemon_key(const esc_cache_t *c, const char *value) {
+    hyp_config_t *cfg = hyp_config_open(c->dir);
+    if (!cfg) {
+        return;
+    }
+    hyp_config_set(cfg, HYP_CONFIG_ASK_ESC_DAEMON_KEY, value);
+    hyp_config_close(cfg);
+}
+
 #define ESC_TEST_KEY_VAR "HYP_TEST_ASK_ESCALATION_KEY_VAR"
 
 /* A project with one node and NO vector fixture at all — neither lane built. */
@@ -843,6 +1414,7 @@ TEST(ask_local_answers_carry_lane_and_both_encoders) {
     ASSERT_NOT_NULL(strstr(inner, "index_encoder: test-double/axis-1024"));
     /* No space disclosure on the local lane: one model on both sides. */
     ASSERT_NULL(strstr(inner, "space:"));
+    ASSERT_NULL(strstr(inner, "key_custody:"));
     free(inner);
     free(resp);
 
@@ -856,6 +1428,10 @@ TEST(ask_local_answers_carry_lane_and_both_encoders) {
     ASSERT_STR_EQ(yyjson_get_str(yyjson_obj_get(root, "query_encoder")), "test-double/axis-1024");
     ASSERT_STR_EQ(yyjson_get_str(yyjson_obj_get(root, "index_encoder")), "test-double/axis-1024");
     ASSERT_NULL(yyjson_obj_get(root, "space"));
+    /* No key_custody either: the local lane reads no key, so a claim about
+     * whose key paid would be a claim about nothing (§3.2 step 5). Asserted in
+     * BOTH encodings, because the text path is the one a client reads. */
+    ASSERT_NULL(yyjson_obj_get(root, "key_custody"));
     yyjson_doc_free(doc);
     free(inner);
     free(resp);
@@ -1086,6 +1662,197 @@ TEST(ask_escalate_index_mode_still_refuses_an_unbuilt_escalation_index) {
     PASS();
 }
 
+/* ── Key custody through the tool (NEXT-STEPS §3.2 step 5) ─────────
+ *
+ * Every `ask` reaching the handler in production is served by the daemon —
+ * MCP sessions through the stdio frontend, `hyponoia cli ask`, and the graph
+ * UI's /api/embed-view/ask all execute in that one long-lived process. So the
+ * environment the key would come from belongs to whoever started the daemon.
+ * Under the default this is refused, and the refusal is what the caller sees.
+ *
+ * Note what CANNOT be asserted here: the successful escalated answer, whose
+ * `key_custody` disclosure needs a live paid provider call to reach. Its text
+ * is pinned separately, below, through the same function the handler uses. */
+TEST(ask_escalate_refuses_when_a_shared_server_would_spend_the_owners_key) {
+    fake_reset();
+    esc_cache_t cache;
+    ASSERT_TRUE(esc_cache_begin(&cache));
+    /* The key IS present in this process — that is the whole point. What is
+     * missing is the owner's permission for a shared server to lend it. */
+    hyp_setenv(ESC_TEST_KEY_VAR, "not-a-real-key-placeholder", 1);
+    esc_cache_configure(&cache, "voyage", "voyage-4-large", ESC_TEST_KEY_VAR, "query");
+    ASSERT_EQ(hyp_ask_backend_install(&g_fake_backend_voyage4), 0);
+    hyp_mcp_server_t *srv = ask_srv_with_nodes("askproj");
+    ASSERT_NOT_NULL(srv);
+    /* Stamp the fixture with the voyage-4 backend's own id so the index reads
+     * as AVAILABLE and the run reaches the lane's later gates. Without it the
+     * "built by a different model" gate answers first and the second leg below
+     * would be testing nothing. */
+    ask_fixture_put_meta(hyp_store_get_db(hyp_mcp_server_store(srv)), "askproj",
+                         "voyage-4-nano-Q8_0@test-double", HYP_ASK_DIM, "none", 0, 3);
+    hyp_ask_provider_declare_shared_key_custody("the hyponoia daemon (pid 4242)");
+
+    char *resp = ask_call(srv, "{\"project\":\"askproj\",\"question\":\"GOLD\",\"escalate\":true}");
+    ASSERT_NOT_NULL(resp);
+    ASSERT_TRUE(ask_is_error(resp));
+    char *inner = ask_inner_text(resp);
+    ASSERT_NOT_NULL(inner);
+    ASSERT_NOT_NULL(strstr(inner, "the hyponoia daemon (pid 4242)"));
+    ASSERT_NOT_NULL(strstr(inner, HYP_CONFIG_ASK_ESC_DAEMON_KEY));
+    ASSERT_NOT_NULL(strstr(inner, ESC_TEST_KEY_VAR));
+    ASSERT_NOT_NULL(strstr(inner, "NOTHING was sent"));
+    ASSERT_NOT_NULL(strstr(inner, "did NOT fall back"));
+    /* NOT the sentence for an unconfigured lane: the lane is configured, and
+     * sending someone to re-set a provider they already set is the wrong
+     * remedy for a permission refusal. */
+    ASSERT_NULL(strstr(inner, "escalation encoder is not usable"));
+    /* THE PLACEHOLDER MUST NEVER BE ECHOED — a refusal is the other place a
+     * secret leaks, and this one is written to be pasted into a bug report. */
+    ASSERT_NULL(strstr(inner, "not-a-real-key-placeholder"));
+    ASSERT_NULL(strstr(inner, "results:"));
+    ASSERT_EQ(g_fake_query_calls, 0);
+    free(inner);
+    free(resp);
+
+    /* Allowed: the custody gate stops refusing and the lane's OWN gates take
+     * over. The model is switched to voyage-code-3 first — measured NOT in the
+     * voyage-4 space — so the next gate is the space gate and NO REQUEST CAN
+     * LEAVE THE MACHINE. Leaving voyage-4-large configured here would let a
+     * passing space gate carry the placeholder key to the real endpoint, which
+     * is a network call in a unit test and a leak in a CI log. */
+    esc_cache_configure(&cache, NULL, "voyage-code-3", NULL, NULL);
+    esc_cache_configure_daemon_key(&cache, HYP_CONFIG_ASK_ESC_DAEMON_KEY_ALLOW);
+    resp = ask_call(srv, "{\"project\":\"askproj\",\"question\":\"GOLD\",\"escalate\":true}");
+    ASSERT_NOT_NULL(resp);
+    ASSERT_TRUE(ask_is_error(resp));
+    inner = ask_inner_text(resp);
+    ASSERT_NOT_NULL(inner);
+    ASSERT_NOT_NULL(strstr(inner, "embedding space"));
+    ASSERT_NULL(strstr(inner, "may not spend on your behalf"));
+    ASSERT_NULL(strstr(inner, HYP_CONFIG_ASK_ESC_DAEMON_KEY));
+    ASSERT_NULL(strstr(inner, "not-a-real-key-placeholder"));
+    ASSERT_EQ(g_fake_query_calls, 0);
+    free(inner);
+    free(resp);
+
+    hyp_ask_provider_clear_key_custody_for_test();
+    hyp_mcp_server_free(srv);
+    hyp_ask_backend_install(NULL);
+    hyp_unsetenv(ESC_TEST_KEY_VAR);
+    esc_cache_end(&cache);
+    PASS();
+}
+
+/* CALLER CUSTODY IS UNCHANGED, AND THAT IS THE POINT OF THE DEFAULT. A process
+ * that holds the key itself — `embed --escalation`, a directly-spawned stdio
+ * server, this test — is never gated, whatever the setting says. If this ever
+ * fails, default-refuse has started costing people the lane they configured. */
+TEST(ask_escalate_under_caller_custody_is_not_gated_by_the_daemon_key_setting) {
+    fake_reset();
+    esc_cache_t cache;
+    ASSERT_TRUE(esc_cache_begin(&cache));
+    hyp_setenv(ESC_TEST_KEY_VAR, "not-a-real-key-placeholder", 1);
+    esc_cache_configure(&cache, "voyage", "voyage-code-3", ESC_TEST_KEY_VAR, "query");
+    esc_cache_configure_daemon_key(&cache, HYP_CONFIG_ASK_ESC_DAEMON_KEY_REFUSE);
+    ASSERT_EQ(hyp_ask_backend_install(&g_fake_backend_voyage4), 0);
+    hyp_mcp_server_t *srv = ask_srv_with_nodes("askproj");
+    ASSERT_NOT_NULL(srv);
+    ask_fixture_put_meta(hyp_store_get_db(hyp_mcp_server_store(srv)), "askproj",
+                         "voyage-4-nano-Q8_0@test-double", HYP_ASK_DIM, "none", 0, 3);
+    hyp_ask_provider_clear_key_custody_for_test();
+
+    /* voyage-code-3 is measured NOT in the voyage-4 space, so the answer is a
+     * refusal — but it must be the SPACE refusal, reached only because custody
+     * let the encoder be built at all. */
+    char *resp = ask_call(srv, "{\"project\":\"askproj\",\"question\":\"GOLD\",\"escalate\":true}");
+    ASSERT_NOT_NULL(resp);
+    ASSERT_TRUE(ask_is_error(resp));
+    char *inner = ask_inner_text(resp);
+    ASSERT_NOT_NULL(inner);
+    ASSERT_NOT_NULL(strstr(inner, "embedding space"));
+    ASSERT_NULL(strstr(inner, "may not spend on your behalf"));
+    ASSERT_NULL(strstr(inner, HYP_CONFIG_ASK_ESC_DAEMON_KEY));
+    ASSERT_NULL(strstr(inner, "not-a-real-key-placeholder"));
+    free(inner);
+    free(resp);
+
+    hyp_mcp_server_free(srv);
+    hyp_ask_backend_install(NULL);
+    hyp_unsetenv(ESC_TEST_KEY_VAR);
+    esc_cache_end(&cache);
+    PASS();
+}
+
+/* THE GRAPH UI IS A SECOND SPENDING ROUTE, AND IT IS THE SAME GATE.
+ * `/api/embed-view/ask` (§3.1 step 5) POSTs to hyp_mcp_ask_view_overlay, which
+ * takes the same arguments as the tool — `escalate` included — and runs the
+ * tool itself. It is worth its own test rather than an argument from reading,
+ * because it reaches the lane through a DIFFERENT hyp_mcp_server_t on a
+ * different thread, and because the caller there is a browser: there is no
+ * client environment to read a key from even in principle. The route is
+ * localhost-only, which bounds who can reach it and does not bound what it
+ * would have spent. */
+TEST(ask_view_overlay_is_gated_by_key_custody_like_the_tool) {
+    fake_reset();
+    esc_cache_t cache;
+    ASSERT_TRUE(esc_cache_begin(&cache));
+    hyp_setenv(ESC_TEST_KEY_VAR, "not-a-real-key-placeholder", 1);
+    esc_cache_configure(&cache, "voyage", "voyage-4-large", ESC_TEST_KEY_VAR, "query");
+    ASSERT_EQ(hyp_ask_backend_install(&g_fake_backend_voyage4), 0);
+    hyp_mcp_server_t *srv = ask_srv_with_nodes("askproj");
+    ASSERT_NOT_NULL(srv);
+    ask_fixture_put_meta(hyp_store_get_db(hyp_mcp_server_store(srv)), "askproj",
+                         "voyage-4-nano-Q8_0@test-double", HYP_ASK_DIM, "none", 0, 3);
+    hyp_ask_provider_declare_shared_key_custody("the hyponoia daemon (pid 4242)");
+
+    char *json = hyp_mcp_ask_view_overlay(
+        srv, "{\"project\":\"askproj\",\"question\":\"GOLD\",\"escalate\":true}");
+    ASSERT_NOT_NULL(json);
+    ASSERT_NOT_NULL(strstr(json, "may not spend on your behalf"));
+    ASSERT_NOT_NULL(strstr(json, "the hyponoia daemon (pid 4242)"));
+    ASSERT_NULL(strstr(json, "not-a-real-key-placeholder"));
+    ASSERT_EQ(g_fake_query_calls, 0);
+    free(json);
+
+    hyp_ask_provider_clear_key_custody_for_test();
+    hyp_mcp_server_free(srv);
+    hyp_ask_backend_install(NULL);
+    hyp_unsetenv(ESC_TEST_KEY_VAR);
+    esc_cache_end(&cache);
+    PASS();
+}
+
+/* The disclosure the successful escalated answer carries. Pinned through the
+ * handler's own function because the success path needs a paid provider call.
+ * What matters most is the last assertion in each block: the sentence names
+ * the VARIABLE and can never name the VALUE. */
+TEST(ask_key_custody_disclosure_names_the_variable_and_never_the_key) {
+    char text[HYP_SZ_512];
+
+    hyp_ask_provider_clear_key_custody_for_test();
+    text[0] = '\0';
+    hyp_mcp_ask_key_custody_text_for_test(ESC_TEST_KEY_VAR, text, sizeof(text));
+    ASSERT_NOT_NULL(strstr(text, "caller"));
+    ASSERT_NOT_NULL(strstr(text, ESC_TEST_KEY_VAR));
+    ASSERT_NOT_NULL(strstr(text, "this process's own environment"));
+    ASSERT_NULL(strstr(text, "not-a-real-key-placeholder"));
+
+    hyp_ask_provider_declare_shared_key_custody("the hyponoia daemon (pid 4242)");
+    text[0] = '\0';
+    hyp_mcp_ask_key_custody_text_for_test(ESC_TEST_KEY_VAR, text, sizeof(text));
+    ASSERT_NOT_NULL(strstr(text, "shared"));
+    ASSERT_NOT_NULL(strstr(text, ESC_TEST_KEY_VAR));
+    ASSERT_NOT_NULL(strstr(text, "the hyponoia daemon (pid 4242)"));
+    ASSERT_NOT_NULL(strstr(text, "NOT from the environment"));
+    ASSERT_NOT_NULL(strstr(text, HYP_CONFIG_ASK_ESC_DAEMON_KEY));
+    /* It says how to stop it, not merely that it happened. */
+    ASSERT_NOT_NULL(strstr(text, HYP_CONFIG_ASK_ESC_DAEMON_KEY_REFUSE));
+    ASSERT_NULL(strstr(text, "not-a-real-key-placeholder"));
+
+    hyp_ask_provider_clear_key_custody_for_test();
+    PASS();
+}
+
 /* A mode the validator never saw (written by hand or by an older binary) is
  * refused naming both legal values — it decides what leaves the machine, so it
  * is not guessed. */
@@ -1148,9 +1915,14 @@ TEST(ask_schema_describes_both_escalation_modes_and_the_lane_values) {
 
 /* §2 cost a measurement round to `search_graph --help` documenting an
  * array-flag spelling that did not work. So the schema is pinned against the
- * invocation the description tells a caller to type: both required flags are
- * declared required, and `question` is declared a STRING (which is what makes
- * the CLI pass it through as one rather than splicing it into an array). */
+ * invocation the description tells a caller to type: `question` is the ONE
+ * required flag, and it is declared a STRING (which is what makes the CLI
+ * pass it through as one rather than splicing it into an array).
+ *
+ * `project` left the required list in §3.2 step 2 — the server derives it
+ * from its working directory and every answer says so — but it must stay a
+ * declared PROPERTY carrying that contract, or a caller has no way to learn
+ * either that it may be omitted or how to read the answer's disclosure. */
 TEST(ask_schema_declares_what_the_help_promises) {
     const char *schema = hyp_mcp_tool_input_schema("ask");
     ASSERT_NOT_NULL(schema);
@@ -1170,9 +1942,16 @@ TEST(ask_schema_declares_what_the_help_promises) {
     ASSERT_STR_EQ(yyjson_get_str(yyjson_obj_get(yyjson_obj_get(props, "limit"), "type")),
                   "integer");
 
+    const char *pdesc =
+        yyjson_get_str(yyjson_obj_get(yyjson_obj_get(props, "project"), "description"));
+    ASSERT_NOT_NULL(pdesc);
+    ASSERT_NOT_NULL(strstr(pdesc, "OPTIONAL"));
+    ASSERT_NOT_NULL(strstr(pdesc, "working directory"));
+    ASSERT_NOT_NULL(strstr(pdesc, "project_source"));
+
     yyjson_val *required = yyjson_obj_get(root, "required");
     ASSERT_NOT_NULL(required);
-    ASSERT_EQ(yyjson_arr_size(required), 2U);
+    ASSERT_EQ(yyjson_arr_size(required), 1U);
     bool has_q = false;
     bool has_p = false;
     size_t i, max;
@@ -1183,8 +1962,46 @@ TEST(ask_schema_declares_what_the_help_promises) {
         has_p = has_p || (s && strcmp(s, "project") == 0);
     }
     ASSERT_TRUE(has_q);
-    ASSERT_TRUE(has_p);
+    ASSERT_FALSE(has_p);
     yyjson_doc_free(doc);
+    PASS();
+}
+
+/* The two ends must agree about what the tool now returns. A client picks
+ * `include_source` and `limit` out of the SCHEMA, and reads what the answer
+ * contains out of the DESCRIPTION — so an implementation that ships the source
+ * block behind a schema that never mentions it is §2.14's failure again. */
+TEST(ask_schema_documents_the_source_block_and_the_new_default) {
+    const char *schema = hyp_mcp_tool_input_schema("ask");
+    ASSERT_NOT_NULL(schema);
+    yyjson_doc *doc = yyjson_read(schema, strlen(schema), 0);
+    ASSERT_NOT_NULL(doc);
+    yyjson_val *props = yyjson_obj_get(yyjson_doc_get_root(doc), "properties");
+    ASSERT_NOT_NULL(props);
+
+    yyjson_val *inc = yyjson_obj_get(props, "include_source");
+    ASSERT_NOT_NULL(inc);
+    ASSERT_STR_EQ(yyjson_get_str(yyjson_obj_get(inc, "type")), "boolean");
+    ASSERT_TRUE(yyjson_get_bool(yyjson_obj_get(inc, "default"))); /* ON by default */
+    const char *incd = yyjson_get_str(yyjson_obj_get(inc, "description"));
+    ASSERT_NOT_NULL(incd);
+    ASSERT_NOT_NULL(strstr(incd, "40 lines / 1600"));
+    ASSERT_NOT_NULL(strstr(incd, "CUT"));
+
+    yyjson_val *lim = yyjson_obj_get(props, "limit");
+    ASSERT_NOT_NULL(lim);
+    ASSERT_EQ(yyjson_get_int(yyjson_obj_get(lim, "default")), 3);
+    yyjson_doc_free(doc);
+
+    /* And the description a client actually receives — out of tools/list, the
+     * only place it ever sees one — tells it what is about to arrive. */
+    char *listed = hyp_mcp_tools_list();
+    ASSERT_NOT_NULL(listed);
+    ASSERT_NOT_NULL(strstr(listed, "CARRIES THE SOURCE"));
+    ASSERT_NOT_NULL(strstr(listed, "include_source=false"));
+    ASSERT_NOT_NULL(strstr(listed, "NAMES ITS FULL RANGE"));
+    ASSERT_NOT_NULL(strstr(listed, "NOT a confidence"));
+    free(listed);
     PASS();
 }
 
@@ -1492,10 +2309,24 @@ SUITE(ask) {
     RUN_TEST(ask_escalate_query_mode_refuses_without_key_naming_the_variable);
     RUN_TEST(ask_escalate_query_mode_refuses_when_the_index_space_is_unknown);
     RUN_TEST(ask_escalate_query_mode_refuses_a_space_mismatch_naming_both_spaces);
+    RUN_TEST(ask_escalate_refuses_when_a_shared_server_would_spend_the_owners_key);
+    RUN_TEST(ask_escalate_under_caller_custody_is_not_gated_by_the_daemon_key_setting);
+    RUN_TEST(ask_view_overlay_is_gated_by_key_custody_like_the_tool);
+    RUN_TEST(ask_key_custody_disclosure_names_the_variable_and_never_the_key);
     RUN_TEST(ask_escalate_query_mode_without_a_local_index_says_so);
     RUN_TEST(ask_escalate_index_mode_still_refuses_an_unbuilt_escalation_index);
     RUN_TEST(ask_escalate_refuses_an_unrecognised_mode);
     RUN_TEST(ask_schema_describes_both_escalation_modes_and_the_lane_values);
     RUN_TEST(ask_schema_declares_what_the_help_promises);
     RUN_TEST(ask_is_a_separate_tool_and_semantic_query_is_unchanged);
+    RUN_TEST(ask_carries_the_span_text_for_the_top_candidates);
+    RUN_TEST(ask_a_cut_span_names_its_full_range_and_the_call_that_completes_it);
+    RUN_TEST(ask_the_source_block_is_bounded_in_bytes_not_only_lines);
+    RUN_TEST(ask_include_source_false_returns_coordinates_only_and_costs_less);
+    RUN_TEST(ask_says_why_a_span_could_not_be_read_rather_than_omitting_it);
+    RUN_TEST(ask_json_source_reaches_the_client_as_structuredcontent);
+    RUN_TEST(ask_exact_marks_a_name_the_question_spelled_and_is_absent_otherwise);
+    RUN_TEST(ask_a_fence_in_the_source_cannot_close_the_block_early);
+    RUN_TEST(ask_default_limit_is_three_and_limit_is_still_honoured);
+    RUN_TEST(ask_schema_documents_the_source_block_and_the_new_default);
 }

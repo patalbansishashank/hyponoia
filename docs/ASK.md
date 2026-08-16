@@ -92,6 +92,97 @@ them.
 Every answer discloses the model, the language whose prefix was rendered,
 whether any declaration was truncated, and the population searched.
 
+## One call, and the lines named
+
+`ask` returns **3 candidates by default and the source of the top 2**, so a
+common-case question does not need a second `get_code_snippet` round trip.
+
+Real answer, abridged (`lld/ELF`, "Which pass folds together read-only sections
+that turn out to hold byte-identical contents?"):
+
+````
+results: 3  (cols: qn label file lines score)
+  <project>.Options.print_icf_sections Function Options.td 395-397 0.4562
+  <project>.ICF.run Function ICF.cpp 464-580 0.451
+  <project>.SyntheticSections.lld::elf.RelroPaddingSection Class SyntheticSections.h 812-817 0.4478
+
+source: 2  (verbatim lines for the top 2 row(s), capped at 40 lines / 1600 bytes each; a CUT span names its full range and get_code_snippet returns the rest. Pass include_source=false for coordinates only.)
+#1 <project>.Options.print_icf_sections Options.td:395-397 — whole, 3 lines
+```
+defm print_icf_sections: B<"print-icf-sections",
+    "List identical folded sections",
+    "Do not list identical folded sections (default)">;
+```
+#2 <project>.ICF.run ICF.cpp:464-498 of 464-580 — CUT at 35 of 117 lines
+```
+template <class ELFT> void ICF<ELFT>::run() {
+  ...
+```
+````
+
+The fence grows past any backtick run inside the span, so source that is itself
+markdown cannot close the block early.
+
+Every number there is measured on the pinned corpus (`lld/ELF`, the frozen 60):
+
+- **2 spans, not 3.** With `v0.3.1` at `limit=10`, gold landed at rank 1 on 13
+  questions and rank 2 on 10 — and at **rank 3 on none of the 60**. A third
+  span would cost bytes on every question to buy nothing measurable.
+- **40 lines / 1600 bytes per span.** The median gold declaration is 37 lines
+  and 1,382 bytes, so the median one arrives whole; the cap cuts the tail,
+  which is the half where a second call was going to happen anyway.
+- **3,200 bytes for the whole block**, a shared pool, so the answer's size is a
+  bound rather than a consequence.
+- **`limit` 10 → 3.** Rows 4-10 carried a fifth of the answers and most of the
+  bytes. `limit` is still honoured up to 500 for a survey; only the top 2 ever
+  carry text.
+
+A span over the cap is marked `CUT`, names its full line range, and points at
+the call that returns the rest. It is never silently shortened — the same rule
+as `available: false`: a caller must be able to tell from the outside that it is
+holding part of something.
+
+`include_source=false` returns coordinates only.
+
+### What it costs
+
+Tool-result **bytes** over all 60 frozen questions on `lld/ELF`, `v0.3.1`
+against this build (median / mean):
+
+| what the caller gets | calls | median | mean |
+|---|---|---|---|
+| `v0.3.1` `ask`, limit 10 — coordinates, **no code** | 1 | 1,765 | 1,750 |
+| `v0.3.1` `ask` + `get_code_snippet` on the top row — code | **2** | 3,249 | 3,878 |
+| this build, default — **code, one call** | **1** | **2,712** | **2,737** |
+| this build, `include_source=false` | 1 | 925 | 941 |
+| control: this build at limit 10, no source | 1 | 1,775 | 1,823 |
+
+The control reproduces `v0.3.1` to within 10 bytes at the median (the residue is
+the `exact` column, on the 11 of 60 questions where it fires at limit 10), so the
+two rows above it are measuring the same thing. The one-call answer is **16.5%
+below the two-call median and 29.4% below its mean**, and it carries the gold
+declaration's own source text on **23 of 60** questions — exactly the top-2 hit
+rate, since the top 2 are what carry text.
+
+## The `exact` column, which is not a confidence
+
+When at least one candidate's own name is spelled in the question, the rows
+carry an `exact` column and the answer carries one sentence saying what it
+means. `exact=true` is **a fact about two strings** — the question contains that
+declaration's name as a whole word (case-sensitive), or its `Parent::name` tail.
+It is not a score, not a threshold and not a confidence: §2.4 closed score-margin
+gates by measurement when two corpora disagreed 3× on band width, and nothing
+here reopens them. `exact=false` is not evidence against a row, and when nothing
+matched the column is absent entirely rather than a wall of `false`.
+
+Its measured fire rate is the honest half: **0 of 75 gold declarations** on the
+frozen 60. That query set was *built* so every question avoids the word the code
+uses, which makes it the one corpus where an exact-name marker is guaranteed
+silent. It fired at all on 3 of 60 answers at the default limit and 11 of 60 at
+`limit=10` — always on a non-gold row that happened to share a word with the
+question, which is exactly what the column claims and no more. It costs nothing
+when it does not fire.
+
 ## Which agents can call it
 
 The generated agent profiles (`hyponoia`, `hyponoia-auditor`) and the
@@ -166,6 +257,72 @@ so — never a quiet answer from the local encoder that leaves you believing you
 had the expensive one. Every answer carries `lane` (`local`,
 `escalation-query` or `escalation-index`), `query_encoder` and
 `index_encoder`, so the agent holding it knows what it is holding.
+
+### Whose key pays
+
+The key is read from an environment variable at the moment of use and is never
+stored, logged, or put on a command line. That is a rule about the *value*. It
+says nothing about *whose environment* it is read from — and on this product
+those are usually not the same process.
+
+**Every tool call is served by the per-account daemon.** MCP sessions reach it
+through a thin stdio frontend, `hyponoia cli <tool>` connects to it, and the
+graph UI's `/api/embed-view/ask` route runs inside it. The daemon's environment
+was fixed when it was started, so a daemon launched from a shell that exported
+`$VOYAGE_API_KEY` holds that key for its whole life. Measured during §3.1: an
+escalated `ask` returned `lane: escalation-query` for a client that had no key
+in its own environment at all.
+
+That is not a privilege escalation. It is same-uid and local-only, and any
+process that can reach the daemon's socket can also read `/proc/<pid>/environ`,
+so the key was never hidden from it. It is a **spending surface**, and this
+lane's whole design is that money never moves by surprise. So:
+
+| | who can spend | how |
+|---|---|---|
+| `ask.escalation.daemon_key = refuse` | **only a process that holds the key itself** | the daemon refuses to read the key for a client, naming itself and this setting. **The default.** |
+| `ask.escalation.daemon_key = allow` | **any local process of your user account that can reach the daemon** | it spends against the account named by `ask.escalation.key_env`, without holding the key |
+
+**So `ask(escalate=true)` needs `allow`, and that is deliberate.** There is no
+in-process MCP server in this build — the stdio entry point is a thin frontend
+to the daemon — so *every* escalated question is served by a shared process,
+and the default turns escalated `ask` off until you opt in. That is one
+`config set` beside the three the lane already requires, and the refusal you
+get in the meantime names it. `hyponoia embed --escalation` is the exception:
+it runs in your own process with your own environment and never needed the
+setting.
+
+**How to stop it**, in order of bluntness:
+
+```
+hyponoia config set ask.escalation.daemon_key refuse   # the default; revocable live
+hyponoia daemon stop                                   # the process holding the key goes away
+```
+
+The setting is read **per request**, so revoking it takes effect on the next
+question — you do not have to restart the daemon that holds the key. `hyponoia
+daemon status` prints the current policy and the variable name whenever
+`ask.escalation.key_env` is configured.
+
+**None of this touches the local lane.** `escalate=false` reads no key at all,
+so the offline default is unaffected either way and `refuse` costs an offline
+user nothing.
+
+When a shared server *is* allowed to spend, it says so on every answer, beside
+the other disclosures:
+
+```
+key_custody: shared — $VOYAGE_API_KEY was read from the environment of the
+hyponoia daemon (pid 3904334, holding it since 2026-08-16T10:57:04Z), NOT from
+the environment of the process that asked. ask.escalation.daemon_key is
+'allow', so any local process of this user account that can reach this server
+can escalate on that account without holding the key; `hyponoia config set
+ask.escalation.daemon_key refuse` stops that
+```
+
+A process that read the key from its own environment says
+`key_custody: caller — $VOYAGE_API_KEY was read from this process's own
+environment`. The field names the **variable**, never the value.
 
 The record is `engine/hyponoia/runs/XMODEL/` (the frozen 60 and the space
 probe) and `engine/hyponoia/runs/XMODEL-PUBLIC/` (the 8,122-query replication).

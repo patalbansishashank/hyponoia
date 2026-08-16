@@ -2331,6 +2331,74 @@ TEST(tool_search_graph_query_honors_file_pattern_issue552) {
     PASS();
 }
 
+/* BM25 must DEPRIORITISE is_test rows, not hide them.  The two nodes below are
+ * constructed to tie on bm25(): same name, same label, same token counts in
+ * qualified_name and file_path — so the only thing separating them is the
+ * is_test penalty and the `ORDER BY rank, n.id` tie-break.  The TEST node is
+ * inserted FIRST, so it holds the lower id and WOULD win the tie without the
+ * penalty; the assertion is therefore non-vacuous in both directions. */
+TEST(tool_search_graph_bm25_deprioritises_is_test) {
+    hyp_mcp_server_t *srv = hyp_mcp_server_new(NULL);
+    ASSERT_NOT_NULL(srv);
+    hyp_store_t *st = hyp_mcp_server_store(srv);
+    ASSERT_NOT_NULL(st);
+
+    const char *proj = "istest-rank";
+    hyp_mcp_server_set_project(srv, proj);
+    hyp_store_upsert_project(st, proj, "/tmp/istest-rank");
+
+    hyp_node_t test_fn = {0};
+    test_fn.project = proj;
+    test_fn.label = "Function";
+    test_fn.name = "handleBackup";
+    test_fn.qualified_name = "istest-rank.tests.aaa.handleBackup";
+    test_fn.file_path = "tests/aaa.c";
+    test_fn.start_line = 1;
+    test_fn.end_line = 3;
+    test_fn.properties_json = "{\"is_test\":true}";
+    ASSERT_GT(hyp_store_upsert_node(st, &test_fn), 0);
+
+    hyp_node_t prod_fn = {0};
+    prod_fn.project = proj;
+    prod_fn.label = "Function";
+    prod_fn.name = "handleBackup";
+    prod_fn.qualified_name = "istest-rank.core.bbb.handleBackup";
+    prod_fn.file_path = "core/bbb.c";
+    prod_fn.start_line = 1;
+    prod_fn.end_line = 3;
+    prod_fn.properties_json = "{\"is_test\":false}";
+    ASSERT_GT(hyp_store_upsert_node(st, &prod_fn), 0);
+
+    hyp_store_exec(st, "INSERT INTO nodes_fts(nodes_fts) VALUES('delete-all');");
+    ASSERT_EQ(hyp_store_exec(st,
+                             "INSERT INTO nodes_fts(rowid, name, qualified_name, label, "
+                             "file_path) "
+                             "SELECT id, hyp_camel_split(name), qualified_name, label, file_path "
+                             "FROM nodes;"),
+              HYP_STORE_OK);
+
+    char *resp = hyp_mcp_server_handle(
+        srv, "{\"jsonrpc\":\"2.0\",\"id\":871,\"method\":\"tools/call\","
+             "\"params\":{\"name\":\"search_graph\","
+             "\"arguments\":{\"project\":\"istest-rank\",\"query\":\"handleBackup\","
+             "\"limit\":10}}}");
+    ASSERT_NOT_NULL(resp);
+    char *inner = extract_text_content(resp);
+    ASSERT_NOT_NULL(inner);
+    ASSERT_NOT_NULL(strstr(inner, "search_mode: bm25"));
+
+    const char *prod_hit = strstr(inner, "core/bbb.c");
+    const char *test_hit = strstr(inner, "tests/aaa.c");
+    ASSERT_NOT_NULL(prod_hit);
+    ASSERT(test_hit != NULL && "deprioritised, NOT hidden");
+    ASSERT(prod_hit < test_hit && "production declaration outranks the test one");
+
+    free(inner);
+    free(resp);
+    hyp_mcp_server_free(srv);
+    PASS();
+}
+
 /* Resource discovery methods this server doesn't populate must return EMPTY
  * lists, not -32601 Method-not-found: clients like Cline probe them on connect
  * and surface the errors as a failed connection (#958). */
@@ -3830,6 +3898,422 @@ TEST(tool_project_arg_resolves_unique_tail_issue1025) {
     PASS();
 }
 
+/* ══════════════════════════════════════════════════════════════════
+ *  `project` DEFAULTS FROM THE CLIENT'S WORKING DIRECTORY (§3.2 step 2)
+ *
+ *  MEASURED: 120 of 120 runs in the §3.1 token harness spent their FIRST
+ *  tool call on list_projects, after the agent profile had been given a
+ *  sentence spelling out exactly how the project name is derived. Prose
+ *  lost. These tests pin the four outcomes the server now produces instead,
+ *  and — the one that matters most — the one it REFUSES to produce.
+ * ══════════════════════════════════════════════════════════════════ */
+
+static void proj_write_repo(const char *dir, const char *fn_name) {
+    char path[HYP_SZ_512];
+    snprintf(path, sizeof(path), "%s/mod.py", dir);
+    FILE *f = fopen(path, "w");
+    if (!f) {
+        return;
+    }
+    fprintf(f, "def %s(x):\n    return x + 1\n", fn_name);
+    fclose(f);
+}
+
+/* Index `dir` under its DERIVED name (no `name` override) — the shape a real
+ * install produces, and the only shape from which a working directory can be
+ * mapped back to an index. */
+static void proj_index(hyp_mcp_server_t *srv, const char *dir) {
+    char args[HYP_SZ_1K];
+    snprintf(args, sizeof(args), "{\"repo_path\":\"%s\"}", dir);
+    char *r = hyp_mcp_handle_tool(srv, "index_repository", args);
+    free(r);
+}
+
+/* One tool call from a FRESH server standing in `cwd`, unwrapped to the text
+ * the client reads. Fresh because session detection is once-per-server, which
+ * is exactly what a real client gets: one spawn, one working directory. */
+static char *proj_call_from(const char *cwd, const char *tool, const char *args) {
+    if (hyp_chdir(cwd) != 0) {
+        return NULL;
+    }
+    hyp_mcp_server_t *srv = hyp_mcp_server_new(NULL);
+    if (!srv) {
+        return NULL;
+    }
+    char *raw = hyp_mcp_handle_tool(srv, tool, args);
+    char *text = extract_text_content(raw);
+    free(raw);
+    hyp_mcp_server_free(srv);
+    return text;
+}
+
+TEST(tool_project_defaults_from_working_directory_step2) {
+    char repo_a[HYP_SZ_256];
+    char repo_b[HYP_SZ_256];
+    char elsewhere[HYP_SZ_256];
+    char cache[HYP_SZ_256];
+    snprintf(repo_a, sizeof(repo_a), "/tmp/hyp-proja-XXXXXX");
+    snprintf(repo_b, sizeof(repo_b), "/tmp/hyp-projb-XXXXXX");
+    snprintf(elsewhere, sizeof(elsewhere), "/tmp/hyp-projc-XXXXXX");
+    snprintf(cache, sizeof(cache), "/tmp/hyp-projd-XXXXXX");
+    if (!hyp_mkdtemp(repo_a) || !hyp_mkdtemp(repo_b) || !hyp_mkdtemp(elsewhere) ||
+        !hyp_mkdtemp(cache)) {
+        FAIL("mkdtemp failed");
+    }
+    char oldcwd[HYP_SZ_1K];
+    if (!hyp_getcwd(oldcwd, sizeof(oldcwd))) {
+        FAIL("getcwd failed");
+    }
+    const char *saved_cache = getenv("HYP_CACHE_DIR");
+    char *saved_cache_copy = saved_cache ? hyp_strdup(saved_cache) : NULL;
+    hyp_setenv("HYP_CACHE_DIR", cache, 1);
+    hyp_setenv("HYP_INDEX_SUPERVISOR", "0", 1);
+
+    proj_write_repo(repo_a, "alpha_target");
+    proj_write_repo(repo_b, "beta_target");
+
+    char *name_a = hyp_project_name_from_path(repo_a);
+    char *name_b = hyp_project_name_from_path(repo_b);
+    ASSERT_NOT_NULL(name_a);
+    ASSERT_NOT_NULL(name_b);
+
+    hyp_mcp_server_t *indexer = hyp_mcp_server_new(NULL);
+    ASSERT_NOT_NULL(indexer);
+    proj_index(indexer, repo_a);
+    proj_index(indexer, repo_b);
+    hyp_mcp_server_free(indexer);
+
+    char expect[HYP_SZ_2K];
+    char *r = NULL;
+
+    /* (b) The working directory. TWO projects are indexed, so the sole-project
+     * fallback cannot be what answered — the disclosure has to name the cwd. */
+    r = proj_call_from(repo_a, "search_graph", "{\"name_pattern\":\".*alpha.*\"}");
+    ASSERT_NOT_NULL(r);
+    snprintf(expect, sizeof(expect), "project: %s\n", name_a);
+    ASSERT_NOT_NULL(strstr(r, expect));
+    snprintf(expect, sizeof(expect), "project_source: \"derived from working directory %s\"\n",
+             repo_a);
+    ASSERT_NOT_NULL(strstr(r, expect));
+    ASSERT_NOT_NULL(strstr(r, "alpha_target"));
+    free(r);
+
+    /* (a) An explicit argument always wins, even standing in another repo. */
+    char args[HYP_SZ_1K];
+    snprintf(args, sizeof(args), "{\"project\":\"%s\",\"name_pattern\":\".*beta.*\"}", name_b);
+    r = proj_call_from(repo_a, "search_graph", args);
+    ASSERT_NOT_NULL(r);
+    snprintf(expect, sizeof(expect), "project: %s\n", name_b);
+    ASSERT_NOT_NULL(strstr(r, expect));
+    ASSERT_NOT_NULL(strstr(r, "project_source: supplied\n"));
+    ASSERT_NOT_NULL(strstr(r, "beta_target"));
+    free(r);
+
+    /* (b) from a SUBDIRECTORY: an agent started one level down is still in the
+     * repo, and the disclosure names both paths rather than half of them. */
+    char sub[HYP_SZ_512];
+    snprintf(sub, sizeof(sub), "%s/sub", repo_a);
+    ASSERT_EQ(hyp_mkdir(sub), 0);
+    r = proj_call_from(sub, "search_graph", "{\"name_pattern\":\".*alpha.*\"}");
+    ASSERT_NOT_NULL(r);
+    snprintf(expect, sizeof(expect), "project: %s\n", name_a);
+    ASSERT_NOT_NULL(strstr(r, expect));
+    snprintf(expect, sizeof(expect),
+             "project_source: \"derived from working directory %s (indexed root %s)\"\n", sub,
+             repo_a);
+    ASSERT_NOT_NULL(strstr(r, expect));
+    free(r);
+
+    /* THE REFUSAL. Outside every indexed tree with more than one candidate,
+     * the server does NOT pick — it names them. This is the case an
+     * "improvement" would quietly get wrong. */
+    r = proj_call_from(elsewhere, "search_graph", "{\"name_pattern\":\".*\"}");
+    ASSERT_NOT_NULL(r);
+    ASSERT_NOT_NULL(strstr(r, "which project?"));
+    ASSERT_NOT_NULL(strstr(r, name_a));
+    ASSERT_NOT_NULL(strstr(r, name_b));
+    ASSERT_NULL(strstr(r, "project_source"));
+    free(r);
+
+    /* ingest_traces answers without opening a store, so it is the one tool
+     * that reaches its emitter with nothing resolved — and it must not report
+     * an empty project as "supplied". A disclosure that lies about the easy
+     * case is not worth reading in the hard one. */
+    r = proj_call_from(elsewhere, "ingest_traces", "{\"traces\":[]}");
+    ASSERT_NOT_NULL(r);
+    ASSERT_NULL(strstr(r, "\"project_source\":\"supplied\""));
+    ASSERT_NOT_NULL(strstr(r, "no project argument, and none could be derived"));
+    free(r);
+
+    /* delete_project is the holdout: destructive, so never derived. */
+    r = proj_call_from(repo_a, "delete_project", "{}");
+    ASSERT_NOT_NULL(r);
+    ASSERT_NOT_NULL(strstr(r, "project is required"));
+    ASSERT_NULL(strstr(r, name_a));
+    free(r);
+
+    /* (c) The sole indexed project. With B's db gone there is exactly one
+     * candidate, and standing outside every repo now resolves to it. */
+    cleanup_project_db(cache, name_b);
+    r = proj_call_from(elsewhere, "search_graph", "{\"name_pattern\":\".*alpha.*\"}");
+    ASSERT_NOT_NULL(r);
+    snprintf(expect, sizeof(expect), "project: %s\n", name_a);
+    ASSERT_NOT_NULL(strstr(r, expect));
+    ASSERT_NOT_NULL(strstr(r, "project_source: \"the only indexed project\"\n"));
+    free(r);
+
+    /* And `ask`, the tool the measurement was about, discloses the same way
+     * even when its semantic index was never built. */
+    r = proj_call_from(repo_a, "ask", "{\"question\":\"where is the target\"}");
+    ASSERT_NOT_NULL(r);
+    snprintf(expect, sizeof(expect), "project: %s\n", name_a);
+    ASSERT_NOT_NULL(strstr(r, expect));
+    ASSERT_NOT_NULL(strstr(r, "project_source: \"derived from working directory"));
+    free(r);
+
+    free(name_a);
+    free(name_b);
+    if (hyp_chdir(oldcwd) != 0) {
+        FAIL("chdir back failed");
+    }
+    if (saved_cache_copy) {
+        hyp_setenv("HYP_CACHE_DIR", saved_cache_copy, 1);
+        free(saved_cache_copy);
+    } else {
+        hyp_unsetenv("HYP_CACHE_DIR");
+    }
+    th_rmtree(repo_a);
+    th_rmtree(repo_b);
+    th_rmtree(elsewhere);
+    th_rmtree(cache);
+    PASS();
+}
+
+/* EVERY tool that can derive its project must SAY it did — on every one of its
+ * answer shapes, tree and json alike.
+ *
+ * This exists because the first pass missed one: search_graph's ranked (BM25)
+ * path returns from inside a helper, several returns before the emitter the
+ * handler itself owns, so a fix written by reading handler bodies disclosed on
+ * the regex path and not the ranked one — the path the measured harness
+ * actually used. §2.14: an enumerated fix is only as good as its enumeration,
+ * so the enumeration here is DERIVED. The tool list comes from tools/list, the
+ * table below must cover it exactly, and a new tool with an optional `project`
+ * fails this test until someone drives it. */
+typedef struct {
+    const char *tool;
+    const char *args;
+} project_disclosure_case_t;
+
+static const project_disclosure_case_t PROJECT_DISCLOSURE_CASES[] = {
+    {"search_graph", "{\"query\":\"alpha\",\"limit\":2}"},
+    {"search_graph", "{\"name_pattern\":\".*alpha.*\",\"limit\":2}"},
+    {"search_graph", "{\"query\":\"alpha\",\"limit\":2,\"format\":\"json\"}"},
+    {"search_graph", "{\"name_pattern\":\".*alpha.*\",\"limit\":2,\"format\":\"json\"}"},
+    {"ask", "{\"question\":\"where does alpha live\"}"},
+    {"ask", "{\"question\":\"where does alpha live\",\"format\":\"json\"}"},
+    {"query_graph", "{\"query\":\"MATCH (f:Function) RETURN f.name\"}"},
+    {"query_graph", "{\"query\":\"MATCH (f:Function) RETURN f.name\",\"format\":\"json\"}"},
+    {"trace_path", "{\"function_name\":\"alpha_target\",\"depth\":1}"},
+    {"trace_path", "{\"function_name\":\"alpha_target\",\"depth\":1,\"format\":\"json\"}"},
+    {"get_code_snippet", "{\"qualified_name\":\"alpha_target\"}"},
+    {"get_graph_schema", "{}"},
+    {"get_architecture", "{}"},
+    {"get_architecture", "{\"aspects\":[\"overview\"]}"},
+    {"search_code", "{\"pattern\":\"alpha_target\",\"limit\":2}"},
+    {"index_status", "{}"},
+    {"check_index_coverage", "{\"paths\":[\"mod.py\"]}"},
+    {"detect_changes", "{\"scope\":\"files\"}"},
+    {"detect_changes", "{\"scope\":\"files\",\"format\":\"json\"}"},
+    {"manage_adr", "{\"mode\":\"get\"}"},
+    {"ingest_traces", "{\"traces\":[]}"},
+};
+
+TEST(tool_every_derivable_project_answer_discloses_its_source_step2) {
+    char repo[HYP_SZ_256];
+    char cache[HYP_SZ_256];
+    snprintf(repo, sizeof(repo), "/tmp/hyp-projdisc-XXXXXX");
+    snprintf(cache, sizeof(cache), "/tmp/hyp-projdiscc-XXXXXX");
+    if (!hyp_mkdtemp(repo) || !hyp_mkdtemp(cache)) {
+        FAIL("mkdtemp failed");
+    }
+    char oldcwd[HYP_SZ_1K];
+    if (!hyp_getcwd(oldcwd, sizeof(oldcwd))) {
+        FAIL("getcwd failed");
+    }
+    const char *saved_cache = getenv("HYP_CACHE_DIR");
+    char *saved_cache_copy = saved_cache ? hyp_strdup(saved_cache) : NULL;
+    hyp_setenv("HYP_CACHE_DIR", cache, 1);
+    hyp_setenv("HYP_INDEX_SUPERVISOR", "0", 1);
+    proj_write_repo(repo, "alpha_target");
+
+    hyp_mcp_server_t *indexer = hyp_mcp_server_new(NULL);
+    ASSERT_NOT_NULL(indexer);
+    proj_index(indexer, repo);
+    hyp_mcp_server_free(indexer);
+
+    /* The enumeration, read off the wire. */
+    hyp_mcp_server_t *lister = hyp_mcp_server_new(NULL);
+    ASSERT_NOT_NULL(lister);
+    char *listed = hyp_mcp_server_handle(
+        lister, "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/list\",\"params\":{}}");
+    ASSERT_NOT_NULL(listed);
+    yyjson_doc *ldoc = yyjson_read(listed, strlen(listed), 0);
+    ASSERT_NOT_NULL(ldoc);
+    yyjson_val *tools =
+        yyjson_obj_get(yyjson_obj_get(yyjson_doc_get_root(ldoc), "result"), "tools");
+    ASSERT_NOT_NULL(tools);
+    int uncovered = 0;
+    size_t ti, tmax;
+    yyjson_val *tool;
+    yyjson_arr_foreach(tools, ti, tmax, tool) {
+        const char *tname = yyjson_get_str(yyjson_obj_get(tool, "name"));
+        yyjson_val *sch = yyjson_obj_get(tool, "inputSchema");
+        yyjson_val *props = sch ? yyjson_obj_get(sch, "properties") : NULL;
+        if (!tname || !props || !yyjson_obj_get(props, "project")) {
+            continue;
+        }
+        bool req_project = false;
+        yyjson_val *req = yyjson_obj_get(sch, "required");
+        if (req && yyjson_is_arr(req)) {
+            size_t ri, rmax;
+            yyjson_val *e;
+            yyjson_arr_foreach(req, ri, rmax, e) {
+                if (yyjson_is_str(e) && strcmp(yyjson_get_str(e), "project") == 0) {
+                    req_project = true;
+                }
+            }
+        }
+        if (req_project) {
+            continue; /* delete_project — never derived, nothing to disclose */
+        }
+        bool covered = false;
+        for (size_t c = 0; c < sizeof(PROJECT_DISCLOSURE_CASES) / sizeof(*PROJECT_DISCLOSURE_CASES);
+             c++) {
+            if (strcmp(PROJECT_DISCLOSURE_CASES[c].tool, tname) == 0) {
+                covered = true;
+            }
+        }
+        if (!covered) {
+            fprintf(stderr, "  [step2] %s takes an optional project and is not driven here\n",
+                    tname);
+            uncovered++;
+        }
+    }
+    yyjson_doc_free(ldoc);
+    free(listed);
+    hyp_mcp_server_free(lister);
+
+    int missing = 0;
+    if (hyp_chdir(repo) != 0) {
+        FAIL("chdir failed");
+    }
+    for (size_t c = 0; c < sizeof(PROJECT_DISCLOSURE_CASES) / sizeof(*PROJECT_DISCLOSURE_CASES);
+         c++) {
+        hyp_mcp_server_t *srv = hyp_mcp_server_new(NULL);
+        ASSERT_NOT_NULL(srv);
+        char *r = hyp_mcp_handle_tool(srv, PROJECT_DISCLOSURE_CASES[c].tool,
+                                      PROJECT_DISCLOSURE_CASES[c].args);
+        if (!r || !strstr(r, "project_source")) {
+            fprintf(stderr, "  [step2] %s %s did not disclose: %.160s\n",
+                    PROJECT_DISCLOSURE_CASES[c].tool, PROJECT_DISCLOSURE_CASES[c].args,
+                    r ? r : "(null)");
+            missing++;
+        }
+        free(r);
+        hyp_mcp_server_free(srv);
+    }
+
+    if (hyp_chdir(oldcwd) != 0) {
+        FAIL("chdir back failed");
+    }
+    if (saved_cache_copy) {
+        hyp_setenv("HYP_CACHE_DIR", saved_cache_copy, 1);
+        free(saved_cache_copy);
+    } else {
+        hyp_unsetenv("HYP_CACHE_DIR");
+    }
+    th_rmtree(repo);
+    th_rmtree(cache);
+    if (uncovered) {
+        FAIL("a tool with an optional project argument is not driven by this test");
+    }
+    if (missing) {
+        FAIL("a derivable answer did not say which project it used");
+    }
+    PASS();
+}
+
+/* The enumeration, DERIVED rather than written down (§2.14: an enumerated fix
+ * is only as good as its enumeration). Every advertised tool that declares a
+ * `project` property must declare it optional and describe the derivation —
+ * except delete_project, which must still require it. A tool added later with
+ * a copy-pasted `"required":["project"]` fails here. */
+TEST(mcp_project_argument_is_optional_on_every_tool_but_delete_step2) {
+    hyp_mcp_server_t *srv = hyp_mcp_server_new(NULL);
+    ASSERT_NOT_NULL(srv);
+    char *resp = hyp_mcp_server_handle(
+        srv, "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/list\",\"params\":{}}");
+    ASSERT_NOT_NULL(resp);
+    yyjson_doc *doc = yyjson_read(resp, strlen(resp), 0);
+    ASSERT_NOT_NULL(doc);
+    yyjson_val *tools = yyjson_obj_get(yyjson_obj_get(yyjson_doc_get_root(doc), "result"), "tools");
+    ASSERT_NOT_NULL(tools);
+
+    int with_project = 0;
+    int optional = 0;
+    int required = 0;
+    char required_names[HYP_SZ_512] = "";
+    size_t ti, tmax;
+    yyjson_val *tool;
+    yyjson_arr_foreach(tools, ti, tmax, tool) {
+        const char *tname = yyjson_get_str(yyjson_obj_get(tool, "name"));
+        yyjson_val *schema = yyjson_obj_get(tool, "inputSchema");
+        yyjson_val *props = schema ? yyjson_obj_get(schema, "properties") : NULL;
+        yyjson_val *proj = props ? yyjson_obj_get(props, "project") : NULL;
+        if (!tname || !proj) {
+            continue;
+        }
+        with_project++;
+        bool is_required = false;
+        yyjson_val *req = yyjson_obj_get(schema, "required");
+        if (req && yyjson_is_arr(req)) {
+            size_t ri, rmax;
+            yyjson_val *entry;
+            yyjson_arr_foreach(req, ri, rmax, entry) {
+                if (yyjson_is_str(entry) && strcmp(yyjson_get_str(entry), "project") == 0) {
+                    is_required = true;
+                }
+            }
+        }
+        if (is_required) {
+            required++;
+            size_t used = strlen(required_names);
+            snprintf(required_names + used, sizeof(required_names) - used, "%s%s", used ? "," : "",
+                     tname);
+            continue;
+        }
+        optional++;
+        const char *desc = yyjson_get_str(yyjson_obj_get(proj, "description"));
+        if (!desc || !strstr(desc, "OPTIONAL") || !strstr(desc, "working directory") ||
+            !strstr(desc, "project_source")) {
+            fprintf(stderr, "  [step2] %s: optional project without the derivation contract\n",
+                    tname);
+            ASSERT_TRUE(false);
+        }
+    }
+    yyjson_doc_free(doc);
+    free(resp);
+    hyp_mcp_server_free(srv);
+
+    /* 14 tools take `project`; exactly one still demands it. */
+    ASSERT_EQ(with_project, 14);
+    ASSERT_EQ(optional, 13);
+    ASSERT_EQ(required, 1);
+    ASSERT_TRUE(strcmp(required_names, "delete_project") == 0);
+    PASS();
+}
+
 /* Regression for #604: path scopes architecture totals and content. */
 TEST(tool_get_architecture_path_scoping) {
     hyp_mcp_server_t *srv = hyp_mcp_server_new(NULL);
@@ -4447,33 +4931,49 @@ TEST(search_code_ampersand_accepted_issue272) {
     PASS();
 }
 
-TEST(tool_detect_changes_no_project) {
+/* `project` is optional now, so "omitted" no longer means "unresolvable": the
+ * only way to reach the refusal deterministically is to run against a cache
+ * dir with nothing in it. That isolation is also what these two tests always
+ * needed — they used to read the developer's real cache and pass by luck. */
+static char *proj_call_with_empty_cache(const char *request) {
+    char cache[HYP_SZ_256];
+    snprintf(cache, sizeof(cache), "/tmp/hyp-noproj-XXXXXX");
+    if (!hyp_mkdtemp(cache)) {
+        return NULL;
+    }
+    const char *saved = getenv("HYP_CACHE_DIR");
+    char *saved_copy = saved ? hyp_strdup(saved) : NULL;
+    hyp_setenv("HYP_CACHE_DIR", cache, 1);
     hyp_mcp_server_t *srv = hyp_mcp_server_new(NULL);
+    char *resp = srv ? hyp_mcp_server_handle(srv, request) : NULL;
+    hyp_mcp_server_free(srv);
+    restore_cache_dir(saved_copy);
+    free(saved_copy);
+    th_rmtree(cache);
+    return resp;
+}
 
+TEST(tool_detect_changes_no_project) {
     char *resp =
-        hyp_mcp_server_handle(srv, "{\"jsonrpc\":\"2.0\",\"id\":35,\"method\":\"tools/call\","
+        proj_call_with_empty_cache("{\"jsonrpc\":\"2.0\",\"id\":35,\"method\":\"tools/call\","
                                    "\"params\":{\"name\":\"detect_changes\","
                                    "\"arguments\":{}}}");
     ASSERT_NOT_NULL(resp);
-    ASSERT_NOT_NULL(strstr(resp, "missing required argument: project"));
+    ASSERT_NOT_NULL(strstr(resp, "which project?"));
+    ASSERT_NOT_NULL(strstr(resp, "No projects indexed yet"));
     free(resp);
-
-    hyp_mcp_server_free(srv);
     PASS();
 }
 
 TEST(tool_manage_adr_no_project) {
-    hyp_mcp_server_t *srv = hyp_mcp_server_new(NULL);
-
     char *resp =
-        hyp_mcp_server_handle(srv, "{\"jsonrpc\":\"2.0\",\"id\":36,\"method\":\"tools/call\","
+        proj_call_with_empty_cache("{\"jsonrpc\":\"2.0\",\"id\":36,\"method\":\"tools/call\","
                                    "\"params\":{\"name\":\"manage_adr\","
                                    "\"arguments\":{}}}");
     ASSERT_NOT_NULL(resp);
-    ASSERT_NOT_NULL(strstr(resp, "missing required argument: project"));
+    ASSERT_NOT_NULL(strstr(resp, "which project?"));
+    ASSERT_NOT_NULL(strstr(resp, "No projects indexed yet"));
     free(resp);
-
-    hyp_mcp_server_free(srv);
     PASS();
 }
 
@@ -10540,6 +11040,7 @@ SUITE(mcp) {
     RUN_TEST(tool_output_regression_gate);
     RUN_TEST(tool_output_byte_budgets);
     RUN_TEST(tool_search_graph_query_honors_file_pattern_issue552);
+    RUN_TEST(tool_search_graph_bm25_deprioritises_is_test);
     RUN_TEST(mcp_resource_discovery_methods_return_empty_lists);
     RUN_TEST(tool_query_graph_basic);
     RUN_TEST(tool_index_status_no_project);
@@ -10572,6 +11073,9 @@ SUITE(mcp) {
     RUN_TEST(tool_get_architecture_accepts_project_name_alias_issue640);
     RUN_TEST(tool_search_graph_accepts_project_name_alias_issue640);
     RUN_TEST(tool_project_arg_resolves_unique_tail_issue1025);
+    RUN_TEST(tool_project_defaults_from_working_directory_step2);
+    RUN_TEST(tool_every_derivable_project_answer_discloses_its_source_step2);
+    RUN_TEST(mcp_project_argument_is_optional_on_every_tool_but_delete_step2);
     RUN_TEST(tool_get_architecture_path_scoping);
     RUN_TEST(tool_query_graph_missing_query);
 

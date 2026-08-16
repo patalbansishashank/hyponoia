@@ -7,12 +7,14 @@ Getting the binary onto your machine and your agent talking to it.
 > **Where the project actually is.** `v0.3.1` is the current release — the
 > one-liners and release archives below work, and it is the first release whose
 > Linux x86-64 build is also published with GPU (Vulkan) embedding as a separate
-> archive. The **package managers do not yet**: Homebrew, Scoop, Chocolatey, AUR
-> and winget manifests are in-tree but their checksums are zeroed until the real
-> values are copied from this release's `checksums.txt`, and none has been
-> submitted to its registry — so install from the script or the archive for now.
-> **[Building from source](#build-from-source)** remains supported everywhere,
-> and is the only path on macOS.
+> archive. The **package managers mostly do not yet**: the Scoop, Chocolatey,
+> AUR and winget manifests are in-tree, carry this release's real checksums, and
+> have been submitted to **no** registry — so install from the script or the
+> archive. The one exception is **Homebrew**, which needs no registry: this
+> repository is itself the tap, and `brew tap` + `brew install` below work
+> today. **[Building from source](#build-from-source)** remains supported
+> everywhere, and is the only path on macOS. What submitting the other four
+> would involve is written up in [Packaging](PACKAGING.md).
 
 ## Build from source
 
@@ -43,9 +45,10 @@ build/c/test-runner --list-suites   # what is available
 
 ---
 
-*The direct downloads and the install scripts below are live as of `v0.3.1`. The
-package-manager entries are not yet submitted to their registries — see the note
-at the top.*
+*The direct downloads and the install scripts below are live as of `v0.3.1`.
+Homebrew works today; the Scoop, Chocolatey, AUR and winget entries are not yet
+submitted to their registries — see the note at the top and
+[Packaging](PACKAGING.md).*
 
 ## Pre-built Binaries
 
@@ -58,6 +61,7 @@ One archive per platform, and it includes the graph UI:
 |----------|---------|
 | Linux (x86_64) | `hyponoia-ui-linux-amd64.tar.gz` |
 | Linux (x86_64, static) | `hyponoia-ui-linux-amd64-portable.tar.gz` |
+| Linux (x86_64, GPU/Vulkan) | `hyponoia-ui-linux-amd64-gpu.tar.gz` |
 | Linux (ARM64) | `hyponoia-ui-linux-arm64.tar.gz` |
 | Linux (ARM64, static) | `hyponoia-ui-linux-arm64-portable.tar.gz` |
 | Windows (x86_64) | `hyponoia-ui-windows-amd64.zip` |
@@ -72,6 +76,49 @@ There is no macOS download and no ARM64 Windows download. On macOS,
 ARM64 Windows, use the amd64 archive under emulation.
 
 Every release includes `checksums.txt` with SHA-256 hashes. Keep the native executable together with the authenticated `hyp-integrations.json` asset and its single content-addressed `hyp-ui-<sha256>.pack`. Linux `-portable` archives contain the fully static builds; ordinary platform archives use their native system ABI.
+
+### The GPU (Vulkan) archive
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/patalbansishashank/hyponoia/main/install.sh | bash -s -- --gpu
+```
+
+`hyponoia-ui-linux-amd64-gpu.tar.gz` is the same six-member UI archive as every
+other one; only the binary differs. It is built `HYP_ASK_GPU=vulkan STATIC=0`,
+so it is dynamically linked and needs a Vulkan loader — `libvulkan.so.1` —
+present at runtime. It is not a fallback build: without the loader it cannot
+start at all, and `install.sh --gpu` warns before downloading if it cannot find
+one (Debian/Ubuntu `libvulkan1`, Fedora `vulkan-loader`, Arch
+`vulkan-icd-loader`).
+
+What the GPU actually does: **`hyponoia embed` runs on the GPU, and nothing
+else does.** `ask` encodes the question on the CPU in every build, because one
+short query is not worth a device round trip. So the GPU archive shortens the
+opt-in second pass over a repository; it does not make queries faster.
+
+Limits, and what `--gpu` does when it cannot be honoured:
+
+| Situation | Behaviour |
+|-----------|-----------|
+| linux-amd64, release publishes the GPU archive | Installs it, verifying its SHA-256 from `checksums.txt` like every other variant |
+| Any other OS/arch (`linux-arm64`, Windows) | Refuses by name — no GPU archive is published for that platform. It never silently installs the CPU archive |
+| A release whose `checksums.txt` lists no GPU archive | Refuses by name, before downloading anything |
+| Windows (`install.ps1 --gpu`) | Refuses by name — there is no Windows GPU archive |
+| No Vulkan loader found | Warns and continues; install the loader afterwards and the same binary works |
+
+`install.sh` prints which variant landed on every path, GPU or not:
+
+```
+Installed: hyponoia 0.3.1
+  variant: ui + GPU (Vulkan) (from hyponoia-ui-linux-amd64-gpu.tar.gz)
+```
+
+**Updates keep the flavour.** `hyponoia update` does not update anything itself —
+it prints `bash <dir>/install.sh` for you to run, with no flags — so a GPU
+install would come back as a CPU install unless the choice were recorded.
+`install.sh --gpu` writes `hyp-install-variant` beside the binary, and a run
+with neither `--gpu` nor `--cpu` reuses it. Pass `--cpu` to move a GPU install
+back to the portable CPU build; that removes the marker.
 
 > **Windows note**: SmartScreen may show a warning for unsigned software. Click **"More info"** → **"Run anyway"**. Verify integrity with `checksums.txt`.
 
@@ -105,7 +152,28 @@ curl -fsSL https://raw.githubusercontent.com/patalbansishashank/hyponoia/main/sc
 
 </details>
 
+## Homebrew (Linux)
+
+The formula is served from this repository — there is no separate tap
+repository and nothing to submit:
+
+```bash
+brew tap patalbansishashank/hyponoia https://github.com/patalbansishashank/hyponoia
+brew install hyponoia
+```
+
+It installs the fully static `-portable` build, so it does not care how old the
+distribution's glibc is. There is no macOS formula: macOS is a
+[retired platform](MAINTAINERS.md#retired-platforms) and `brew` refuses there
+with "Linux is required for this software" before downloading anything.
+
 ## AUR (Arch Linux)
+
+**Not published yet.** `https://aur.archlinux.org/packages/hyponoia-bin` is a
+404 today — this page previously claimed otherwise. The `PKGBUILD` and
+`.SRCINFO` are in-tree at [`pkg/aur/`](../pkg/aur/) and validate against
+`v0.3.1`; what remains is an AUR account and one `git push`, written up in
+[Packaging](PACKAGING.md#aur). Once it is pushed:
 
 ```bash
 yay -S hyponoia-bin
@@ -115,7 +183,11 @@ yay -S hyponoia-bin
 paru -S hyponoia-bin
 ```
 
-The `hyponoia-bin` package is available at: https://aur.archlinux.org/packages/hyponoia-bin
+Until then, build it locally from the in-tree PKGBUILD:
+
+```bash
+cp pkg/aur/PKGBUILD /tmp/hyponoia-bin/ && cd /tmp/hyponoia-bin && makepkg -si
+```
 
 ## Install via Claude Code
 
@@ -149,6 +221,35 @@ scripts/build.sh --with-ui          # with graph visualization
 ```
 
 Every platform builds a **verified runtime set**: the native executable, `hyp-integrations.json`, and—when `--with-ui` is selected—exactly one content-addressed `hyp-ui-<sha256>.pack`. These files are authenticated and published together; do not separate the executable from its sidecars.
+
+`build/c/hyponoia --version` prints the semantic version and a build identifier
+— the first 12 hex characters of the SHA-256 of the executable itself, the same
+value `hyponoia daemon status` shows on its `build:` line. A build made without
+an injected version therefore reports `hyponoia dev (37fce2c7b9f8)` rather than
+a bare `dev`, so a bug report from a development build names exactly one
+binary. `scripts/build.sh --build-sha <value>` replaces it with a source
+identifier of your choosing (for example `git rev-parse --short=12 HEAD`).
+
+**Installing from a world-writable location is refused.** `install` copies the
+running executable, and it will not do so while any directory above that
+executable is group- or world-writable — otherwise another account could
+substitute the file between the safety check and the copy. Checkouts on shared
+mounts frequently hit this (`/media`, `/srv`, some `/mnt` layouts). The refusal
+names the exact directory and its mode, changes nothing, and exits non-zero:
+
+```
+error: install refused before any file was changed: the source directory "/media/DEV"
+is group- and world-writable (mode 0777; install requires the 0022 bits clear on every
+directory above the binary being installed, so that no other account can substitute the
+file between the safety check and the copy)
+```
+
+Copy the runtime set into a directory you own privately and install from there:
+
+```bash
+mkdir -p ~/hyp-install && cp build/c/hyponoia build/c/hyp-* ~/hyp-install/
+~/hyp-install/hyponoia install
+```
 
 Run the test suite (6,768 tests across 120 suites):
 

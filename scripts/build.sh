@@ -19,7 +19,8 @@ cd "$ROOT"
 
 usage() {
     cat <<'EOF'
-Usage: scripts/build.sh [--with-ui] [--version V] [--arch ARCH] [VAR=VAL ...]
+Usage: scripts/build.sh [--with-ui] [--version V] [--build-sha S] [--arch ARCH]
+                        [VAR=VAL ...]
 
 The canonical production-build entry: identical in local CI, PR CI, dry run
 and release. Always a CLEAN build of BUILD_DIR (build/c by default) — the
@@ -31,6 +32,13 @@ construction (CCACHE_COMPILERCHECK=content).
 Options:
   --with-ui       Build the web UI as a content-addressed sidecar (needs node).
   --version V     Stamp the version string (release venue passes the tag).
+  --build-sha S   Stamp a source identifier (e.g. "$(git rev-parse --short=12
+                  HEAD)$(git diff --quiet || echo -dirty)") into --version's
+                  output. Explicit on purpose: BUILD_CONFIG_SIG carries
+                  CFLAGS_EXTRA, so a value that changed on every commit would
+                  force a full rebuild on every commit. Without it --version
+                  falls back to hashing the executable image, which identifies
+                  the binary but not the tree it came from.
   --arch ARCH     Force target arch (arm64 | x86_64), e.g. under Rosetta.
   -h, --help      This text.
 
@@ -88,6 +96,7 @@ source "$ROOT/scripts/path-safety.sh"
 # clobbering the host's native build/c artifacts.
 WITH_UI=false
 VERSION=""
+BUILD_SHA=""
 BUILD_DIR="build/c"
 EXTRA_MAKE_ARGS=()
 
@@ -102,7 +111,7 @@ for arg in "$@"; do
         --with-ui)
             WITH_UI=true
             ;;
-        --version)
+        --version|--build-sha)
             prev_arg="$arg"
             continue
             ;;
@@ -126,10 +135,12 @@ for arg in "$@"; do
             EXTRA_MAKE_ARGS+=("$arg") # VAR=VAL make passthrough
             ;;
         *)
-            # Bare words are only ever the value of --version; anything else is
-            # a usage error, not a silent make argument.
+            # Bare words are only ever the value of --version or --build-sha;
+            # anything else is a usage error, not a silent make argument.
             if [[ "${prev_arg:-}" == "--version" ]]; then
                 VERSION="$arg"
+            elif [[ "${prev_arg:-}" == "--build-sha" ]]; then
+                BUILD_SHA="$arg"
             else
                 echo "build.sh: unexpected argument '$arg'. Please consult --help." >&2
                 exit 2
@@ -145,9 +156,18 @@ if [[ -n "$VERSION" ]]; then
     CLEAN_VERSION="${VERSION#v}"
     CFLAGS_EXTRA="-DHYP_VERSION=\"\\\"$CLEAN_VERSION\\\"\""
 fi
+# Source identifier. A literal single quote would break BUILD_CONFIG_SIG's
+# single-quoted stamp write, so refuse one rather than corrupt the stamp.
+if [[ -n "$BUILD_SHA" ]]; then
+    if [[ "$BUILD_SHA" == *"'"* || "$BUILD_SHA" == *'"'* || "$BUILD_SHA" == *'\'* ]]; then
+        echo "build.sh: --build-sha must not contain quotes or backslashes." >&2
+        exit 2
+    fi
+    CFLAGS_EXTRA="$CFLAGS_EXTRA -DHYP_BUILD_SHA=\"\\\"$BUILD_SHA\\\"\""
+fi
 
 print_env "build.sh"
-echo "  ui=$WITH_UI version=${VERSION:-dev}"
+echo "  ui=$WITH_UI version=${VERSION:-dev} build_sha=${BUILD_SHA:-<image hash>}"
 
 # Verify compiler supports target arch
 verify_compiler "$CC"

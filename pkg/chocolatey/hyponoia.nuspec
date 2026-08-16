@@ -3,12 +3,18 @@
   <metadata>
     <id>hyponoia</id>
     <version>0.3.1</version>
+    <!-- packageSourceUrl points at the packaging, not the product: it is the
+         first thing a Chocolatey moderator looks for, because it is how the
+         next maintainer finds the nuspec that produced the package. -->
+    <packageSourceUrl>https://github.com/patalbansishashank/hyponoia/tree/main/pkg/chocolatey</packageSourceUrl>
+    <owners>patalbansishashank</owners>
     <title>Hyponoia</title>
     <authors>patalbansishashank</authors>
     <projectUrl>https://github.com/patalbansishashank/hyponoia</projectUrl>
     <licenseUrl>https://github.com/patalbansishashank/hyponoia/blob/main/LICENSE</licenseUrl>
     <requireLicenseAcceptance>false</requireLicenseAcceptance>
     <projectSourceUrl>https://github.com/patalbansishashank/hyponoia</projectSourceUrl>
+    <docsUrl>https://github.com/patalbansishashank/hyponoia/blob/main/docs/INSTALL.md</docsUrl>
     <bugTrackerUrl>https://github.com/patalbansishashank/hyponoia/issues</bugTrackerUrl>
     <tags>mcp ai claude code-intelligence codebase developer-tools tree-sitter llm</tags>
     <summary>Fast code intelligence engine for AI coding agents</summary>
@@ -28,7 +34,11 @@ After installation, run:
 
 to configure your coding agents automatically.
     </description>
-    <releaseNotes>https://github.com/patalbansishashank/hyponoia/releases/tag/v0.8.1</releaseNotes>
+    <!-- The tag this package actually installs. v0.8.1 stood here and 404s:
+         it is a DeusData-era version from the inherited tag line, and it
+         survived every version bump because nothing follows this URL. It is
+         the one field in the nuspec that is not derived from $version. -->
+    <releaseNotes>https://github.com/patalbansishashank/hyponoia/releases/tag/v0.3.1</releaseNotes>
   </metadata>
   <files>
     <file src="tools\**" target="tools" />

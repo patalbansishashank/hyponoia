@@ -200,6 +200,7 @@ typedef struct {
 static hyp_cli_activation_ops_t g_cli_activation_test_ops;
 static bool g_cli_activation_test_ops_set = false;
 static const char *g_cli_activation_runtime_parent_for_test = NULL;
+static const char *g_cli_install_candidate_for_test = NULL;
 
 static void cli_activation_diagnostic(const hyp_cli_activation_ops_t *ops, const char *message) {
     const char *diagnostic = message ? message : CLI_ACTIVATION_REFUSED_MESSAGE;
@@ -276,6 +277,10 @@ bool hyp_cli_activation_test_ops_installed(void) {
 
 void hyp_cli_set_activation_runtime_parent_for_test(const char *runtime_parent) {
     g_cli_activation_runtime_parent_for_test = runtime_parent;
+}
+
+void hyp_cli_set_install_candidate_for_test(const char *candidate_path) {
+    g_cli_install_candidate_for_test = candidate_path;
 }
 
 static const char *cli_activation_action_text(hyp_daemon_runtime_activation_action_t action) {
@@ -6548,6 +6553,24 @@ int hyp_config_validate(const char *key, const char *value, char *err, size_t er
                  key, HYP_CONFIG_ASK_ESC_MODE_QUERY, HYP_CONFIG_ASK_ESC_MODE_INDEX, value);
         return CLI_ERR;
     }
+    if (strcmp(key, HYP_CONFIG_ASK_ESC_DAEMON_KEY) == 0) {
+        /* Two words, refused otherwise — the same rule as mode, for the same
+         * reason and a sharper one: this value decides WHOSE MONEY a warm
+         * daemon may spend, and a misspelling resolved to a default would be a
+         * spending decision made by a typo. */
+        if (strcmp(value, HYP_CONFIG_ASK_ESC_DAEMON_KEY_ALLOW) == 0 ||
+            strcmp(value, HYP_CONFIG_ASK_ESC_DAEMON_KEY_REFUSE) == 0) {
+            return 0;
+        }
+        snprintf(err, errlen,
+                 "%s must be '%s' (the default — a shared daemon does not read the escalation "
+                 "key on a client's behalf) or '%s' (it may, and then ANY local process of this "
+                 "user account that can reach the daemon can escalate on your account without "
+                 "holding the key); got '%s'",
+                 key, HYP_CONFIG_ASK_ESC_DAEMON_KEY_REFUSE, HYP_CONFIG_ASK_ESC_DAEMON_KEY_ALLOW,
+                 value);
+        return CLI_ERR;
+    }
     return 0;
 }
 
@@ -6618,6 +6641,9 @@ int hyp_cmd_config(int argc, char **argv) {
                "NAME of the env var holding the API key — never the key");
         printf("  %-25s  default=%-10s  %s\n", HYP_CONFIG_ASK_ESC_MODE,
                HYP_CONFIG_ASK_ESC_MODE_DEFAULT, "What ask(escalate=true) sends: query | index");
+        printf("  %-25s  default=%-10s  %s\n", HYP_CONFIG_ASK_ESC_DAEMON_KEY,
+               HYP_CONFIG_ASK_ESC_DAEMON_KEY_DEFAULT,
+               "May a warm daemon read the key for clients: allow | refuse");
         printf("\nEscalation is opt-in and never automatic: ask(escalate=true) per question.\n"
                "  mode=query  sends ONLY the question to the provider and scores it against the\n"
                "              local index. Needs the key and the local index, nothing else; the\n"
@@ -6625,7 +6651,12 @@ int hyp_cmd_config(int argc, char **argv) {
                "              the escalation model share a measured embedding space (voyage-4).\n"
                "  mode=index  queries a second, API-built index of the whole corpus; build it\n"
                "              with `hyponoia embed --escalation` (spends tokens per declaration).\n"
-               "Neither mode ever falls back to the local answer: a refusal says so.\n");
+               "Neither mode ever falls back to the local answer: a refusal says so.\n"
+               "\nWHOSE KEY PAYS. Tool calls are served by the per-account daemon, which reads\n"
+               "the key from the environment IT was started with — so with daemon_key=allow,\n"
+               "any local process of this user that can reach it can escalate on your account\n"
+               "without holding the key. It is `refuse` by default, and every escalated answer\n"
+               "discloses which environment the key came from (`key_custody`).\n");
         return 0;
     }
 
@@ -9966,6 +9997,9 @@ int hyp_cmd_install(int argc, char **argv) {
         /* Non-macOS activation reaches this block only for a real copy. */
         const char *candidate = self_path;
 #endif
+        if (g_cli_install_candidate_for_test) {
+            candidate = g_cli_install_candidate_for_test;
+        }
         /* Preparation is always out-of-line. The target transaction must not
          * snapshot or reserve anything in the install directory until the
          * activation guard is held; otherwise a waiter races the current
@@ -9995,9 +10029,44 @@ int hyp_cmd_install(int argc, char **argv) {
         if (stage_status != HYP_ACTIVATION_TRANSACTION_OK || !binary_transaction ||
             !cli_activation_transaction_expected_build(binary_transaction, &staged_validator)) {
             const char *stage_refusal = hyp_activation_transaction_refusal_note();
-            (void)fprintf(stderr, "error: failed to stage install candidate: %s%s%s\n",
-                          hyp_activation_transaction_status_message(stage_status),
-                          stage_refusal[0] ? ": " : "", stage_refusal);
+            /* Everything printed so far went to stdout, which is block-buffered
+             * whenever the caller pipes or captures it. Without this flush the
+             * unbuffered error lands FIRST and the run reads as a banner
+             * following a failure -- which is how "install printed a success
+             * banner and an error" was reported for a week. */
+            (void)fflush(stdout);
+            if (stage_refusal[0]) {
+                /* Not an I/O error: a permission rule refused before anything
+                 * was copied. Say which path, which rule, and what to do — and
+                 * name the sidecars in the remedy, because copying the binary
+                 * alone leaves the runtime assets behind and the retry then
+                 * fails with a second, unrelated-looking message. */
+                char candidate_dir[CLI_BUF_1K];
+                (void)snprintf(candidate_dir, sizeof(candidate_dir), "%s", candidate);
+                char *separator = strrchr(candidate_dir, '/');
+#ifdef _WIN32
+                char *backslash = strrchr(candidate_dir, '\\');
+                if (backslash && (!separator || backslash > separator)) {
+                    separator = backslash;
+                }
+#endif
+                if (separator && separator != candidate_dir) {
+                    *separator = '\0';
+                } else {
+                    (void)snprintf(candidate_dir, sizeof(candidate_dir), ".");
+                }
+                (void)fprintf(stderr,
+                              "error: install refused before any file was changed: %s\n"
+                              "error: nothing was installed and nothing was modified. Copy the "
+                              "binary and the hyp-* runtime files beside it into a directory "
+                              "this account owns privately, then install from there:\n"
+                              "         mkdir -p ~/hyp-install && cp %s/hyponoia %s/hyp-* "
+                              "~/hyp-install/ && ~/hyp-install/hyponoia install\n",
+                              stage_refusal, candidate_dir, candidate_dir);
+            } else {
+                (void)fprintf(stderr, "error: failed to stage install candidate: %s\n",
+                              hyp_activation_transaction_status_message(stage_status));
+            }
             (void)cli_activation_transaction_abort(&binary_transaction);
             if (prepared_dir[0]) {
                 (void)hyp_rmdir(prepared_dir);

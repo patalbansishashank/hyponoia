@@ -365,6 +365,13 @@ jobs:
           formula="$GITHUB_WORKSPACE/pkg/homebrew/Formula/hyponoia.rb"
           version="$(sed -n 's/^  version "\(.*\)"$/\1/p' "$formula" | head -1)"
           asset="$(grep -oE 'hyponoia[^"/]*-linux-amd64[^"]*\.tar\.gz' "$formula" | head -1)"
+          # A formula that pins no version composes ".../download/v/<asset>",
+          # which 404s and would be reported below as "nothing published yet" —
+          # the misleading skip. Fail loudly instead.
+          if [ -z "$version" ] || [ -z "$asset" ]; then
+            echo "The formula has no parseable version or linux-amd64 asset." >&2
+            exit 1
+          fi
           url="https://github.com/patalbansishashank/hyponoia/releases/download/v${version}/${asset}"
           if ! curl -fsIL -o /dev/null "$url"; then
             echo "SKIP: the formula pins v${version}, whose ${asset} is not published."
@@ -373,6 +380,18 @@ jobs:
           fi
           eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
           brew tap patalbansishashank/hyponoia "$GITHUB_WORKSPACE"
-          brew trust patalbansishashank/hyponoia
+          # `brew trust` was here and is not a Homebrew command — `brew commands`
+          # has no such entry and it exits 1 with "Unknown command: brew trust".
+          # Under `set -e` it aborted this step before `brew install` ever ran,
+          # and `continue-on-error: true` turned that into a red X nobody reads,
+          # so this check has never actually installed the formula. Tapping a
+          # third-party tap needs no trust step: `brew tap <user>/<name> <url>`
+          # followed by `brew install` is the whole sequence, verified against
+          # the published repository in the homebrew/brew image.
           brew install hyponoia
+          # The install proves the checksum and the install block; running the
+          # binary proves the archive choice. The ordinary linux archive needs
+          # glibc 2.38+, which is why the formula ships the static `-portable`
+          # one — on an older runner this line is what catches a regression.
           hyponoia --version
+          brew test hyponoia

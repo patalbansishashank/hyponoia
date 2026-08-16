@@ -254,6 +254,18 @@ bash "$ROOT/tests/test_vt_gate_zero_tolerance_contract.sh"
 echo "=== Step 0r: VirusTotal release-note evidence contract ==="
 bash "$ROOT/tests/test_vt_release_notes_contract.sh"
 
+# NEXT-STEPS.md §3.2 step 6. Both of these existed and NOTHING RAN THEM: no
+# workflow, no Makefile target, no script referenced either file. A contract
+# test nobody invokes is a comment. They are wired here, beside the other
+# Step 0 contracts, because that is where every other one is wired — and the
+# gate-chain contract in particular now guards the `skip_lint` input added in
+# the same step, which is precisely the class of change it exists to catch.
+echo "=== Step 0s: release gate-chain contract (optional phases) ==="
+bash "$ROOT/tests/test_release_gate_chain_contract.sh"
+
+echo "=== Step 0t: script exec-bit contract ==="
+bash "$ROOT/tests/test_script_exec_bit_contract.sh"
+
 # Verify compiler supports target arch
 verify_compiler "$CC"
 

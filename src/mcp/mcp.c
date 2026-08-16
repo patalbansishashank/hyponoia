@@ -392,6 +392,22 @@ typedef struct {
     const char *input_schema; /* JSON string */
 } tool_def_t;
 
+/* The `project` argument, defined ONCE for every tool that takes it.
+ *
+ * It is optional, and saying so is the whole point: 120 of 120 measured runs
+ * opened with list_projects because the schema said `required` and the agent
+ * had no way to know the name (§3.2 step 2). The wording is deliberately
+ * short — it is paid on every tools/list of every session — and it promises
+ * exactly what resolve_project_arg does, including the disclosure the answer
+ * carries back. delete_project is the one holdout and keeps `required`: a
+ * destructive tool does not infer its target. */
+#define TOOL_PROJECT_ARG                                                                       \
+    "\"project\":{\"type\":\"string\",\"description\":\"OPTIONAL. Omit it and the "            \
+    "server uses the project of its own working directory — the directory the client started " \
+    "it in — or, when that is not indexed and exactly one project is, that one. Every answer " \
+    "reports project and project_source (supplied | derived from working directory <path> | "  \
+    "the only indexed project). An explicit value always wins.\"}"
+
 static const tool_def_t TOOLS[] = {
     {"index_repository", "Index repository",
      "Index a repository into the knowledge graph. "
@@ -447,11 +463,13 @@ static const tool_def_t TOOLS[] = {
      "offset+returned). Detect truncation with has_more, then page by re-calling with "
      "offset=offset+limit until has_more is false. Narrow first via label/file_pattern/"
      "min_degree before paginating large result sets.",
-     "{\"type\":\"object\",\"properties\":{\"project\":{\"type\":\"string\"},"
+     "{\"type\":\"object\",\"properties\":{" TOOL_PROJECT_ARG ","
      "\"query\":{\"type\":\"string\",\"description\":\"Natural-language or keyword full-text "
      "search using BM25 ranking. Tokens are split on whitespace; camelCase identifiers are "
      "indexed as individual words (updateCloudClient → update, cloud, client). Results are "
-     "ranked with structural boosting: Functions/Methods +10, Routes +8, Classes/Interfaces +5. "
+     "ranked with structural boosting: Functions/Methods +10, Routes +8, Classes/Interfaces +5, "
+     "and test declarations (is_test=true) -5 — deprioritised, never hidden, so a test still "
+     "surfaces when it is clearly the best match. "
      "Noise labels (File/Folder/Module/Variable) are filtered out. When provided, name_pattern "
      "is ignored.\"},"
      "\"label\":{\"type\":\"string\"},\"name_pattern\":{\"type\":\"string\"},\"qn_pattern\":{"
@@ -474,13 +492,16 @@ static const tool_def_t TOOLS[] = {
      "json: the SAME tree model as structured JSON (groups + column-ordered row arrays).\"},"
      "\"fields\":{\"type\":\"array\",\"items\":{\"type\":\"string\"},\"description\":"
      "\"Extra per-node property columns, e.g. complexity, cognitive, "
-     "signature, docstring, return_type, is_test, lines(int). Core row columns "
+     "signature, docstring, return_type, is_test (JSON boolean: true for EVERY "
+     "declaration in a test file, plus Rust #[test] items and GoogleTest macros in "
+     "a non-test file; in query_graph compare with = true — = 1 matches nothing), "
+     "lines(int). Core row columns "
      "(qn/label/file/lines/in/out) are always present — do not request them here. "
      "Missing values emit as empty cells.\"},"
      "\"detail\":{\"type\":\"string\",\"enum\":[\"ids\",\"default\"],\"default\":\"default\","
      "\"description\":\"ids: bare qualified-name enumeration (one column) — cheapest form "
      "for wide sweeps where per-row metadata is noise. default: full rows.\"}},"
-     "\"required\":[\"project\"]}"},
+     "\"required\":[]}"},
 
     /* `ask` is a SEPARATE TOOL from search_graph's semantic_query, not a mode
      * of it (NEXT-STEPS.md §2.1). They differ in input type (one string vs an
@@ -500,24 +521,35 @@ static const tool_def_t TOOLS[] = {
      "ARRAY of keywords scored against a static per-token table. This takes ONE STRING and "
      "runs the model over whole declarations. "
      "RANKED, NEVER EXACT: there is no such thing as a guaranteed-correct ask result. Read "
-     "the top 2–3 and verify with get_code_snippet. "
+     "the top 2–3 candidates and verify. "
+     "ONE CALL: the answer CARRIES THE SOURCE for the top 2 candidates — verbatim lines, "
+     "capped at 40 lines / 1600 bytes each, in a fenced block after the rows — so a common-case "
+     "question does not need a second get_code_snippet round trip. A span that exceeds the cap "
+     "is marked CUT and NAMES ITS FULL RANGE; it is never silently shortened. Pass "
+     "include_source=false for coordinates only. "
      "AVAILABILITY: this lane reads a semantic index built by an OPT-IN second pass. Until "
      "that index exists the response is available=false with a reason and the exact remedy, "
      "and NO rows. That is not 'nothing matched' — ask never conflates the two, because "
      "'your codebase has no such code' is a claim about your code and 'the index is not "
      "built' is a claim about this tool. "
      "RESPONSE: available, then the disclosures (lane, query_encoder, index_encoder, model, "
-     "language, truncation, population), "
+     "language, language_source, truncation, population, whole_file_spans), "
      "then rows carrying qn/label/file/lines/score — the SAME span shape search_graph "
-     "returns, so an agent that can read one can read the other. A 'cut' column appears "
-     "only when the index reports truncated declarations. format=\"json\" returns cols plus "
-     "column-ordered row ARRAYS matching cols, never per-row key envelopes.",
+     "returns, so an agent that can read one can read the other — then the source block. "
+     "A 'cut' column appears only when the index reports truncated declarations. An 'exact' "
+     "column appears only when at least one row matched: exact=true means THE QUESTION SPELLS "
+     "THAT DECLARATION'S NAME (whole word, case-sensitive, or its Parent::name tail), which is "
+     "a fact about two strings and NOT a confidence — there is no score threshold anywhere in "
+     "this tool. exact=false is not evidence against a row, and the column's ABSENCE means no "
+     "row was spelled out in the question. format=\"json\" returns cols plus column-ordered "
+     "row ARRAYS matching cols, never per-row key envelopes, and the source block as a "
+     "'source' array of {rank,qn,file,lines,shown,truncated,text} — or {rank,qn,file,lines,"
+     "unavailable} for a span that could not be read.",
      "{\"type\":\"object\",\"properties\":{"
      "\"question\":{\"type\":\"string\",\"description\":\"ONE natural-language question as a "
      "plain string, e.g. \\\"how does the writer decide section ordering\\\". Not a keyword "
      "list — for keywords use search_graph(semantic_query=[\\\"a\\\",\\\"b\\\"]). Not a regex, "
-     "not Cypher.\"},"
-     "\"project\":{\"type\":\"string\"},"
+     "not Cypher.\"}," TOOL_PROJECT_ARG ","
      "\"language\":{\"type\":\"string\",\"description\":\"Which language's instruct prefix to "
      "render — the one word substituted into the query-side prompt, and the only part of this "
      "lane a caller can get wrong without any downstream signal. OPTIONAL: the project's "
@@ -526,9 +558,19 @@ static const tool_def_t TOOLS[] = {
      "polyglot repo. Accepts an extension (\\\"cpp\\\", \\\"rs\\\", \\\"py\\\") or a display "
      "name (\\\"C++\\\", \\\"Rust\\\", \\\"Python\\\"); an unrecognised value is refused, never "
      "defaulted.\"},"
-     "\"limit\":{\"type\":\"integer\",\"default\":10,\"description\":\"Max ranked results. "
-     "Default 10: the lane is ranked, so the top few are the answer and the tail is noise. "
-     "Capped at 500. There is no offset — raise limit rather than page a ranking.\"},"
+     "\"limit\":{\"type\":\"integer\",\"default\":3,\"description\":\"Max ranked results. "
+     "Default 3: measured on the pinned corpus, rows 4-10 carried a fifth of the answers and "
+     "most of the bytes, so the tail is noise you pay for. Capped at 500 — raise it "
+     "deliberately for a survey. There is no offset: raise limit rather than page a ranking. "
+     "Only the top 2 rows ever carry source text, whatever limit is.\"},"
+     "\"include_source\":{\"type\":\"boolean\",\"default\":true,\"description\":\"Return the "
+     "VERBATIM SOURCE LINES of the top 2 candidates in the answer, capped at 40 lines / 1600 "
+     "bytes each and 3200 bytes in total. ON by default: the measured median was 5-6 turns "
+     "with a 0% one-shot rate, and the ask/get_code_snippet pair is the part of that this "
+     "removes for the common case. A span longer than the cap is marked CUT and names its "
+     "full line range so the rest is one get_code_snippet away — nothing is ever shortened "
+     "silently. Set false when you want coordinates only: a wide survey (limit=20+), or a "
+     "client that will read the files itself.\"},"
      "\"format\":{\"type\":\"string\",\"enum\":[\"tree\",\"json\"],\"default\":\"tree\","
      "\"description\":\"Response encoding. tree (default): compact text rows. json: cols + "
      "column-ordered row arrays (the SAME model, structured).\"},"
@@ -547,9 +589,11 @@ static const tool_def_t TOOLS[] = {
      "or the two spaces are not provably the same, this RETURNS AN ERROR SAYING SO and does "
      "not quietly answer from the local encoder — you would otherwise get the cheap answer "
      "while believing you had the expensive one. Every answer names the lane that answered "
-     "(`lane`: local | escalation-query | escalation-index) and both encoders "
-     "(`query_encoder`, `index_encoder`).\"}},"
-     "\"required\":[\"question\",\"project\"]}"},
+     "(`lane`: local | escalation-query | escalation-index), both encoders "
+     "(`query_encoder`, `index_encoder`) and whose environment the key came from "
+     "(`key_custody`) — a warm daemon may only spend for you if its owner set "
+     "ask.escalation.daemon_key=allow.\"}},"
+     "\"required\":[\"question\"]}"},
 
     {"query_graph", "Query graph",
      "Execute a Cypher query against the knowledge graph for complex multi-hop patterns, "
@@ -575,7 +619,7 @@ static const tool_def_t TOOLS[] = {
      "f.kind = \\\"parse_partial\\\" RETURN f.file_path, f.detail. Absence from this graph is "
      "NOT a completeness guarantee.",
      "{\"type\":\"object\",\"properties\":{\"query\":{\"type\":\"string\",\"description\":\"Cypher "
-     "query\"},\"project\":{\"type\":\"string\"},"
+     "query\"}," TOOL_PROJECT_ARG ","
      "\"graph\":{\"type\":\"string\",\"enum\":[\"code\",\"missed\"],\"default\":\"code\","
      "\"description\":\"Which graph to query: the code knowledge graph (default) or the "
      "missed graph (only files not fully indexed, laid out as their file structure).\"},"
@@ -583,7 +627,7 @@ static const tool_def_t TOOLS[] = {
      "\"description\":"
      "\"Optional row limit. Default: unlimited up to a 100k row "
      "ceiling. No offset support — use search_graph for paginated browsing.\"}},"
-     "\"required\":[\"query\",\"project\"]}"},
+     "\"required\":[\"query\"]}"},
 
     {"trace_path", "Trace path",
      "Trace paths through the code graph. Modes: calls (callers/callees), data_flow (value "
@@ -596,8 +640,8 @@ static const tool_def_t TOOLS[] = {
      "table. "
      "`truncated: true` + `next` = more rows — pass next back as cursor. "
      "format=\"json\" returns the SAME tree model as structured JSON.",
-     "{\"type\":\"object\",\"properties\":{\"function_name\":{\"type\":\"string\"},\"project\":{"
-     "\"type\":\"string\"},\"direction\":{\"type\":\"string\",\"enum\":[\"inbound\",\"outbound\","
+     "{\"type\":\"object\",\"properties\":{\"function_name\":{\"type\":\"string\"}"
+     "," TOOL_PROJECT_ARG ",\"direction\":{\"type\":\"string\",\"enum\":[\"inbound\",\"outbound\","
      "\"both\"],\"default\":\"both\"},\"depth\":{\"type\":\"integer\",\"default\":3},"
      "\"limit\":{\"type\":\"integer\",\"default\":100,\"minimum\":1,\"maximum\":5000,"
      "\"description\":\"Rows per page. callees_total/callers_total always carry the exact full "
@@ -625,7 +669,7 @@ static const tool_def_t TOOLS[] = {
      "\"description\":\"Add how each hop was resolved: a strategy class (lsp | language_rule | "
      "heuristic | unresolved) and the resolver's confidence. Off by default — it adds two "
      "columns per row. Use it to judge whether an edge is trustworthy, not to find edges.\"}},"
-     "\"required\":[\"function_name\",\"project\"]}"},
+     "\"required\":[\"function_name\"]}"},
 
     {"get_code_snippet", "Get code snippet",
      "Read source code for a function/class/symbol. IMPORTANT: First call search_graph to find the "
@@ -635,14 +679,13 @@ static const tool_def_t TOOLS[] = {
      "in the noted line ranges may be missing from the graph (best-effort signal); prefer grep "
      "there and treat the returned source as ground truth.",
      "{\"type\":\"object\",\"properties\":{\"qualified_name\":{\"type\":\"string\",\"description\":"
-     "\"Full qualified_name from search_graph, or short function name\"},\"project\":{"
-     "\"type\":\"string\"},\"include_neighbors\":{"
-     "\"type\":\"boolean\",\"default\":false}},\"required\":[\"qualified_name\",\"project\"]}"},
+     "\"Full qualified_name from search_graph, or short function name\"}," TOOL_PROJECT_ARG
+     ",\"include_neighbors\":{"
+     "\"type\":\"boolean\",\"default\":false}},\"required\":[\"qualified_name\"]}"},
 
     {"get_graph_schema", "Get graph schema",
      "Get the schema of the knowledge graph (node labels, edge types)",
-     "{\"type\":\"object\",\"properties\":{\"project\":{\"type\":\"string\"}},\"required\":["
-     "\"project\"]}"},
+     "{\"type\":\"object\",\"properties\":{" TOOL_PROJECT_ARG "},\"required\":[]}"},
 
     {"get_architecture", "Get architecture",
      "Get high-level architecture overview. DEFAULT (no aspects) is a compact summary — "
@@ -654,7 +697,7 @@ static const tool_def_t TOOLS[] = {
      "across the folder layout. Optional path scopes analysis to nodes under that directory "
      "prefix (file_path).",
      /* The aspects enum mirrors VALID_ASPECTS (see aspect_is_valid) — update both together. */
-     "{\"type\":\"object\",\"properties\":{\"project\":{\"type\":\"string\"},\"path\":{\"type\":"
+     "{\"type\":\"object\",\"properties\":{" TOOL_PROJECT_ARG ",\"path\":{\"type\":"
      "\"string\",\"description\":\"Optional directory prefix to scope architecture (e.g. "
      "apps/hoa)\"},"
      "\"aspects\":{\"type\":\"array\",\"items\":{\"type\":\"string\",\"enum\":[\"all\","
@@ -664,7 +707,7 @@ static const tool_def_t TOOLS[] = {
      "\"description\":\"Aspects to include. 'all' = everything; 'overview' = compact summary "
      "(all except file_tree); omit = all. 'cycles' is opt-in ONLY (never via all/overview): it "
      "scans the whole call graph for circular CALLS dependencies (SCCs of size > 1).\"}},"
-     "\"required\":[\"project\"]}"},
+     "\"required\":[]}"},
 
     {"search_code", "Search code",
      "Graph-augmented code search. Finds text patterns via grep, then enriches results with "
@@ -678,8 +721,8 @@ static const tool_def_t TOOLS[] = {
      "'total_grep_matches' (raw grep hit count) and 'total_results' (deduplicated function "
      "count) — compare to limit to detect truncation. There is no offset parameter; to see "
      "more, raise limit or narrow the query with file_pattern / path_filter.",
-     "{\"type\":\"object\",\"properties\":{\"pattern\":{\"type\":\"string\"},\"project\":{\"type\":"
-     "\"string\"},\"file_pattern\":{\"type\":\"string\",\"description\":\"Glob for grep "
+     "{\"type\":\"object\",\"properties\":{\"pattern\":{\"type\":\"string\"}," TOOL_PROJECT_ARG
+     ",\"file_pattern\":{\"type\":\"string\",\"description\":\"Glob for grep "
      "--include (e.g. *.go)\"},\"path_filter\":{\"type\":\"string\",\"description\":\"Regex "
      "filter on result file paths (e.g. ^src/ or \\\\.(go|ts)$)\"},\"mode\":{\"type\":\"string\","
      "\"enum\":[\"compact\",\"full\",\"files\"],\"default\":\"compact\",\"description\":\"compact: "
@@ -690,11 +733,18 @@ static const tool_def_t TOOLS[] = {
      "\"description\":\"Max enriched results per call. Default 10. Response includes "
      "'total_grep_matches' and 'total_results' so callers can detect truncation. No "
      "offset parameter — raise limit or narrow with file_pattern / path_filter to see more."
-     "\",\"default\":10}},\"required\":[\"pattern\",\"project\"]}"},
+     "\",\"default\":10}},\"required\":[\"pattern\"]}"},
 
     {"list_projects", "List projects", "List all indexed projects",
      "{\"type\":\"object\",\"properties\":{}}"},
-    {"delete_project", "Delete project", "Delete a project from the index",
+    /* The one tool whose `project` stays REQUIRED. Everything else can
+     * derive it from the working directory because the cost of a wrong guess
+     * is a wrong answer, which the disclosure makes visible; here it is a
+     * deleted index, which no disclosure undoes. */
+    {"delete_project", "Delete project",
+     "Delete a project from the index. `project` is REQUIRED here and is never derived from "
+     "the working directory — every other tool defaults it, but a destructive tool does not "
+     "infer its target.",
      "{\"type\":\"object\",\"properties\":{\"project\":{\"type\":\"string\"}},\"required\":["
      "\"project\"]}"},
 
@@ -710,11 +760,10 @@ static const tool_def_t TOOLS[] = {
      "query_graph(graph=\"missed\"). The report also carries 'not_indexed' — files/dirs excluded "
      "BY DESIGN (gitignore/.hypignore/skip-lists): deliberate and deterministic, not failures; "
      "change the ignore rules and re-index to include them.",
-     "{\"type\":\"object\",\"properties\":{\"project\":{\"type\":\"string\"},"
+     "{\"type\":\"object\",\"properties\":{" TOOL_PROJECT_ARG ","
      "\"verbose\":{\"type\":\"boolean\",\"default\":false,\"description\":\"Include the git "
      "context block (worktree/shadow path variants). Only needed when debugging where an index "
-     "lives — omitted by default to keep the status lean.\"}},\"required\":["
-     "\"project\"]}"},
+     "lives — omitted by default to keep the status lean.\"}},\"required\":[]}"},
 
     {"check_index_coverage", "Check index coverage",
      "Check authoritative indexing-coverage metadata for exact repository-relative paths and "
@@ -723,15 +772,14 @@ static const tool_def_t TOOLS[] = {
      "normal graph results. Returns coverage status separately from filesystem metadata freshness, "
      "plus structured parse-error ranges and direct-source fallback actions. The signal is "
      "best-effort: indexed_no_recorded_gap is not a completeness guarantee.",
-     "{\"type\":\"object\",\"properties\":{"
-     "\"project\":{\"type\":\"string\"},"
+     "{\"type\":\"object\",\"properties\":{" TOOL_PROJECT_ARG ","
      "\"paths\":{\"type\":\"array\",\"items\":{\"type\":\"string\"},\"maxItems\":128,"
      "\"description\":\"Repository-relative files to check exactly.\"},"
      "\"scopes\":{\"type\":\"array\",\"items\":{\"type\":\"string\"},\"maxItems\":32,"
      "\"description\":\"Repository-relative path prefixes; use . for the project root.\"},"
      "\"scope_limit\":{\"type\":\"integer\",\"default\":200,\"minimum\":1,\"maximum\":1000},"
      "\"scope_offset\":{\"type\":\"integer\",\"default\":0,\"minimum\":0}},"
-     "\"required\":[\"project\"],\"anyOf\":[{\"required\":[\"paths\"]},{\"required\":[\"scopes\"]}]"
+     "\"required\":[],\"anyOf\":[{\"required\":[\"paths\"]},{\"required\":[\"scopes\"]}]"
      "}"},
 
     {"detect_changes", "Detect changes",
@@ -744,7 +792,7 @@ static const tool_def_t TOOLS[] = {
      "reached from another changed file is not counted as extra impact. format=\"json\" returns "
      "the "
      "same model as structured JSON.",
-     "{\"type\":\"object\",\"properties\":{\"project\":{\"type\":\"string\"},\"scope\":{\"type\":"
+     "{\"type\":\"object\",\"properties\":{" TOOL_PROJECT_ARG ",\"scope\":{\"type\":"
      "\"string\",\"enum\":[\"files\",\"impact\"],\"description\":\"files: changed files only "
      "(no traversal). impact (default): files + the transitive impact set.\"},"
      "\"direction\":{\"type\":\"string\",\"enum\":[\"inbound\",\"outbound\",\"both\"],\"default\":"
@@ -759,22 +807,21 @@ static const tool_def_t TOOLS[] = {
      "\"string\",\"default\":\"main\"},\"since\":{\"type\":\"string\",\"description\":"
      "\"Git ref or tag to compare from (e.g. HEAD~5, v0.5.0). Diffs <ref>...HEAD.\"},"
      "\"format\":{\"type\":\"string\",\"enum\":[\"tree\",\"json\"],\"default\":\"tree\"}},"
-     "\"required\":"
-     "[\"project\"]}"},
+     "\"required\":[]}"},
 
     {"manage_adr", "Manage ADR", "Create or update Architecture Decision Records",
-     "{\"type\":\"object\",\"properties\":{\"project\":{\"type\":\"string\"},\"mode\":{\"type\":"
+     "{\"type\":\"object\",\"properties\":{" TOOL_PROJECT_ARG ",\"mode\":{\"type\":"
      "\"string\",\"enum\":[\"get\",\"update\",\"sections\"],\"description\":\"update replaces "
      "the entire ADR document; sections only lists existing "
      "headings\"},\"content\":{\"type\":\"string\",\"description\":\"Complete replacement document "
      "required by update\"}},\"additionalProperties\":false,"
-     "\"required\":[\"project\"]}"},
+     "\"required\":[]}"},
 
     {"ingest_traces", "Ingest traces", "Ingest runtime traces to enhance the knowledge graph",
      "{\"type\":\"object\",\"properties\":{\"traces\":{\"type\":\"array\",\"items\":{\"type\":"
      "\"object\",\"properties\":{\"caller\":{\"type\":\"string\"},\"callee\":{\"type\":\"string\"},"
-     "\"count\":{\"type\":\"integer\"}},\"additionalProperties\":false}},\"project\":{\"type\":"
-     "\"string\"}},\"required\":[\"traces\",\"project\"]}"},
+     "\"count\":{\"type\":\"integer\"}},\"additionalProperties\":false}}," TOOL_PROJECT_ARG
+     "},\"required\":[\"traces\"]}"},
 };
 
 static const int TOOL_COUNT = sizeof(TOOLS) / sizeof(TOOLS[0]);
@@ -1332,7 +1379,9 @@ static const char MCP_SERVER_INSTRUCTIONS[] =
     "trace_path for callers and callees, get_code_snippet for exact source, query_graph for "
     "complex multi-hop patterns, and get_architecture for orientation. Use search_code or "
     "filesystem grep for literal or non-code text, or when graph coverage is insufficient. "
-    "Call list_projects before initial use and index_repository only when a repository is not "
+    "Omit the project argument: it defaults to the project of this server's working directory, "
+    "and every answer reports project and project_source. Call list_projects only when an "
+    "answer says it could not choose, and index_repository only when a repository is not "
     "indexed or to force immediate freshness after a large external update. Once indexed, "
     "watched projects auto-refresh in the background; use index_status for project health and "
     "check_index_coverage for every cited path and for scopes behind negative or exhaustive "
@@ -1340,8 +1389,10 @@ static const char MCP_SERVER_INSTRUCTIONS[] =
     "and paginate when present.";
 
 static const char MCP_ANALYSIS_SERVER_INSTRUCTIONS[] =
-    "This is the analysis tool profile; graph and index mutation tools are unavailable. Use "
-    "list_projects and index_status to select a current graph project, then use search_graph, "
+    "This is the analysis tool profile; graph and index mutation tools are unavailable. Omit "
+    "the project argument: it defaults to the project of this server's working directory, and "
+    "every answer reports project and project_source; use list_projects only when an answer "
+    "says it could not choose, and index_status for project health. Use search_graph, "
     "trace_path, get_code_snippet, query_graph, get_architecture, and search_code for read-only "
     "analysis. Use ask for one natural-language question about where behaviour lives; it "
     "returns ranked declarations with line ranges, and available:false with a remedy when the "
@@ -1353,7 +1404,9 @@ static const char MCP_ANALYSIS_SERVER_INSTRUCTIONS[] =
 
 static const char MCP_SCOUT_SERVER_INSTRUCTIONS[] =
     "This is the scout tool profile; only the fast positive-discovery graph tools are available. "
-    "Use list_projects and index_status to select a current graph project, then use search_graph, "
+    "Omit the project argument: it defaults to the project of this server's working directory, "
+    "and every answer reports project and project_source; use list_projects only when an answer "
+    "says it could not choose, and index_status for project health. Use search_graph, "
     "trace_path, get_code_snippet, and get_architecture with narrow limits. Call "
     "check_index_coverage once for every cited path and read flagged ranges directly. Findings "
     "are provisional: do not make absence, exhaustive-impact, or dead-code claims. If the project "
@@ -2429,13 +2482,36 @@ static char *build_project_list_error(const char *reason) {
 }
 
 /* Distinct from "unknown project": the caller omitted the project argument
- * entirely (no recognized key). Name the literal "project" key so the fix is
- * obvious (#640). Caller must free() result. */
+ * AND nothing could be derived — the working directory is not an indexed
+ * project (nor inside one) and there is more than one project on the machine.
+ * That is the ONE case where the server has several candidates and no reason
+ * to prefer any; it names them here rather than picking, and rather than
+ * spending a list_projects round trip to say the same thing (§3.2 step 2).
+ * Name the literal "project" key so the fix is obvious (#640).
+ * Caller must free() result. */
 static char *build_missing_project_error(void) {
-    return heap_strdup("{\"error\":\"missing required argument: project\",\"hint\":\"Pass "
-                       "the project as the \\\"project\\\" argument, e.g. "
-                       "{\\\"project\\\":\\\"<name from list_projects>\\\"}. Run "
-                       "list_projects to see indexed projects.\"}");
+    char dir_path[HYP_SZ_1K];
+    cache_dir(dir_path, sizeof(dir_path));
+    char projects[HYP_SZ_4K] = "";
+    int count = collect_db_project_names(dir_path, projects, sizeof(projects));
+
+    enum { MISSING_ERR_BUF_SZ = 5120 };
+    char buf[MISSING_ERR_BUF_SZ];
+    if (count > 0) {
+        snprintf(buf, sizeof(buf),
+                 "{\"error\":\"which project?\",\"hint\":\"`project` is optional and normally "
+                 "derived from the working directory this server was started in, but that "
+                 "directory is not an indexed project and there is more than one to choose "
+                 "from. Pass one of the names below as the \\\"project\\\" argument, or index "
+                 "the working directory.\",\"available_projects\":[%s],\"count\":%d}",
+                 projects, count);
+    } else {
+        snprintf(buf, sizeof(buf),
+                 "{\"error\":\"which project?\",\"hint\":\"No projects indexed yet. "
+                 "Call index_repository first; after that `project` is optional and is derived "
+                 "from the working directory.\"}");
+    }
+    return heap_strdup(buf);
 }
 
 /* Pick the right no-store error: a NULL project means the argument was missing
@@ -2476,6 +2552,323 @@ static bool project_has_adr(hyp_store_t *store, const char *project, const char 
     snprintf(adr_path, sizeof(adr_path), "%s/.hyponoia/adr.md", root_path);
     struct stat adr_st;
     return stat(adr_path, &adr_st) == 0;
+}
+
+/* ── Which project answered, and why (NEXT-STEPS §3.2 step 2) ────
+ *
+ * MEASURED: 120 of 120 runs in the §3.1 token harness spent their FIRST tool
+ * call on list_projects — after the analysis-tier profile body had been given
+ * a sentence spelling out exactly how the name is derived from the repo path
+ * (tool_tiers.h generation 2). Prose lost. Every session paid a round trip to
+ * learn something this process already knows.
+ *
+ * IT ALREADY KNOWS IT. The MCP server is spawned BY the client, so its own
+ * working directory is the client's (detect_session reads getcwd()); the
+ * daemon is told the same path explicitly by the thin client, which
+ * canonicalizes "." and hands it over in the context frame
+ * (main_session_context → hyp_mcp_server_set_session_context). Both ends run
+ * the path through hyp_project_name_from_path — the SAME function the
+ * pipeline used to name the index — so the name derived here is the name on
+ * disk by construction, not by transcription.
+ *
+ * MEASURED AGAINST THE LIVE CLIENT, because "the spawned process inherits the
+ * cwd" is an assumption until someone checks. A recording MCP server
+ * registered with Claude Code 2.1.233 logged, from `claude -p` run in
+ * /media/DEV/Projects/context-engine/wt-project:
+ *   spawned  cwd = /media/DEV/Projects/context-engine/wt-project
+ *   initialize params → clientInfo + capabilities only; NO path of any kind
+ *   roots/list (server→client) → [{"uri":
+ *       "file:///media/DEV/Projects/context-engine/wt-project"}]
+ * So MCP's documented `roots` capability and the inherited cwd name the SAME
+ * directory. cwd is what this uses: it needs no reverse request over a
+ * line-oriented stdio loop, it is already plumbed through both the stdio and
+ * daemon paths, and it is the only one of the two that works for a client
+ * which declares no roots capability at all. `roots` remains the upgrade if a
+ * client is ever found whose roots and cwd disagree.
+ *
+ * The order is an ORDER, not a search:
+ *   (a) an explicit `project` argument — always wins, never second-guessed;
+ *   (b) the working directory, or the nearest ancestor of it that IS indexed
+ *       (an agent launched in a subdirectory means the repo it sits in);
+ *   (c) the single indexed project, and ONLY when there is exactly one.
+ * Several candidates and no signal is not resolved by picking one: that
+ * returns the existing error listing them, because a confidently wrong
+ * project is worse than a question.
+ *
+ * And every answer SAYS which rule fired. Silent inference is precisely the
+ * failure this project keeps paying for — an agent that cannot tell which
+ * project answered cannot tell a right answer from a plausible wrong one. */
+typedef enum {
+    PROJECT_SUPPLIED = 0,
+    PROJECT_FROM_CWD,
+    PROJECT_ONLY_INDEXED,
+    PROJECT_UNRESOLVED,
+} project_source_t;
+
+typedef struct {
+    project_source_t source;
+    char how[HYP_SZ_2K]; /* the disclosure, verbatim, as the answer carries it */
+} project_choice_t;
+
+/* Defined with the session-detection block far below; called here so a tool
+ * invoked before `initialize` (every direct hyp_mcp_handle_tool caller, tests
+ * included) still resolves. Idempotent — guarded by srv->session_detected. */
+static void detect_session(hyp_mcp_server_t *srv);
+
+/* Exactly one indexed project on this machine? Names it and returns true.
+ * Reads the INTERNAL project name out of each .db, the same way
+ * collect_db_project_names does, so a drifted filename cannot produce a name
+ * no store can be resolved from. Zero or several → false, and the caller
+ * refuses rather than guesses. */
+static bool sole_indexed_project(char *out, size_t outsz) {
+    char dir[HYP_SZ_1K];
+    cache_dir(dir, sizeof(dir));
+    hyp_dir_t *d = hyp_opendir(dir);
+    if (!d) {
+        return false;
+    }
+    int count = 0;
+    char found[HYP_SZ_1K] = "";
+    hyp_dirent_t *entry;
+    while ((entry = hyp_readdir(d)) != NULL) {
+        size_t len = strlen(entry->name);
+        if (!is_project_db_file(entry->name, len)) {
+            continue;
+        }
+        char full[HYP_SZ_2K];
+        snprintf(full, sizeof(full), "%s/%s", dir, entry->name);
+        char iname[HYP_SZ_1K];
+        if (!db_internal_project_name(full, iname, sizeof(iname), NULL)) {
+            continue; /* ghost / empty / corrupt db — not a candidate */
+        }
+        count++;
+        if (count > 1) {
+            break;
+        }
+        snprintf(found, sizeof(found), "%s", iname);
+    }
+    hyp_closedir(d);
+    if (count != 1 || !found[0] || strlen(found) >= outsz) {
+        return false;
+    }
+    snprintf(out, outsz, "%s", found);
+    return true;
+}
+
+/* Is <project>.db on disk? The cheap "is this indexed" test — the same
+ * filename resolve_store opens. */
+static bool project_is_indexed(const char *project) {
+    if (!project || !project[0]) {
+        return false;
+    }
+    char db[HYP_SZ_2K];
+    project_db_path(project, db, sizeof(db));
+    return db[0] && hyp_file_exists(db);
+}
+
+/* Walk the session root and its ancestors for an indexed project. On success
+ * returns the heap project name and writes the path it was derived from into
+ * `from`. Stops at $HOME and at the filesystem root: above a user's own home
+ * there is nothing a working directory can honestly be said to be inside. */
+static char *project_from_session_root(hyp_mcp_server_t *srv, char *from, size_t from_sz) {
+    if (!srv || srv->session_root[0] == '\0') {
+        return NULL;
+    }
+    const char *home = hyp_get_home_dir();
+    char path[HYP_SZ_1K];
+    snprintf(path, sizeof(path), "%s", srv->session_root);
+    hyp_normalize_path_sep(path);
+    while (path[0]) {
+        char *name = hyp_project_name_from_path(path);
+        if (name && project_is_indexed(name)) {
+            snprintf(from, from_sz, "%s", path);
+            return name;
+        }
+        free(name);
+        if (home && home[0] && strcmp(path, home) == 0) {
+            break; /* never climb out of the user's home */
+        }
+        char *slash = strrchr(path, '/');
+        if (!slash || slash == path) {
+            break; /* "/x" or a drive-relative remainder — nothing left above */
+        }
+        *slash = '\0';
+    }
+    return NULL;
+}
+
+/* Resolve the project for one tool call and RECORD how. Returns the heap
+ * project name (caller frees) or NULL when nothing resolved — callers then
+ * fall into the existing not-found / missing-project errors, which list the
+ * candidates. `out` is always written. */
+static char *resolve_project_arg(hyp_mcp_server_t *srv, const char *args, project_choice_t *out) {
+    project_choice_t discard;
+    if (!out) {
+        out = &discard;
+    }
+    out->source = PROJECT_UNRESOLVED;
+    out->how[0] = '\0';
+
+    /* (a) Explicit always wins. */
+    char *supplied = get_project_arg(args);
+    if (supplied) {
+        out->source = PROJECT_SUPPLIED;
+        snprintf(out->how, sizeof(out->how), "supplied");
+        return supplied;
+    }
+
+    /* (b) The client's working directory. */
+    if (srv) {
+        detect_session(srv);
+        char from[HYP_SZ_1K] = "";
+        char *derived = project_from_session_root(srv, from, sizeof(from));
+        if (derived) {
+            out->source = PROJECT_FROM_CWD;
+            if (strcmp(from, srv->session_root) == 0) {
+                snprintf(out->how, sizeof(out->how), "derived from working directory %s", from);
+            } else {
+                /* Climbed: say BOTH paths. "derived from working directory X"
+                 * would otherwise name a directory that is not the one whose
+                 * name was used, which is the kind of half-disclosure that
+                 * makes a disclosure worthless. */
+                snprintf(out->how, sizeof(out->how),
+                         "derived from working directory %s (indexed root %s)", srv->session_root,
+                         from);
+            }
+            hyp_log_info("mcp.project.derived", "project", derived, "from", from);
+            return derived;
+        }
+    }
+
+    /* (c) The single indexed project — and only when it is single. */
+    char sole[HYP_SZ_1K];
+    if (sole_indexed_project(sole, sizeof(sole))) {
+        out->source = PROJECT_ONLY_INDEXED;
+        snprintf(out->how, sizeof(out->how), "the only indexed project");
+        hyp_log_info("mcp.project.sole", "project", sole);
+        return heap_strdup(sole);
+    }
+
+    /* Nothing resolved. Almost every caller turns this into the "which
+     * project?" error and never discloses anything — but ingest_traces
+     * answers without a store, and it must not report an empty project as
+     * "supplied". A disclosure that can lie about the easy case would not be
+     * worth reading in the hard one. */
+    snprintf(out->how, sizeof(out->how), "none — no project argument, and none could be derived");
+    return NULL;
+}
+
+/* The disclosure string for an answer. Never empty, and never a guess: an
+ * answer that names a project must also name where the project came from,
+ * including when the answer is that it came from nowhere. */
+static const char *project_choice_text(const project_choice_t *c) {
+    return c && c->how[0] ? c->how : "unrecorded";
+}
+
+/* Emit `project` + `project_source` into a TOON answer. */
+static void emit_project_choice_toon(hyp_sb_t *sb, const char *project,
+                                     const project_choice_t *choice) {
+    hyp_tree_scalar_str(sb, "project", project ? project : "");
+    hyp_tree_scalar_str(sb, "project_source", project_choice_text(choice));
+}
+
+/* Emit `project` + `project_source` into a JSON answer. */
+static void add_project_choice_json(yyjson_mut_doc *doc, yyjson_mut_val *root, const char *project,
+                                    const project_choice_t *choice) {
+    yyjson_mut_obj_add_strcpy(doc, root, "project", project ? project : "");
+    yyjson_mut_obj_add_strcpy(doc, root, "project_source", project_choice_text(choice));
+}
+
+/* Emit only `project_source`, for answers that already carry `project`. */
+static void add_project_source_json(yyjson_mut_doc *doc, yyjson_mut_val *root,
+                                    const project_choice_t *choice) {
+    yyjson_mut_obj_add_strcpy(doc, root, "project_source", project_choice_text(choice));
+}
+
+/* Attach the disclosure to an already-enveloped SUCCESSFUL result.
+ *
+ * Two handlers — get_code_snippet and search_code — assemble their answers
+ * several call layers down in builders shared with other paths, where
+ * threading a choice through every signature would touch far more code than
+ * the disclosure is worth. Those two come back through here instead: the
+ * envelope is reopened, the two fields are put at the FRONT of the body
+ * (JSON object or TOON scalars, whichever the body is), and it is re-wrapped.
+ * Everywhere else the disclosure is written straight into the answer being
+ * built, which costs nothing.
+ *
+ * Errors are left alone: an error already says what went wrong, and the ones
+ * that concern the project name list the candidates themselves.
+ *
+ * Takes ownership of `result`; returns the replacement, or the ORIGINAL
+ * unchanged on any failure — an answer is never lost to a disclosure. */
+static char *result_with_project_choice(char *result, const char *project,
+                                        const project_choice_t *choice) {
+    if (!result) {
+        return result;
+    }
+    yyjson_doc *env = yyjson_read(result, strlen(result), 0);
+    yyjson_val *root = env ? yyjson_doc_get_root(env) : NULL;
+    yyjson_val *is_err = root ? yyjson_obj_get(root, "isError") : NULL;
+    if (!root || (is_err && yyjson_is_bool(is_err) && yyjson_get_bool(is_err))) {
+        yyjson_doc_free(env);
+        return result;
+    }
+    yyjson_val *content = yyjson_obj_get(root, "content");
+    yyjson_val *first = content ? yyjson_arr_get(content, 0) : NULL;
+    yyjson_val *text = first ? yyjson_obj_get(first, "text") : NULL;
+    const char *inner = text && yyjson_is_str(text) ? yyjson_get_str(text) : NULL;
+    if (!inner) {
+        yyjson_doc_free(env);
+        return result;
+    }
+
+    char *replacement = NULL;
+    if (inner[0] == '{') {
+        yyjson_doc *body = yyjson_read(inner, strlen(inner), 0);
+        yyjson_val *broot = body ? yyjson_doc_get_root(body) : NULL;
+        if (broot && yyjson_is_obj(broot)) {
+            yyjson_mut_doc *out = yyjson_mut_doc_new(NULL);
+            yyjson_mut_val *oroot = yyjson_mut_obj(out);
+            if (oroot) {
+                yyjson_mut_doc_set_root(out, oroot);
+                add_project_choice_json(out, oroot, project, choice);
+                size_t idx, max;
+                yyjson_val *key, *val;
+                yyjson_obj_foreach(broot, idx, max, key, val) {
+                    const char *kname = yyjson_get_str(key);
+                    if (!kname || strcmp(kname, "project") == 0 ||
+                        strcmp(kname, "project_source") == 0) {
+                        continue;
+                    }
+                    yyjson_mut_val *mk = yyjson_mut_strcpy(out, kname);
+                    yyjson_mut_val *mv = yyjson_val_mut_copy(out, val);
+                    if (mk && mv) {
+                        yyjson_mut_obj_add(oroot, mk, mv);
+                    }
+                }
+                replacement = yy_doc_to_str(out);
+            }
+            yyjson_mut_doc_free(out);
+        }
+        yyjson_doc_free(body);
+    } else {
+        hyp_sb_t sb;
+        hyp_sb_init(&sb);
+        emit_project_choice_toon(&sb, project, choice);
+        hyp_sb_append(&sb, inner);
+        replacement = hyp_sb_finish(&sb);
+    }
+    yyjson_doc_free(env);
+    if (!replacement) {
+        return result;
+    }
+    char *wrapped = hyp_mcp_text_result(replacement, false);
+    free(replacement);
+    if (!wrapped) {
+        return result;
+    }
+    free(result);
+    return wrapped;
 }
 
 /* ── Tool handler implementations ─────────────────────────────── */
@@ -2719,7 +3112,8 @@ static char *verify_project_indexed(hyp_store_t *store, const char *project) {
 static bool sg_field_blocked(const char *f); /* internal-only fields, defined with search_graph */
 
 static char *handle_get_graph_schema(hyp_mcp_server_t *srv, const char *args) {
-    char *project = get_project_arg(args);
+    project_choice_t choice;
+    char *project = resolve_project_arg(srv, args, &choice);
     hyp_store_t *store = resolve_store(srv, project);
     REQUIRE_STORE(store, project);
 
@@ -2735,6 +3129,7 @@ static char *handle_get_graph_schema(hyp_mcp_server_t *srv, const char *args) {
     yyjson_mut_doc *doc = yyjson_mut_doc_new(NULL);
     yyjson_mut_val *root = yyjson_mut_obj(doc);
     yyjson_mut_doc_set_root(doc, root);
+    add_project_choice_json(doc, root, project, &choice);
 
     yyjson_mut_val *labels = yyjson_mut_arr(doc);
     for (int i = 0; i < schema.node_label_count; i++) {
@@ -2770,6 +3165,31 @@ static char *handle_get_graph_schema(hyp_mcp_server_t *srv, const char *args) {
         yyjson_mut_arr_add_val(types, typ);
     }
     yyjson_mut_obj_add_val(doc, root, "edge_types", types);
+
+    /* Property semantics the property-NAME list above cannot express. Two
+     * traps live here: is_test is a JSON boolean whose derivation is not
+     * obvious, and the in-loop metrics are COUNTERS, so the natural
+     * `WHERE alloc_in_loop = true` matches nothing at all. */
+    yyjson_mut_val *notes = yyjson_mut_obj(doc);
+    yyjson_mut_obj_add_str(
+        doc, notes, "is_test",
+        "JSON boolean. True for EVERY declaration (Function, Method, Class, Variable, Module, ...) "
+        "in a file the extractor classified as a test file — a per-language basename rule "
+        "(*_test.go, test_*.py, *.test.ts, *Test.java, *_test.c / test_*.c, ...) OR a path with a "
+        "tests/, test/, spec/ or __tests__/ directory segment. Also true for individual Rust "
+        "#[test]/#[tokio::test] items and C++ GoogleTest macros in a file that is NOT otherwise a "
+        "test file. It is never inferred from a function's own name. In query_graph compare it "
+        "with = true; = 1 matches NOTHING. search_graph's BM25 mode deprioritises these rows by "
+        "5.0 (half the Function/Method boost); nothing hides them.");
+    yyjson_mut_obj_add_str(
+        doc, notes, "alloc_in_loop",
+        "INTEGER COUNT of allocation/append calls inside loops, NOT a boolean — = true matches "
+        "nothing. Use > 0.");
+    yyjson_mut_obj_add_str(
+        doc, notes, "linear_scan_in_loop",
+        "INTEGER COUNT of linear-scan calls (find/contains/indexOf) inside loops, NOT a boolean — "
+        "= true matches nothing. Use > 0.");
+    yyjson_mut_obj_add_val(doc, root, "property_notes", notes);
 
     /* Check ADR presence */
     hyp_project_t proj_info = {0};
@@ -3006,6 +3426,15 @@ static char *bm25_search(hyp_store_t *store, const char *project, const char *qu
         "        - CASE WHEN n.label IN ('Function','Method') THEN 10.0 "
         "               WHEN n.label = 'Route' THEN 8.0 "
         "               WHEN n.label IN (" HYP_SQL_TYPE_LIKE_LABELS ") THEN 5.0 "
+        "               ELSE 0.0 END "
+        /* Test declarations are DEPRIORITISED, never hidden: bm25() is
+         * negative and lower is better, so adding the penalty pushes a test
+         * row down without removing it. Half the Function/Method boost — a
+         * test function is weighted like a type-like declaration, so a
+         * production function with a comparable lexical match always wins,
+         * while a test that is overwhelmingly the better match can still
+         * surface (someone asking about a test deserves to find it). */
+        "        + CASE WHEN json_extract(n.properties, '$.is_test') = 1 THEN 5.0 "
         "               ELSE 0.0 END) AS rank "
         "FROM ("
         "    SELECT rowid, bm25(nodes_fts) AS base_rank"
@@ -3617,7 +4046,8 @@ static char *handle_search_graph(hyp_mcp_server_t *srv, const char *args) {
      * retainer is in what the handlers share -- store resolution or the query
      * itself. These marks separate the two. */
     hyp_mem_phase_mark("handler.args");
-    char *project = get_project_arg(args);
+    project_choice_t choice;
+    char *project = resolve_project_arg(srv, args, &choice);
     hyp_mem_phase_mark("handler.resolve_store");
     hyp_store_t *store = resolve_store(srv, project);
     hyp_mem_phase_mark("handler.body");
@@ -3649,9 +4079,13 @@ static char *handle_search_graph(hyp_mcp_server_t *srv, const char *args) {
         free(q_file_pattern);
         if (bm25_json) {
             free(query);
-            free(project);
             char *result = hyp_mcp_text_result(bm25_json, false);
             free(bm25_json);
+            /* The ranked path returns from inside a helper, so the disclosure
+             * is attached to the finished answer rather than written into the
+             * builder — same two fields, same order, either way. */
+            result = result_with_project_choice(result, project, &choice);
+            free(project);
             return result;
         }
     }
@@ -3720,6 +4154,7 @@ static char *handle_search_graph(hyp_mcp_server_t *srv, const char *args) {
 
             hyp_sb_t sb;
             hyp_sb_init(&sb);
+            emit_project_choice_toon(&sb, project, &choice);
             hyp_search_output_t tout = {0};
             if (!semantic_only) {
                 hyp_store_search(store, &params, &tout);
@@ -3806,6 +4241,7 @@ static char *handle_search_graph(hyp_mcp_server_t *srv, const char *args) {
     yyjson_mut_doc *doc = yyjson_mut_doc_new(NULL);
     yyjson_mut_val *root = yyjson_mut_obj(doc);
     yyjson_mut_doc_set_root(doc, root);
+    add_project_choice_json(doc, root, project, &choice);
 
     /* format:"json" = json-stringified tree: same grouped model as the
      * default text output, structured for parsing. include_connected adds a
@@ -3886,12 +4322,62 @@ static char *handle_search_graph(hyp_mcp_server_t *srv, const char *args) {
  * either answers or errors; this one has a third outcome that is neither, and
  * getting it wrong is worse than getting the ranking wrong. See ask_emit_*. */
 
+/* ── The one-call answer (NEXT-STEPS.md §3.2 step 1) ─────────────────
+ *
+ * §3.1 measured this lane through a real client: 3,800 tool-result tokens per
+ * CORRECT answer against plain Read/Grep's 2,490, a 5-6 turn median and a
+ * ONE-SHOT RATE OF 0%. The profile the agents load tells them to read ask's top
+ * rows and verify with `get_code_snippet`, and that pair is a turn boundary the
+ * tool can remove by itself — so the answer below carries the source for the
+ * top candidates and stops at three rows instead of ten.
+ *
+ * EVERY CONSTANT HERE IS DERIVED FROM A MEASUREMENT ON THE PINNED CORPUS
+ * (~/ctxbench/repos/llvm/lld/ELF, the frozen 60 of runs/EMBED-SWAP), not
+ * chosen to make a number look good. The measurements, run with v0.3.1 at
+ * limit=10 over all 60 questions:
+ *
+ *   gold rank   1     2     3    4-5   6-10   never
+ *   questions   13    10    0     5      8      24
+ *
+ * ASK_SOURCE_ROWS = 2 because RANK 3 CARRIED NO GOLD AT ALL (0 of 60), while
+ * ranks 1-2 carry 23 of the 36 answers this lane finds. A third span would
+ * cost ~600 bytes on every question to buy nothing measurable here. The third
+ * ROW is still returned — a row is ~120 bytes and names a span the agent can
+ * fetch — it just does not carry text.
+ *
+ * ASK_SOURCE_SPAN_LINES_MAX / ASK_SOURCE_SPAN_BYTES_MAX are set so THE MEDIAN
+ * GOLD DECLARATION ARRIVES WHOLE: across the 75 gold spans the median is 37
+ * lines and 1,382 bytes (p75 71 lines / 2,793 bytes). 40 lines and 1,600 bytes
+ * clear both medians with a little room and cut the tail, which is the half of
+ * the distribution where a second call was going to happen anyway. A cut span
+ * NEVER goes out silently: it names its full range and the call that gets the
+ * rest.
+ *
+ * ASK_SOURCE_TOTAL_BYTES_MAX is the bound on the whole block, stated once so
+ * the answer's size is a fact rather than a consequence. It is a running pool,
+ * so raising ASK_SOURCE_ROWS later cannot quietly unbound the answer.
+ *
+ * ASK_DEFAULT_LIMIT drops 10 -> 3 for the same reason the table shows: rows
+ * 4-10 carry 13 of the 36 answers and cost ~900 bytes on EVERY question,
+ * answered or not. §3.1's harness put the same fact differently — top-3 55%
+ * local / 75% escalated against a top-10 of 68% / 85% — under its own gold-hit
+ * rule; the table above is this file's direct re-measurement and the two agree
+ * on the shape, which is all this constant needs. `limit` stays honourable to
+ * ASK_MAX_LIMIT for a caller that wants the tail. */
 enum {
-    ASK_DEFAULT_LIMIT = 10,
+    ASK_DEFAULT_LIMIT = 3,
     ASK_MAX_LIMIT = 500,
     ASK_QUESTION_MAX = 4096,
     ASK_MSG = HYP_SZ_1K,
     ASK_LANG_SAMPLE_MAX = 20000, /* distinct files sampled to derive the language */
+    ASK_SOURCE_ROWS = 2,
+    ASK_SOURCE_SPAN_LINES_MAX = 40,
+    ASK_SOURCE_SPAN_BYTES_MAX = 1600,
+    ASK_SOURCE_TOTAL_BYTES_MAX = 3200,
+    /* A one- or two-character declaration name matching a word in the question
+     * is a coincidence, not a naming. This is a floor on what "the question
+     * names it" can mean, NOT a confidence threshold — see ask_row_is_named. */
+    ASK_NAMED_MIN_LEN = 3,
 };
 
 /* Machine-readable reason tokens. Stable strings: a caller branches on these,
@@ -3987,6 +4473,45 @@ static void ask_truncation_text(const hyp_ask_status_t *st, char *out, size_t ou
     }
 }
 
+/* WHO PAID FOR THIS ANSWER (NEXT-STEPS §3.2 step 5).
+ *
+ * The answer already names the lane and both encoders, so an agent knows WHAT
+ * it is holding. This names whose key bought it. Under shared custody that is
+ * the surprising case and it gets the long sentence — the holder, the fact
+ * that any local process of this account can do the same, and the one command
+ * that stops it. Under caller custody it is one clause, because "my own key"
+ * is what a reader already assumed; it is emitted in both cases anyway, so its
+ * absence never has to be interpreted.
+ *
+ * `key_env` is a variable NAME and is echoed. NEVER pass a value: this string
+ * goes to a client, into transcripts, and very likely into a bug report.
+ *
+ * A function rather than two snprintfs at the call site so the text — and in
+ * particular the promise that no key can reach it — is reachable from a test
+ * without a live provider call. */
+static void ask_key_custody_text(const char *key_env, char *out, size_t outlen) {
+    if (!out || outlen == 0) {
+        return;
+    }
+    if (hyp_ask_provider_key_custody() == HYP_ASK_KEY_CUSTODY_SHARED) {
+        snprintf(out, outlen,
+                 "shared — $%s was read from the environment of %s, NOT from the environment of "
+                 "the process that asked. %s is '%s', so any local process of this user account "
+                 "that can reach this server can escalate on that account without holding the "
+                 "key; `hyponoia config set %s %s` stops that",
+                 key_env ? key_env : "", hyp_ask_provider_key_holder(),
+                 HYP_CONFIG_ASK_ESC_DAEMON_KEY, HYP_CONFIG_ASK_ESC_DAEMON_KEY_ALLOW,
+                 HYP_CONFIG_ASK_ESC_DAEMON_KEY, HYP_CONFIG_ASK_ESC_DAEMON_KEY_REFUSE);
+        return;
+    }
+    snprintf(out, outlen, "caller — $%s was read from this process's own environment",
+             key_env ? key_env : "");
+}
+
+void hyp_mcp_ask_key_custody_text_for_test(const char *key_env, char *out, size_t outlen) {
+    ask_key_custody_text(key_env, out, outlen);
+}
+
 /* What this index did with spans covering a whole file, said beside the
  * population it ranked.
  *
@@ -4060,8 +4585,9 @@ static HYPLanguage ask_derive_language(hyp_store_t *store, const char *project) 
 
 /* Column set. `cut` is present only when the index reports truncated rows —
  * a per-row flag that is always false costs every caller a column to learn
- * nothing, and the header declares the columns anyway. */
-static void ask_cols(const char *cols[], int *ncols, bool with_cut) {
+ * nothing, and the header declares the columns anyway. `exact` follows the
+ * same rule for the same reason. */
+static void ask_cols(const char *cols[], int *ncols, bool with_cut, bool with_exact) {
     int i = 0;
     cols[i++] = "qn";
     cols[i++] = "label";
@@ -4071,14 +4597,279 @@ static void ask_cols(const char *cols[], int *ncols, bool with_cut) {
     if (with_cut) {
         cols[i++] = "cut";
     }
+    if (with_exact) {
+        cols[i++] = "exact";
+    }
     *ncols = i;
+}
+
+/* ── The exactness marker ────────────────────────────────────────────
+ *
+ * §3.2 asks for "a marker for which candidate is exact rather than making the
+ * agent infer it from a score it has no calibration for". THIS IS NOT A
+ * CONFIDENCE. §2.4 closed score-margin gates by measurement — two corpora
+ * disagreed 3x on band width, so a constant fitted on one fires on every query
+ * of the other — and NEXT-STEPS repeats the prohibition. So the marker here is
+ * not derived from the scores at all.
+ *
+ * What it reports is A FACT ABOUT TWO STRINGS: the question spells this
+ * declaration's own name. That is computed identically on every corpus, has no
+ * tunable in it, and cannot drift. It says nothing more than it checks:
+ *
+ *   - true  — the declaration's bare name occurs in the question as a whole
+ *             word (case-sensitive), or the question contains its
+ *             `Parent::name` / `Parent.name` scoped tail.
+ *   - false — the question did not spell it. THIS IS NOT EVIDENCE AGAINST THE
+ *             ROW, and the whole column is omitted when no row matched, so a
+ *             caller never reads a wall of `false` as a wall of "no".
+ *
+ * MEASURED FIRE RATE, stated because it is the honest half: on the frozen 60
+ * (runs/EMBED-SWAP) this marker fires on 0 of 75 gold declarations. That set
+ * was CONSTRUCTED as a vocabulary-gap set — every question deliberately avoids
+ * the word the code uses — so it is the one corpus where an exact-name marker
+ * is guaranteed silent, and its silence there is a property of the query set,
+ * not of the marker. It stays because it costs nothing when it does not fire
+ * (no column, no prose) and because the alternative on offer was a fabricated
+ * confidence band. */
+#define ASK_EXACT_MARKER_TEXT                                                                    \
+    "exact=true means THE QUESTION SPELLS THIS DECLARATION'S NAME (whole word, case-sensitive, " \
+    "or its Parent::name tail) — a fact about two strings, not a confidence and not a score. "   \
+    "exact=false means the question did not spell it, which is not evidence against the row. "   \
+    "The column is absent entirely when no row matched."
+
+static bool ask_ident_char(char c) {
+    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_';
+}
+
+/* `needle` occurs in `hay` bounded by non-identifier characters on both sides. */
+static bool ask_contains_whole_word(const char *hay, const char *needle) {
+    if (!hay || !needle || !needle[0]) {
+        return false;
+    }
+    size_t nlen = strlen(needle);
+    for (const char *p = strstr(hay, needle); p; p = strstr(p + 1, needle)) {
+        bool left_ok = (p == hay) || !ask_ident_char(p[-1]);
+        bool right_ok = !ask_ident_char(p[nlen]);
+        if (left_ok && right_ok) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static bool ask_row_is_named(const char *question, const hyp_ask_hit_t *hit) {
+    if (!question || !hit) {
+        return false;
+    }
+    const char *name = hit->name;
+    if (name && strlen(name) >= ASK_NAMED_MIN_LEN && ask_contains_whole_word(question, name)) {
+        return true;
+    }
+    /* The scoped tail, for a question that writes `ICF::run` rather than `run`.
+     * Built from the qualified name's last two segments — the separator the
+     * graph stores is '.', and a caller may have written either. */
+    const char *qn = hit->qualified_name;
+    if (!qn || !name || !name[0]) {
+        return false;
+    }
+    const char *last = strrchr(qn, '.');
+    if (!last || last == qn) {
+        return false;
+    }
+    const char *prev = last - 1;
+    while (prev > qn && prev[-1] != '.') {
+        prev--;
+    }
+    size_t parent_len = (size_t)(last - prev);
+    if (parent_len == 0 || parent_len > HYP_SZ_128) {
+        return false;
+    }
+    char scoped[HYP_SZ_256];
+    snprintf(scoped, sizeof(scoped), "%.*s::%s", (int)parent_len, prev, name);
+    if (strstr(question, scoped)) {
+        return true;
+    }
+    snprintf(scoped, sizeof(scoped), "%.*s.%s", (int)parent_len, prev, name);
+    return strstr(question, scoped) != NULL;
+}
+
+/* ── The span text ───────────────────────────────────────────────────
+ *
+ * One resolved span, capped. Read through hyp_ask_read_span — the SAME reader
+ * the embed pass used to build the text it encoded — so the lines an agent is
+ * handed are the lines that were ranked, rather than a second reader's idea of
+ * where line N starts. */
+typedef struct {
+    char *text; /* NULL when nothing could be read; see `reason` */
+    const char *reason;
+    int shown_start; /* first line of `text` */
+    int shown_end;   /* last line of `text` */
+    int span_lines;  /* the declaration's full line count */
+    bool truncated;  /* `text` stops short of the declaration */
+} ask_span_text_t;
+
+/* utf8_is_cont and sanitize_utf8_lossy live with get_code_snippet, several
+ * thousand lines below; the span reader needs both. */
+static bool utf8_is_cont(unsigned char c);
+static char *sanitize_utf8_lossy(const char *s);
+
+/* Cap `text` (in place) at `budget` bytes on a LINE boundary, reporting how
+ * many lines survived. A single line longer than the budget is cut mid-line
+ * rather than dropped whole: a 4 KB one-liner is still worth its first 1.6 KB,
+ * and the caller marks it truncated either way. The cut lands on a UTF-8
+ * boundary so the answer is never invalid text. */
+static int ask_span_cap_bytes(char *text, size_t budget) {
+    size_t len = strlen(text);
+    int lines = 1;
+    if (len <= budget) {
+        for (size_t i = 0; i < len; i++) {
+            if (text[i] == '\n') {
+                lines++;
+            }
+        }
+        return lines;
+    }
+    size_t cut = 0;
+    lines = 0;
+    for (size_t i = 0; i < len && i < budget; i++) {
+        if (text[i] == '\n') {
+            cut = i;
+            lines++;
+        }
+    }
+    if (lines == 0) {
+        cut = budget;
+        while (cut > 0 && utf8_is_cont((unsigned char)text[cut])) {
+            cut--;
+        }
+        lines = 1;
+    }
+    text[cut] = '\0';
+    return lines;
+}
+
+static void ask_span_text_read(const char *root_path, const hyp_ask_hit_t *hit, size_t budget,
+                               ask_span_text_t *out) {
+    memset(out, 0, sizeof(*out));
+    out->span_lines = hit->start_line > 0 && hit->end_line >= hit->start_line
+                          ? hit->end_line - hit->start_line + 1
+                          : 0;
+    if (hit->start_line <= 0 || out->span_lines <= 0) {
+        out->reason = "the graph recorded no line range for this declaration";
+        return;
+    }
+    if (!root_path || !root_path[0]) {
+        out->reason = "this project has no root path recorded, so its files cannot be located";
+        return;
+    }
+    if (!hit->file_path || !hit->file_path[0]) {
+        out->reason = "the graph recorded no file for this declaration";
+        return;
+    }
+    size_t apsz = strlen(root_path) + strlen(hit->file_path) + MCP_SEPARATOR;
+    char *abs_path = malloc(apsz);
+    if (!abs_path) {
+        out->reason = "out of memory resolving the path";
+        return;
+    }
+    snprintf(abs_path, apsz, "%s/%s", root_path, hit->file_path);
+    /* Existence BEFORE containment, only so the reason is true. Containment
+     * canonicalises both sides, which fails on a path that is not there — and
+     * "outside the project root" is a security claim, not a staleness one.
+     * Reporting a deleted file as an escape attempt would be a lie in the
+     * direction that gets investigated. */
+    if (!hyp_file_exists(abs_path)) {
+        out->reason = "no file at the recorded path — the index is stale for this declaration";
+        free(abs_path);
+        return;
+    }
+    /* The same containment guard every other MCP file-read sink passes: an
+     * indexed path that resolves outside the project root (a `..` segment, or a
+     * symlink discovery followed) must not be read back into a response. */
+    if (!hyp_path_within_root(root_path, abs_path)) {
+        free(abs_path);
+        out->reason = "the recorded path resolves outside the project root and was not read";
+        return;
+    }
+
+    int want_end = hit->end_line;
+    if (out->span_lines > ASK_SOURCE_SPAN_LINES_MAX) {
+        want_end = hit->start_line + ASK_SOURCE_SPAN_LINES_MAX - 1;
+    }
+    char *raw = hyp_ask_read_span(abs_path, hit->start_line, want_end);
+    free(abs_path);
+    if (!raw) {
+        out->reason = "the file could not be read at the recorded path (moved, deleted, or the "
+                      "index is stale)";
+        return;
+    }
+    char *clean = sanitize_utf8_lossy(raw);
+    free(raw);
+    if (!clean) {
+        out->reason = "out of memory reading the span";
+        return;
+    }
+    int shown = ask_span_cap_bytes(clean, budget);
+    out->text = clean;
+    out->shown_start = hit->start_line;
+    out->shown_end = hit->start_line + shown - 1;
+    if (out->shown_end > hit->end_line) {
+        out->shown_end = hit->end_line;
+    }
+    out->truncated = out->shown_end < hit->end_line;
+}
+
+static void ask_span_text_free(ask_span_text_t *s) {
+    free(s->text);
+    s->text = NULL;
+}
+
+/* The fence a markdown-reading client can trust. CommonMark's own rule: a
+ * fence must be longer than any backtick run at the start of a line inside it,
+ * so a C++ raw string or an embedded markdown file cannot close the block
+ * early. Returns the number of backticks to use. */
+static int ask_fence_len(const char *text) {
+    enum { FENCE_MIN = 3 };
+    int longest = 0;
+    bool at_line_start = true;
+    for (const char *p = text; *p; p++) {
+        if (at_line_start && *p == '`') {
+            int run = 0;
+            while (p[run] == '`') {
+                run++;
+            }
+            if (run > longest) {
+                longest = run;
+            }
+            p += run - 1;
+            at_line_start = false;
+            continue;
+        }
+        at_line_start = (*p == '\n');
+    }
+    return longest >= FENCE_MIN ? longest + 1 : FENCE_MIN;
+}
+
+static void ask_emit_fence(hyp_sb_t *sb, const char *text) {
+    int n = ask_fence_len(text);
+    for (int i = 0; i < n; i++) {
+        hyp_sb_append(sb, "`");
+    }
+    hyp_sb_append(sb, "\n");
+    hyp_sb_append(sb, text);
+    hyp_sb_append(sb, "\n");
+    for (int i = 0; i < n; i++) {
+        hyp_sb_append(sb, "`");
+    }
+    hyp_sb_append(sb, "\n");
 }
 
 /* The unavailable answer. NO results table is emitted — not an empty one.
  * An empty `results[0]{...}:` is how "the index was never built" gets read as
  * "your codebase has nothing like that", which is a claim about the caller's
  * code that this tool has no basis to make. */
-static char *ask_emit_unavailable(const hyp_ask_status_t *st, const char *project, bool json) {
+static char *ask_emit_unavailable(const hyp_ask_status_t *st, const char *project, bool json,
+                                  const project_choice_t *choice) {
     char detail[ASK_MSG];
     char remedy[ASK_MSG];
     ask_unavailable_text(st, project, detail, sizeof(detail), remedy, sizeof(remedy));
@@ -4087,6 +4878,7 @@ static char *ask_emit_unavailable(const hyp_ask_status_t *st, const char *projec
         yyjson_mut_doc *doc = yyjson_mut_doc_new(NULL);
         yyjson_mut_val *root = yyjson_mut_obj(doc);
         yyjson_mut_doc_set_root(doc, root);
+        add_project_choice_json(doc, root, project, choice);
         yyjson_mut_obj_add_bool(doc, root, "available", false);
         /* Only the LOCAL lane answers unavailable in this shape; an escalated
          * ask that cannot proceed is an error that says which lane and why. */
@@ -4104,6 +4896,7 @@ static char *ask_emit_unavailable(const hyp_ask_status_t *st, const char *projec
 
     hyp_sb_t sb;
     hyp_sb_init(&sb);
+    emit_project_choice_toon(&sb, project, choice);
     hyp_tree_scalar_bool(&sb, "available", false);
     hyp_tree_scalar_str(&sb, "lane", "local");
     hyp_tree_scalar_str(&sb, "reason", ask_reason_token(st->avail));
@@ -4122,6 +4915,19 @@ static char *ask_error(const char *msg, char *project, char *question) {
     return hyp_mcp_text_result(msg, true);
 }
 
+/* hyp_mcp_get_bool_arg reads an absent key as false, which is the wrong
+ * default for a flag whose whole point is that it is ON unless turned off. */
+static bool ask_bool_arg_default(const char *args_json, const char *key, bool def) {
+    yyjson_doc *doc = yyjson_read(args_json, strlen(args_json), 0);
+    if (!doc) {
+        return def;
+    }
+    yyjson_val *val = yyjson_obj_get(yyjson_doc_get_root(doc), key);
+    bool result = (val && yyjson_is_bool(val)) ? yyjson_get_bool(val) : def;
+    yyjson_doc_free(doc);
+    return result;
+}
+
 /* Defined below, with the rest of the project-root helpers. */
 static char *project_root_from_store(hyp_store_t *store, const char *project);
 
@@ -4130,12 +4936,19 @@ static char *project_root_from_store(hyp_store_t *store, const char *project);
  * scored against (zeroed when no vector was produced). It exists for ONE
  * caller — hyp_mcp_ask_view_overlay — so the 3-D view draws the question with
  * the very vector that ranked, rather than re-encoding and hoping the two
- * agree. handle_ask passes NULL and is otherwise identical. */
-static char *ask_run(hyp_mcp_server_t *srv, const char *args, bool force_json, float *qvec_out) {
+ * agree.
+ *
+ * `allow_source` is that same caller's second concession: the overlay embeds
+ * this tool's whole answer inside a 3-D view payload, where span text is
+ * several kilobytes of code nobody is going to read in a scatter plot. It
+ * passes false; handle_ask passes true and lets `include_source` decide. */
+static char *ask_run(hyp_mcp_server_t *srv, const char *args, bool force_json, bool allow_source,
+                     float *qvec_out) {
     if (qvec_out) {
         memset(qvec_out, 0, (size_t)HYP_ASK_DIM * sizeof(float));
     }
-    char *project = get_project_arg(args);
+    project_choice_t choice;
+    char *project = resolve_project_arg(srv, args, &choice);
     hyp_store_t *store = resolve_store(srv, project);
     REQUIRE_STORE(store, project);
 
@@ -4190,6 +5003,14 @@ static char *ask_run(hyp_mcp_server_t *srv, const char *args, bool force_json, f
         limit = ASK_MAX_LIMIT;
     }
 
+    /* THE SOURCE IS ON BY DEFAULT, because the measurement says the default is
+     * where the cost is: a 5-6 turn median and a ONE-SHOT RATE OF 0% in every
+     * column of runs/ASK-REACHABLE. A switch that has to be discovered would
+     * have been read by nobody and changed nothing. Off is for the caller who
+     * already knows it only wants coordinates — a wide survey at limit=50, or a
+     * client that will fetch the file itself. */
+    bool include_source = allow_source && ask_bool_arg_default(args, "include_source", true);
+
     int search_limit = limit;
 
     /* ESCALATION IS PER QUERY AND NEVER INFERRED. §2.4 closed the door on the
@@ -4217,6 +5038,11 @@ static char *ask_run(hyp_mcp_server_t *srv, const char *args, bool force_json, f
     hyp_ask_lane_t lane = HYP_ASK_LANE_LOCAL;
     hyp_ask_encoder_t *esc_enc = NULL;
     const hyp_ask_provider_t *esc_provider = NULL;
+    /* WHOSE KEY PAID, said on the answer itself. Filled in below while
+     * `key_env` is still in scope; empty on the local lane, which reads no key
+     * at all and would only be making a claim about nothing. */
+    char key_custody_text[HYP_SZ_512];
+    key_custody_text[0] = '\0';
     if (escalate) {
         /* Not `cache_dir`: this file already has a static cache_dir(char *,
          * size_t) at line 1948, and shadowing it reads as a call site. */
@@ -4235,6 +5061,15 @@ static char *ask_run(hyp_mcp_server_t *srv, const char *args, bool force_json, f
         snprintf(mode, sizeof(mode), "%s",
                  cfg ? hyp_config_get(cfg, HYP_CONFIG_ASK_ESC_MODE, HYP_CONFIG_ASK_ESC_MODE_DEFAULT)
                      : HYP_CONFIG_ASK_ESC_MODE_DEFAULT);
+        /* Read per request, not cached at startup: the owner must be able to
+         * revoke a daemon's spending permission without restarting the daemon
+         * that holds the key. */
+        char daemon_key[HYP_SZ_32];
+        snprintf(daemon_key, sizeof(daemon_key), "%s",
+                 cfg ? hyp_config_get(cfg, HYP_CONFIG_ASK_ESC_DAEMON_KEY,
+                                      HYP_CONFIG_ASK_ESC_DAEMON_KEY_DEFAULT)
+                     : HYP_CONFIG_ASK_ESC_DAEMON_KEY_DEFAULT);
+        bool daemon_key_allowed = strcmp(daemon_key, HYP_CONFIG_ASK_ESC_DAEMON_KEY_ALLOW) == 0;
         if (cfg) {
             hyp_config_close(cfg);
         }
@@ -4257,7 +5092,28 @@ static char *ask_run(hyp_mcp_server_t *srv, const char *args, bool force_json, f
         }
         lane = esc_query_mode ? HYP_ASK_LANE_LOCAL : HYP_ASK_LANE_ESCALATION;
         char eerr[ASK_MSG] = "";
-        esc_enc = hyp_ask_provider_encoder_create(provider, model, key_env, eerr, sizeof(eerr));
+        /* WHOSE KEY WOULD PAY (NEXT-STEPS §3.2 step 5). Every tool call
+         * reaching this line is served by the daemon — MCP sessions through
+         * the stdio frontend, `hyponoia cli <tool>`, and the graph UI's
+         * /api/embed-view/ask all execute in that one long-lived process — so
+         * the environment `hyp_ask_provider_key` is about to read belongs to
+         * whoever started the daemon, not to whoever asked. Asked FIRST and
+         * separately from the encoder's other failures because the remedy is
+         * completely different: the lane below tells a caller to configure a
+         * provider, which here is already configured and would be the wrong
+         * advice entirely. */
+        if (hyp_ask_provider_key_custody_refused(daemon_key_allowed, key_env, eerr, sizeof(eerr))) {
+            char msg[ASK_MSG + HYP_SZ_256];
+            snprintf(msg, sizeof(msg),
+                     "escalate=true was asked for and this server may not spend on your behalf: "
+                     "%s. NOTHING was sent and NOTHING was charged, and this did NOT fall back "
+                     "to the local encoder — you asked for the escalated answer and would have "
+                     "received a different one without being told.",
+                     eerr);
+            return ask_error(msg, project, question);
+        }
+        esc_enc = hyp_ask_provider_encoder_create(provider, model, key_env, daemon_key_allowed,
+                                                  eerr, sizeof(eerr));
         if (!esc_enc) {
             /* NEVER A SILENT FALLBACK. Answering from the local index here
              * would hand back the cheap answer to someone who asked for the
@@ -4293,6 +5149,8 @@ static char *ask_run(hyp_mcp_server_t *srv, const char *args, bool force_json, f
         }
         /* Non-NULL whenever the encoder was created; kept for the dim_mode gate. */
         esc_provider = hyp_ask_provider_by_name(provider);
+
+        ask_key_custody_text(key_env, key_custody_text, sizeof(key_custody_text));
     }
 
     hyp_ask_status_t st;
@@ -4371,7 +5229,7 @@ static char *ask_run(hyp_mcp_server_t *srv, const char *args, bool force_json, f
             hyp_ask_encoder_destroy(esc_enc);
             return ask_error(msg, project, question);
         }
-        char *result = ask_emit_unavailable(&st, project, json);
+        char *result = ask_emit_unavailable(&st, project, json, &choice);
         free(project);
         free(question);
         return result;
@@ -4578,21 +5436,62 @@ static char *ask_run(hyp_mcp_server_t *srv, const char *args, bool force_json, f
     char trunc_text[ASK_MSG];
     ask_truncation_text(&st, trunc_text, sizeof(trunc_text));
     bool with_cut = st.trunc == HYP_ASK_TRUNC_SOME;
-    const char *cols[7];
+
+    /* The exactness marker, per row. Computed for every returned row, emitted
+     * as a column only when at least one row matched — the `cut` rule, for the
+     * `cut` reason: a column of `false` costs every caller bytes to learn
+     * nothing, and worse here, a wall of `false` reads as a verdict. */
+    bool *named = hit_count > 0 ? (bool *)calloc((size_t)hit_count, sizeof(bool)) : NULL;
+    bool with_exact = false;
+    for (int i = 0; i < hit_count && named; i++) {
+        named[i] = ask_row_is_named(question, &hits[i]);
+        with_exact = with_exact || named[i];
+    }
+
+    const char *cols[8];
     int ncols = 0;
-    ask_cols(cols, &ncols, with_cut);
+    ask_cols(cols, &ncols, with_cut, with_exact);
+
+    /* THE SPAN TEXT. Read for the top ASK_SOURCE_ROWS rows out of one shared
+     * byte pool, so the block is bounded no matter what the rows contain. */
+    ask_span_text_t spans[ASK_SOURCE_ROWS];
+    memset(spans, 0, sizeof(spans));
+    int span_count = 0;
+    char *root_path = NULL;
+    if (include_source && hit_count > 0) {
+        root_path = project_root_from_store(store, project);
+        size_t pool = ASK_SOURCE_TOTAL_BYTES_MAX;
+        int want = hit_count < ASK_SOURCE_ROWS ? hit_count : ASK_SOURCE_ROWS;
+        for (int i = 0; i < want; i++) {
+            size_t budget =
+                pool < (size_t)ASK_SOURCE_SPAN_BYTES_MAX ? pool : (size_t)ASK_SOURCE_SPAN_BYTES_MAX;
+            if (budget == 0) {
+                break;
+            }
+            ask_span_text_read(root_path, &hits[i], budget, &spans[span_count]);
+            if (spans[span_count].text) {
+                size_t used = strlen(spans[span_count].text);
+                pool = used >= pool ? 0 : pool - used;
+            }
+            span_count++;
+        }
+    }
 
     char *result = NULL;
     if (json) {
         yyjson_mut_doc *doc = yyjson_mut_doc_new(NULL);
         yyjson_mut_val *root = yyjson_mut_obj(doc);
         yyjson_mut_doc_set_root(doc, root);
+        add_project_choice_json(doc, root, project, &choice);
         yyjson_mut_obj_add_bool(doc, root, "available", true);
         yyjson_mut_obj_add_str(doc, root, "lane", lane_name);
         yyjson_mut_obj_add_strcpy(doc, root, "query_encoder", query_encoder);
         yyjson_mut_obj_add_strcpy(doc, root, "index_encoder", st.model_id);
         if (space_text[0]) {
             yyjson_mut_obj_add_strcpy(doc, root, "space", space_text);
+        }
+        if (key_custody_text[0]) {
+            yyjson_mut_obj_add_strcpy(doc, root, "key_custody", key_custody_text);
         }
         /* `model` predates the two-encoder disclosure and is the INDEX's model;
          * kept so nothing that read it breaks, duplicated by index_encoder. */
@@ -4621,9 +5520,42 @@ static char *ask_run(hyp_mcp_server_t *srv, const char *args, bool force_json, f
             if (with_cut) {
                 yyjson_mut_arr_add_bool(doc, row, hits[i].truncated);
             }
+            if (with_exact) {
+                yyjson_mut_arr_add_bool(doc, row, named && named[i]);
+            }
             yyjson_mut_arr_add_val(rows, row);
         }
         yyjson_mut_obj_add_val(doc, root, "rows", rows);
+        if (with_exact) {
+            yyjson_mut_obj_add_str(doc, root, "exact_marker", ASK_EXACT_MARKER_TEXT);
+        }
+        /* `source` is present iff it was asked for, and every entry says either
+         * what it read or why it could not. An ABSENT key means "not requested";
+         * an entry with `unavailable` means "requested and there is nothing" —
+         * the two claims that 505ee69d exists to keep apart. */
+        if (include_source) {
+            yyjson_mut_val *src = yyjson_mut_arr(doc);
+            for (int i = 0; i < span_count; i++) {
+                yyjson_mut_val *e = yyjson_mut_obj(doc);
+                yyjson_mut_obj_add_int(doc, e, "rank", i + 1);
+                yyjson_mut_obj_add_strcpy(doc, e, "qn", hits[i].qualified_name);
+                yyjson_mut_obj_add_strcpy(doc, e, "file", hits[i].file_path);
+                char full[HYP_SZ_32];
+                sg_lines_str(full, sizeof(full), hits[i].start_line, hits[i].end_line);
+                yyjson_mut_obj_add_strcpy(doc, e, "lines", full);
+                if (spans[i].text) {
+                    char shown[HYP_SZ_32];
+                    sg_lines_str(shown, sizeof(shown), spans[i].shown_start, spans[i].shown_end);
+                    yyjson_mut_obj_add_strcpy(doc, e, "shown", shown);
+                    yyjson_mut_obj_add_bool(doc, e, "truncated", spans[i].truncated);
+                    yyjson_mut_obj_add_strcpy(doc, e, "text", spans[i].text);
+                } else {
+                    yyjson_mut_obj_add_str(doc, e, "unavailable", spans[i].reason);
+                }
+                yyjson_mut_arr_add_val(src, e);
+            }
+            yyjson_mut_obj_add_val(doc, root, "source", src);
+        }
         char *json_text = yy_doc_to_str(doc);
         yyjson_mut_doc_free(doc);
         result = hyp_mcp_text_result(json_text ? json_text : "{}", false);
@@ -4631,12 +5563,20 @@ static char *ask_run(hyp_mcp_server_t *srv, const char *args, bool force_json, f
     } else {
         hyp_sb_t sb;
         hyp_sb_init(&sb);
+        emit_project_choice_toon(&sb, project, &choice);
         hyp_tree_scalar_bool(&sb, "available", true);
         hyp_tree_scalar_str(&sb, "lane", lane_name);
         hyp_tree_scalar_str(&sb, "query_encoder", query_encoder);
         hyp_tree_scalar_str(&sb, "index_encoder", st.model_id);
         if (space_text[0]) {
             hyp_tree_scalar_str(&sb, "space", space_text);
+        }
+        /* BOTH PATHS, ALWAYS. The text path is the one an MCP client actually
+         * reads (no outputSchema is advertised, so `structuredContent` is not
+         * where the answer lives), and a disclosure that only the JSON path
+         * carried would be a disclosure nobody sees. */
+        if (key_custody_text[0]) {
+            hyp_tree_scalar_str(&sb, "key_custody", key_custody_text);
         }
         hyp_tree_scalar_str(&sb, "model", st.model_id);
         hyp_tree_scalar_str(&sb, "language", lang_name);
@@ -4657,7 +5597,13 @@ static char *ask_run(hyp_mcp_server_t *srv, const char *args, bool force_json, f
             if (with_cut) {
                 hyp_tree_cell_bool(&sb, hits[i].truncated, false);
             }
+            if (with_exact) {
+                hyp_tree_cell_bool(&sb, named && named[i], false);
+            }
             hyp_tree_row_end(&sb);
+        }
+        if (with_exact) {
+            hyp_tree_scalar_str(&sb, "exact_marker", ASK_EXACT_MARKER_TEXT);
         }
         if (hit_count == 0) {
             /* A REAL empty result: the index exists, the question encoded, and
@@ -4667,11 +5613,54 @@ static char *ask_run(hyp_mcp_server_t *srv, const char *args, bool force_json, f
                                 "the index was searched and returned nothing. Unlike "
                                 "available=false, this IS a statement about the code.");
         }
+        /* THE SPAN BLOCK. Not a TOON table: a table cell is one line, and a
+         * declaration is not. Each entry is a header line naming exactly which
+         * lines follow, then the lines themselves inside a backtick fence long
+         * enough that nothing in the code can close it early. */
+        if (include_source && span_count > 0) {
+            char head[HYP_SZ_512];
+            snprintf(head, sizeof(head),
+                     "\nsource: %d  (verbatim lines for the top %d row(s), capped at %d lines / "
+                     "%d bytes each; a CUT span names its full range and get_code_snippet "
+                     "returns the rest. Pass include_source=false for coordinates only.)\n",
+                     span_count, span_count, ASK_SOURCE_SPAN_LINES_MAX, ASK_SOURCE_SPAN_BYTES_MAX);
+            hyp_sb_append(&sb, head);
+            for (int i = 0; i < span_count; i++) {
+                char full[HYP_SZ_32];
+                sg_lines_str(full, sizeof(full), hits[i].start_line, hits[i].end_line);
+                char line[HYP_SZ_1K];
+                if (!spans[i].text) {
+                    snprintf(line, sizeof(line), "#%d %s %s:%s — NOT READ: %s\n", i + 1,
+                             hits[i].qualified_name ? hits[i].qualified_name : "",
+                             hits[i].file_path ? hits[i].file_path : "", full, spans[i].reason);
+                    hyp_sb_append(&sb, line);
+                    continue;
+                }
+                if (spans[i].truncated) {
+                    snprintf(line, sizeof(line), "#%d %s %s:%d-%d of %s — CUT at %d of %d lines\n",
+                             i + 1, hits[i].qualified_name ? hits[i].qualified_name : "",
+                             hits[i].file_path ? hits[i].file_path : "", spans[i].shown_start,
+                             spans[i].shown_end, full,
+                             spans[i].shown_end - spans[i].shown_start + 1, spans[i].span_lines);
+                } else {
+                    snprintf(line, sizeof(line), "#%d %s %s:%s — whole, %d lines\n", i + 1,
+                             hits[i].qualified_name ? hits[i].qualified_name : "",
+                             hits[i].file_path ? hits[i].file_path : "", full, spans[i].span_lines);
+                }
+                hyp_sb_append(&sb, line);
+                ask_emit_fence(&sb, spans[i].text);
+            }
+        }
         char *text = hyp_sb_finish(&sb);
         result = hyp_mcp_text_result(text ? text : "out of memory", text == NULL);
         free(text);
     }
 
+    for (int i = 0; i < span_count; i++) {
+        ask_span_text_free(&spans[i]);
+    }
+    free(root_path);
+    free(named);
     hyp_ask_free_hits(hits, hit_count);
     free(project);
     free(question);
@@ -4679,7 +5668,7 @@ static char *ask_run(hyp_mcp_server_t *srv, const char *args, bool force_json, f
 }
 
 static char *handle_ask(hyp_mcp_server_t *srv, const char *args) {
-    return ask_run(srv, args, false, NULL);
+    return ask_run(srv, args, false, true, NULL);
 }
 
 /* ── The 3-D view's query overlay (NEXT-STEPS §3.1 step 5) ─────────
@@ -4713,15 +5702,19 @@ char *hyp_mcp_ask_view_overlay(hyp_mcp_server_t *srv, const char *args_json) {
     if (!qvec) {
         return NULL;
     }
-    char *tool_result = ask_run(srv, args_json, true, qvec);
+    /* allow_source=false: the overlay carries the tool's whole answer inside a
+     * 3-D view payload, and kilobytes of source in a scatter plot is weight no
+     * viewer reads. The rows, the ranking and every disclosure are unchanged. */
+    char *tool_result = ask_run(srv, args_json, true, false, qvec);
 
     yyjson_mut_doc *doc = yyjson_mut_doc_new(NULL);
     yyjson_mut_val *root = yyjson_mut_obj(doc);
     yyjson_mut_doc_set_root(doc, root);
 
-    char *project = get_project_arg(args_json);
+    project_choice_t choice;
+    char *project = resolve_project_arg(srv, args_json, &choice);
     char *question = hyp_mcp_get_string_arg(args_json, "question");
-    yyjson_mut_obj_add_strcpy(doc, root, "project", project ? project : "");
+    add_project_choice_json(doc, root, project, &choice);
     yyjson_mut_obj_add_strcpy(doc, root, "question", question ? question : "");
     bool escalate = hyp_mcp_get_bool_arg(args_json, "escalate");
 
@@ -5035,7 +6028,8 @@ char *hyp_mcp_ask_view_points_json(const char *project, bool escalation) {
 
 static char *handle_query_graph(hyp_mcp_server_t *srv, const char *args) {
     char *query = hyp_mcp_get_string_arg(args, "query");
-    char *project = get_project_arg(args);
+    project_choice_t choice;
+    char *project = resolve_project_arg(srv, args, &choice);
     hyp_store_t *store = resolve_store(srv, project);
     int max_rows = hyp_mcp_get_int_arg(args, "max_rows", 0);
 
@@ -5099,6 +6093,7 @@ static char *handle_query_graph(hyp_mcp_server_t *srv, const char *args) {
     if (!qg_legacy_json) {
         hyp_sb_t sb;
         hyp_sb_init(&sb);
+        emit_project_choice_toon(&sb, project, &choice);
         hyp_tree_table_header(&sb, "rows", result.row_count, (const char *const *)result.columns,
                               result.col_count);
         for (int r = 0; r < result.row_count; r++) {
@@ -5122,6 +6117,7 @@ static char *handle_query_graph(hyp_mcp_server_t *srv, const char *args) {
         yyjson_mut_doc *doc = yyjson_mut_doc_new(NULL);
         yyjson_mut_val *root = yyjson_mut_obj(doc);
         yyjson_mut_doc_set_root(doc, root);
+        add_project_choice_json(doc, root, project, &choice);
 
         /* columns */
         yyjson_mut_val *cols = yyjson_mut_arr(doc);
@@ -5501,7 +6497,8 @@ static const char *coverage_recommended_action(const char *status, const char *f
 }
 
 static char *handle_check_index_coverage(hyp_mcp_server_t *srv, const char *args) {
-    char *project = get_project_arg(args);
+    project_choice_t choice;
+    char *project = resolve_project_arg(srv, args, &choice);
     hyp_store_t *store = resolve_store(srv, project);
     REQUIRE_STORE(store, project);
 
@@ -5535,6 +6532,7 @@ static char *handle_check_index_coverage(hyp_mcp_server_t *srv, const char *args
     yyjson_mut_val *root = yyjson_mut_obj(doc);
     yyjson_mut_doc_set_root(doc, root);
     yyjson_mut_obj_add_strcpy(doc, root, "project", project);
+    add_project_source_json(doc, root, &choice);
     yyjson_mut_obj_add_str(doc, root, "signal", "best_effort");
     yyjson_mut_obj_add_strcpy(doc, root, "indexed_at",
                               have_project && proj.indexed_at ? proj.indexed_at : "");
@@ -5691,7 +6689,8 @@ static char *handle_check_index_coverage(hyp_mcp_server_t *srv, const char *args
 }
 
 static char *handle_index_status(hyp_mcp_server_t *srv, const char *args) {
-    char *project = get_project_arg(args);
+    project_choice_t choice;
+    char *project = resolve_project_arg(srv, args, &choice);
     hyp_store_t *store = resolve_store(srv, project);
     REQUIRE_STORE(store, project);
     /* The git context block (worktree/shadow path variants) only matters when
@@ -5707,6 +6706,7 @@ static char *handle_index_status(hyp_mcp_server_t *srv, const char *args) {
         int nodes = hyp_store_count_nodes(store, project);
         int edges = hyp_store_count_edges(store, project);
         yyjson_mut_obj_add_str(doc, root, "project", project);
+        add_project_source_json(doc, root, &choice);
         yyjson_mut_obj_add_int(doc, root, "nodes", nodes);
         yyjson_mut_obj_add_int(doc, root, "edges", edges);
         yyjson_mut_obj_add_str(doc, root, "status", nodes > 0 ? "ready" : "empty");
@@ -6286,7 +7286,8 @@ static void arch_node_qn(hyp_store_t *store, int64_t id, char *out, size_t outsz
 }
 
 static char *handle_get_architecture(hyp_mcp_server_t *srv, const char *args) {
-    char *project = get_project_arg(args);
+    project_choice_t choice;
+    char *project = resolve_project_arg(srv, args, &choice);
     hyp_store_t *store = resolve_store(srv, project);
     /* REQUIRE_STORE returns without freeing anything but `project`, so every
      * other allocation must come after it (scope_path leaked here before —
@@ -6399,9 +7400,7 @@ static char *handle_get_architecture(hyp_mcp_server_t *srv, const char *args) {
     if (!arch_legacy_json) {
         hyp_sb_t sb;
         hyp_sb_init(&sb);
-        if (project) {
-            hyp_tree_scalar_str(&sb, "project", project);
-        }
+        emit_project_choice_toon(&sb, project, &choice);
         if (default_summary) {
             hyp_tree_scalar_str(&sb, "aspects_hint",
                                 "Summary view (default). More on request via aspects:[...] — "
@@ -6655,9 +7654,7 @@ static char *handle_get_architecture(hyp_mcp_server_t *srv, const char *args) {
     yyjson_mut_val *root = yyjson_mut_obj(doc);
     yyjson_mut_doc_set_root(doc, root);
 
-    if (project) {
-        yyjson_mut_obj_add_str(doc, root, "project", project);
-    }
+    add_project_choice_json(doc, root, project, &choice);
     if (default_summary) {
         yyjson_mut_obj_add_str(doc, root, "aspects_hint",
                                "Summary view (default). More on request via aspects:[...] — "
@@ -7594,7 +8591,8 @@ static int clamp_mcp_depth(int depth, const char *tool) {
 
 static char *handle_trace_call_path(hyp_mcp_server_t *srv, const char *args) {
     char *func_name = hyp_mcp_get_string_arg(args, "function_name");
-    char *project = get_project_arg(args);
+    project_choice_t choice;
+    char *project = resolve_project_arg(srv, args, &choice);
     hyp_store_t *store = resolve_store(srv, project);
     char *direction = hyp_mcp_get_string_arg(args, "direction");
     char *mode = hyp_mcp_get_string_arg(args, "mode");
@@ -7893,6 +8891,7 @@ static char *handle_trace_call_path(hyp_mcp_server_t *srv, const char *args) {
     if (!trace_legacy_json) {
         hyp_sb_t sb;
         hyp_sb_init(&sb);
+        emit_project_choice_toon(&sb, project, &choice);
         hyp_tree_scalar_str(&sb, "function", func_name);
         hyp_tree_scalar_str(&sb, "direction", direction);
         if (mode) {
@@ -7937,6 +8936,7 @@ static char *handle_trace_call_path(hyp_mcp_server_t *srv, const char *args) {
         yyjson_mut_val *root = yyjson_mut_obj(doc);
         yyjson_mut_doc_set_root(doc, root);
 
+        add_project_choice_json(doc, root, project, &choice);
         yyjson_mut_obj_add_str(doc, root, "function", func_name);
         yyjson_mut_obj_add_str(doc, root, "direction", direction);
         if (mode) {
@@ -9728,7 +10728,8 @@ static char *build_snippet_response(hyp_mcp_server_t *srv, hyp_node_t *node,
 
 static char *handle_get_code_snippet(hyp_mcp_server_t *srv, const char *args) {
     char *qn = hyp_mcp_get_string_arg(args, "qualified_name");
-    char *project = get_project_arg(args);
+    project_choice_t choice;
+    char *project = resolve_project_arg(srv, args, &choice);
     bool include_neighbors = hyp_mcp_get_bool_arg(args, "include_neighbors");
 
     if (!qn) {
@@ -9761,6 +10762,7 @@ static char *handle_get_code_snippet(hyp_mcp_server_t *srv, const char *args) {
     int rc = hyp_store_find_node_by_qn(store, effective_project, qn, &node);
     if (rc == HYP_STORE_OK) {
         char *result = build_snippet_response(srv, &node, NULL, include_neighbors, NULL, 0);
+        result = result_with_project_choice(result, project, &choice);
         free_node_contents(&node);
         free(qn);
         free(project);
@@ -9777,6 +10779,7 @@ static char *handle_get_code_snippet(hyp_mcp_server_t *srv, const char *args) {
         copy_node(&suffix_nodes[0], &node);
         hyp_store_free_nodes(suffix_nodes, suffix_count);
         char *result = build_snippet_response(srv, &node, "suffix", include_neighbors, NULL, 0);
+        result = result_with_project_choice(result, project, &choice);
         free_node_contents(&node);
         free(qn);
         free(project);
@@ -9794,12 +10797,14 @@ static char *handle_get_code_snippet(hyp_mcp_server_t *srv, const char *args) {
             copy_node(&suffix_nodes[ssel], &node);
             hyp_store_free_nodes(suffix_nodes, suffix_count);
             char *result = build_snippet_response(srv, &node, "suffix", include_neighbors, NULL, 0);
+            result = result_with_project_choice(result, project, &choice);
             free_node_contents(&node);
             free(qn);
             free(project);
             return result;
         }
         char *result = snippet_suggestions(qn, suffix_nodes, suffix_count);
+        result = result_with_project_choice(result, project, &choice);
         hyp_store_free_nodes(suffix_nodes, suffix_count);
         free(qn);
         free(project);
@@ -10766,7 +11771,8 @@ static bool compile_path_filter(const char *filter, hyp_regex_t *re) {
 
 static char *handle_search_code(hyp_mcp_server_t *srv, const char *args) {
     char *pattern = hyp_mcp_get_string_arg(args, "pattern");
-    char *project = get_project_arg(args);
+    project_choice_t choice;
+    char *project = resolve_project_arg(srv, args, &choice);
     char *file_pattern = hyp_mcp_get_string_arg(args, "file_pattern");
     char *path_filter = hyp_mcp_get_string_arg(args, "path_filter");
     char *mode_str = hyp_mcp_get_string_arg(args, "mode");
@@ -10792,11 +11798,12 @@ static char *handle_search_code(hyp_mcp_server_t *srv, const char *args) {
         return hyp_mcp_text_result("pattern is required", true);
     }
 
-    /* Project is required */
+    /* Unresolved: no argument, no indexed working directory, and more than
+     * one candidate — the error names them (§3.2 step 2). */
     if (!project) {
         free(pattern);
         free(file_pattern);
-        char *_err = build_project_list_error("project is required");
+        char *_err = build_missing_project_error();
         char *_res = hyp_mcp_text_result(_err, true);
         free(_err);
         return _res;
@@ -11019,6 +12026,7 @@ static char *handle_search_code(hyp_mcp_server_t *srv, const char *args) {
                                         context_lines, root_path, pat_has_pipe && !use_regex,
                                         hyp_now_ms() - search_t0);
     }
+    result = result_with_project_choice(result, project, &choice);
     free(gm);
     free(sr);
     free(raw);
@@ -11343,7 +12351,8 @@ static void detect_emit_impacted_tree(hyp_sb_t *sb, hyp_traverse_result_t *tr, i
 }
 
 static char *handle_detect_changes(hyp_mcp_server_t *srv, const char *args) {
-    char *project = get_project_arg(args);
+    project_choice_t choice;
+    char *project = resolve_project_arg(srv, args, &choice);
     char *base_branch = hyp_mcp_get_string_arg(args, "base_branch");
     char *since = hyp_mcp_get_string_arg(args, "since");
     char *scope = hyp_mcp_get_string_arg(args, "scope");
@@ -11699,6 +12708,7 @@ static char *handle_detect_changes(hyp_mcp_server_t *srv, const char *args) {
     if (!legacy_json) {
         hyp_sb_t sb;
         hyp_sb_init(&sb);
+        emit_project_choice_toon(&sb, project, &choice);
         hyp_tree_scalar_str(&sb, "base", base_branch);
         if (merge_base[0]) {
             hyp_tree_scalar_str(&sb, "merge_base", merge_base);
@@ -11758,6 +12768,7 @@ static char *handle_detect_changes(hyp_mcp_server_t *srv, const char *args) {
         yyjson_mut_doc *doc = yyjson_mut_doc_new(NULL);
         yyjson_mut_val *root_obj = yyjson_mut_obj(doc);
         yyjson_mut_doc_set_root(doc, root_obj);
+        add_project_choice_json(doc, root_obj, project, &choice);
         yyjson_mut_obj_add_strcpy(doc, root_obj, "base", base_branch);
         if (merge_base[0]) {
             yyjson_mut_obj_add_strcpy(doc, root_obj, "merge_base", merge_base);
@@ -11939,7 +12950,8 @@ static hyp_store_t *open_adr_store_for_write(hyp_mcp_server_t *srv, hyp_store_t 
 }
 
 static char *handle_manage_adr(hyp_mcp_server_t *srv, const char *args) {
-    char *project = get_project_arg(args);
+    project_choice_t choice;
+    char *project = resolve_project_arg(srv, args, &choice);
     char *mode_str = hyp_mcp_get_string_arg(args, "mode");
     char *content = hyp_mcp_get_string_arg(args, "content");
 
@@ -12074,6 +13086,7 @@ static char *handle_manage_adr(hyp_mcp_server_t *srv, const char *args) {
     yyjson_mut_doc *doc = yyjson_mut_doc_new(NULL);
     yyjson_mut_val *root_obj = yyjson_mut_obj(doc);
     yyjson_mut_doc_set_root(doc, root_obj);
+    add_project_choice_json(doc, root_obj, project, &choice);
 
     bool is_error = false;
     const char *adr_content = have_adr ? adr.content : legacy;
@@ -12121,7 +13134,8 @@ static char *handle_manage_adr(hyp_mcp_server_t *srv, const char *args) {
 /* ── ingest_traces ────────────────────────────────────────────── */
 
 static char *handle_ingest_traces(hyp_mcp_server_t *srv, const char *args) {
-    (void)srv;
+    project_choice_t choice;
+    char *project = resolve_project_arg(srv, args, &choice);
     /* Parse traces array from JSON args */
     yyjson_doc *adoc = yyjson_read(args, strlen(args), 0);
     int trace_count = 0;
@@ -12139,6 +13153,7 @@ static char *handle_ingest_traces(hyp_mcp_server_t *srv, const char *args) {
     yyjson_mut_val *root = yyjson_mut_obj(doc);
     yyjson_mut_doc_set_root(doc, root);
 
+    add_project_choice_json(doc, root, project, &choice);
     yyjson_mut_obj_add_str(doc, root, "status", "accepted");
     yyjson_mut_obj_add_int(doc, root, "traces_received", trace_count);
     yyjson_mut_obj_add_str(doc, root, "note",
@@ -12149,6 +13164,7 @@ static char *handle_ingest_traces(hyp_mcp_server_t *srv, const char *args) {
 
     char *result = hyp_mcp_text_result(json, false);
     free(json);
+    free(project);
     return result;
 }
 

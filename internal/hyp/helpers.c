@@ -289,9 +289,37 @@ static void strip_ext(const char *base, char *buf, size_t buflen) {
     }
 }
 
+/* Language-agnostic DIRECTORY component of test detection.
+ *
+ * The per-language rules below look only at the BASENAME, so a whole test tree
+ * whose files carry neither a "test_" prefix nor a "_test" suffix —
+ * tests/repro/repro_issue557.c in this repository, 1,031 of its 9,676 test
+ * functions — was indexed as ordinary production code.  These are exactly the
+ * directory patterns that
+ * hyp_is_test_path() (src/pipeline/pass_tests.c) has always used to decide
+ * which CALLS edges become TESTS edges, kept identical here so the extractor
+ * and the pipeline agree about what a test tree is.  Deliberately narrow: a
+ * path SEGMENT must be exactly tests, test, spec or __tests__, so the
+ * "test-infrastructure/" tree and any src/ file with "test" in its name are
+ * NOT matched.
+ * A wrong is_test=true hides production code, which is worse than the miss it
+ * replaces. */
+static bool is_test_dir_path(const char *rel_path) {
+    if (strstr(rel_path, "__tests__/") || strstr(rel_path, "/tests/") ||
+        strstr(rel_path, "/test/") || strstr(rel_path, "/spec/")) {
+        return true;
+    }
+    /* Same segments at the head of a repo-relative path (no leading slash). */
+    return has_prefix(rel_path, "tests/") || has_prefix(rel_path, "test/") ||
+           has_prefix(rel_path, "spec/") || has_prefix(rel_path, "__tests__/");
+}
+
 bool hyp_is_test_file(const char *rel_path, HYPLanguage lang) {
     if (!rel_path) {
         return false;
+    }
+    if (is_test_dir_path(rel_path)) {
+        return true;
     }
     const char *base = path_basename(rel_path);
 

@@ -43,10 +43,19 @@
  *    tokens per correct answer moved -2.9% (a null); with one sentence in
  *    the body it called ask 60/60 and tokens per correct answer fell 25.5%
  *    (CI [-1,547, -657]), best accuracy of the columns, 0 capped runs. A
- *    tool in the list is not reachable until the body says when to use it. */
-#define HYP_PROFILE_GENERATION 2U
+ *    tool in the list is not reachable until the body says when to use it.
+ * 3  the project-name rule is deleted from the prompt because the SERVER now
+ *    derives it (mcp.c, resolve_project_arg). Generation 2 taught the agent
+ *    to COMPUTE the name and pass it, and it did not work: 120 of 120 runs
+ *    still opened with list_projects. Prose describing a derivation the
+ *    server can perform is dead weight paid on every run, and after the
+ *    server performs it the prose is also wrong — it tells the agent to send
+ *    an argument it should omit. The replacement says the opposite: leave
+ *    `project` out, and read project/project_source in the answer. */
+#define HYP_PROFILE_GENERATION 3U
 #define HYP_PROFILE_GENERATION_ASK_TOOL 1U
 #define HYP_PROFILE_GENERATION_ASK_GUIDANCE 2U
+#define HYP_PROFILE_GENERATION_PROJECT_DEFAULT 3U
 
 /* X(name, analysis, scout, generation) */
 #define HYP_TOOL_TIERS(X)                           \

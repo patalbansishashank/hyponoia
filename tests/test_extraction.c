@@ -4142,6 +4142,100 @@ TEST(extract_rust_test_attr_marks_is_test_issue855) {
     PASS();
 }
 
+/* Every def in a test FILE carries is_test, in every language — not just Rust.
+ * The file-level signal (hyp_is_test_file) reached the Module row and stopped
+ * there, so 9,676 of this repository's own functions sat under tests/ reporting
+ * is_test=false and ranked beside production code in search_graph.  Returns the
+ * is_test of the named def, or -1 when the def was not extracted. */
+static int istest_of(HYPFileResult *r, const char *name) {
+    for (int i = 0; i < r->defs.count; i++) {
+        const char *n = r->defs.items[i].name;
+        if (n && strcmp(n, name) == 0) {
+            return r->defs.items[i].is_test ? 1 : 0;
+        }
+    }
+    return -1;
+}
+
+TEST(extract_test_file_marks_every_def_is_test) {
+    /* C — basename rule (test_*.c). */
+    HYPFileResult *c = extract("static int helper(void) { return 1; }\n"
+                               "void test_thing(void) { helper(); }\n",
+                               HYP_LANG_C, "t", "tests/test_thing.c");
+    ASSERT_NOT_NULL(c);
+    ASSERT_EQ(istest_of(c, "helper"), 1);
+    ASSERT_EQ(istest_of(c, "test_thing"), 1);
+
+    /* C — DIRECTORY rule: tests/repro/repro_issue557.c matches no basename
+     * pattern, and its functions were the ones that outranked production. */
+    HYPFileResult *cd = extract("static int is_backup_artifact_name(const char *n) { return 1; }\n",
+                                HYP_LANG_C, "t", "tests/repro/repro_issue557.c");
+    ASSERT_NOT_NULL(cd);
+    ASSERT_EQ(istest_of(cd, "is_backup_artifact_name"), 1);
+
+    /* Python. */
+    HYPFileResult *py = extract("def _fixture():\n    return 1\n\n"
+                                "def test_answer():\n    assert _fixture() == 1\n",
+                                HYP_LANG_PYTHON, "t", "tests/test_answer.py");
+    ASSERT_NOT_NULL(py);
+    ASSERT_EQ(istest_of(py, "_fixture"), 1);
+    ASSERT_EQ(istest_of(py, "test_answer"), 1);
+
+    /* Rust in a test file: the file-level flag covers the plain helper too,
+     * not only the #[test] item the per-item rule already caught. */
+    HYPFileResult *rs = extract("fn helper() -> i32 { 1 }\n"
+                                "#[test]\nfn checks() { assert_eq!(helper(), 1); }\n",
+                                HYP_LANG_RUST, "t", "tests/lib_test.rs");
+    ASSERT_NOT_NULL(rs);
+    ASSERT_EQ(istest_of(rs, "helper"), 1);
+    ASSERT_EQ(istest_of(rs, "checks"), 1);
+
+    /* Go — a language with no per-item test rule at all. */
+    HYPFileResult *go = extract("package main\n\nfunc helper() int { return 1 }\n"
+                                "func TestThing(t *testing.T) { helper() }\n",
+                                HYP_LANG_GO, "t", "internal/svc/svc_test.go");
+    ASSERT_NOT_NULL(go);
+    ASSERT_EQ(istest_of(go, "helper"), 1);
+    ASSERT_EQ(istest_of(go, "TestThing"), 1);
+
+    hyp_free_result(c);
+    hyp_free_result(cd);
+    hyp_free_result(py);
+    hyp_free_result(rs);
+    hyp_free_result(go);
+    PASS();
+}
+
+/* The other half of the contract, and the more important one: a wrong
+ * is_test=true HIDES production code.  Production files in trees whose NAME
+ * contains "test" must stay unflagged. */
+TEST(extract_production_file_never_marked_is_test) {
+    /* The detector this repository's own src/pipeline/pass_tests.c lives in —
+     * "test" in the filename, production code. */
+    HYPFileResult *c = extract("int hyp_is_test_path(const char *p) { return 0; }\n", HYP_LANG_C,
+                               "t", "src/pipeline/pass_tests.c");
+    ASSERT_NOT_NULL(c);
+    ASSERT_EQ(istest_of(c, "hyp_is_test_path"), 0);
+
+    /* "test-infrastructure/" is not a test SEGMENT — substring matching on
+     * "test" would wrongly claim it. */
+    HYPFileResult *py = extract("def provision():\n    return 1\n", HYP_LANG_PYTHON, "t",
+                                "test-infrastructure/vm/provision.py");
+    ASSERT_NOT_NULL(py);
+    ASSERT_EQ(istest_of(py, "provision"), 0);
+
+    /* "latest/" contains "test" and must not match either. */
+    HYPFileResult *go =
+        extract("package main\n\nfunc Serve() {}\n", HYP_LANG_GO, "t", "internal/latest/server.go");
+    ASSERT_NOT_NULL(go);
+    ASSERT_EQ(istest_of(go, "Serve"), 0);
+
+    hyp_free_result(c);
+    hyp_free_result(py);
+    hyp_free_result(go);
+    PASS();
+}
+
 /* #1017: docstring truncation at MAX_COMMENT_LEN (500 bytes) can split a
  * multi-byte UTF-8 character, leaving an incomplete byte sequence.
  * Craft a Go comment whose 498th-500th bytes are a 3-byte CJK character
@@ -5475,6 +5569,8 @@ SUITE(extraction) {
     RUN_TEST(extract_c_clean_file_no_recovery_duplicates_issue961);
     RUN_TEST(walk_defs_no_truncation_over_4096_issue668);
     RUN_TEST(extract_rust_test_attr_marks_is_test_issue855);
+    RUN_TEST(extract_test_file_marks_every_def_is_test);
+    RUN_TEST(extract_production_file_never_marked_is_test);
     RUN_TEST(docstring_utf8_truncation_boundary_issue1017);
     RUN_TEST(extract_ts_decorators_survive_interleaved_comment);
 

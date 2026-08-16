@@ -18,7 +18,10 @@ Use `cli <tool> --help` to see the flags generated from that tool's input schema
 hyponoia cli index_repository --repo-path /path/to/repo
 hyponoia cli list_projects
 
-## Use the "name" returned by list_projects as the project value.
+## `--project` is optional: omitted, the tool uses the project for the
+## working directory it runs in. Pass it to override, or when you are not
+## standing in the repository you mean.
+hyponoia cli search_graph --name-pattern '.*Handler.*' --label Function
 hyponoia cli search_graph --project my-project --name-pattern '.*Handler.*' --label Function
 hyponoia cli trace_path --project my-project --function-name Search --direction both
 hyponoia cli query_graph --project my-project --query 'MATCH (f:Function) RETURN f.name LIMIT 5'
@@ -46,7 +49,7 @@ JSON arguments can also be piped on stdin. Inline JSON remains accepted for back
 | Tool | Description |
 |------|-------------|
 | `search_graph` | Structured search by label, name pattern, file pattern, degree filters. Pagination via limit/offset. |
-| `ask` | Ask ONE natural-language question; ranked declarations with line ranges. The semantic lane — documents encoded whole and bare, the question behind an instruct prefix, so an answer can match code sharing none of the question's words. Reports `available: false` with a remedy (never zero results) until the opt-in semantic index is built. `escalate=true` (off by default, per question) brings a configured hosted model in: in the default `ask.escalation.mode=query` only the question is sent and scored against the local index (refused unless both are in a measured shared space); `index` mode queries a second API-built index. Every answer names `lane`, `query_encoder` and `index_encoder`; nothing falls back silently. |
+| `ask` | Ask ONE natural-language question; ranked declarations with line ranges **and the source of the top 2**, so a common-case question is one call rather than `ask` + `get_code_snippet`. 3 candidates by default (`limit` still honoured to 500); spans capped at 40 lines / 1600 bytes each and 3200 bytes total, and a span over the cap is marked `CUT` with its full range named — never silently shortened. `include_source=false` for coordinates only. An `exact` column appears only when the question spells a candidate's name — a fact about two strings, not a confidence. The semantic lane — documents encoded whole and bare, the question behind an instruct prefix, so an answer can match code sharing none of the question's words. Reports `available: false` with a remedy (never zero results) until the opt-in semantic index is built. `escalate=true` (off by default, per question) brings a configured hosted model in: in the default `ask.escalation.mode=query` only the question is sent and scored against the local index (refused unless both are in a measured shared space); `index` mode queries a second API-built index. Every answer names `lane`, `query_encoder`, `index_encoder` and `key_custody`; nothing falls back silently. A warm daemon will not read your API key on a client’s behalf unless `ask.escalation.daemon_key=allow` — see [ASK.md § Whose key pays](ASK.md#whose-key-pays). |
 | `trace_path` | BFS traversal — who calls a function and what it calls (alias: `trace_call_path`). Depth 1-5. |
 | `detect_changes` | Map git diff to affected symbols + blast radius with risk classification. |
 | `query_graph` | Execute Cypher-like graph queries (read-only). |
@@ -56,5 +59,29 @@ JSON arguments can also be piped on stdin. Inline JSON remains accepted for back
 | `search_code` | Grep-like text search within indexed project files. |
 | `manage_adr` | CRUD for Architecture Decision Records. Query modes do not wait behind a same-project reindex; writes remain serialized. |
 | `ingest_traces` | Ingest runtime traces to validate HTTP_CALLS edges. |
+
+## The `project` argument
+
+`project` is **optional on every tool that takes it except `delete_project`**. Omitted, the server resolves it in this order and says in the answer which rule applied:
+
+1. **`supplied`** — an explicit `project` argument. It always wins and is never second-guessed.
+2. **`derived from working directory <path>`** — the directory the MCP server was started in, which is the client's own working directory (the client spawns the server). The name is derived with the same rule the indexer used: the absolute path with its leading separator dropped and every other separator mapped to `-`, so `/home/u/repo` is `home-u-repo`. If that directory is not indexed, the nearest indexed ancestor of it is used and the disclosure names both paths.
+3. **`the only indexed project`** — and only when exactly one project is indexed on the machine.
+
+If none of these resolve — the working directory is not an indexed project and there is more than one candidate — the call returns a `which project?` error that **lists the candidates**, rather than picking one. A confidently wrong project is worse than a question.
+
+Every successful answer carries two fields, `project` and `project_source`, so a caller can always tell which project answered and why. `delete_project` is the single holdout and still requires an explicit `project`: a destructive tool does not infer its target.
+
+## Node properties worth knowing
+
+`get_graph_schema` lists the property NAMES carried by each label and, under `property_notes`, the semantics of the three that are read wrong most often.
+
+| Property | Type | Meaning |
+|----------|------|---------|
+| `is_test` | JSON boolean | True for **every** declaration — Function, Method, Class, Variable, Module — in a file the extractor classified as a test file. Classification is a per-language basename rule (`*_test.go`, `test_*.py`, `*.test.ts`, `*Test.java`, `*_test.c` / `test_*.c`, …) **or** a path with a `tests/`, `test/`, `spec/` or `__tests__/` directory segment. Additionally true for individual Rust `#[test]`/`#[tokio::test]` items and C++ GoogleTest macros inside a file that is not otherwise a test file. It is never guessed from a function's own name. In `query_graph` compare it with `= true`; `= 1` matches nothing. |
+| `alloc_in_loop` | integer **count** | Allocation/append calls inside loops. NOT a boolean — `WHERE alloc_in_loop = true` matches nothing; use `> 0`. |
+| `linear_scan_in_loop` | integer **count** | Linear-scan calls (find/contains/indexOf) inside loops. Same trap: use `> 0`. |
+
+`search_graph`'s BM25 mode deprioritises `is_test` rows by 5.0 — half the Function/Method boost. They are ranked down, never filtered out, so a test still surfaces when it is clearly the best match for the query. The `name_pattern`/`qn_pattern` mode is a filter, not a ranker, and is unaffected; pass `fields: ["is_test"]` to see the flag on any row.
 
 `manage_adr` query modes (`get` and `sections`) use the server's cached query store so they can proceed while a same-project reindex is running. If another process publishes a replacement store during reindexing, they can return the pre-publication ADR until idle eviction refreshes that cache. Updates remain serialized through the project mutation guard.

@@ -1,13 +1,25 @@
-# Maintainer: patalbansishashank <https://github.com/patalbansishashank>
-pkgname=hyponoia
+# Maintainer: Shashank <mail@creative.desi>
+# `-bin`, not `hyponoia`. The AUR package-naming rules reserve the plain name
+# for a package built from source and require the `-bin` suffix on one that
+# repackages an upstream binary, which is exactly what this does. It is also
+# the name docs/INSTALL.md has always told users to install, and the name a
+# from-source `hyponoia` package would have to coexist with.
+pkgname=hyponoia-bin
+_pkgname=hyponoia
 pkgver=0.3.1
 pkgrel=1
 pkgdesc="Code context engine for AI coding agents — indexes repositories into a queryable graph and returns exact code spans instead of whole files"
 arch=('x86_64' 'aarch64')
 url="https://github.com/patalbansishashank/hyponoia"
 license=('MIT')
-provides=("$pkgname")
-conflicts=("$pkgname")
+# From the shipped ELF's own DT_NEEDED, not from guesswork: libc.so.6 and
+# libm.so.6 come from glibc, libstdc++.so.6 and libgcc_s.so.1 from gcc-libs.
+# This is the ordinary (dynamic) archive rather than the static `-portable`
+# one — Arch's glibc is always newer than the 2.38 floor it was built against,
+# and a distribution package is expected to link the system runtime.
+depends=('glibc' 'gcc-libs')
+provides=("$_pkgname")
+conflicts=("$_pkgname")
 
 # The build publishes only the UI variant, so these are the only archives that exist.
 source_x86_64=("${pkgname}-${pkgver}-linux-amd64.tar.gz::https://github.com/patalbansishashank/hyponoia/releases/download/v${pkgver}/hyponoia-ui-linux-amd64.tar.gz")

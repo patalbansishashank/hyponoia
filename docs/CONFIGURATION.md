@@ -90,11 +90,22 @@ Current keys:
 | `ask.escalation.model` | none | Model to call on that provider, e.g. `voyage-4-large`. |
 | `ask.escalation.key_env` | none | The **NAME** of the environment variable holding the API key — never the key itself; a value that looks like a key is refused. |
 | `ask.escalation.mode` | `query` | What an escalated question sends. `query`: only the question, encoded by the hosted model and scored against the local index — the code never leaves the machine, and it is refused unless the local index and the hosted model share a measured embedding space (voyage-4 family). `index`: a second, API-built index of the whole corpus (`hyponoia embed --escalation`), queried by the model that built it. |
+| `ask.escalation.daemon_key` | `refuse` | May the long-lived per-account daemon read the key on a client's behalf? `refuse`: it does not, and an escalated `ask` through it is refused naming the holder. `allow`: it does — and then **any** local process of this user account that can reach the daemon can spend against that account without holding the key. |
 
 Escalation is never automatic — `ask` takes `escalate=true` per question and,
 whatever the mode, refuses rather than silently answering from the local
 encoder when the lane is unconfigured, keyless, unbuilt or mismatched. Every
 answer names the lane that produced it.
+
+**Whose key pays.** Tool calls are served by the per-account daemon, which
+reads the key from the environment *it* was started with — not the caller's.
+`ask.escalation.daemon_key` decides whether it may: with `allow`, any local
+process of your user account that can reach the daemon can escalate on that
+account without holding the key. It is `refuse` by default, read per request
+(so revoking it needs no restart), and every escalated answer discloses which
+environment the key came from under `key_custody`. `hyponoia daemon status`
+shows the current policy. The local lane reads no key and is unaffected. See
+[ASK.md § Whose key pays](ASK.md#whose-key-pays).
 
 ## 3. UI Settings
 
@@ -127,6 +138,7 @@ These environment variables affect runtime behavior:
 |---|---|---|
 | `HYP_ALLOWED_ROOT` | *(unset)* | Confine `index_repository` to paths within this directory. When set, a `repo_path` that resolves (after symlink / `..` resolution) outside this root is refused, and the same check now applies to the graph UI's `POST /api/index` route rather than only to the MCP tool. Unset imposes no *containment* restriction — but see the always-on limits below, which apply whether or not this is set. Useful when the server may be driven by an untrusted caller, e.g. agentic or multi-tenant deployments. |
 | `HYP_CACHE_DIR` | `~/.cache/hyponoia` | Override the cache directory used for indexes, `_config.db`, and UI `config.json`. |
+| `HYP_DAEMON_RUNTIME_PARENT` | *(unset)* | Place this build's daemon rendezvous (socket, cohort record, project leases) under a private directory instead of the account-wide `/tmp/hyp-daemon-<uid>/`, so a second build can run while another is active. Requires `HYP_CACHE_DIR` to be something other than the account default — an isolated rendezvous over the shared cache is refused, because two daemons over one store is the corruption the cohort guard exists to prevent. The directory under it is named from a digest of the canonical cache root, so isolation follows the cache rather than the spelling of this variable. Full walkthrough: [docs/OPERATIONS.md](OPERATIONS.md#running-a-second-build-beside-the-active-one). |
 | `HYP_DIAGNOSTICS` | `false` | Enable periodic `snapshot.json` and retained `trajectory.ndjson` below a fresh owner-private directory in the system temp directory. The daemon records the randomized paths in the `diagnostics.start` discovery record (a single JSON line) in `${HYP_CACHE_DIR}/logs/hyp-daemon.log`; that one record is emitted even when `HYP_LOG_LEVEL` suppresses ordinary logging, so the paths always remain discoverable. |
 | `HYP_DOWNLOAD_URL` | GitHub releases | Override the update download URL. |
 | `HYP_LOG_LEVEL` | `info` | Set the log level to `debug`, `info`, `warn`, `error`, or `none` (or `0`-`4`). Thin-frontend messages use that session's stderr; detached daemon events use `${HYP_CACHE_DIR}/logs/hyp-daemon.log`. |

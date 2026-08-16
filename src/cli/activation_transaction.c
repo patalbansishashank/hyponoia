@@ -4,6 +4,7 @@
 
 #include <errno.h>
 #include <inttypes.h>
+#include <stdarg.h>
 #include <stdatomic.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -740,6 +741,58 @@ static char *activation_posix_walk_path(const char *directory) {
     return activation_string_copy(directory);
 }
 
+/* The POSIX predicates below refuse on a deliberate permission rule, not on an
+ * OS error, so "(os 0)" is noise where the path and the offending bits are the
+ * entire answer. This writes the note directly, first-wins like
+ * activation_note_refusal, so the deepest refusal survives the unwind.
+ *
+ * Until this existed the whole POSIX half of the transaction was silent: every
+ * refusal here arrived at the CLI as the bare status text "activation
+ * transaction I/O failed", which names an I/O error that did not happen and
+ * says nothing about the directory that was actually rejected. A week of
+ * "environmental" install failures under a world-writable checkout is what
+ * that cost. */
+static void activation_posix_note(const char *format, ...) {
+    if (g_activation_refusal_note[0] != '\0') {
+        return;
+    }
+    va_list args;
+    va_start(args, format);
+    (void)vsnprintf(g_activation_refusal_note, sizeof(g_activation_refusal_note), format, args);
+    va_end(args);
+}
+
+/* `path` is the prefix ending at the component under test; the walker keeps
+ * walk_path NUL-terminated there while the predicate runs. */
+static void activation_posix_note_directory(const char *path, const struct stat *status,
+                                            bool leaf) {
+    if (!S_ISDIR(status->st_mode)) {
+        activation_posix_note("\"%s\" is not a directory", path);
+        return;
+    }
+    if ((status->st_mode & 0022) != 0) {
+        const char *which =
+            (status->st_mode & 0002) != 0
+                ? ((status->st_mode & 0020) != 0 ? "group- and world-writable" : "world-writable")
+                : "group-writable";
+        activation_posix_note(
+            "the source directory \"%s\" is %s (mode 0%03o; install requires the 0022 bits "
+            "clear on every directory above the binary being installed, so that no other "
+            "account can substitute the file between the safety check and the copy)",
+            path, which, (unsigned)(status->st_mode & 07777));
+        return;
+    }
+    if (leaf ? status->st_uid != geteuid() : (status->st_uid != 0 && status->st_uid != geteuid())) {
+        activation_posix_note("the source directory \"%s\" is owned by uid %ld, not by this "
+                              "account (uid %ld)",
+                              path, (long)status->st_uid, (long)geteuid());
+        return;
+    }
+    activation_posix_note("the source directory \"%s\" failed an install safety check "
+                          "(mode 0%03o, uid %ld)",
+                          path, (unsigned)(status->st_mode & 07777), (long)status->st_uid);
+}
+
 static bool activation_posix_intermediate_secure(const struct stat *status) {
     bool trusted_owner = status->st_uid == 0 || status->st_uid == geteuid();
     bool private_permissions = (status->st_mode & 0022) == 0;
@@ -768,6 +821,9 @@ static bool activation_directory_secure(const char *directory, int *directory_fd
         struct stat initial_status;
         ok = fstat(descriptor, &initial_status) == 0 &&
              activation_posix_intermediate_secure(&initial_status);
+        if (!ok) {
+            activation_posix_note_directory(absolute ? "/" : ".", &initial_status, false);
+        }
     }
     while (ok && *cursor) {
         char *component = cursor;
@@ -789,6 +845,9 @@ static bool activation_directory_secure(const char *directory, int *directory_fd
                 remaining++;
             }
             if (next_ok && *remaining && !activation_posix_intermediate_secure(&next_status)) {
+                /* walk_path is NUL-terminated at this component, so it IS the
+                 * absolute prefix that was rejected — name it, not the leaf. */
+                activation_posix_note_directory(walk_path, &next_status, false);
                 next_ok = false;
             }
             if (next_ok) {
@@ -797,6 +856,9 @@ static bool activation_directory_secure(const char *directory, int *directory_fd
             } else {
                 if (next >= 0) {
                     (void)close(next);
+                } else {
+                    activation_posix_note("\"%s\" could not be opened as a directory (errno %d)",
+                                          walk_path, errno);
                 }
                 ok = false;
             }
@@ -807,9 +869,22 @@ static bool activation_directory_secure(const char *directory, int *directory_fd
         }
     }
     struct stat status;
-    ok = ok && fstat(descriptor, &status) == 0 && S_ISDIR(status.st_mode) &&
-         status.st_uid == geteuid() && (status.st_mode & 0022) == 0 &&
-         activation_posix_acl_empty(descriptor);
+    if (ok && fstat(descriptor, &status) == 0) {
+        if (!S_ISDIR(status.st_mode) || status.st_uid != geteuid() ||
+            (status.st_mode & 0022) != 0) {
+            activation_posix_note_directory(directory, &status, true);
+            ok = false;
+        } else if (!activation_posix_acl_empty(descriptor)) {
+            activation_posix_note("the source directory \"%s\" carries an extended ACL; install "
+                                  "requires owner-only access with no additional grants",
+                                  directory);
+            ok = false;
+        }
+    } else if (ok) {
+        activation_posix_note("the source directory \"%s\" could not be inspected (errno %d)",
+                              directory, errno);
+        ok = false;
+    }
     free(walk_path);
     if (!ok) {
         if (descriptor >= 0) {
@@ -1460,6 +1535,12 @@ static bool activation_source_open(const char *path, activation_native_file_t *f
     bool before_valid = fstatat(directory_fd, name, &before, AT_SYMLINK_NOFOLLOW) == 0 &&
                         S_ISREG(before.st_mode) && before.st_uid == geteuid() &&
                         before.st_nlink == 1 && (before.st_mode & 0022) == 0;
+    if (!before_valid) {
+        activation_posix_note("the binary being installed, \"%s\", is not a private single-linked "
+                              "regular file owned by this account (the 0022 bits must be clear "
+                              "and it must have exactly one hard link)",
+                              path);
+    }
     int flags = O_RDONLY | O_CLOEXEC;
 #ifdef O_NOFOLLOW
     flags |= O_NOFOLLOW;
