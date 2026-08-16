@@ -458,11 +458,13 @@ static const tool_def_t TOOLS[] = {
      "property columns via "
      "fields (e.g. [\"complexity\",\"signature\",\"docstring\"]); format=\"json\" returns "
      "the SAME tree model as structured JSON. "
-     "PAGINATION: results are capped at limit (default 50). The response always includes "
-     "'total' (full match count before limit) and 'has_more' (true when total > "
-     "offset+returned). Detect truncation with has_more, then page by re-calling with "
-     "offset=offset+limit until has_more is false. Narrow first via label/file_pattern/"
-     "min_degree before paginating large result sets.",
+     "PAGINATION: results are capped at limit (DEFAULT 10, maximum 2000) — small because rows "
+     "11-50 were measured to cost ~2,000 tokens a call and to hold the answer in well under a "
+     "fifth of them. The response always includes 'total' (full match count before limit) and "
+     "'has_more'; when rows were withheld it also carries 'withheld' (how many) and 'paging' "
+     "(how to get them), and has_more:false means nothing was held back. To see more, raise "
+     "limit or re-call with offset=offset+limit. Narrow first via label/file_pattern/min_degree "
+     "rather than paging a wide set.",
      "{\"type\":\"object\",\"properties\":{" TOOL_PROJECT_ARG ","
      "\"query\":{\"type\":\"string\",\"description\":\"Natural-language or keyword full-text "
      "search using BM25 ranking. Tokens are split on whitespace; camelCase identifiers are "
@@ -482,9 +484,12 @@ static const tool_def_t TOOLS[] = {
      "Each keyword is scored independently via per-keyword min-cosine; results reflect functions "
      "that score well on ALL keywords. Requires moderate/full index mode. Results appear in the "
      "'semantic_results' field (separate from 'results').\"},\"limit\":{\"type\":"
-     "\"integer\",\"description\":\"Max results per call. Default 50. Response carries "
-     "'total' (full match count) and 'has_more' (true if truncated) so callers can "
-     "detect the limit and paginate.\"},\"offset\":{\"type\":\"integer\",\"default\":0,"
+     "\"integer\",\"default\":10,\"minimum\":1,\"maximum\":2000,\"description\":\"Max results "
+     "per call. Default 10, from measurement: the sought declaration was inside the top 10 in "
+     "82% of the calls that returned it at all. Raise it deliberately for a survey; above 2000 "
+     "is clamped to 2000 (the ranked path's candidate window). Response carries 'total', "
+     "'has_more', and — when rows were held back — 'withheld' and "
+     "'paging'.\"},\"offset\":{\"type\":\"integer\",\"default\":0,"
      "\"description\":\"Skip the first N matching nodes. Combine with 'limit' to page: "
      "increment offset by limit and re-call while has_more is true.\"},"
      "\"format\":{\"type\":\"string\",\"enum\":[\"tree\",\"json\"],\"default\":\"tree\","
@@ -3287,6 +3292,98 @@ static void enrich_connected_joined(hyp_store_t *store, int64_t node_id, const c
     }
 }
 
+/* ── The fallback cap (NEXT-STEPS.md §3.3) ───────────────────────────
+ *
+ * §3.2 made `ask` cheap (~700 tokens: 3 rows plus the source of the top 2) and
+ * the measurement that followed (runs/ASK-REACHABLE, sonnet, the frozen 60 on
+ * lld/ELF) put the remaining cost in ONE place: the fallback after a retrieval
+ * miss. Runs where the gold was in ask's rows cost 1,901 tokens a question;
+ * runs where it was not cost 2,711 — and a miss is about one run in three. The
+ * thing the miss reaches for is search_graph, which returned 48-50 rows for
+ * ~3,000 tokens PER CALL. Question B15 is the whole defect in one run: ask 704
+ * tokens, then two search_graph calls at 2,983 + 3,001 = 73% of that run's
+ * entire cost, to read one row out of ninety-eight.
+ *
+ * THE DEFAULT IS PICKED FROM THAT RUN, not from taste. The 60 gen-3
+ * transcripts contain 59 real search_graph calls over 33 questions (27
+ * questions never called it). Replaying all 59 against v0.3.1 and asking at
+ * what rank the question's gold declaration appears:
+ *
+ *   best gold rank    1    2    3   4-5  6-10  11-20  21-30  never
+ *   questions         8    1    3    1     5      2      2     11
+ *
+ * Cumulative over the 22 questions where this tool surfaces the gold at all,
+ * against the bytes those 59 calls cost in total:
+ *
+ *   limit            3      5     10     15     30     50 (v0.3.1)
+ *   bytes       37,005 46,081 68,141 90,240 147,137  212,849
+ *   golds kept   12/22  13/22  18/22  20/22   22/22    22/22
+ *
+ * 10 IS THE KNEE. Going 5 -> 10 buys 23 points of retention for 10 points of
+ * byte-share; 10 -> 15 buys 9 for another 10; 15 -> 30 buys 9 for 27. The
+ * prior for this work was 5 and the data does not support it: 5 keeps 13 of
+ * the 22, which is not a majority worth the 6% of bytes it saves over 10. At
+ * 10 the tool costs 32% of what it did and still returns every gold that
+ * ranks in the top ten — the same horizon §3.2's own table used for `ask`.
+ *
+ * The four questions 10 loses (ranks 12, 15, 21, 28) are not silently lost:
+ * see sg_emit_withheld. A caller that cannot tell it got a truncated view
+ * re-queries blindly or concludes wrongly; one that can, pages.
+ *
+ * SG_MAX_LIMIT is the honest ceiling rather than a new restriction. The BM25
+ * path already could not return more than its FTS5 candidate window
+ * (BM25_INNER_LIMIT), so no path could promise more than that; the regex path
+ * takes the same number so one figure describes the tool, and a caller asking
+ * for more is clamped and TOLD, not truncated in silence. */
+enum {
+    SG_DEFAULT_LIMIT = 10,
+    SG_MAX_LIMIT = 2000, /* == BM25_INNER_LIMIT; asserted below */
+};
+
+/* Both search paths take `limit` through here, so one number bounds the tool.
+ * A non-positive limit means "unset" (hyp_mcp_get_int_arg returns the default
+ * for an absent key; an explicit 0 or negative is a caller mistake) and falls
+ * back to the default rather than to the store layer's own 50. */
+static int sg_clamp_limit(int limit) {
+    if (limit <= 0) {
+        return SG_DEFAULT_LIMIT;
+    }
+    return limit > SG_MAX_LIMIT ? SG_MAX_LIMIT : limit;
+}
+
+/* One line naming the rows this call did NOT return, and both ways to get
+ * them. Written only when rows were actually withheld: `has_more: false` is
+ * always present and already says "there is nothing more", so an absent
+ * `withheld` is unambiguous and costs the common case nothing. Shape follows
+ * the table header's — `key: N  (note)` — because that is what every other
+ * count in this response already looks like. */
+static void sg_emit_withheld(hyp_sb_t *sb, int total, int shown, int offset) {
+    if (total <= offset + shown) {
+        return;
+    }
+    char buf[HYP_SZ_256];
+    snprintf(buf, sizeof(buf),
+             "withheld: %d  (showing %d of %d from offset %d; pass limit=N up to %d, or "
+             "offset=%d, for the rest)\n",
+             total - offset - shown, shown, total, offset, SG_MAX_LIMIT, offset + shown);
+    hyp_sb_append(sb, buf);
+}
+
+/* The json encoding of the same disclosure. Two keys rather than a sentence:
+ * a parsing caller wants the number, and the how-to is the same words the
+ * text path prints so the two views cannot drift apart. */
+static void sg_add_withheld_json(yyjson_mut_doc *doc, yyjson_mut_val *root, int total, int shown,
+                                 int offset) {
+    if (total <= offset + shown) {
+        return;
+    }
+    yyjson_mut_obj_add_int(doc, root, "withheld", total - offset - shown);
+    char buf[HYP_SZ_256];
+    snprintf(buf, sizeof(buf), "pass limit=N up to %d, or offset=%d, for the rest", SG_MAX_LIMIT,
+             offset + shown);
+    yyjson_mut_obj_add_strcpy(doc, root, "paging", buf);
+}
+
 /* Build an FTS5 MATCH expression from a free-form query string by splitting
  * on whitespace and joining the terms with OR.  Each token is also sanitized:
  * anything that isn't alnum or underscore is dropped, so the caller can't
@@ -3296,7 +3393,6 @@ enum {
     BM25_MIN_BUF = 2, /* minimum buffer size: at least NUL + one char */
     BM25_SEP_RESERVE = 1,
     BM25_QUERY_BUF = 1024,
-    BM25_DEFAULT_LIMIT = 50,
     BM25_COL_ID = 0,
     BM25_COL_LABEL = 1,
     BM25_COL_NAME = 2,
@@ -3320,6 +3416,13 @@ enum {
      * N = BM25_INNER_LIMIT rather than the full match set size. */
     BM25_INNER_LIMIT = 2000,
 };
+
+/* SG_MAX_LIMIT is declared above bm25_search's constants because both search
+ * paths need it; this is the line that keeps the two numbers one number. If
+ * the candidate window ever moves, the advertised ceiling must move with it —
+ * otherwise search_graph promises a page it cannot fill. */
+_Static_assert((int)SG_MAX_LIMIT == (int)BM25_INNER_LIMIT,
+               "the advertised limit ceiling must equal the FTS5 candidate window");
 
 /* Module-local SQLITE_TRANSIENT wrapper to dodge performance-no-int-to-ptr.
  * See the matching helper in src/store/store.c for the same pattern. */
@@ -3457,7 +3560,7 @@ static char *bm25_search(hyp_store_t *store, const char *project, const char *qu
     }
     sqlite3_bind_text(stmt, BM25_BIND_QUERY, fts_query, BM25_SQL_AUTO_LEN, MCP_SQLITE_TRANSIENT);
     sqlite3_bind_text(stmt, BM25_BIND_PROJECT, project, BM25_SQL_AUTO_LEN, MCP_SQLITE_TRANSIENT);
-    sqlite3_bind_int(stmt, BM25_BIND_LIMIT, limit > 0 ? limit : BM25_DEFAULT_LIMIT);
+    sqlite3_bind_int(stmt, BM25_BIND_LIMIT, limit > 0 ? limit : SG_DEFAULT_LIMIT);
     sqlite3_bind_int(stmt, BM25_BIND_OFFSET, offset > 0 ? offset : 0);
     sqlite3_bind_int(stmt, BM25_BIND_INNER, BM25_INNER_LIMIT);
     if (file_like) {
@@ -3539,6 +3642,7 @@ static char *bm25_search(hyp_store_t *store, const char *project, const char *qu
         hyp_sb_append(&sb, rows_text ? rows_text : "");
         free(rows_text);
         hyp_tree_scalar_bool(&sb, "has_more", total > offset + emitted);
+        sg_emit_withheld(&sb, total, emitted, offset);
         return hyp_sb_finish(&sb);
     }
 
@@ -3582,6 +3686,7 @@ static char *bm25_search(hyp_store_t *store, const char *project, const char *qu
 
     yyjson_mut_obj_add_val(doc, root, "rows", rows);
     yyjson_mut_obj_add_bool(doc, root, "has_more", total > offset + emitted);
+    sg_add_withheld_json(doc, root, total, emitted, offset);
 
     char *json = yy_doc_to_str(doc);
     yyjson_mut_doc_free(doc);
@@ -3808,6 +3913,7 @@ static void emit_search_results_toon(hyp_sb_t *sb, const hyp_search_output_t *ou
             hyp_tree_row_end(sb);
         }
         hyp_tree_scalar_bool(sb, "has_more", out->total > offset + out->count);
+        sg_emit_withheld(sb, out->total, out->count, offset);
         return;
     }
     const char *cols[6 + SG_MAX_EXTRA_FIELDS] = {"qn", "label", "file", "lines", "in", "out"};
@@ -3831,6 +3937,7 @@ static void emit_search_results_toon(hyp_sb_t *sb, const hyp_search_output_t *ou
         hyp_tree_row_end(sb);
     }
     hyp_tree_scalar_bool(sb, "has_more", out->total > offset + out->count);
+    sg_emit_withheld(sb, out->total, out->count, offset);
 }
 
 /* ── Tree format (Phase-2 A/B candidate) ────────────────────────────
@@ -3935,6 +4042,7 @@ static void emit_search_results_tree(hyp_sb_t *sb, hyp_search_output_t *out, int
     snprintf(buf, sizeof(buf), "has_more: %s\n",
              out->total > offset + out->count ? "true" : "false");
     hyp_sb_append(sb, buf);
+    sg_emit_withheld(sb, out->total, out->count, offset);
 }
 
 /* json-stringified tree: the SAME grouped model as the text tree, serialized
@@ -4024,6 +4132,7 @@ static void emit_search_results_tree_json(yyjson_mut_doc *doc, yyjson_mut_val *r
     }
     yyjson_mut_obj_add_val(doc, root, "groups", groups);
     yyjson_mut_obj_add_bool(doc, root, "has_more", out->total > offset + out->count);
+    sg_add_withheld_json(doc, root, out->total, out->count, offset);
 }
 
 /* Emit semantic vector-search results as a TOON table. */
@@ -4071,7 +4180,7 @@ static char *handle_search_graph(hyp_mcp_server_t *srv, const char *args) {
      * tokenization, fall through to the regex path. */
     char *query = hyp_mcp_get_string_arg(args, "query");
     if (query && query[0]) {
-        int q_limit = hyp_mcp_get_int_arg(args, "limit", BM25_DEFAULT_LIMIT);
+        int q_limit = sg_clamp_limit(hyp_mcp_get_int_arg(args, "limit", SG_DEFAULT_LIMIT));
         int q_offset = hyp_mcp_get_int_arg(args, "offset", 0);
         char *q_file_pattern = hyp_mcp_get_string_arg(args, "file_pattern");
         char *bm25_json =
@@ -4098,7 +4207,7 @@ static char *handle_search_graph(hyp_mcp_server_t *srv, const char *args) {
     char *relationship = hyp_mcp_get_string_arg(args, "relationship");
     bool exclude_entry_points = hyp_mcp_get_bool_arg(args, "exclude_entry_points");
     bool include_connected = hyp_mcp_get_bool_arg(args, "include_connected");
-    int limit = hyp_mcp_get_int_arg(args, "limit", HYP_DEFAULT_SEARCH_LIMIT);
+    int limit = sg_clamp_limit(hyp_mcp_get_int_arg(args, "limit", SG_DEFAULT_LIMIT));
     int offset = hyp_mcp_get_int_arg(args, "offset", 0);
     int min_degree = hyp_mcp_get_int_arg(args, "min_degree", HYP_NOT_FOUND);
     int max_degree = hyp_mcp_get_int_arg(args, "max_degree", HYP_NOT_FOUND);

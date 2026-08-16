@@ -2399,6 +2399,212 @@ TEST(tool_search_graph_bm25_deprioritises_is_test) {
     PASS();
 }
 
+/* ── The fallback cap (NEXT-STEPS.md §3.3) ──────────────────────────
+ *
+ * search_graph is what an agent reaches for when `ask` missed, and it used to
+ * answer with 48-50 rows for ~3,000 tokens. These tests pin the two halves of
+ * the fix — a small default and a disclosure — on BOTH emitters, because §3.2
+ * was bitten by fixing only one of a tool's two output paths. */
+
+/* A project with `count` declarations that all match the word "widget", both
+ * lexically (BM25) and by name pattern, so one fixture exercises both paths. */
+static hyp_mcp_server_t *sg_cap_fixture(const char *proj, int count) {
+    hyp_mcp_server_t *srv = hyp_mcp_server_new(NULL);
+    if (!srv) {
+        return NULL;
+    }
+    hyp_store_t *st = hyp_mcp_server_store(srv);
+    hyp_mcp_server_set_project(srv, proj);
+    hyp_store_upsert_project(st, proj, "/tmp/sg-cap");
+    for (int i = 0; i < count; i++) {
+        char name[64];
+        char qn[128];
+        /* camelCase on purpose: the FTS5 rows are fed through hyp_camel_split,
+         * so "widget" is only a token when a capital follows it. */
+        snprintf(name, sizeof(name), "widgetPart%02d", i);
+        snprintf(qn, sizeof(qn), "%s.core.%s", proj, name);
+        hyp_node_t n = {0};
+        n.project = proj;
+        n.label = "Function";
+        n.name = name;
+        n.qualified_name = qn;
+        n.file_path = "core/widgets.c";
+        n.start_line = 1 + i;
+        n.end_line = 2 + i;
+        if (hyp_store_upsert_node(st, &n) <= 0) {
+            hyp_mcp_server_free(srv);
+            return NULL;
+        }
+    }
+    hyp_store_exec(st, "INSERT INTO nodes_fts(nodes_fts) VALUES('delete-all');");
+    hyp_store_exec(st, "INSERT INTO nodes_fts(rowid, name, qualified_name, label, file_path) "
+                       "SELECT id, hyp_camel_split(name), qualified_name, label, file_path "
+                       "FROM nodes;");
+    return srv;
+}
+
+static char *sg_cap_call(hyp_mcp_server_t *srv, const char *arguments) {
+    char req[512];
+    snprintf(req, sizeof(req),
+             "{\"jsonrpc\":\"2.0\",\"id\":933,\"method\":\"tools/call\",\"params\":{\"name\":"
+             "\"search_graph\",\"arguments\":%s}}",
+             arguments);
+    char *resp = hyp_mcp_server_handle(srv, req);
+    if (!resp) {
+        return NULL;
+    }
+    char *inner = extract_text_content(resp);
+    free(resp);
+    return inner;
+}
+
+/* 10, not 50, and on every emitter search_graph has. The number is derived in
+ * mcp.c from the 59 real calls in the gen-3 transcripts; what this test pins
+ * is that all four output paths agree on it. */
+TEST(tool_search_graph_default_is_ten_rows_on_both_paths) {
+    hyp_mcp_server_t *srv = sg_cap_fixture("sg-cap-default", 25);
+    ASSERT_NOT_NULL(srv);
+
+    char *bm25 = sg_cap_call(srv, "{\"project\":\"sg-cap-default\",\"query\":\"widget\"}");
+    ASSERT_NOT_NULL(bm25);
+    ASSERT_NOT_NULL(strstr(bm25, "search_mode: bm25"));
+    ASSERT_NOT_NULL(strstr(bm25, "total: 25"));
+    ASSERT_NOT_NULL(strstr(bm25, "results: 10  (cols:"));
+
+    char *regex =
+        sg_cap_call(srv, "{\"project\":\"sg-cap-default\",\"name_pattern\":\"widget.*\"}");
+    ASSERT_NOT_NULL(regex);
+    ASSERT_NOT_NULL(strstr(regex, "total: 25"));
+    ASSERT_NOT_NULL(strstr(regex, "results: 10  (rows:"));
+
+    char *ids = sg_cap_call(
+        srv, "{\"project\":\"sg-cap-default\",\"name_pattern\":\"widget.*\",\"detail\":\"ids\"}");
+    ASSERT_NOT_NULL(ids);
+    ASSERT_NOT_NULL(strstr(ids, "results: 10  (cols: qn)"));
+
+    /* limit stays honourable: ask for all 25 and 25 arrive, on both paths. */
+    char *wide_bm25 =
+        sg_cap_call(srv, "{\"project\":\"sg-cap-default\",\"query\":\"widget\",\"limit\":25}");
+    ASSERT_NOT_NULL(wide_bm25);
+    ASSERT_NOT_NULL(strstr(wide_bm25, "results: 25  (cols:"));
+    char *wide_regex = sg_cap_call(
+        srv, "{\"project\":\"sg-cap-default\",\"name_pattern\":\"widget.*\",\"limit\":25}");
+    ASSERT_NOT_NULL(wide_regex);
+    ASSERT_NOT_NULL(strstr(wide_regex, "results: 25  (rows:"));
+
+    free(bm25);
+    free(regex);
+    free(ids);
+    free(wide_bm25);
+    free(wide_regex);
+    hyp_mcp_server_free(srv);
+    PASS();
+}
+
+/* A truncated view an agent cannot detect is worse than a small one: it
+ * re-queries blindly or concludes wrongly. Every path says how many rows it
+ * held back and how to get them — and says nothing when it held back none. */
+TEST(tool_search_graph_says_what_it_withheld_on_both_paths) {
+    hyp_mcp_server_t *srv = sg_cap_fixture("sg-cap-disclose", 25);
+    ASSERT_NOT_NULL(srv);
+
+    const char *args[] = {
+        "{\"project\":\"sg-cap-disclose\",\"query\":\"widget\"}",
+        "{\"project\":\"sg-cap-disclose\",\"name_pattern\":\"widget.*\"}",
+        "{\"project\":\"sg-cap-disclose\",\"name_pattern\":\"widget.*\",\"detail\":\"ids\"}",
+    };
+    for (size_t i = 0; i < sizeof(args) / sizeof(args[0]); i++) {
+        char *text = sg_cap_call(srv, args[i]);
+        ASSERT_NOT_NULL(text);
+        ASSERT_NOT_NULL(strstr(text, "has_more: true"));
+        ASSERT_NOT_NULL(strstr(text, "withheld: 15"));
+        ASSERT_NOT_NULL(strstr(text, "showing 10 of 25"));
+        ASSERT_NOT_NULL(strstr(text, "limit=N up to 2000"));
+        ASSERT_NOT_NULL(strstr(text, "offset=10"));
+        free(text);
+    }
+
+    /* format:"json" is a separate emitter per path and carries the same news
+     * as parseable fields rather than a sentence. */
+    const char *json_args[] = {
+        "{\"project\":\"sg-cap-disclose\",\"query\":\"widget\",\"format\":\"json\"}",
+        "{\"project\":\"sg-cap-disclose\",\"name_pattern\":\"widget.*\",\"format\":\"json\"}",
+    };
+    for (size_t i = 0; i < sizeof(json_args) / sizeof(json_args[0]); i++) {
+        char *text = sg_cap_call(srv, json_args[i]);
+        ASSERT_NOT_NULL(text);
+        ASSERT_NOT_NULL(strstr(text, "\"withheld\":15"));
+        ASSERT_NOT_NULL(strstr(text, "\"paging\":"));
+        free(text);
+    }
+
+    /* Nothing withheld: has_more already says so, and the key is absent
+     * rather than zero — a key costs bytes only when it carries news. */
+    char *whole =
+        sg_cap_call(srv, "{\"project\":\"sg-cap-disclose\",\"query\":\"widget\",\"limit\":25}");
+    ASSERT_NOT_NULL(whole);
+    ASSERT_NOT_NULL(strstr(whole, "has_more: false"));
+    ASSERT_NULL(strstr(whole, "withheld"));
+    free(whole);
+
+    hyp_mcp_server_free(srv);
+    PASS();
+}
+
+/* A limit above the ranked path's candidate window cannot be honoured by any
+ * path, so it is clamped — and the answer says it clamped, with the offset
+ * that continues the sweep. */
+TEST(tool_search_graph_limit_above_the_ceiling_is_clamped_and_said) {
+    hyp_mcp_server_t *srv = sg_cap_fixture("sg-cap-clamp", 25);
+    ASSERT_NOT_NULL(srv);
+    char *text = sg_cap_call(
+        srv, "{\"project\":\"sg-cap-clamp\",\"name_pattern\":\"widget.*\",\"limit\":100000}");
+    ASSERT_NOT_NULL(text);
+    /* 25 < the ceiling, so everything arrives and nothing is withheld — the
+     * clamp is a ceiling on the request, never a truncation of a small set. */
+    ASSERT_NOT_NULL(strstr(text, "results: 25  (rows:"));
+    ASSERT_NOT_NULL(strstr(text, "has_more: false"));
+    ASSERT_NULL(strstr(text, "withheld"));
+    free(text);
+
+    /* A zero or negative limit is a caller mistake, not a request for
+     * everything: it falls back to the default rather than the store's 50. */
+    char *zero =
+        sg_cap_call(srv, "{\"project\":\"sg-cap-clamp\",\"name_pattern\":\"widget.*\",\"limit\":0}");
+    ASSERT_NOT_NULL(zero);
+    ASSERT_NOT_NULL(strstr(zero, "results: 10  (rows:"));
+    free(zero);
+
+    hyp_mcp_server_free(srv);
+    PASS();
+}
+
+/* The client only ever sees the schema and the tools/list description. If they
+ * still say 50, the cap is a surprise rather than a contract. */
+TEST(tool_search_graph_schema_documents_the_new_default_and_ceiling) {
+    const char *schema = hyp_mcp_tool_input_schema("search_graph");
+    ASSERT_NOT_NULL(schema);
+    yyjson_doc *doc = yyjson_read(schema, strlen(schema), 0);
+    ASSERT_NOT_NULL(doc);
+    yyjson_val *props = yyjson_obj_get(yyjson_doc_get_root(doc), "properties");
+    ASSERT_NOT_NULL(props);
+    yyjson_val *lim = yyjson_obj_get(props, "limit");
+    ASSERT_NOT_NULL(lim);
+    ASSERT_EQ(yyjson_get_int(yyjson_obj_get(lim, "default")), 10);
+    ASSERT_EQ(yyjson_get_int(yyjson_obj_get(lim, "maximum")), 2000);
+    const char *limd = yyjson_get_str(yyjson_obj_get(lim, "description"));
+    ASSERT_NOT_NULL(limd);
+    ASSERT_NOT_NULL(strstr(limd, "withheld"));
+    yyjson_doc_free(doc);
+
+    char *listed = hyp_mcp_tools_list();
+    ASSERT_NOT_NULL(listed);
+    ASSERT_NOT_NULL(strstr(listed, "DEFAULT 10, maximum 2000"));
+    ASSERT_NOT_NULL(strstr(listed, "has_more:false means nothing was held back"));
+    free(listed);
+    PASS();
+}
+
 /* Resource discovery methods this server doesn't populate must return EMPTY
  * lists, not -32601 Method-not-found: clients like Cline probe them on connect
  * and surface the errors as a failed connection (#958). */
@@ -11041,6 +11247,10 @@ SUITE(mcp) {
     RUN_TEST(tool_output_byte_budgets);
     RUN_TEST(tool_search_graph_query_honors_file_pattern_issue552);
     RUN_TEST(tool_search_graph_bm25_deprioritises_is_test);
+    RUN_TEST(tool_search_graph_default_is_ten_rows_on_both_paths);
+    RUN_TEST(tool_search_graph_says_what_it_withheld_on_both_paths);
+    RUN_TEST(tool_search_graph_limit_above_the_ceiling_is_clamped_and_said);
+    RUN_TEST(tool_search_graph_schema_documents_the_new_default_and_ceiling);
     RUN_TEST(mcp_resource_discovery_methods_return_empty_lists);
     RUN_TEST(tool_query_graph_basic);
     RUN_TEST(tool_index_status_no_project);
