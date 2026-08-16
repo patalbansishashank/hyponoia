@@ -1,19 +1,59 @@
 #!/usr/bin/env bash
-# Refuse to push a commit carrying a vendor API key. NEXT-STEPS.md §2.13.
+# Refuse to push a commit carrying a vendor API key, or code CI's linter will
+# reject. NEXT-STEPS.md §2.13 (secrets) and §3 (the CI round trip).
 #
 # pre-push, not pre-commit, deliberately: a key in a local commit is a mistake,
 # a key in a pushed commit is an incident. This is the last point at which it is
-# still only the former.
+# still only the former. The same logic covers lint — a red `lint` job costs an
+# hour to learn something that takes seconds to check here.
 #
 # stdin carries "<local ref> <local sha> <remote ref> <remote sha>" per ref, so
 # the scan sees exactly the commits this push would publish. It walks those
 # COMMITS, not the worktree — the key that made this necessary had already been
-# removed from the worktree and was still in every clone.
+# removed from the worktree and was still in every clone. stdin is therefore
+# reserved for the scan; lint runs first and must not consume it.
 set -euo pipefail
 
 ROOT="$(git rev-parse --show-toplevel)"
 SCAN="$ROOT/scripts/check-secret-history.sh"
+LINT_IMAGE="hyp-lint"
+LINT_DOCKERFILE="$ROOT/test-infrastructure/Dockerfile.lint"
 
+# ── Formatting, in CI's environment ──────────────────────────────────────
+#
+# `lint-format` ONLY, deliberately — not the whole lint job. Measured: the full
+# gate is 586-667s in CI and ~10 min here, essentially all of it cppcheck, while
+# clang-format alone is 4.5s. A ten-minute pre-push hook does not get run, it
+# gets exported around, so cppcheck stays in CI where its cost is already paid.
+#
+# Formatting is also the half that fails for a reason CI alone can never teach
+# you in less than an hour: CI pins clang-format 20, a workstation typically has
+# a newer major, and the two disagree on code neither considers wrong. Checking
+# with the wrong version is worse than not checking — it reports green while CI
+# reports red. The image is the only thing that reproduces the pinned version.
+if [ "${HYP_SKIP_PREPUSH_LINT:-}" = "1" ]; then
+    echo "pre-push: format check skipped (HYP_SKIP_PREPUSH_LINT=1)." >&2
+elif ! command -v docker >/dev/null 2>&1; then
+    echo "pre-push: docker not found, so CI's clang-format cannot be reproduced here." >&2
+    echo "  Install docker, or push with HYP_SKIP_PREPUSH_LINT=1 and let CI judge it." >&2
+    exit 1
+else
+    if ! docker image inspect "$LINT_IMAGE" >/dev/null 2>&1; then
+        echo "pre-push: building $LINT_IMAGE (first run only; cppcheck compiles from source)..." >&2
+        docker build -t "$LINT_IMAGE" -f "$LINT_DOCKERFILE" "$ROOT/test-infrastructure/" >&2
+    fi
+    echo "pre-push: clang-format-20 (CI's exact version)..." >&2
+    if ! docker run --rm -v "$ROOT":/src --entrypoint make "$LINT_IMAGE" \
+        -f Makefile.hyp lint-format CLANG_FORMAT=clang-format-20 >&2; then
+        echo "" >&2
+        echo "pre-push: FORMATTING FAILED — CI would reject this. Fix it here, not in an hour." >&2
+        echo "  Rewrite in place:  docker run --rm -v \"\$PWD\":/src --entrypoint make $LINT_IMAGE \\" >&2
+        echo "                       -f Makefile.hyp format CLANG_FORMAT=clang-format-20" >&2
+        exit 1
+    fi
+fi
+
+# ── Secrets ──────────────────────────────────────────────────────────────
 if [ ! -x "$SCAN" ]; then
     echo "pre-push: $SCAN missing or not executable — cannot verify, refusing." >&2
     exit 1
