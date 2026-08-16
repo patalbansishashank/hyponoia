@@ -191,7 +191,7 @@ The generated agent profiles (`hyponoia`, `hyponoia-auditor`) and the
 tool answers, and `ask` can legitimately answer `available: false`, so it lives
 on the tier where an agent is already expected to reason about index state. The
 two ends — what the server permits and what the profiles request — are rendered
-from one table, `src/mcp/tool_tiers.h`, so they cannot drift apart again; until
+from one table, `src/mcp/tool_surface.h`, so they cannot drift apart again; until
 they were, v0.3.0 shipped a server that permitted `ask` and profiles that never
 requested it. An unrestricted server (no `--tool-profile`, which is what
 `hyponoia install` registers for Claude Code's main session) always offers it.

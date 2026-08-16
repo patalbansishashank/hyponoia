@@ -6486,7 +6486,7 @@ TEST(cli_tiered_codex_profiles_migrate_preserve_and_uninstall) {
     PASS();
 }
 
-/* A profile the installer wrote at an earlier generation (mcp/tool_tiers.h)
+/* A profile the installer wrote at an earlier generation (mcp/tool_surface.h)
  * is an owned document, not a user edit: install must upgrade it in place and
  * uninstall must still recognise it. Anything else strands every existing
  * user on a profile without `ask` while printing "preserved modified profile"

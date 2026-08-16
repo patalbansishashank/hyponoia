@@ -308,7 +308,7 @@ TEST(agent_profiles_render_deterministically_and_reject_invalid_inputs) {
 
 /* The two ends of a restricted profile: what the MCP server advertises under
  * `--tool-profile`, and what the generated agent definition requests. Both
- * expand mcp/tool_tiers.h; this holds them to it FROM THE CLIENT'S SIDE — the
+ * expand mcp/tool_surface.h; this holds them to it FROM THE CLIENT'S SIDE — the
  * server's tools/list response and the rendered profile file — rather than by
  * reading either end's static list, because `ask` was permitted by one and
  * never requested by the other while both ends' own tests passed. */

@@ -209,6 +209,7 @@ def main():
         c.send({"jsonrpc": "2.0", "id": 2, "method": "tools/list"})
         tools = (((c.read() or {}).get("result")) or {}).get("tools") or []
         declaring = [t["name"] for t in tools if "outputSchema" in t]
+        schemas = {t["name"]: t["outputSchema"] for t in tools if "outputSchema" in t}
         print("tools advertised: %d, declaring outputSchema: %d" % (len(tools), len(declaring)))
 
         bad = []
@@ -239,6 +240,31 @@ def main():
                 shape, verdict = "-", "no content, no structure"
                 bad.append(name)
             print("%-20s %8d  %-10s %s" % (name, len(text), shape, verdict))
+
+            # THE PROMISE, CHECKED AGAINST WHAT THE CLIENT HOLDS. A declared
+            # outputSchema says "every `required` field is here". The generic
+            # form of the shipped defect is a schema promising structure the
+            # text path never sends; asserting the emitted shape cannot see it,
+            # so this reads the object the client actually ends up with —
+            # structuredContent, or content[0].text when that parses as one.
+            schema = schemas.get(name)
+            if schema and not res.get("isError"):
+                seen = sc if isinstance(sc, dict) and sc else None
+                if seen is None and text:
+                    try:
+                        parsed = json.loads(text)
+                        seen = parsed if isinstance(parsed, dict) else None
+                    except Exception:
+                        seen = None
+                if seen is None:
+                    print("FAIL: %s declares outputSchema and a client reads no object" % name)
+                    bad.append(name)
+                else:
+                    for key in schema.get("required") or []:
+                        if key not in seen:
+                            print("FAIL: %s promises required field %r a client never receives"
+                                  % (name, key))
+                            bad.append(name)
 
         # A tool may only promise structure it actually delivers.
         for t in declaring:

@@ -120,8 +120,13 @@ future or mutating tools remain unavailable until explicitly reviewed. `ask` is
 on Analysis and not on Scout because it can legitimately answer "unavailable"
 (its index is opt-in, see [ASK.md](ASK.md)) and Scout promises a surface where
 every tool answers. The server's allowlist and the generated profiles' tool
-lists are rendered from one table (`src/mcp/tool_tiers.h`), so a tool cannot be
-permitted by one end and never requested by the other. If either Junie alias
+lists are rendered from one table (`src/mcp/tool_surface.h`), so a tool cannot be
+permitted by one end and never requested by the other. That table is the whole
+surface, not only the tiers: a row also carries the tool's client-visible
+annotation hints, any output shape it promises, whether it is live or a
+published-but-unimplemented signature, and any legacy name dispatch answers to.
+A compile-time assertion pairs its row count against the tool registry, so a
+tool added to one and not the other does not build. If either Junie alias
 collides with user configuration, the installer preserves it and installs
 parent-handoff profiles instead. Qoder combines its documented named-server
 selection with exact tier-specific MCP tool IDs. Factory uses exact registered
