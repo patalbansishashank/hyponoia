@@ -139,7 +139,10 @@ typedef enum {
      * writer nobody audited. It reads a manifest and appends to a record                          \
      * store the caller names — no graph, no index, no daemon. */                                  \
     X(migrate_comments, "migrate-comments", HYP_DAEMON_PROCESS_STATELESS, HYP_CLI_HELP_PLAIN,      \
-      HYP_CLI_DISPATCH_SUBCOMMAND, NULL)                                                           \
+      HYP_CLI_DISPATCH_SUBCOMMAND,                                                                 \
+      "  hyponoia migrate-comments --manifest FILE --store DIR\n"                                  \
+      "                                      Move comment prose into the decision store,\n"        \
+      "                                      attributed to whoever wrote it\n")                    \
     /* `fetch-model` writes ONE file into the user's cache and reads no                            \
      * project, no index and no store. It also has to work when the daemon                         \
      * cannot start, which is exactly when someone is trying to get the `ask`                      \
