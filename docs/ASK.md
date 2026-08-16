@@ -300,7 +300,7 @@ rank-fusion lever had already named as its prerequisite.
 | | |
 |---|---|
 | model | `voyage-4-nano`, Q8_0 GGUF (355 MB) **plus** an 8 MB projection head, fetched once |
-| embedding | 36.7 declarations/s on this GPU — measured, see below |
+| embedding | 34.9 declarations/s on this GPU — measured, see below |
 | query | ~0.28 s warm, dominated by encoding the question |
 | index | float32, dim 1024, one row per declaration |
 
@@ -320,8 +320,22 @@ verified. Applying that head after llama.cpp pools is exact rather than
 approximate: it is a linear map and the pooler is a mean, so the two commute.
 
 The GPU path is opt-in at build time (`make HYP_ASK_GPU=vulkan`) and needs a
-Vulkan SDK. The default build is CPU-only and portable. Only the `embed` pass
-is affected; `ask` itself is unchanged either way.
+Vulkan SDK; since `v0.3.1` it is also published as its own release archive,
+because the standard Linux builds are static and `-lvulkan` is not. The default
+build is CPU-only and portable. Only the `embed` pass is affected; `ask` itself
+is unchanged either way, and it encodes the question on the CPU in both builds —
+one short forward pass, where a GPU context would cost more than it saves.
+
+**Batching is verified, not assumed.** 34.9 declarations/s is the current number
+on the same 4,072; the 36.7 above it was measured when every batch was cut into
+equal-token-length runs, which was correct but rarely batched more than one
+document. Removing that cut on the belief that llama.cpp masks ragged batches by
+itself produced vectors in which only the SHORTEST row of each batch was right:
+llama.cpp's default per-sequence KV streams split a ragged batch by length, so a
+bidirectional pass sees the head of every longer row without its tail. A unified
+KV buffer makes ragged batching exact, and `hyponoia embed --verify-batching`
+encodes a fixture alone and in groups and fails if any vector depends on what
+shared its forward pass. Run it after any change to the encoder path.
 
 ## Why this model and not another
 
