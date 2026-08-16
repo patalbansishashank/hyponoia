@@ -31,10 +31,10 @@
 #endif
 
 enum {
-    ONBOARD_SAMPLE_DEFAULT = 8,    /* files measured for the cost estimate */
-    ONBOARD_SAMPLE_TRUNC = 2048,   /* bytes per sample document — declaration-sized */
-    ONBOARD_VERIFY_GROUP = 3,      /* forms ragged groups over the fixture below */
-    ONBOARD_ANSWER_LINE = 4096,    /* one answers-file line */
+    ONBOARD_SAMPLE_DEFAULT = 8,  /* files measured for the cost estimate */
+    ONBOARD_SAMPLE_TRUNC = 2048, /* bytes per sample document — declaration-sized */
+    ONBOARD_VERIFY_GROUP = 3,    /* forms ragged groups over the fixture below */
+    ONBOARD_ANSWER_LINE = 4096,  /* one answers-file line */
     ONBOARD_MS_PER_SEC = 1000,
 };
 
@@ -57,8 +57,7 @@ static const char *const ONBOARD_VERIFY_TEXTS[] = {
     "def parse(line):\n    return [int(x) for x in line.split(',') if x]",
 };
 enum {
-    ONBOARD_VERIFY_COUNT =
-        (int)(sizeof(ONBOARD_VERIFY_TEXTS) / sizeof(ONBOARD_VERIFY_TEXTS[0]))
+    ONBOARD_VERIFY_COUNT = (int)(sizeof(ONBOARD_VERIFY_TEXTS) / sizeof(ONBOARD_VERIFY_TEXTS[0]))
 };
 
 /* ── Roles ──────────────────────────────────────────────────────── */
@@ -110,9 +109,9 @@ static void onboard_gpu_run_check(hyp_ask_encoder_t *enc, hyp_onboard_probe_t *r
     memset(&chk, 0, sizeof(chk));
     const char *note = hyp_ask_encoder_device_note(enc);
     (void)snprintf(r->gpu_device, sizeof(r->gpu_device), "%s", note ? note : "unreported");
-    int rc = hyp_ask_encoder_check_batching(enc, ONBOARD_VERIFY_TEXTS, ONBOARD_VERIFY_COUNT,
-                                            ONBOARD_VERIFY_GROUP, ONBOARD_VERIFY_THRESHOLD, NULL,
-                                            &chk);
+    int rc =
+        hyp_ask_encoder_check_batching(enc, ONBOARD_VERIFY_TEXTS, ONBOARD_VERIFY_COUNT,
+                                       ONBOARD_VERIFY_GROUP, ONBOARD_VERIFY_THRESHOLD, NULL, &chk);
     if (rc != 0) {
         /* The encoder failed outright: nothing was compared, so nothing is
          * verified. An encoder that cannot encode is not a working GPU. */
@@ -319,15 +318,14 @@ static void onboard_cost_probe(const hyp_onboard_probe_opts_t *opts, hyp_onboard
         if (done > 0 && ms > 0) {
             r->encode_measured = true;
             r->encode_docs_per_sec = (double)done / (ms / ONBOARD_MS_PER_SEC);
-            (void)snprintf(r->encode_method, sizeof(r->encode_method),
-                           "measured now: %d sample documents from this corpus (each capped at "
-                           "%d bytes), encoded one at a time by %s on %s in %.0f ms",
-                           done, ONBOARD_SAMPLE_TRUNC,
-                           hyp_ask_encoder_model_id(enc) ? hyp_ask_encoder_model_id(enc)
-                                                         : "unreported",
-                           hyp_ask_encoder_device_note(enc) ? hyp_ask_encoder_device_note(enc)
-                                                            : "unreported",
-                           ms);
+            (void)snprintf(
+                r->encode_method, sizeof(r->encode_method),
+                "measured now: %d sample documents from this corpus (each capped at "
+                "%d bytes), encoded one at a time by %s on %s in %.0f ms",
+                done, ONBOARD_SAMPLE_TRUNC,
+                hyp_ask_encoder_model_id(enc) ? hyp_ask_encoder_model_id(enc) : "unreported",
+                hyp_ask_encoder_device_note(enc) ? hyp_ask_encoder_device_note(enc) : "unreported",
+                ms);
         }
     }
     if (!r->encode_measured) {
@@ -499,8 +497,7 @@ static int onboard_toml_render(const hyp_onboard_plan_t *plan, char *buf, size_t
     for (int i = 0; i < plan->repo_count && off >= 0 && (size_t)off < buf_sz; i++) {
         onboard_toml_escape(plan->repos[i].path, esc, sizeof(esc));
         off += snprintf(buf + off, buf_sz - (size_t)off,
-                        "\n[[repos]]\npath = \"%s\"\nrole = \"%s\"\n", esc,
-                        plan->repos[i].role);
+                        "\n[[repos]]\npath = \"%s\"\nrole = \"%s\"\n", esc, plan->repos[i].role);
     }
     return (off >= 0 && (size_t)off < buf_sz) ? off : -1;
 }
@@ -628,8 +625,7 @@ int hyp_onboard_toml_read(const char *dir, hyp_onboard_plan_t *out, char *err, s
             }
             if (out->repo_count >= HYP_ONBOARD_MAX_REPOS) {
                 (void)fclose(f);
-                (void)snprintf(err, errlen, "%s: more than %d repos", path,
-                               HYP_ONBOARD_MAX_REPOS);
+                (void)snprintf(err, errlen, "%s: more than %d repos", path, HYP_ONBOARD_MAX_REPOS);
                 return -1;
             }
             cur = out->repo_count++;
@@ -688,8 +684,7 @@ static int onboard_check_collisions(const hyp_onboard_repo_t *repos, int count, 
     char slugs[HYP_ONBOARD_MAX_REPOS][HYP_SZ_256];
     for (int i = 0; i < count; i++) {
         if (!onboard_repo_slug(repos[i].path, slugs[i], sizeof(slugs[i]))) {
-            (void)snprintf(err, errlen, "no project slug can be derived from '%s'",
-                           repos[i].path);
+            (void)snprintf(err, errlen, "no project slug can be derived from '%s'", repos[i].path);
             return -1;
         }
         for (int j = 0; j < i; j++) {
@@ -714,8 +709,7 @@ static int onboard_name_from_members(const hyp_onboard_repo_t *repos, int count,
     char slugs[HYP_ONBOARD_MAX_REPOS][HYP_SZ_256];
     for (int i = 0; i < count; i++) {
         if (!onboard_repo_slug(repos[i].path, slugs[i], sizeof(slugs[i]))) {
-            (void)snprintf(err, errlen, "no project slug can be derived from '%s'",
-                           repos[i].path);
+            (void)snprintf(err, errlen, "no project slug can be derived from '%s'", repos[i].path);
             return -1;
         }
     }
@@ -824,9 +818,8 @@ static const struct {
     const char *key;
     const char *prompt;
 } ONBOARD_QUESTIONS[HYP_ONBOARD_Q_COUNT] = {
-    [HYP_ONBOARD_Q_REPOS] = {"repos",
-                             "Which other repositories belong in this workspace? (paths, "
-                             "comma-separated; empty = just this one)"},
+    [HYP_ONBOARD_Q_REPOS] = {"repos", "Which other repositories belong in this workspace? (paths, "
+                                      "comma-separated; empty = just this one)"},
     [HYP_ONBOARD_Q_REFERENCE] = {"reference",
                                  "Which of them are read-only reference material? (paths, "
                                  "comma-separated; empty = none)"},
@@ -897,8 +890,7 @@ static int onboard_add_repo(const char *canon, void *opaque) {
         }
     }
     if (plan->repo_count >= HYP_ONBOARD_MAX_REPOS) {
-        (void)snprintf(ctx->err, ctx->errlen, "more than %d repositories",
-                       HYP_ONBOARD_MAX_REPOS);
+        (void)snprintf(ctx->err, ctx->errlen, "more than %d repositories", HYP_ONBOARD_MAX_REPOS);
         return -1;
     }
     hyp_onboard_repo_t *r = &plan->repos[plan->repo_count++];
@@ -961,8 +953,8 @@ static bool onboard_yes_no(const char *s, bool dflt, bool *out) {
 }
 
 int hyp_onboard_flow(const char *repo_dir, const hyp_onboard_probe_t *probe,
-                     const hyp_onboard_answers_t *answers, hyp_onboard_plan_t *out_plan,
-                     char *err, size_t errlen) {
+                     const hyp_onboard_answers_t *answers, hyp_onboard_plan_t *out_plan, char *err,
+                     size_t errlen) {
     if (!repo_dir || !out_plan) {
         return -1;
     }
@@ -985,8 +977,7 @@ int hyp_onboard_flow(const char *repo_dir, const hyp_onboard_probe_t *probe,
     /* Device is PROPOSED from evidence: gpu only when the probe RAN the check
      * on a GPU encoder and it passed. No probe, no gpu. */
     bool gpu_verified = probe && probe->gpu == HYP_ONBOARD_GPU_VERIFIED && probe->gpu_check_ran;
-    (void)snprintf(out_plan->device, sizeof(out_plan->device), "%s",
-                   gpu_verified ? "gpu" : "cpu");
+    (void)snprintf(out_plan->device, sizeof(out_plan->device), "%s", gpu_verified ? "gpu" : "cpu");
     out_plan->spend = false;
     if (probe && probe->key_env_named) {
         (void)snprintf(out_plan->key_env, sizeof(out_plan->key_env), "%s", probe->key_env_name);
@@ -1303,8 +1294,7 @@ int hyp_cmd_onboard(int argc, char **argv) {
         char confirm[HYP_SZ_16];
         printf("proceed? [Y/n] ");
         (void)fflush(stdout);
-        if (fgets(confirm, sizeof(confirm), stdin) &&
-            (confirm[0] == 'n' || confirm[0] == 'N')) {
+        if (fgets(confirm, sizeof(confirm), stdin) && (confirm[0] == 'n' || confirm[0] == 'N')) {
             printf("nothing written\n");
             return 0;
         }

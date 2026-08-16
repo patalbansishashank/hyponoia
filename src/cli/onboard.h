@@ -87,15 +87,15 @@ typedef struct {
 typedef struct {
     /* gpu — the verdict AND its evidence, together. */
     hyp_onboard_gpu_t gpu;
-    bool gpu_check_ran;             /* the batching check actually executed */
+    bool gpu_check_ran;              /* the batching check actually executed */
     hyp_ask_batch_check_t gpu_check; /* zeroed unless gpu_check_ran */
-    char gpu_device[HYP_SZ_128];    /* device_note of the encoder that ran */
-    char gpu_evidence[HYP_SZ_512];  /* what was run/observed, as a sentence */
+    char gpu_device[HYP_SZ_128];     /* device_note of the encoder that ran */
+    char gpu_evidence[HYP_SZ_512];   /* what was run/observed, as a sentence */
 
     /* key variable — NAME only, set/unset only. */
-    bool key_env_named;             /* config names a variable at all */
-    char key_env_name[HYP_SZ_128];  /* the NAME (empty when !key_env_named) */
-    bool key_env_set;               /* getenv(name) != NULL — value untouched */
+    bool key_env_named;            /* config names a variable at all */
+    char key_env_name[HYP_SZ_128]; /* the NAME (empty when !key_env_named) */
+    bool key_env_set;              /* getenv(name) != NULL — value untouched */
 
     /* corpus */
     bool corpus_walked;
@@ -143,8 +143,8 @@ typedef struct {
     hyp_onboard_repo_t repos[HYP_ONBOARD_MAX_REPOS];
     int repo_count;
     /* SHOWN, editable, never asked. */
-    char device[HYP_SZ_8]; /* "cpu" | "gpu" — gpu only over a VERIFIED probe */
-    bool spend;            /* the escalation lane may spend money */
+    char device[HYP_SZ_8];    /* "cpu" | "gpu" — gpu only over a VERIFIED probe */
+    bool spend;               /* the escalation lane may spend money */
     char key_env[HYP_SZ_128]; /* NAME of an env var, never a value */
     bool write_toml;          /* record the plan in HYP_ONBOARD_TOML_NAME */
 } hyp_onboard_plan_t;
@@ -155,10 +155,10 @@ typedef struct {
  * testable property: a fifth question is a fifth row, and the count is
  * asserted. Everything else is derived by the probe/resolver and only SHOWN. */
 typedef enum {
-    HYP_ONBOARD_Q_REPOS = 0,  /* which repos belong together */
-    HYP_ONBOARD_Q_REFERENCE,  /* which of them are `reference` */
-    HYP_ONBOARD_Q_SPEND,      /* whether to spend money */
-    HYP_ONBOARD_Q_NAME,       /* what to call it */
+    HYP_ONBOARD_Q_REPOS = 0, /* which repos belong together */
+    HYP_ONBOARD_Q_REFERENCE, /* which of them are `reference` */
+    HYP_ONBOARD_Q_SPEND,     /* whether to spend money */
+    HYP_ONBOARD_Q_NAME,      /* what to call it */
     HYP_ONBOARD_Q_COUNT,
 } hyp_onboard_q_t;
 
