@@ -2149,9 +2149,9 @@ static void main_daemon_ctl_print_escalation_key_custody(void) {
     char policy[HYP_SZ_32];
     (void)snprintf(key_env, sizeof(key_env), "%s",
                    hyp_config_get(cfg, HYP_CONFIG_ASK_ESC_KEY_ENV, ""));
-    (void)snprintf(policy, sizeof(policy), "%s",
-                   hyp_config_get(cfg, HYP_CONFIG_ASK_ESC_DAEMON_KEY,
-                                  HYP_CONFIG_ASK_ESC_DAEMON_KEY_DEFAULT));
+    (void)snprintf(
+        policy, sizeof(policy), "%s",
+        hyp_config_get(cfg, HYP_CONFIG_ASK_ESC_DAEMON_KEY, HYP_CONFIG_ASK_ESC_DAEMON_KEY_DEFAULT));
     hyp_config_close(cfg);
     if (!key_env[0]) {
         return;

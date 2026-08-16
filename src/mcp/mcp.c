@@ -4631,10 +4631,10 @@ static void ask_cols(const char *cols[], int *ncols, bool with_cut, bool with_ex
  * not of the marker. It stays because it costs nothing when it does not fire
  * (no column, no prose) and because the alternative on offer was a fabricated
  * confidence band. */
-#define ASK_EXACT_MARKER_TEXT                                                                      \
-    "exact=true means THE QUESTION SPELLS THIS DECLARATION'S NAME (whole word, case-sensitive, "   \
-    "or its Parent::name tail) — a fact about two strings, not a confidence and not a score. "     \
-    "exact=false means the question did not spell it, which is not evidence against the row. "     \
+#define ASK_EXACT_MARKER_TEXT                                                                    \
+    "exact=true means THE QUESTION SPELLS THIS DECLARATION'S NAME (whole word, case-sensitive, " \
+    "or its Parent::name tail) — a fact about two strings, not a confidence and not a score. "   \
+    "exact=false means the question did not spell it, which is not evidence against the row. "   \
     "The column is absent entirely when no row matched."
 
 static bool ask_ident_char(char c) {
@@ -4700,7 +4700,7 @@ static bool ask_row_is_named(const char *question, const hyp_ask_hit_t *hit) {
  * handed are the lines that were ranked, rather than a second reader's idea of
  * where line N starts. */
 typedef struct {
-    char *text;      /* NULL when nothing could be read; see `reason` */
+    char *text; /* NULL when nothing could be read; see `reason` */
     const char *reason;
     int shown_start; /* first line of `text` */
     int shown_end;   /* last line of `text` */
@@ -5463,9 +5463,8 @@ static char *ask_run(hyp_mcp_server_t *srv, const char *args, bool force_json, b
         size_t pool = ASK_SOURCE_TOTAL_BYTES_MAX;
         int want = hit_count < ASK_SOURCE_ROWS ? hit_count : ASK_SOURCE_ROWS;
         for (int i = 0; i < want; i++) {
-            size_t budget = pool < (size_t)ASK_SOURCE_SPAN_BYTES_MAX
-                                ? pool
-                                : (size_t)ASK_SOURCE_SPAN_BYTES_MAX;
+            size_t budget =
+                pool < (size_t)ASK_SOURCE_SPAN_BYTES_MAX ? pool : (size_t)ASK_SOURCE_SPAN_BYTES_MAX;
             if (budget == 0) {
                 break;
             }
@@ -5624,8 +5623,7 @@ static char *ask_run(hyp_mcp_server_t *srv, const char *args, bool force_json, b
                      "\nsource: %d  (verbatim lines for the top %d row(s), capped at %d lines / "
                      "%d bytes each; a CUT span names its full range and get_code_snippet "
                      "returns the rest. Pass include_source=false for coordinates only.)\n",
-                     span_count, span_count, ASK_SOURCE_SPAN_LINES_MAX,
-                     ASK_SOURCE_SPAN_BYTES_MAX);
+                     span_count, span_count, ASK_SOURCE_SPAN_LINES_MAX, ASK_SOURCE_SPAN_BYTES_MAX);
             hyp_sb_append(&sb, head);
             for (int i = 0; i < span_count; i++) {
                 char full[HYP_SZ_32];
@@ -5639,9 +5637,8 @@ static char *ask_run(hyp_mcp_server_t *srv, const char *args, bool force_json, b
                     continue;
                 }
                 if (spans[i].truncated) {
-                    snprintf(line, sizeof(line),
-                             "#%d %s %s:%d-%d of %s — CUT at %d of %d lines\n", i + 1,
-                             hits[i].qualified_name ? hits[i].qualified_name : "",
+                    snprintf(line, sizeof(line), "#%d %s %s:%d-%d of %s — CUT at %d of %d lines\n",
+                             i + 1, hits[i].qualified_name ? hits[i].qualified_name : "",
                              hits[i].file_path ? hits[i].file_path : "", spans[i].shown_start,
                              spans[i].shown_end, full,
                              spans[i].shown_end - spans[i].shown_start + 1, spans[i].span_lines);
