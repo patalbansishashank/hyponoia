@@ -125,7 +125,18 @@ static int build_import_map(hyp_pipeline_ctx_t *ctx, const char *rel_path,
             if (!imp->local_name || !imp->local_name[0] || !imp->module_path) {
                 continue;
             }
-            char *target_qn = hyp_pipeline_fqn_module(ctx->project_name, imp->module_path);
+            /* module_path is the VERBATIM source specifier, so "./config" and
+             * ".config" are relative imports, not paths. Resolving against the
+             * importing file is what turns one into the other; handing the raw
+             * specifier to the QN derivation addresses a file that is not the
+             * imported one — ".foo" strips to the bare project QN, which IS the
+             * root Folder node, so the lookup HITS and the import map points at
+             * the repository root. Non-relative specifiers resolve to NULL and
+             * pass through unchanged. */
+            char *resolved = hyp_pipeline_resolve_relative_import(rel_path, imp->module_path);
+            char *target_qn =
+                hyp_pipeline_fqn_module(ctx->project_name, resolved ? resolved : imp->module_path);
+            free(resolved);
             const hyp_gbuf_node_t *target = hyp_gbuf_find_by_qn(ctx->gbuf, target_qn);
             free(target_qn);
             if (!target) {

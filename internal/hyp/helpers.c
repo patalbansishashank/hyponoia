@@ -4,8 +4,9 @@
 #include "lang_specs.h"
 #include "tree_sitter/api.h" // TSNode, ts_node_*
 #include "foundation/constants.h"
-#include "foundation/compat.h" // HYP_TLS
-#include <stdlib.h>            // calloc/free for the symbol-set cache
+#include "foundation/compat.h"   // HYP_TLS
+#include "foundation/fqn_core.h" // the one QN derivation, shared with the pipeline
+#include <stdlib.h>              // calloc/free for the symbol-set cache
 
 enum {
     MIN_ROUTE_LEN = 3,
@@ -14,8 +15,6 @@ enum {
     NOEXT_BUF = 256,
     MIN_HEX_LEN = 3,
     MAX_HEX_NAME_LEN = 64,
-    INIT_FILE_LEN = 8,  /* strlen("__init__") */
-    INDEX_FILE_LEN = 5, /* strlen("index") */
     NOT_FOUND = -1,
 };
 
@@ -1358,107 +1357,18 @@ bool hyp_is_module_level(TSNode node, HYPLanguage lang) {
 }
 
 // --- FQN computation ---
-// Mirrors Go's fqn.Compute(): project + path_parts_dotted + name
-
-// Internal helper: find extension start in basename (returns length without ext)
-static size_t strip_ext_len(const char *s, size_t len) {
-    for (size_t i = len; i > 0; i--) {
-        if (s[i - SKIP_ONE] == '.') {
-            /* A dot at the very start of a filename segment (index 0, or right
-             * after a '/') is a DOTFILE marker (".env", ".gitignore"), NOT an
-             * extension separator. Stripping there leaves an empty stem whose
-             * module QN collides with the parent directory/project root. Keep
-             * the whole name as the stem; the leading dot is dropped later in
-             * append_path_segments. */
-            if (i - SKIP_ONE == 0 || s[i - SKIP_ONE - SKIP_ONE] == '/') {
-                return len;
-            }
-            return i - SKIP_ONE;
-        }
-        if (s[i - SKIP_ONE] == '/') {
-            break;
-        }
-    }
-    return len;
-}
-
-// Check if a path part should be skipped (Python __init__, JS/TS index).
-static bool should_skip_fqn_part(const char *part, size_t part_len, bool is_last, bool has_name) {
-    if (!is_last || !has_name) {
-        return false;
-    }
-    if (part_len == INIT_FILE_LEN && memcmp(part, "__init__", INIT_FILE_LEN) == 0) {
-        return true;
-    }
-    if (part_len == INDEX_FILE_LEN && memcmp(part, "index", INDEX_FILE_LEN) == 0) {
-        return true;
-    }
-    return false;
-}
-
-// Append dotted path segments from rel_path (extension-stripped) to output buffer.
-static char *append_path_segments(char *out, const char *rel_path, size_t plen, bool has_name) {
-    const char *start = rel_path;
-    const char *end_ptr = rel_path + plen;
-    while (start < end_ptr) {
-        const char *slash = (const char *)memchr(start, '/', end_ptr - start);
-        const char *part_end = slash ? slash : end_ptr;
-        size_t part_len = (size_t)(part_end - start);
-
-        if (part_len > 0) {
-            bool is_last = (part_end == end_ptr);
-            if (!should_skip_fqn_part(start, part_len, is_last, has_name)) {
-                /* Drop a leading '.' from a dotfile / hidden-dir segment
-                 * (".env" -> "env", ".github" -> "github"). Otherwise the QN
-                 * separator '.' plus the segment's own leading '.' produce a
-                 * malformed "proj..env" double-dot, and a root dotfile's empty
-                 * stem collides with the project QN. */
-                const char *seg = start;
-                size_t seg_len = part_len;
-                if (seg[0] == '.') {
-                    seg++;
-                    seg_len--;
-                }
-                if (seg_len > 0) {
-                    *out++ = '.';
-                    memcpy(out, seg, seg_len);
-                    out += seg_len;
-                }
-            }
-        }
-        start = part_end + SKIP_ONE;
-    }
-    return out;
-}
+// The arena-allocated half of the scheme. Every rule lives in
+// foundation/fqn_core.h, which the malloc-allocated pipeline half
+// (src/pipeline/fqn.c) uses as well: extraction writes the def and module QNs,
+// the pipeline derives the QNs it looks them up by, and the registry joins the
+// two — so the derivation has to be one derivation rather than two that agree.
 
 char *hyp_fqn_compute(HYPArena *a, const char *project, const char *rel_path, const char *name) {
-    if (!project)
-        project = "";
-    if (!rel_path)
-        rel_path = "";
-    size_t proj_len = strlen(project);
-    size_t path_len = strlen(rel_path);
-    size_t name_len = name ? strlen(name) : 0;
-
-    size_t max_len = proj_len + SKIP_ONE + path_len + SKIP_ONE + name_len + SKIP_ONE;
-    char *buf = (char *)hyp_arena_alloc(a, max_len);
+    char *buf = (char *)hyp_arena_alloc(a, hyp_fqn_core_bound(project, rel_path, name));
     if (!buf) {
         return NULL;
     }
-
-    char *out = buf;
-    memcpy(out, project, proj_len);
-    out += proj_len;
-
-    size_t plen = strip_ext_len(rel_path, path_len);
-    out = append_path_segments(out, rel_path, plen, name && name_len > 0);
-
-    if (name && name_len > 0) {
-        *out++ = '.';
-        memcpy(out, name, name_len);
-        out += name_len;
-    }
-    *out = '\0';
+    hyp_fqn_core_write(buf, project, rel_path, name);
     return buf;
 }
 
@@ -1485,13 +1395,16 @@ char *hyp_fqn_module_source_lang(HYPArena *a, const char *project, const char *r
     if (!rel_path) {
         rel_path = "";
     }
-    // Module is the CONTAINING DIRECTORY: strip the basename (last '/' segment).
-    const char *last_slash = strrchr(rel_path, '/');
-    if (!last_slash) {
+    // Module is the CONTAINING DIRECTORY: strip the basename. The pipeline-side
+    // hyp_pipeline_fqn_module_dir() cuts at the same byte through the same
+    // hyp_fqn_core_dir_len(), so a cross-file caller QN matches its callee's
+    // def QN.
+    size_t path_len = strlen(rel_path);
+    size_t dir_len = hyp_fqn_core_dir_len(rel_path, path_len);
+    if (dir_len == path_len) {
         // Root file: dir is empty → module is just the project.
         return hyp_fqn_folder(a, project, "");
     }
-    size_t dir_len = (size_t)(last_slash - rel_path);
     char *dir = (char *)hyp_arena_alloc(a, dir_len + SKIP_ONE);
     if (!dir) {
         return NULL;
@@ -1518,35 +1431,15 @@ char *hyp_fqn_compute_source_lang(HYPArena *a, const char *project, const char *
 }
 
 char *hyp_fqn_folder(HYPArena *a, const char *project, const char *rel_dir) {
-    // project.dir1.dir2
-    size_t proj_len = strlen(project);
-    size_t dir_len = strlen(rel_dir);
-    size_t max_len = proj_len + SKIP_ONE + dir_len + SKIP_ONE;
-    char *buf = (char *)hyp_arena_alloc(a, max_len);
+    // project.dir1.dir2. A NULL project is guarded inside the core, which the
+    // arena side reaches through the same call the pipeline side makes — this
+    // entry point took strlen() of both arguments unguarded, so a NULL project
+    // crashed here while hyp_fqn_compute() answered.
+    char *buf = (char *)hyp_arena_alloc(a, hyp_fqn_core_folder_bound(project, rel_dir));
     if (!buf) {
         return NULL;
     }
-
-    char *out = buf;
-    memcpy(out, project, proj_len);
-    out += proj_len;
-
-    if (dir_len > 0 && !(dir_len == SKIP_ONE && rel_dir[0] == '.')) {
-        const char *start = rel_dir;
-        const char *end_ptr = rel_dir + dir_len;
-        while (start < end_ptr) {
-            const char *slash = (const char *)memchr(start, '/', end_ptr - start);
-            const char *part_end = slash ? slash : end_ptr;
-            size_t part_len = (size_t)(part_end - start);
-            if (part_len > 0) {
-                *out++ = '.';
-                memcpy(out, start, part_len);
-                out += part_len;
-            }
-            start = part_end + SKIP_ONE;
-        }
-    }
-    *out = '\0';
+    hyp_fqn_core_folder_write(buf, project, rel_dir);
     return buf;
 }
 

@@ -23,6 +23,12 @@ typedef struct hyp_store hyp_store_t;
 #define HYP_STORE_OK 0
 #define HYP_STORE_ERR (-1)
 #define HYP_STORE_NOT_FOUND (-2)
+/* More than one row answers a lookup that addresses exactly one thing. The
+ * caller gets no row: an address that names two entities names neither, and
+ * handing back whichever one the b-tree stepped first is the plausible wrong
+ * answer this store refuses everywhere else. Distinct from NOT_FOUND, which
+ * says "nothing is here" — the two are never the same claim. */
+#define HYP_STORE_AMBIGUOUS (-3)
 
 /* ── Data structures ────────────────────────────────────────────── */
 
