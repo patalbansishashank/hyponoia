@@ -1,14 +1,15 @@
 $ErrorActionPreference = 'Stop'
 
 $packageName = 'hyponoia'
-$version     = '0.3.0'
+$version     = '0.3.1'
 # The build publishes only the UI variant, so this is the only archive that exists.
 $url64       = "https://github.com/patalbansishashank/hyponoia/releases/download/v${version}/hyponoia-ui-windows-amd64.zip"
-# Checksums are placeholders until v0.3.0 publishes. They were upstream's,
-# for a v0.8.1 release this fork never cut; a plausible-but-wrong hash fails
-# at install time with a mismatch nobody can attribute, so they are zeroed
-# until the real values are copied from the release's checksums.txt.
-$checksum64  = '078399bd0e87d08666a2c6762834aa64a5004bcd5f7abade88070f91fdecabfe'
+# Placeholder until v0.3.1 publishes. The value below WAS the real v0.3.0
+# hash, which makes it worse than an obvious blank once the URL points at
+# v0.3.1: it would fail at install time with a mismatch nobody could
+# attribute to a cause. Zeroed until the real value is copied from the
+# release's checksums.txt.
+$checksum64  = '0000000000000000000000000000000000000000000000000000000000000000'
 $installDir  = Join-Path $env:ChocolateyBinRoot $packageName
 
 Install-ChocolateyZipPackage `

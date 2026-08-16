@@ -40,7 +40,7 @@ const (
 	// fork never cut that release, so every `go install` composed a download
 	// URL for a tag that does not exist here -- see the fmt.Sprintf further
 	// down, which builds releases/download/v<version>/<archive> from this.
-	version = "0.3.0"
+	version = "0.3.1"
 
 	windowsBinaryName    = "hyponoia.exe"
 	integrationsFileName = "hyp-integrations.json"

@@ -1,7 +1,7 @@
 class Hyponoia < Formula
   desc "Code context engine for AI coding agents"
   homepage "https://github.com/patalbansishashank/hyponoia"
-  version "0.3.0"
+  version "0.3.1"
   license "MIT"
 
   # RETIRED-PLATFORM(macos): the on_macos block and its two darwin URLs were
@@ -11,17 +11,19 @@ class Hyponoia < Formula
   # See docs/MAINTAINERS.md "Retired platforms".
   depends_on :linux
 
-  # Checksums are placeholders until v0.3.0 publishes — see pkg/aur/PKGBUILD
-  # for why they are zeroed rather than left at upstream's values.
+  # Checksums are placeholders until v0.3.1 publishes — see pkg/aur/PKGBUILD
+  # for why they are zeroed rather than left at the PREVIOUS release's values:
+  # a real hash for the wrong tag fails at install time with a mismatch nobody
+  # can attribute, while an obviously-absent one names its own problem.
   # The build publishes only the UI variant, so these are the only archives that exist.
   on_linux do
     on_arm do
       url "https://github.com/patalbansishashank/hyponoia/releases/download/v#{version}/hyponoia-ui-linux-arm64.tar.gz"
-      sha256 "5fa1342d7ebfb00e32048fcf39bf21a7314a0a07af3a7e045a46ecea0303b720"
+      sha256 "0000000000000000000000000000000000000000000000000000000000000000"
     end
     on_intel do
       url "https://github.com/patalbansishashank/hyponoia/releases/download/v#{version}/hyponoia-ui-linux-amd64.tar.gz"
-      sha256 "baecf99e5ad46976d75a96ffd2a71a145e68b09710a2b32f983a4202afc73d60"
+      sha256 "0000000000000000000000000000000000000000000000000000000000000000"
     end
   end
 
