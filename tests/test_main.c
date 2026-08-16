@@ -640,6 +640,7 @@ extern void suite_language(void);
 extern void suite_userconfig(void);
 extern void suite_gitignore(void);
 extern void suite_git_context(void);
+extern void suite_roles(void);
 extern void suite_discover(void);
 extern void suite_graph_buffer(void);
 extern void suite_registry(void);
@@ -916,6 +917,7 @@ int main(int argc, char **argv) {
     RUN_SELECTED_SUITE(userconfig);
     RUN_SELECTED_SUITE(gitignore);
     RUN_SELECTED_SUITE(git_context);
+    RUN_SELECTED_SUITE(roles);
     RUN_SELECTED_SUITE(discover);
 
     /* Graph Buffer (M7) */
