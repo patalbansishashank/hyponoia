@@ -602,6 +602,7 @@ extern void suite_hash_table(void);
 extern void suite_dyn_array(void);
 extern void suite_str_intern(void);
 extern void suite_record(void);
+extern void suite_watched_ingest(void);
 extern void suite_log(void);
 extern void suite_str_util(void);
 extern void suite_workspace(void);
@@ -866,6 +867,9 @@ int main(int argc, char **argv) {
     RUN_SELECTED_SUITE(private_file_lock);
     RUN_SELECTED_SUITE(lock_registry);
     RUN_SELECTED_SUITE(dump_verify);
+
+    /* Feed adapters (§4 track D) */
+    RUN_SELECTED_SUITE(watched_ingest);
 
     /* Existing C code regression tests */
     RUN_SELECTED_SUITE(ac);
