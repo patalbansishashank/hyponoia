@@ -1132,6 +1132,52 @@ static const char *const SCHEMA_OK_CELLS[] = {
 
 enum { SCHEMA_OK_ROWS = sizeof(SCHEMA_OK_CELLS) / sizeof(SCHEMA_OK_CELLS[0]) / 3 };
 
+/* Copy the catalog fixture, dropping every row that names `drop`. */
+static size_t catalog_without(const char **dst, const char *drop) {
+    size_t kept = 0;
+    for (size_t r = 0; r < (size_t)SCHEMA_OK_ROWS; r++) {
+        if (strcmp(SCHEMA_OK_CELLS[r * 3 + 1], drop) == 0) {
+            continue;
+        }
+        dst[kept * 3] = SCHEMA_OK_CELLS[r * 3];
+        dst[kept * 3 + 1] = SCHEMA_OK_CELLS[r * 3 + 1];
+        dst[kept * 3 + 2] = SCHEMA_OK_CELLS[r * 3 + 2];
+        kept++;
+    }
+    return kept;
+}
+
+TEST(multica_schema_pin_separates_required_from_ignored) {
+    /*
+     * Nothing was verified about `agent` beyond id and name, so nothing more is
+     * REQUIRED there. This is the direction that is easy to get wrong in the
+     * safe-looking way: pinning a column nobody confirmed exists does not make
+     * the adapter stricter, it makes it refuse a perfectly correct schema — and
+     * then every row, forever, with a message blaming upstream drift.
+     */
+    const char *cells[SCHEMA_OK_ROWS * 3];
+    fix_rows_ctx_t ctx;
+    size_t kept = catalog_without(cells, "agent.kind");
+    hyp_multica_rows_t rows = fix_rows(&ctx, SCHEMA_OK_NAMES, 3, cells, kept);
+    ASSERT_EQ(hyp_multica_schema_pin_check(&rows), HYP_FEED_OK);
+    kept = catalog_without(cells, "agent.model");
+    rows = fix_rows(&ctx, SCHEMA_OK_NAMES, 3, cells, kept);
+    ASSERT_EQ(hyp_multica_schema_pin_check(&rows), HYP_FEED_OK);
+
+    /* And the other direction, or the paragraph above is just a smaller pin:
+     * the three columns the mapping does ride on are still required. */
+    kept = catalog_without(cells, "agent.name");
+    rows = fix_rows(&ctx, SCHEMA_OK_NAMES, 3, cells, kept);
+    ASSERT_EQ(hyp_multica_schema_pin_check(&rows), HYP_FEED_ERR_SCHEMA);
+    kept = catalog_without(cells, "agent.workspace_id");
+    rows = fix_rows(&ctx, SCHEMA_OK_NAMES, 3, cells, kept);
+    ASSERT_EQ(hyp_multica_schema_pin_check(&rows), HYP_FEED_ERR_SCHEMA);
+    kept = catalog_without(cells, "agent.id");
+    rows = fix_rows(&ctx, SCHEMA_OK_NAMES, 3, cells, kept);
+    ASSERT_EQ(hyp_multica_schema_pin_check(&rows), HYP_FEED_ERR_SCHEMA);
+    PASS();
+}
+
 TEST(multica_schema_pin_accepts_the_verified_catalog) {
     fix_rows_ctx_t ctx;
     hyp_multica_rows_t rows = fix_rows(&ctx, SCHEMA_OK_NAMES, 3, SCHEMA_OK_CELLS, SCHEMA_OK_ROWS);
@@ -1216,5 +1262,6 @@ SUITE(feed) {
     RUN_TEST(multica_issues_map_and_pin_their_enums);
     RUN_TEST(multica_workspaces_pull_typed_rows_and_pin_repos_shape);
     RUN_TEST(multica_schema_pin_accepts_the_verified_catalog);
+    RUN_TEST(multica_schema_pin_separates_required_from_ignored);
     RUN_TEST(multica_schema_pin_fails_closed_on_drift);
 }

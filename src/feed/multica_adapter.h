@@ -36,12 +36,11 @@
  *
  * The tables' own shapes are pinned separately: HYP_MULTICA_SCHEMA_PIN_SQL
  * reads the catalog and hyp_multica_schema_pin_check() verifies it — the
- * verified column SETS of task_message, issue and workspace exactly; the
- * columns this adapter consumes from agent_task_queue and agent as a subset
- * (their orchestration columns are pinned as IGNORED, explicitly including
- * delegated_from_task_id, retry_of_task_id and rerun_of_task_id: task
- * lineage is read from parent_task_id ONLY); and the four foreign keys the
- * mapping rides on:
+ * verified column SETS of task_message, issue and workspace exactly; a
+ * REQUIRED SUBSET of agent_task_queue and agent (their remaining columns are
+ * pinned as IGNORED, explicitly including delegated_from_task_id,
+ * retry_of_task_id and rerun_of_task_id: task lineage is read from
+ * parent_task_id ONLY); and the four foreign keys the mapping rides on:
  *
  *     task_message.task_id        -> agent_task_queue.id   (the author hop)
  *     agent_task_queue.agent_id   -> agent.id              (the author hop)
@@ -51,6 +50,13 @@
  * The first is pinned because a LEFT JOIN over a silently renamed or unkeyed
  * table would not error — it would return NULL agents forever. A schema that
  * drifts must die loudly, at the pin, before a single row is mapped.
+ *
+ * The required subsets are sized by what was VERIFIED, not by what sounds
+ * likely. agent_task_queue's list was read off a live catalog; `agent` was not,
+ * so only id, name and workspace_id are required there — and workspace_id is
+ * itself UNVERIFIED, listed only because the attribution join rides on it.
+ * Requiring an unconfirmed column is not extra safety: it fails closed against
+ * a schema that is entirely correct, and then refuses every row forever.
  *
  * ── The mapping ──────────────────────────────────────────────────────────────
  *

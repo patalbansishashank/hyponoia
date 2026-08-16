@@ -961,10 +961,26 @@ static const char *const WORKSPACE_TABLE_COLUMNS[] = {"workspace.id",
                                                       "workspace.attribution_fail_closed",
                                                       NULL};
 
-/* Consumed subsets: these must exist; the tables' other columns are pinned as
+/*
+ * Required subsets: these must exist; the tables' other columns are pinned as
  * IGNORED and may come and go. For agent_task_queue that explicitly includes
  * delegated_from_task_id, retry_of_task_id and rerun_of_task_id — lineage is
- * read from parent_task_id ONLY. */
+ * read from parent_task_id ONLY.
+ *
+ * REQUIRED is not the same as CONSUMED, and the difference decides what a
+ * refusal means. agent_task_queue's list is the set a read-only \d VERIFIED as
+ * meaningful; only id, agent_id, parent_task_id and issue_id are read by the
+ * SQL above. The rest are required because they are the task-level record's
+ * inputs (D1) and their disappearance is news, not because a pull needs them.
+ *
+ * The `agent` list is the opposite case and is deliberately SHORT. Nothing was
+ * verified about that table beyond id and name; workspace_id is added because
+ * the attribution join above rides on it, and it is UNVERIFIED. Requiring a
+ * column nobody has confirmed exists is not caution — it fails closed on a
+ * schema that is perfectly correct, and refuses every row forever. Columns are
+ * added here when a live catalog read confirms them, not when they sound
+ * plausible.
+ */
 static const char *const QUEUE_REQUIRED_COLUMNS[] = {"agent_task_queue.id",
                                                      "agent_task_queue.agent_id",
                                                      "agent_task_queue.parent_task_id",
@@ -977,8 +993,9 @@ static const char *const QUEUE_REQUIRED_COLUMNS[] = {"agent_task_queue.id",
                                                      "agent_task_queue.status",
                                                      NULL};
 
-static const char *const AGENT_REQUIRED_COLUMNS[] = {
-    "agent.id", "agent.name", "agent.workspace_id", "agent.kind", "agent.model", NULL};
+static const char *const AGENT_REQUIRED_COLUMNS[] = {"agent.id", "agent.name",
+                                                     "agent.workspace_id", /* UNVERIFIED */
+                                                     NULL};
 
 /* The four foreign keys the mapping rides on. The first is the loud-death pin:
  * without it a renamed or unkeyed table would join to NULLs forever. */
