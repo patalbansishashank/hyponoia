@@ -56,6 +56,7 @@
 #include "store/record_store.h"
 #include "store/store.h"
 
+#include <stdarg.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -541,8 +542,14 @@ static void g3_read(g3_world_t *w, const char *address, g3_answer_t *out) {
         } else {
             attach = hyp_addr_equal(&held.addr, &queried.addr);
         }
-        if (attach && out->record_count < G3_MATCH_MAX) {
-            snprintf(out->matched[out->record_count++], HYP_ANCHOR_MAX + 1, "%s", rec->anchor);
+        if (attach) {
+            /* The COUNT is never capped, only the sample of anchors kept beside
+             * it: a count that silently saturates would understate exactly the
+             * failure these controls exist to catch. */
+            if (out->record_count < G3_MATCH_MAX) {
+                snprintf(out->matched[out->record_count], HYP_ANCHOR_MAX + 1, "%s", rec->anchor);
+            }
+            out->record_count++;
         }
     }
     hyp_record_set_free(set);
@@ -582,6 +589,25 @@ static bool g3_answer_names(const g3_world_t *w, const g3_answer_t *ans, const c
 
 /* ── Shared shapes ───────────────────────────────────────────────── */
 
+/* Append one violation to a control's verdict. EVERY check in a control runs,
+ * and every one that fails is reported: a control that stops at its first
+ * failure hides the assertions behind it, and an assertion that has never been
+ * seen to fire is the class this suite exists to rule out. */
+static void g3_note(char *why, size_t cap, const char *fmt, ...) {
+    size_t used = strlen(why);
+    if (used + 8 >= cap) {
+        return;
+    }
+    if (used > 0) {
+        snprintf(why + used, cap - used, " | ");
+        used = strlen(why);
+    }
+    va_list ap;
+    va_start(ap, fmt);
+    (void)vsnprintf(why + used, cap - used, fmt, ap);
+    va_end(ap);
+}
+
 /* Every renamed control asserts the same four things about the same shape, so
  * the shape is written once and the CASES are the data. `after_addr` is the
  * positive complement: the symbol the rename produced IS in this index, and it
@@ -596,52 +622,45 @@ static int g3_check_renamed(const char *tree, const char *anchor, const char *af
         g3_world_close(&w);
         return -1;
     }
-    int rc = 0;
     g3_answer_t ans;
     g3_read(&w, anchor, &ans);
     if (ans.status != HYP_ANCHOR_ORPHANED) {
-        snprintf(why, why_sz, "status is %s, expected orphaned (resolved at %s:%d)",
-                 hyp_anchor_status_str(ans.status), ans.file_path, ans.start_line);
-        rc = 1;
-    } else if (ans.records_present) {
-        snprintf(why, why_sz, "orphaned but the record list was present, not absent");
-        rc = 1;
-    } else if (ans.candidate_count != 0) {
-        snprintf(why, why_sz, "candidate_count is %d, expected 0 (first: %s)", ans.candidate_count,
-                 ans.candidates[0]);
-        rc = 1;
+        g3_note(why, why_sz, "status is %s, expected orphaned (resolved at %s:%d)",
+                hyp_anchor_status_str(ans.status), ans.file_path, ans.start_line);
     }
-    for (int i = 0; rc == 0 && i < must_not_count; i++) {
+    if (ans.records_present) {
+        g3_note(why, why_sz, "the record list was present, not absent");
+    }
+    if (ans.candidate_count != 0) {
+        g3_note(why, why_sz, "candidate_count is %d, expected 0 (first: %s)", ans.candidate_count,
+                ans.candidates[0]);
+    }
+    for (int i = 0; i < must_not_count; i++) {
         if (g3_answer_names(&w, &ans, must_not[i])) {
-            snprintf(why, why_sz, "re-attached to the plausible neighbour %s", must_not[i]);
-            rc = 1;
+            g3_note(why, why_sz, "re-attached to the plausible neighbour %s", must_not[i]);
         }
     }
     /* The positive complement, in the same index and the same call. */
-    if (rc == 0) {
-        char after_anchor[HYP_ANCHOR_MAX + 1];
-        hyp_anchor_t parsed;
-        if (hyp_anchor_parse(after_addr, &parsed) != HYP_ADDR_OK ||
-            !hyp_anchor_format(&parsed.addr, after_hash, after_anchor, sizeof(after_anchor))) {
-            snprintf(why, why_sz, "could not build the after anchor");
-            rc = 1;
-        } else {
-            g3_answer_t live;
-            g3_read(&w, after_anchor, &live);
-            if (live.status != HYP_ANCHOR_RESOLVED) {
-                snprintf(why, why_sz, "the renamed-to symbol does not resolve: %s (%s)",
-                         hyp_anchor_status_str(live.status), live.reason);
-                rc = 1;
-            }
+    char after_anchor[HYP_ANCHOR_MAX + 1];
+    hyp_anchor_t parsed;
+    if (hyp_anchor_parse(after_addr, &parsed) != HYP_ADDR_OK ||
+        !hyp_anchor_format(&parsed.addr, after_hash, after_anchor, sizeof(after_anchor))) {
+        g3_note(why, why_sz, "could not build the after anchor");
+    } else {
+        g3_answer_t live;
+        g3_read(&w, after_anchor, &live);
+        if (live.status != HYP_ANCHOR_RESOLVED) {
+            g3_note(why, why_sz, "the renamed-to symbol does not resolve: %s (%s)",
+                    hyp_anchor_status_str(live.status), live.reason);
         }
     }
     g3_world_close(&w);
-    return rc;
+    return why[0] ? 1 : 0;
 }
 
 #define G3_RENAMED(tree, anchor, after_addr, after_hash, must_not, n)                       \
     do {                                                                                    \
-        char _why[512] = "";                                                                \
+        char _why[1024] = "";                                                               \
         int _rc = g3_check_renamed(tree, anchor, after_addr, after_hash, must_not, n, _why, \
                                    sizeof(_why));                                           \
         if (_rc != 0) {                                                                     \
@@ -815,7 +834,6 @@ static int g3_check_isolation(const char *record_anchor, const char *queried, co
         g3_world_close(&w);
         return -1;
     }
-    int rc = 0;
     /* The premise of the control, asserted rather than assumed: the queried
      * repo's span is byte-identical to the span the other repo's record was
      * written against, so content cannot rescue a resolver here and only the
@@ -824,62 +842,54 @@ static int g3_check_isolation(const char *record_anchor, const char *queried, co
     hyp_anchor_t parsed;
     if (hyp_anchor_parse(queried, &parsed) != HYP_ADDR_OK ||
         !hyp_anchor_format(&parsed.addr, hash, probe, sizeof(probe))) {
-        snprintf(why, why_sz, "could not build the byte-identity probe");
-        g3_world_close(&w);
-        return 1;
-    }
-    hyp_anchor_res_t res;
-    hyp_anchor_status_t probed = hyp_anchor_resolve(w.store, "fork-pair", probe, &res);
-    bool identical = (probed == HYP_ANCHOR_RESOLVED && res.relation == HYP_ADDR_REL_SAME);
-    hyp_anchor_res_free(&res);
-    if (!identical) {
-        snprintf(why, why_sz,
-                 "the two repos' spans are not byte-identical, so the control is "
-                 "weaker than the corpus claims");
-        g3_world_close(&w);
-        return 1;
+        g3_note(why, why_sz, "could not build the byte-identity probe");
+    } else {
+        hyp_anchor_res_t res;
+        hyp_anchor_status_t probed = hyp_anchor_resolve(w.store, "fork-pair", probe, &res);
+        bool identical = (probed == HYP_ANCHOR_RESOLVED && res.relation == HYP_ADDR_REL_SAME);
+        hyp_anchor_res_free(&res);
+        if (!identical) {
+            g3_note(why, why_sz,
+                    "the two repos' spans are not byte-identical, so the control is "
+                    "weaker than the corpus claims");
+        }
     }
     g3_answer_t ans;
     g3_read(&w, queried, &ans);
     if (ans.status != HYP_ANCHOR_RESOLVED) {
-        snprintf(why, why_sz, "the queried symbol does not resolve: %s (%s)",
-                 hyp_anchor_status_str(ans.status), ans.reason);
-        rc = 1;
-    } else if (!ans.records_present) {
-        snprintf(why, why_sz, "resolved, but the record list was absent rather than empty");
-        rc = 1;
-    } else if (ans.record_count != 0) {
-        snprintf(why, why_sz, "returned %d record(s), first %s", ans.record_count, ans.matched[0]);
-        rc = 1;
-    } else if (ans.considered == 0) {
-        snprintf(why, why_sz, "no anchored record was examined — the store was empty");
-        rc = 1;
-    } else if (g3_answer_names(&w, &ans, record_anchor)) {
-        snprintf(why, why_sz, "named the other repository's record");
-        rc = 1;
+        g3_note(why, why_sz, "the queried symbol does not resolve: %s (%s)",
+                hyp_anchor_status_str(ans.status), ans.reason);
+    }
+    if (ans.status == HYP_ANCHOR_RESOLVED && !ans.records_present) {
+        g3_note(why, why_sz, "resolved, but the record list was absent rather than empty");
+    }
+    if (ans.record_count != 0) {
+        g3_note(why, why_sz, "returned %d record(s), first %s", ans.record_count, ans.matched[0]);
+    }
+    if (ans.records_present && ans.considered == 0) {
+        g3_note(why, why_sz, "no anchored record was examined — the store was empty");
+    }
+    if (g3_answer_names(&w, &ans, record_anchor)) {
+        g3_note(why, why_sz, "named the other repository's record");
     }
     /* The other end of the same fact: the record IS findable from its own
      * repository, so the empty answer above is isolation and not absence. */
-    if (rc == 0) {
-        const char *at = strchr(record_anchor, '@');
-        g3_answer_t home;
-        g3_read(&w, at ? at + 1 : record_anchor, &home);
-        if (home.record_count != 1) {
-            snprintf(why, why_sz, "the record is not findable from its own repo: %d found",
-                     home.record_count);
-            rc = 1;
-        } else if (strcmp(home.matched[0], record_anchor) != 0) {
-            snprintf(why, why_sz, "its own repo returned a different record");
-            rc = 1;
-        }
+    const char *at = strchr(record_anchor, '@');
+    g3_answer_t home;
+    g3_read(&w, at ? at + 1 : record_anchor, &home);
+    if (home.record_count != 1) {
+        g3_note(why, why_sz, "the record is not findable from its own repo: %d found",
+                home.record_count);
+    } else if (strcmp(home.matched[0], record_anchor) != 0) {
+        g3_note(why, why_sz, "its own repo returned a different record");
     }
     g3_world_close(&w);
-    return rc;
+    return why[0] ? 1 : 0;
 }
 
 #define G3_ISOLATION(record_anchor, queried, hash)                                      \
     do {                                                                                \
-        char _why[512] = "";                                                            \
+        char _why[1024] = "";                                                           \
         int _rc = g3_check_isolation(record_anchor, queried, hash, _why, sizeof(_why)); \
         if (_rc != 0) {                                                                 \
             FAIL(_why);                                                                 \
@@ -922,32 +932,27 @@ TEST(g3_pc_rendezvous_001_env_home_is_found_from_the_other_repo) {
         FAIL(fixture);
     }
     hyp_addr_t addr;
-    int rc = 0;
-    char why[512] = "";
+    char why[1024] = "";
     if (hyp_addr_parse(PC_RENDEZVOUS_001_ADDR, &addr) != HYP_ADDR_OK) {
-        snprintf(why, sizeof(why), "the rendezvous address does not parse");
-        rc = 1;
+        g3_note(why, sizeof(why), "the rendezvous address does not parse");
     } else if (addr.scope != HYP_ADDR_SCOPE_WORKSPACE) {
-        snprintf(why, sizeof(why), "the rendezvous address is not workspace-scoped");
-        rc = 1;
-    } else {
-        g3_answer_t ans;
-        g3_read(&w, PC_RENDEZVOUS_001_ADDR, &ans);
-        if (ans.status != HYP_ANCHOR_RESOLVED) {
-            snprintf(why, sizeof(why), "status is %s, expected resolved (%s)",
-                     hyp_anchor_status_str(ans.status), ans.reason);
-            rc = 1;
-        } else if (!ans.records_present || ans.record_count != 1) {
-            snprintf(why, sizeof(why), "found %d record(s), expected exactly 1",
-                     ans.records_present ? ans.record_count : -1);
-            rc = 1;
-        } else if (strcmp(ans.matched[0], PC_RENDEZVOUS_001_ADDR) != 0) {
-            snprintf(why, sizeof(why), "found the wrong record: %s", ans.matched[0]);
-            rc = 1;
-        }
+        g3_note(why, sizeof(why), "the rendezvous address is not workspace-scoped");
+    }
+    g3_answer_t ans;
+    g3_read(&w, PC_RENDEZVOUS_001_ADDR, &ans);
+    if (ans.status != HYP_ANCHOR_RESOLVED) {
+        g3_note(why, sizeof(why), "status is %s, expected resolved (%s)",
+                hyp_anchor_status_str(ans.status), ans.reason);
+    }
+    if (!ans.records_present || ans.record_count != 1) {
+        g3_note(why, sizeof(why), "found %d record(s), expected exactly 1",
+                ans.records_present ? ans.record_count : -1);
+    }
+    if (ans.record_count >= 1 && strcmp(ans.matched[0], PC_RENDEZVOUS_001_ADDR) != 0) {
+        g3_note(why, sizeof(why), "found the wrong record: %s", ans.matched[0]);
     }
     g3_world_close(&w);
-    if (rc != 0) {
+    if (why[0]) {
         FAIL(why);
     }
     PASS();
@@ -965,37 +970,32 @@ TEST(g3_nc_rendezvous_002_env_cbm_cache_dir_orphans_and_names_no_successor) {
         g3_world_close(&w);
         FAIL(fixture);
     }
-    int rc = 0;
-    char why[512] = "";
+    char why[1024] = "";
     g3_answer_t ans;
     g3_read(&w, NC_RENDEZVOUS_002_ADDR, &ans);
     if (ans.status != HYP_ANCHOR_ORPHANED) {
-        snprintf(why, sizeof(why), "status is %s, expected orphaned",
-                 hyp_anchor_status_str(ans.status));
-        rc = 1;
-    } else if (ans.records_present) {
-        snprintf(why, sizeof(why), "orphaned but the record list was present");
-        rc = 1;
-    } else if (ans.candidate_count != 0) {
-        snprintf(why, sizeof(why), "candidate_count is %d, expected 0", ans.candidate_count);
-        rc = 1;
-    } else if (g3_answer_names(&w, &ans, NC_RENDEZVOUS_002_MUST_NOT)) {
-        snprintf(why, sizeof(why), "substituted the renamed successor");
-        rc = 1;
+        g3_note(why, sizeof(why), "status is %s, expected orphaned",
+                hyp_anchor_status_str(ans.status));
+    }
+    if (ans.records_present) {
+        g3_note(why, sizeof(why), "the record list was present, not absent");
+    }
+    if (ans.candidate_count != 0) {
+        g3_note(why, sizeof(why), "candidate_count is %d, expected 0", ans.candidate_count);
+    }
+    if (g3_answer_names(&w, &ans, NC_RENDEZVOUS_002_MUST_NOT)) {
+        g3_note(why, sizeof(why), "substituted the renamed successor");
     }
     /* The successor is genuinely present in this index: the orphan verdict
      * above is a refusal to guess, not an empty workspace. */
-    if (rc == 0) {
-        g3_answer_t successor;
-        g3_read(&w, NC_RENDEZVOUS_002_MUST_NOT, &successor);
-        if (successor.status != HYP_ANCHOR_RESOLVED) {
-            snprintf(why, sizeof(why), "the successor env key is not in this index: %s",
-                     hyp_anchor_status_str(successor.status));
-            rc = 1;
-        }
+    g3_answer_t successor;
+    g3_read(&w, NC_RENDEZVOUS_002_MUST_NOT, &successor);
+    if (successor.status != HYP_ANCHOR_RESOLVED) {
+        g3_note(why, sizeof(why), "the successor env key is not in this index: %s",
+                hyp_anchor_status_str(successor.status));
     }
     g3_world_close(&w);
-    if (rc != 0) {
+    if (why[0]) {
         FAIL(why);
     }
     PASS();
@@ -1017,35 +1017,33 @@ static int g3_check_unrecorded(const char *address, char *why, size_t why_sz) {
         g3_world_close(&w);
         return -1;
     }
-    int rc = 0;
     g3_answer_t ans;
     g3_read(&w, address, &ans);
     if (ans.status != HYP_ANCHOR_RESOLVED) {
-        snprintf(why, why_sz, "status is %s, expected resolved (%s)",
-                 hyp_anchor_status_str(ans.status), ans.reason);
-        rc = 1;
-    } else if (!ans.records_present) {
-        snprintf(why, why_sz,
-                 "the record list was ABSENT; for a resolved anchor it must be "
-                 "present and empty");
-        rc = 1;
-    } else if (ans.record_count != 0) {
-        snprintf(why, why_sz, "returned %d record(s), first %s", ans.record_count, ans.matched[0]);
-        rc = 1;
-    } else if (ans.considered != (int)(sizeof(G3_RECORDS) / sizeof(G3_RECORDS[0]))) {
-        snprintf(why, why_sz,
-                 "examined %d anchored records, expected %d — an empty store proves "
-                 "nothing",
-                 ans.considered, (int)(sizeof(G3_RECORDS) / sizeof(G3_RECORDS[0])));
-        rc = 1;
+        g3_note(why, why_sz, "status is %s, expected resolved (%s)",
+                hyp_anchor_status_str(ans.status), ans.reason);
+    }
+    if (ans.status == HYP_ANCHOR_RESOLVED && !ans.records_present) {
+        g3_note(why, why_sz,
+                "the record list was ABSENT; for a resolved anchor it must be "
+                "present and empty");
+    }
+    if (ans.record_count != 0) {
+        g3_note(why, why_sz, "returned %d record(s), first %s", ans.record_count, ans.matched[0]);
+    }
+    if (ans.considered != (int)(sizeof(G3_RECORDS) / sizeof(G3_RECORDS[0]))) {
+        g3_note(why, why_sz,
+                "examined %d anchored records, expected %d — an empty store proves "
+                "nothing",
+                ans.considered, (int)(sizeof(G3_RECORDS) / sizeof(G3_RECORDS[0])));
     }
     g3_world_close(&w);
-    return rc;
+    return why[0] ? 1 : 0;
 }
 
 #define G3_UNRECORDED(address)                                      \
     do {                                                            \
-        char _why[512] = "";                                        \
+        char _why[1024] = "";                                       \
         int _rc = g3_check_unrecorded(address, _why, sizeof(_why)); \
         if (_rc != 0) {                                             \
             FAIL(_why);                                             \
