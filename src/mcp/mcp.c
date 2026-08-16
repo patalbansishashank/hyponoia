@@ -451,7 +451,9 @@ static const tool_def_t TOOLS[] = {
      "\"query\":{\"type\":\"string\",\"description\":\"Natural-language or keyword full-text "
      "search using BM25 ranking. Tokens are split on whitespace; camelCase identifiers are "
      "indexed as individual words (updateCloudClient → update, cloud, client). Results are "
-     "ranked with structural boosting: Functions/Methods +10, Routes +8, Classes/Interfaces +5. "
+     "ranked with structural boosting: Functions/Methods +10, Routes +8, Classes/Interfaces +5, "
+     "and test declarations (is_test=true) -5 — deprioritised, never hidden, so a test still "
+     "surfaces when it is clearly the best match. "
      "Noise labels (File/Folder/Module/Variable) are filtered out. When provided, name_pattern "
      "is ignored.\"},"
      "\"label\":{\"type\":\"string\"},\"name_pattern\":{\"type\":\"string\"},\"qn_pattern\":{"
@@ -474,7 +476,10 @@ static const tool_def_t TOOLS[] = {
      "json: the SAME tree model as structured JSON (groups + column-ordered row arrays).\"},"
      "\"fields\":{\"type\":\"array\",\"items\":{\"type\":\"string\"},\"description\":"
      "\"Extra per-node property columns, e.g. complexity, cognitive, "
-     "signature, docstring, return_type, is_test, lines(int). Core row columns "
+     "signature, docstring, return_type, is_test (JSON boolean: true for EVERY "
+     "declaration in a test file, plus Rust #[test] items and GoogleTest macros in "
+     "a non-test file; in query_graph compare with = true — = 1 matches nothing), "
+     "lines(int). Core row columns "
      "(qn/label/file/lines/in/out) are always present — do not request them here. "
      "Missing values emit as empty cells.\"},"
      "\"detail\":{\"type\":\"string\",\"enum\":[\"ids\",\"default\"],\"default\":\"default\","
@@ -2793,6 +2798,31 @@ static char *handle_get_graph_schema(hyp_mcp_server_t *srv, const char *args) {
     }
     yyjson_mut_obj_add_val(doc, root, "edge_types", types);
 
+    /* Property semantics the property-NAME list above cannot express. Two
+     * traps live here: is_test is a JSON boolean whose derivation is not
+     * obvious, and the in-loop metrics are COUNTERS, so the natural
+     * `WHERE alloc_in_loop = true` matches nothing at all. */
+    yyjson_mut_val *notes = yyjson_mut_obj(doc);
+    yyjson_mut_obj_add_str(
+        doc, notes, "is_test",
+        "JSON boolean. True for EVERY declaration (Function, Method, Class, Variable, Module, ...) "
+        "in a file the extractor classified as a test file — a per-language basename rule "
+        "(*_test.go, test_*.py, *.test.ts, *Test.java, *_test.c / test_*.c, ...) OR a path with a "
+        "tests/, test/, spec/ or __tests__/ directory segment. Also true for individual Rust "
+        "#[test]/#[tokio::test] items and C++ GoogleTest macros in a file that is NOT otherwise a "
+        "test file. It is never inferred from a function's own name. In query_graph compare it "
+        "with = true; = 1 matches NOTHING. search_graph's BM25 mode deprioritises these rows by "
+        "5.0 (half the Function/Method boost); nothing hides them.");
+    yyjson_mut_obj_add_str(
+        doc, notes, "alloc_in_loop",
+        "INTEGER COUNT of allocation/append calls inside loops, NOT a boolean — = true matches "
+        "nothing. Use > 0.");
+    yyjson_mut_obj_add_str(
+        doc, notes, "linear_scan_in_loop",
+        "INTEGER COUNT of linear-scan calls (find/contains/indexOf) inside loops, NOT a boolean — "
+        "= true matches nothing. Use > 0.");
+    yyjson_mut_obj_add_val(doc, root, "property_notes", notes);
+
     /* Check ADR presence */
     hyp_project_t proj_info = {0};
     if (hyp_store_get_project(store, project, &proj_info) == 0 && proj_info.root_path) {
@@ -3028,6 +3058,15 @@ static char *bm25_search(hyp_store_t *store, const char *project, const char *qu
         "        - CASE WHEN n.label IN ('Function','Method') THEN 10.0 "
         "               WHEN n.label = 'Route' THEN 8.0 "
         "               WHEN n.label IN (" HYP_SQL_TYPE_LIKE_LABELS ") THEN 5.0 "
+        "               ELSE 0.0 END "
+        /* Test declarations are DEPRIORITISED, never hidden: bm25() is
+         * negative and lower is better, so adding the penalty pushes a test
+         * row down without removing it. Half the Function/Method boost — a
+         * test function is weighted like a type-like declaration, so a
+         * production function with a comparable lexical match always wins,
+         * while a test that is overwhelmingly the better match can still
+         * surface (someone asking about a test deserves to find it). */
+        "        + CASE WHEN json_extract(n.properties, '$.is_test') = 1 THEN 5.0 "
         "               ELSE 0.0 END) AS rank "
         "FROM ("
         "    SELECT rowid, bm25(nodes_fts) AS base_rank"

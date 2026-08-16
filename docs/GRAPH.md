@@ -12,6 +12,13 @@ Node labels, edge types, qualified names, and the Cypher subset `query_graph` ac
 
 `CONTAINS_PACKAGE`, `CONTAINS_FOLDER`, `CONTAINS_FILE`, `DEFINES`, `DEFINES_METHOD`, `IMPORTS`, `CALLS`, `CALL_REFERENCE`, `HTTP_CALLS`, `ASYNC_CALLS`, `IMPLEMENTS`, `HANDLES`, `USAGE`, `CONFIGURES`, `WRITES`, `MEMBER_OF`, `TESTS`, `USES_TYPE`, `FILE_CHANGES_WITH`
 
+## Node Properties
+
+`get_graph_schema` lists the property names per label and, under `property_notes`, the semantics of the ones that are easy to read wrong. Two matter when writing `WHERE`:
+
+- `is_test` is a **boolean**, true for every declaration in a file classified as a test file (per-language basename rules, or a `tests/`/`test/`/`spec/`/`__tests__/` path segment) plus Rust `#[test]` items and C++ GoogleTest macros elsewhere. Match it with `= true`; `= 1` matches nothing.
+- `alloc_in_loop` and `linear_scan_in_loop` are integer **counts**, not booleans. `= true` matches nothing; use `> 0`.
+
 ## Qualified Names
 
 `get_code_snippet` uses qualified names: `<project>.<path_parts>.<name>`. Use `search_graph` to discover them first.

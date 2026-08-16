@@ -57,4 +57,16 @@ JSON arguments can also be piped on stdin. Inline JSON remains accepted for back
 | `manage_adr` | CRUD for Architecture Decision Records. Query modes do not wait behind a same-project reindex; writes remain serialized. |
 | `ingest_traces` | Ingest runtime traces to validate HTTP_CALLS edges. |
 
+## Node properties worth knowing
+
+`get_graph_schema` lists the property NAMES carried by each label and, under `property_notes`, the semantics of the three that are read wrong most often.
+
+| Property | Type | Meaning |
+|----------|------|---------|
+| `is_test` | JSON boolean | True for **every** declaration — Function, Method, Class, Variable, Module — in a file the extractor classified as a test file. Classification is a per-language basename rule (`*_test.go`, `test_*.py`, `*.test.ts`, `*Test.java`, `*_test.c` / `test_*.c`, …) **or** a path with a `tests/`, `test/`, `spec/` or `__tests__/` directory segment. Additionally true for individual Rust `#[test]`/`#[tokio::test]` items and C++ GoogleTest macros inside a file that is not otherwise a test file. It is never guessed from a function's own name. In `query_graph` compare it with `= true`; `= 1` matches nothing. |
+| `alloc_in_loop` | integer **count** | Allocation/append calls inside loops. NOT a boolean — `WHERE alloc_in_loop = true` matches nothing; use `> 0`. |
+| `linear_scan_in_loop` | integer **count** | Linear-scan calls (find/contains/indexOf) inside loops. Same trap: use `> 0`. |
+
+`search_graph`'s BM25 mode deprioritises `is_test` rows by 5.0 — half the Function/Method boost. They are ranked down, never filtered out, so a test still surfaces when it is clearly the best match for the query. The `name_pattern`/`qn_pattern` mode is a filter, not a ranker, and is unaffected; pass `fields: ["is_test"]` to see the flag on any row.
+
 `manage_adr` query modes (`get` and `sections`) use the server's cached query store so they can proceed while a same-project reindex is running. If another process publishes a replacement store during reindexing, they can return the pre-publication ADR until idle eviction refreshes that cache. Updates remain serialized through the project mutation guard.

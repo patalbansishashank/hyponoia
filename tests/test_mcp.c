@@ -2331,6 +2331,74 @@ TEST(tool_search_graph_query_honors_file_pattern_issue552) {
     PASS();
 }
 
+/* BM25 must DEPRIORITISE is_test rows, not hide them.  The two nodes below are
+ * constructed to tie on bm25(): same name, same label, same token counts in
+ * qualified_name and file_path — so the only thing separating them is the
+ * is_test penalty and the `ORDER BY rank, n.id` tie-break.  The TEST node is
+ * inserted FIRST, so it holds the lower id and WOULD win the tie without the
+ * penalty; the assertion is therefore non-vacuous in both directions. */
+TEST(tool_search_graph_bm25_deprioritises_is_test) {
+    hyp_mcp_server_t *srv = hyp_mcp_server_new(NULL);
+    ASSERT_NOT_NULL(srv);
+    hyp_store_t *st = hyp_mcp_server_store(srv);
+    ASSERT_NOT_NULL(st);
+
+    const char *proj = "istest-rank";
+    hyp_mcp_server_set_project(srv, proj);
+    hyp_store_upsert_project(st, proj, "/tmp/istest-rank");
+
+    hyp_node_t test_fn = {0};
+    test_fn.project = proj;
+    test_fn.label = "Function";
+    test_fn.name = "handleBackup";
+    test_fn.qualified_name = "istest-rank.tests.aaa.handleBackup";
+    test_fn.file_path = "tests/aaa.c";
+    test_fn.start_line = 1;
+    test_fn.end_line = 3;
+    test_fn.properties_json = "{\"is_test\":true}";
+    ASSERT_GT(hyp_store_upsert_node(st, &test_fn), 0);
+
+    hyp_node_t prod_fn = {0};
+    prod_fn.project = proj;
+    prod_fn.label = "Function";
+    prod_fn.name = "handleBackup";
+    prod_fn.qualified_name = "istest-rank.core.bbb.handleBackup";
+    prod_fn.file_path = "core/bbb.c";
+    prod_fn.start_line = 1;
+    prod_fn.end_line = 3;
+    prod_fn.properties_json = "{\"is_test\":false}";
+    ASSERT_GT(hyp_store_upsert_node(st, &prod_fn), 0);
+
+    hyp_store_exec(st, "INSERT INTO nodes_fts(nodes_fts) VALUES('delete-all');");
+    ASSERT_EQ(hyp_store_exec(st,
+                             "INSERT INTO nodes_fts(rowid, name, qualified_name, label, "
+                             "file_path) "
+                             "SELECT id, hyp_camel_split(name), qualified_name, label, file_path "
+                             "FROM nodes;"),
+              HYP_STORE_OK);
+
+    char *resp = hyp_mcp_server_handle(
+        srv, "{\"jsonrpc\":\"2.0\",\"id\":871,\"method\":\"tools/call\","
+             "\"params\":{\"name\":\"search_graph\","
+             "\"arguments\":{\"project\":\"istest-rank\",\"query\":\"handleBackup\","
+             "\"limit\":10}}}");
+    ASSERT_NOT_NULL(resp);
+    char *inner = extract_text_content(resp);
+    ASSERT_NOT_NULL(inner);
+    ASSERT_NOT_NULL(strstr(inner, "search_mode: bm25"));
+
+    const char *prod_hit = strstr(inner, "core/bbb.c");
+    const char *test_hit = strstr(inner, "tests/aaa.c");
+    ASSERT_NOT_NULL(prod_hit);
+    ASSERT(test_hit != NULL && "deprioritised, NOT hidden");
+    ASSERT(prod_hit < test_hit && "production declaration outranks the test one");
+
+    free(inner);
+    free(resp);
+    hyp_mcp_server_free(srv);
+    PASS();
+}
+
 /* Resource discovery methods this server doesn't populate must return EMPTY
  * lists, not -32601 Method-not-found: clients like Cline probe them on connect
  * and surface the errors as a failed connection (#958). */
@@ -10540,6 +10608,7 @@ SUITE(mcp) {
     RUN_TEST(tool_output_regression_gate);
     RUN_TEST(tool_output_byte_budgets);
     RUN_TEST(tool_search_graph_query_honors_file_pattern_issue552);
+    RUN_TEST(tool_search_graph_bm25_deprioritises_is_test);
     RUN_TEST(mcp_resource_discovery_methods_return_empty_lists);
     RUN_TEST(tool_query_graph_basic);
     RUN_TEST(tool_index_status_no_project);
