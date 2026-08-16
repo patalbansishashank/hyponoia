@@ -5784,6 +5784,103 @@ TEST(cli_existing_agents_install_durable_child_context) {
     PASS();
 }
 
+/* ── Durable-profile sub-checks, each answerable on its own ────────────
+ *
+ * The vendor-profile test below asserts about seventy separate facts across a
+ * dozen generated files and three vendors' JSON structure. Folded into one
+ * boolean, a failure states only that something among them is wrong: the
+ * vendor, the file and the term are all lost, and the diagnosis begins by
+ * rebuilding the test with printfs in it.
+ *
+ * So every sub-check reports for itself — vendor, path, and the exact term or
+ * fact — and none of them stops the run. A chain of `ok = ok && ...` reports
+ * the first failure and hides the rest by construction, which makes one
+ * failure look like the whole story; the count below is the number that
+ * actually failed. Reporting is also fail-closed: a file that cannot be read
+ * is a failure that names the file, never a check quietly skipped. */
+typedef struct {
+    size_t failures;
+    char first[640];
+} profile_check_log_t;
+
+static void profile_check_report(profile_check_log_t *log, const char *vendor, const char *check,
+                                 const char *path, const char *detail) {
+    log->failures++;
+    printf("\n    durable profile FAILED [%s] %s\n      path: %s\n      detail: %s\n",
+           vendor ? vendor : "?", check ? check : "?", path ? path : "(no file)",
+           detail ? detail : "(none)");
+    if (log->failures == 1U) {
+        snprintf(log->first, sizeof(log->first), "[%s] %s: %s -- %s", vendor ? vendor : "?",
+                 check ? check : "?", detail ? detail : "(none)", path ? path : "(no file)");
+    }
+}
+
+/* Every term the file must contain, reported one by one. */
+static void profile_check_terms(profile_check_log_t *log, const char *vendor, const char *path,
+                                const char *const *terms, size_t count) {
+    char *data = read_test_file_alloc(path);
+    if (!data) {
+        profile_check_report(log, vendor, "file absent or unreadable", path,
+                             "the install wrote nothing here");
+        return;
+    }
+    for (size_t i = 0U; i < count; i++) {
+        if (!strstr(data, terms[i])) {
+            profile_check_report(log, vendor, "required term missing", path, terms[i]);
+        }
+    }
+    free(data);
+}
+
+/* The negatives: capability the profile must never request, and legacy names a
+ * regression could reintroduce. */
+static void profile_check_forbidden(profile_check_log_t *log, const char *vendor, const char *path,
+                                    const char *const *terms, size_t count) {
+    char *data = read_test_file_alloc(path);
+    if (!data) {
+        profile_check_report(log, vendor, "file absent or unreadable", path,
+                             "the install wrote nothing here");
+        return;
+    }
+    for (size_t i = 0U; i < count; i++) {
+        if (strstr(data, terms[i])) {
+            profile_check_report(log, vendor, "forbidden term present", path, terms[i]);
+        }
+    }
+    free(data);
+}
+
+static void profile_check_that(profile_check_log_t *log, const char *vendor, const char *check,
+                               const char *path, bool condition) {
+    if (!condition) {
+        profile_check_report(log, vendor, check, path, "the fact does not hold");
+    }
+}
+
+/* The install plan is a JSON string rather than a file, so it reports against
+ * the receipt it came from instead of a path. */
+static void profile_check_plan(profile_check_log_t *log, const char *plan, const char *check,
+                               const char *needle, bool expected) {
+    bool present = plan && strstr(plan, needle) != NULL;
+    if (present != expected) {
+        profile_check_report(log, "install plan", check, NULL, needle);
+    }
+}
+
+/* Kiro lists three built-in tools ("read", "grep", "glob") before the graph
+ * tools the tier requests. The tier's own length is asked of the renderer's
+ * table rather than written here: a hand-written total is a second list of the
+ * tool surface, and it disagrees with the first one the day a row goes live. */
+enum { KIRO_BUILTIN_TOOL_COUNT = 3U };
+
+static size_t profile_tier_tool_count(hyp_graph_tier_t tier) {
+    size_t count = 0U;
+    while (hyp_graph_tier_tool_name(tier, count) != NULL) {
+        count++;
+    }
+    return count;
+}
+
 TEST(cli_durable_profiles_follow_current_vendor_paths) {
     char tmpdir[256];
     snprintf(tmpdir, sizeof(tmpdir), "/tmp/cli-vendor-profiles-XXXXXX");
@@ -5867,11 +5964,21 @@ TEST(cli_durable_profiles_follow_current_vendor_paths) {
     snprintf(qwen_settings, sizeof(qwen_settings), "%s/settings.json", qwen_home);
     write_test_file(qwen_settings, "{\"disableAllHooks\":true}\n");
 
+    profile_check_log_t diag;
+    memset(&diag, 0, sizeof(diag));
+
     char *plan = hyp_build_install_plan_json(tmpdir, "/opt/hyponoia");
-    bool receipt_kinds = plan && strstr(plan, "\"skill_files_planned\"") &&
-                         strstr(plan, "\"agent_files_planned\"") &&
-                         strstr(plan, "\"prompt_files_planned\"") &&
-                         strstr(plan, "\"instruction_files_planned\"");
+    profile_check_that(&diag, "install plan", "hyp_build_install_plan_json returns a receipt", NULL,
+                       plan != NULL);
+    static const char *const receipt_kinds[] = {
+        "\"skill_files_planned\"",
+        "\"agent_files_planned\"",
+        "\"prompt_files_planned\"",
+        "\"instruction_files_planned\"",
+    };
+    for (size_t i = 0U; i < sizeof(receipt_kinds) / sizeof(receipt_kinds[0]); i++) {
+        profile_check_plan(&diag, plan, "receipt kind missing", receipt_kinds[i], true);
+    }
     const char *const planned[] = {
         "/.claude/agents/hyponoia.md",
         "/vendor-codex/skills/hyponoia/SKILL.md",
@@ -5898,18 +6005,20 @@ TEST(cli_durable_profiles_follow_current_vendor_paths) {
         "/.factory/droids/hyponoia.md",
         "/.agents/skills/hyponoia/SKILL.md",
     };
-    bool paths_planned = plan != NULL;
-    for (size_t i = 0U; paths_planned && i < sizeof(planned) / sizeof(planned[0]); i++) {
-        paths_planned = strstr(plan, planned[i]) != NULL;
+    for (size_t i = 0U; i < sizeof(planned) / sizeof(planned[0]); i++) {
+        profile_check_plan(&diag, plan, "planned path missing", planned[i], true);
     }
-    bool plan_safe = plan && !strstr(plan, "approvedTools") && !strstr(plan, "autoApprove") &&
-                     !strstr(plan, "enable_instructions") && !strstr(plan, "yolo") &&
-                     !strstr(plan, "experimental");
+    static const char *const unsafe_plan_keys[] = {"approvedTools", "autoApprove",
+                                                   "enable_instructions", "yolo", "experimental"};
+    for (size_t i = 0U; i < sizeof(unsafe_plan_keys) / sizeof(unsafe_plan_keys[0]); i++) {
+        profile_check_plan(&diag, plan, "unsafe key in plan", unsafe_plan_keys[i], false);
+    }
     free(plan);
 
     int install_rc = hyp_install_agent_configs(tmpdir, "/opt/hyponoia", false, false);
+    profile_check_that(&diag, "install", "hyp_install_agent_configs reports no error", tmpdir,
+                       install_rc == 0);
     const char *const graph_terms[] = {"hyponoia", "search_graph", "trace_path"};
-    bool files_ok = install_rc == 0;
 
     char *profile = NULL;
     snprintf(path, sizeof(path), "%s/.claude/agents/hyponoia.md", tmpdir);
@@ -5921,12 +6030,12 @@ TEST(cli_durable_profiles_follow_current_vendor_paths) {
                                         "permissionMode: plan",
                                         "skills: [hyponoia]",
                                         "search_graph"};
-    files_ok = files_ok && test_file_contains_all(path, claude_terms, 8U);
+    profile_check_terms(&diag, "Claude Code", path, claude_terms, 8U);
     snprintf(path, sizeof(path), "%s/.claude/agents/hyponoia-scout.md", tmpdir);
-    profile = read_test_file_alloc(path);
-    files_ok = files_ok && profile && !strstr(profile, "mcp__hyponoia__ask") &&
-               strstr(profile, "mcp__hyponoia__search_graph");
-    free(profile);
+    static const char *const claude_scout_terms[] = {"mcp__hyponoia__search_graph"};
+    static const char *const claude_scout_forbidden[] = {"mcp__hyponoia__ask"};
+    profile_check_terms(&diag, "Claude Code scout", path, claude_scout_terms, 1U);
+    profile_check_forbidden(&diag, "Claude Code scout", path, claude_scout_forbidden, 1U);
 
     snprintf(path, sizeof(path), "%s/agents/hyponoia.toml", codex_home);
     const char *const codex_terms[] = {"name = \"hyponoia\"",
@@ -5937,21 +6046,18 @@ TEST(cli_durable_profiles_follow_current_vendor_paths) {
                                        "command = \"/opt/hyponoia\"",
                                        "args = [\"--tool-profile=analysis\"]",
                                        "check_index_coverage"};
-    files_ok = files_ok && test_file_contains_all(path, codex_terms, 8U);
-    profile = read_test_file_alloc(path);
-    files_ok = files_ok && profile && !strstr(profile, "model =") &&
-               !strstr(profile, "index_repository") && !strstr(profile, "delete_project") &&
-               !strstr(profile, "manage_adr") && !strstr(profile, "ingest_traces");
-    free(profile);
+    profile_check_terms(&diag, "Codex CLI", path, codex_terms, 8U);
+    static const char *const codex_forbidden[] = {"model =", "index_repository", "delete_project",
+                                                  "manage_adr", "ingest_traces"};
+    profile_check_forbidden(&diag, "Codex CLI", path, codex_forbidden, 5U);
 
     snprintf(path, sizeof(path), "%s/.cursor/agents/hyponoia.md", tmpdir);
     const char *const cursor_terms[] = {"name: hyponoia", "model: inherit", "readonly: true",
                                         "parent agent", "search_graph"};
-    files_ok = files_ok && test_file_contains_all(path, cursor_terms, 5);
-    profile = read_test_file_alloc(path);
-    files_ok = files_ok && profile &&
-               !strstr(profile, "Use hyponoia for read-only structural discovery");
-    free(profile);
+    profile_check_terms(&diag, "Cursor", path, cursor_terms, 5U);
+    static const char *const cursor_forbidden[] = {
+        "Use hyponoia for read-only structural discovery"};
+    profile_check_forbidden(&diag, "Cursor", path, cursor_forbidden, 1U);
 
     snprintf(path, sizeof(path), "%s/.config/opencode/agents/hyponoia.md", tmpdir);
     const char *const opencode_terms[] = {"description:",
@@ -5960,7 +6066,7 @@ TEST(cli_durable_profiles_follow_current_vendor_paths) {
                                           "read: allow",
                                           "hyponoia_search_graph\": allow",
                                           "check_index_coverage"};
-    files_ok = files_ok && test_file_contains_all(path, opencode_terms, 6U);
+    profile_check_terms(&diag, "OpenCode", path, opencode_terms, 6U);
 
     snprintf(path, sizeof(path), "%s/agents/hyponoia.md", qwen_home);
     const char *const qwen_terms[] = {"name: hyponoia",
@@ -5971,34 +6077,22 @@ TEST(cli_durable_profiles_follow_current_vendor_paths) {
                                       "mcp__hyponoia__search_graph",
                                       "mcp__hyponoia__check_index_coverage",
                                       "search_graph"};
-    files_ok = files_ok && test_file_contains_all(path, qwen_terms, 8U);
-    profile = read_test_file_alloc(path);
-    /* The negative guards against a WRONG server name reaching a generated
-     * profile. It read `mcp__codebase-memory__` — deliberately distinct from
-     * the `mcp__codebase-memory-mcp__` the check above REQUIRES, i.e. the
-     * correct name minus its suffix. f95d6841 renamed both the correct name
-     * and that truncated variant to "hyponoia", collapsing two different
-     * strings into one and making the pair impossible to satisfy. Same
-     * collapse as the skills directory in hyp_remove_old_monolithic_skill.
-     * Post-rename the meaningful wrong name is the legacy one, so that is what
-     * is forbidden — and unlike the collapsed version it is a check a
-     * regression could actually fail. */
-    files_ok = files_ok && profile && !strstr(profile, "permissionMode:") &&
-               !strstr(profile, "mcp__codebase-memory");
-    free(profile);
-    profile = read_test_file_alloc(qwen_settings);
-    files_ok = files_ok && profile && strstr(profile, "\"disableAllHooks\":true") &&
-               strstr(profile, "SessionStart") && strstr(profile, "SubagentStart");
-    free(profile);
+    profile_check_terms(&diag, "Qwen Code", path, qwen_terms, 8U);
+    /* The second negative guards against a WRONG server name reaching a
+     * generated profile: the legacy `mcp__codebase-memory` prefix, which no
+     * current dialect renders and a regression in the prefix table could. */
+    static const char *const qwen_forbidden[] = {"permissionMode:", "mcp__codebase-memory"};
+    profile_check_forbidden(&diag, "Qwen Code", path, qwen_forbidden, 2U);
+    static const char *const qwen_settings_terms[] = {"\"disableAllHooks\":true", "SessionStart",
+                                                      "SubagentStart"};
+    profile_check_terms(&diag, "Qwen Code settings", qwen_settings, qwen_settings_terms, 3U);
 
     snprintf(path, sizeof(path), "%s/agents/hyponoia.agent.md", copilot_home);
     const char *const copilot_terms[] = {"name: hyponoia", "description:", "search_graph",
                                          "hyponoia/check_index_coverage"};
-    files_ok = files_ok && test_file_contains_all(path, copilot_terms, 4U);
-    profile = read_test_file_alloc(path);
-    files_ok =
-        files_ok && profile && !strstr(profile, "mcp-servers:") && !strstr(profile, "permissions:");
-    free(profile);
+    profile_check_terms(&diag, "Copilot", path, copilot_terms, 4U);
+    static const char *const copilot_forbidden[] = {"mcp-servers:", "permissions:"};
+    profile_check_forbidden(&diag, "Copilot", path, copilot_forbidden, 2U);
 
     snprintf(path, sizeof(path), "%s/agents/hyponoia.json", kiro_home);
     const char *const kiro_terms[] = {"\"name\": \"hyponoia\"",
@@ -6012,40 +6106,65 @@ TEST(cli_durable_profiles_follow_current_vendor_paths) {
                                       "--tool-profile",
                                       "analysis",
                                       "search_graph"};
-    files_ok = files_ok && test_file_contains_all(path, kiro_terms, 11U);
+    profile_check_terms(&diag, "Kiro", path, kiro_terms, 11U);
     profile = read_test_file_alloc(path);
     yyjson_doc *kiro_doc = profile ? yyjson_read(profile, strlen(profile), 0) : NULL;
     yyjson_val *kiro_root = kiro_doc ? yyjson_doc_get_root(kiro_doc) : NULL;
+    profile_check_that(&diag, "Kiro", "the profile parses as a JSON object", path,
+                       kiro_root && yyjson_is_obj(kiro_root));
     yyjson_val *kiro_tools = kiro_root ? yyjson_obj_get(kiro_root, "tools") : NULL;
+    profile_check_that(&diag, "Kiro", "\"tools\" is an array", path,
+                       kiro_tools && yyjson_is_arr(kiro_tools));
+    if (kiro_tools && yyjson_is_arr(kiro_tools)) {
+        size_t tier_tools = profile_tier_tool_count(HYP_GRAPH_TIER_VERIFY);
+        size_t expected_tools = (size_t)KIRO_BUILTIN_TOOL_COUNT + tier_tools;
+        if (yyjson_arr_size(kiro_tools) != expected_tools) {
+            char detail[192];
+            snprintf(detail, sizeof(detail),
+                     "\"tools\" holds %lu entries; the Verify tier requests %lu graph tools beside "
+                     "%u built-ins, so %lu is what a client must read",
+                     (unsigned long)yyjson_arr_size(kiro_tools), (unsigned long)tier_tools,
+                     (unsigned)KIRO_BUILTIN_TOOL_COUNT, (unsigned long)expected_tools);
+            profile_check_report(&diag, "Kiro", "\"tools\" length", path, detail);
+        }
+    }
     yyjson_val *kiro_read =
         kiro_tools && yyjson_is_arr(kiro_tools) ? yyjson_arr_get(kiro_tools, 0U) : NULL;
+    profile_check_that(&diag, "Kiro", "tools[0] is \"read\"", path,
+                       kiro_read && yyjson_is_str(kiro_read) &&
+                           strcmp(yyjson_get_str(kiro_read), "read") == 0);
     yyjson_val *kiro_server_tool =
-        kiro_tools && yyjson_is_arr(kiro_tools) ? yyjson_arr_get(kiro_tools, 3U) : NULL;
+        kiro_tools && yyjson_is_arr(kiro_tools)
+            ? yyjson_arr_get(kiro_tools, (size_t)KIRO_BUILTIN_TOOL_COUNT)
+            : NULL;
+    profile_check_that(&diag, "Kiro", "the first graph tool is \"@hyponoia/search_graph\"", path,
+                       kiro_server_tool && yyjson_is_str(kiro_server_tool) &&
+                           strcmp(yyjson_get_str(kiro_server_tool), "@hyponoia/search_graph") == 0);
     yyjson_val *include_mcp = kiro_root ? yyjson_obj_get(kiro_root, "includeMcpJson") : NULL;
+    profile_check_that(&diag, "Kiro", "\"includeMcpJson\" is false", path,
+                       include_mcp && yyjson_is_bool(include_mcp) && !yyjson_get_bool(include_mcp));
     yyjson_val *kiro_servers = kiro_root ? yyjson_obj_get(kiro_root, "mcpServers") : NULL;
-    yyjson_val *kiro_server =
-        kiro_servers ? yyjson_obj_get(kiro_servers, "hyponoia") : NULL;
+    yyjson_val *kiro_server = kiro_servers ? yyjson_obj_get(kiro_servers, "hyponoia") : NULL;
+    profile_check_that(&diag, "Kiro", "\"mcpServers.hyponoia\" is an object", path,
+                       kiro_servers && yyjson_is_obj(kiro_servers) && kiro_server &&
+                           yyjson_is_obj(kiro_server));
     yyjson_val *kiro_command = kiro_server ? yyjson_obj_get(kiro_server, "command") : NULL;
+    profile_check_that(&diag, "Kiro", "the server command is the installed binary", path,
+                       kiro_command && yyjson_is_str(kiro_command) &&
+                           strcmp(yyjson_get_str(kiro_command), "/opt/hyponoia") == 0);
     yyjson_val *kiro_args = kiro_server ? yyjson_obj_get(kiro_server, "args") : NULL;
     yyjson_val *kiro_profile_flag =
         kiro_args && yyjson_is_arr(kiro_args) ? yyjson_arr_get(kiro_args, 0U) : NULL;
     yyjson_val *kiro_profile_name =
         kiro_args && yyjson_is_arr(kiro_args) ? yyjson_arr_get(kiro_args, 1U) : NULL;
-    files_ok = files_ok && profile && kiro_root && yyjson_is_obj(kiro_root) && kiro_tools &&
-               yyjson_arr_size(kiro_tools) == 15U && kiro_read && yyjson_is_str(kiro_read) &&
-               strcmp(yyjson_get_str(kiro_read), "read") == 0 && include_mcp &&
-               yyjson_is_bool(include_mcp) && !yyjson_get_bool(include_mcp) && kiro_server_tool &&
-               yyjson_is_str(kiro_server_tool) &&
-               strcmp(yyjson_get_str(kiro_server_tool), "@hyponoia/search_graph") == 0 &&
-               kiro_servers && yyjson_is_obj(kiro_servers) && kiro_server &&
-               yyjson_is_obj(kiro_server) && kiro_command && yyjson_is_str(kiro_command) &&
-               strcmp(yyjson_get_str(kiro_command), "/opt/hyponoia") == 0 && kiro_args &&
-               yyjson_is_arr(kiro_args) && yyjson_arr_size(kiro_args) == 2U && kiro_profile_flag &&
-               yyjson_is_str(kiro_profile_flag) &&
-               strcmp(yyjson_get_str(kiro_profile_flag), "--tool-profile") == 0 &&
-               kiro_profile_name && yyjson_is_str(kiro_profile_name) &&
-               strcmp(yyjson_get_str(kiro_profile_name), "analysis") == 0 &&
-               !yyjson_obj_get(kiro_root, "allowedTools");
+    profile_check_that(&diag, "Kiro", "the server args are [--tool-profile, analysis]", path,
+                       kiro_args && yyjson_is_arr(kiro_args) && yyjson_arr_size(kiro_args) == 2U &&
+                           kiro_profile_flag && yyjson_is_str(kiro_profile_flag) &&
+                           strcmp(yyjson_get_str(kiro_profile_flag), "--tool-profile") == 0 &&
+                           kiro_profile_name && yyjson_is_str(kiro_profile_name) &&
+                           strcmp(yyjson_get_str(kiro_profile_name), "analysis") == 0);
+    profile_check_that(&diag, "Kiro", "\"allowedTools\" is absent", path,
+                       kiro_root && !yyjson_obj_get(kiro_root, "allowedTools"));
     yyjson_doc_free(kiro_doc);
     free(profile);
 
@@ -6057,24 +6176,28 @@ TEST(cli_durable_profiles_follow_current_vendor_paths) {
         "/.agents/skills/hyponoia/SKILL.md",
     };
     const char *const skill_roots[] = {codex_home, tmpdir, tmpdir, tmpdir, tmpdir};
-    for (size_t i = 0U; files_ok && i < sizeof(skill_files) / sizeof(skill_files[0]); i++) {
+    /* The last root is the shared ~/.agents tree three vendors write into, so
+     * a failure there names the tree rather than a vendor. */
+    const char *const skill_vendors[] = {"Codex CLI skill", "Cursor skill", "OpenCode skill",
+                                         "Factory Droid skill", "shared .agents skill"};
+    for (size_t i = 0U; i < sizeof(skill_files) / sizeof(skill_files[0]); i++) {
         snprintf(path, sizeof(path), "%s%s", skill_roots[i], skill_files[i]);
-        files_ok = test_file_contains_all(path, graph_terms, 3);
+        profile_check_terms(&diag, skill_vendors[i], path, graph_terms, 3U);
     }
     snprintf(path, sizeof(path), "%s/skills/hyponoia/SKILL.md", qwen_home);
-    files_ok = files_ok && test_file_contains_all(path, graph_terms, 3);
+    profile_check_terms(&diag, "Qwen Code skill", path, graph_terms, 3U);
     snprintf(path, sizeof(path), "%s/skills/hyponoia/SKILL.md", copilot_home);
-    files_ok = files_ok && test_file_contains_all(path, graph_terms, 3);
+    profile_check_terms(&diag, "Copilot skill", path, graph_terms, 3U);
     snprintf(path, sizeof(path), "%s/.cline/skills/hyponoia/SKILL.md", tmpdir);
-    files_ok = files_ok && test_file_contains_all(path, graph_terms, 3);
+    profile_check_terms(&diag, "Cline skill", path, graph_terms, 3U);
     snprintf(path, sizeof(path), "%s/.cline/mcp.json", tmpdir);
-    files_ok = files_ok && test_file_contains_all(path, graph_terms, 1);
+    profile_check_terms(&diag, "Cline CLI mcp", path, graph_terms, 1U);
     snprintf(path, sizeof(path), "%s/settings/cline_mcp_settings.json", cline_data_dir);
-    files_ok = files_ok && test_file_contains_all(path, graph_terms, 1);
+    profile_check_terms(&diag, "Cline IDE mcp", path, graph_terms, 1U);
     snprintf(path, sizeof(path), "%s/skills/hyponoia/SKILL.md", kiro_home);
-    files_ok = files_ok && test_file_contains_all(path, graph_terms, 3);
+    profile_check_terms(&diag, "Kiro skill", path, graph_terms, 3U);
     snprintf(path, sizeof(path), "%s/skills/hyponoia/SKILL.md", vibe_home);
-    files_ok = files_ok && test_file_contains_all(path, graph_terms, 3);
+    profile_check_terms(&diag, "Mistral Vibe skill", path, graph_terms, 3U);
 
     snprintf(path, sizeof(path), "%s/.config/kilo/agents/hyponoia.md", tmpdir);
     const char *const kilo_agent_terms[] = {"mode: subagent",
@@ -6083,12 +6206,10 @@ TEST(cli_durable_profiles_follow_current_vendor_paths) {
                                             "\"hyponoia_get_code_snippet\": allow",
                                             "\"hyponoia_check_index_coverage\": allow",
                                             "Tier 2"};
-    files_ok = files_ok && test_file_contains_all(path, kilo_agent_terms, 6U);
-    profile = read_test_file_alloc(path);
-    files_ok = files_ok && profile && !strstr(profile, "\n  bash:") &&
-               !strstr(profile, "\n  edit:") && !strstr(profile, "hyponoia_*") &&
-               !strstr(profile, "delete_project") && !strstr(profile, "manage_adr");
-    free(profile);
+    profile_check_terms(&diag, "KiloCode", path, kilo_agent_terms, 6U);
+    static const char *const kilo_forbidden[] = {"\n  bash:", "\n  edit:", "hyponoia_*",
+                                                 "delete_project", "manage_adr"};
+    profile_check_forbidden(&diag, "KiloCode", path, kilo_forbidden, 5U);
 
     snprintf(path, sizeof(path), "%s/agents/hyponoia.toml", vibe_home);
     const char *const vibe_agent_terms[] = {"agent_type = \"subagent\"",
@@ -6097,13 +6218,11 @@ TEST(cli_durable_profiles_follow_current_vendor_paths) {
                                             "\"hyponoia_search_graph\"",
                                             "\"hyponoia_get_code_snippet\"",
                                             "\"hyponoia_check_index_coverage\""};
-    files_ok = files_ok && test_file_contains_all(path, vibe_agent_terms, 6U);
-    profile = read_test_file_alloc(path);
-    files_ok = files_ok && profile && !strstr(profile, "hyponoia_*") &&
-               !strstr(profile, "delete_project") && !strstr(profile, "manage_adr");
-    free(profile);
+    profile_check_terms(&diag, "Mistral Vibe", path, vibe_agent_terms, 6U);
+    static const char *const vibe_forbidden[] = {"hyponoia_*", "delete_project", "manage_adr"};
+    profile_check_forbidden(&diag, "Mistral Vibe", path, vibe_forbidden, 3U);
     snprintf(path, sizeof(path), "%s/prompts/hyponoia.md", vibe_home);
-    files_ok = files_ok && test_file_contains_all(path, graph_terms, 3U);
+    profile_check_terms(&diag, "Mistral Vibe prompt", path, graph_terms, 3U);
 
     snprintf(path, sizeof(path), "%s/.factory/droids/hyponoia.md", tmpdir);
     const char *const factory_agent_terms[] = {"name: hyponoia",
@@ -6112,19 +6231,21 @@ TEST(cli_durable_profiles_follow_current_vendor_paths) {
                                                "mcp__hyponoia__search_graph",
                                                "search_graph",
                                                "check_index_coverage"};
-    files_ok = files_ok && test_file_contains_all(path, factory_agent_terms, 6U);
-    profile = read_test_file_alloc(path);
-    files_ok = files_ok && profile && !strstr(profile, "mcpServers");
-    free(profile);
+    profile_check_terms(&diag, "Factory Droid", path, factory_agent_terms, 6U);
+    static const char *const factory_forbidden[] = {"mcpServers"};
+    profile_check_forbidden(&diag, "Factory Droid", path, factory_forbidden, 1U);
 
     for (size_t i = 0U; i < sizeof(env_names) / sizeof(env_names[0]); i++) {
         restore_test_env(env_names[i], saved_env[i]);
     }
     test_rmdir_r(tmpdir);
-    if (!receipt_kinds || !paths_planned || !plan_safe || !files_ok) {
-        fprintf(stderr, "durable profile diag receipt=%d paths=%d safe=%d files=%d\n",
-                receipt_kinds, paths_planned, plan_safe, files_ok);
-        FAIL("stable durable profiles must follow current vendor paths and safe schemas");
+    if (diag.failures > 0U) {
+        char summary[768];
+        snprintf(summary, sizeof(summary),
+                 "stable durable profiles must follow current vendor paths and safe schemas: "
+                 "%lu sub-check(s) failed, first %s",
+                 (unsigned long)diag.failures, diag.first);
+        FAIL(summary);
     }
     PASS();
 }
