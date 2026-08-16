@@ -60,6 +60,30 @@ JSON arguments can also be piped on stdin. Inline JSON remains accepted for back
 | `manage_adr` | CRUD for Architecture Decision Records. Query modes do not wait behind a same-project reindex; writes remain serialized. |
 | `ingest_traces` | Ingest runtime traces to validate HTTP_CALLS edges. |
 
+## Memory
+
+The graph answers what the code does; these two answer why it is the way it is.
+Records are **append-only** — there is no mode that edits or deletes one, because
+merging two machines' stores is a union with no conflict resolution — and they
+are **global**, not scoped to a project: a decision outlives the repository
+layout it was taken in.
+
+| Tool | Description |
+|------|-------------|
+| `record_memory` | Append one record: a `decision`, `verdict`, `summary` or `signal`, with a `title` and a `body`. Transcript kinds are refused — transcripts enter only through a feed, and a writer that could forge one would make the ingest completeness audit meaningless. To replace an earlier record, write a new one naming it in `supersedes`; the earlier one is never modified. There is **no author argument**: an author a caller can state is an author a caller can forge. Returns the record id. |
+| `search_memory` | Read the store: by `kind`, by free text, by time range. Omitting `kind` searches every kind — it does not mean none. When no store exists on the machine yet the answer says so and sends **no** records list, because an empty list would claim nothing was ever recorded. |
+
+`record_memory` is on **no tool profile**, deliberately: Scout and Analysis both
+promise read-only surfaces, and a writer admitted to one would break that promise
+rather than widen it. It is available on the full server. `search_memory` reads,
+so Analysis admits it and Scout — the small surface where every tool answers
+fast — does not.
+
+The store lives in a `memory` directory beside the indexes (`HYP_MEMORY_DIR`
+overrides). Anchoring a record to a specific span is **not** available yet: a
+supplied `anchor` is refused rather than stored unverified, because a record is
+never created already-orphaned and never attached to a plausible neighbour.
+
 ## The `project` argument
 
 `project` is **optional on every tool that takes it except `delete_project`**. Omitted, the server resolves it in this order and says in the answer which rule applied:

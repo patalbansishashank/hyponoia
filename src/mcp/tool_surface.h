@@ -71,10 +71,10 @@
  *                  reading the response, never by inspecting the emitter.
  *   annotations    a profile from HYP_TOOL_ANNOTATION_PROFILES below. Mandatory
  *                  — it is a column, so a row without one does not compile.
- *                  There is no default and no fallback. The four booleans that
- *                  reach the wire have not changed; naming the profile is what
- *                  lets the table say a thing the four booleans cannot (see
- *                  HYP_TOOL_ANN_DESTRUCTIVE).
+ *                  There is no default and no fallback. Naming the profile is
+ *                  what let the table say a thing the four booleans could not,
+ *                  and then say it on the wire: see HYP_TOOL_ANN_DESTRUCTIVE
+ *                  for the one bit that changed and why it had to.
  *
  * ─── Reserved rows, and why not "advertised but not implemented" ───────
  *
@@ -144,8 +144,22 @@
  *    status to LIVE must bump HYP_PROFILE_GENERATION to 4 in the same commit
  *    AND write the prompt sentence that teaches them, because generation 2
  *    measured what a listed-but-untaught tool is worth: 4 calls in 60 runs.
+ * 4  the memory surface goes live. `search_memory` joins the analysis tool
+ *    list AND one sentence in the analysis body says when to reach for it —
+ *    both, never one, because generation 2 measured what a listed-but-untaught
+ *    tool is worth: 4 calls in 60 runs listed only, 60 in 60 once the body
+ *    said when.
+ *
+ *    `record_memory` is a WRITER and therefore sits on NO tier, and that is a
+ *    decision rather than an omission: all three tiers promise read-only in
+ *    their own description, so a writer on one would break the promise instead
+ *    of extending the surface. It is reachable on the full server only, and
+ *    the words that teach it live in that server's own initialize
+ *    instructions — paid by the sessions that can call it and by no others.
+ *    `workspace_status` and `sync_memory` stay RESERVED: nothing implements
+ *    them, and an advertised tool that errors charges every session a turn.
  */
-#define HYP_PROFILE_GENERATION 3U
+#define HYP_PROFILE_GENERATION 4U
 #define HYP_PROFILE_GENERATION_ASK_TOOL 1U
 #define HYP_PROFILE_GENERATION_ASK_GUIDANCE 2U
 #define HYP_PROFILE_GENERATION_PROJECT_DEFAULT 3U
@@ -169,33 +183,39 @@ typedef enum {
  * default, so "tool present in the registry, absent from the annotation list"
  * is no longer a state the program can be in.
  *
- * Naming them also lets the table record something the wire cannot.
- * HYP_TOOL_ANN_DESTRUCTIVE and HYP_TOOL_ANN_STORE_READ carry IDENTICAL
- * booleans, which means `delete_project` and `search_graph` are
- * indistinguishable to an MCP client today: the one tool that erases a
- * database advertises the same four hints as the tool that reads it. That is a
- * real defect and fixing it changes bytes a client reads, so it is not fixed
- * here; the table names it so the fix is one row when someone takes it.
+ * Naming them also let the table record something the wire could not, and then
+ * pay for it. DESTRUCTIVE and STORE_READ once carried IDENTICAL booleans, so
+ * `delete_project` and `search_graph` were indistinguishable to an MCP client:
+ * the one tool that erases a database advertised the same four hints as the
+ * tool that reads it, and a client that confirms before a destructive call had
+ * nothing to confirm on.
+ *
+ * The wrong bit was on the READER. A graph read destroys nothing, so
+ * STORE_READ says destructive=false, and destructiveHint is now the single bit
+ * that separates erase from read. read_only stays false on STORE_READ for the
+ * reason it always was — resolving a project can open and quarantine a corrupt
+ * store, which is a write — so the two profiles differ in exactly the bit that
+ * carries the meaning and in no other.
  */
-#define HYP_TOOL_ANNOTATION_PROFILES(X)                       \
-    /* reads nothing but its own listing */                   \
-    X(HYP_TOOL_ANN_PURE_READ, true, false, true, false)       \
-    /* reads the graph; opening a project can quarantine a    \
-     * corrupt store, so not strictly read-only */            \
-    X(HYP_TOOL_ANN_STORE_READ, false, true, true, false)      \
-    /* erases a project database. See the note above: the     \
-     * booleans are the same as STORE_READ and should not be. \
-     */                                                       \
-    X(HYP_TOOL_ANN_DESTRUCTIVE, false, true, true, false)     \
-    /* builds or refreshes an index */                        \
-    X(HYP_TOOL_ANN_INDEX_WRITE, false, false, true, false)    \
-    /* replaces a whole document — see manage_adr's row */    \
-    X(HYP_TOOL_ANN_DOC_REPLACE, false, true, false, false)    \
-    /* appends a record; never mutates one */                 \
-    X(HYP_TOOL_ANN_APPEND, false, false, false, false)        \
-    /* talks to a feed outside this machine. The only         \
-     * open-world row on the surface, and the only one that   \
-     * should ever be. */                                     \
+#define HYP_TOOL_ANNOTATION_PROFILES(X)                      \
+    /* reads nothing but its own listing */                  \
+    X(HYP_TOOL_ANN_PURE_READ, true, false, true, false)      \
+    /* reads the graph; opening a project can quarantine a   \
+     * corrupt store, so not strictly read-only — but it   \
+     * destroys nothing, which is what tells it apart from   \
+     * DESTRUCTIVE below */                                  \
+    X(HYP_TOOL_ANN_STORE_READ, false, false, true, false)    \
+    /* erases a project database. The one destructive row */ \
+    X(HYP_TOOL_ANN_DESTRUCTIVE, false, true, true, false)    \
+    /* builds or refreshes an index */                       \
+    X(HYP_TOOL_ANN_INDEX_WRITE, false, false, true, false)   \
+    /* replaces a whole document — see manage_adr's row */   \
+    X(HYP_TOOL_ANN_DOC_REPLACE, false, true, false, false)   \
+    /* appends a record; never mutates one */                \
+    X(HYP_TOOL_ANN_APPEND, false, false, false, false)       \
+    /* talks to a feed outside this machine. The only        \
+     * open-world row on the surface, and the only one that  \
+     * should ever be. */                                    \
     X(HYP_TOOL_ANN_FEED_SYNC, false, false, false, true)
 
 typedef enum {
@@ -413,6 +433,21 @@ typedef enum {
       NULL, HYP_TOOL_ANN_APPEND)                                                                   \
     X("search_memory", NULL, 1, 0, HYP_PROFILE_GENERATION_WORKSPACE_MEMORY, HYP_TOOL_RESERVED,     \
       NULL, HYP_TOOL_ANN_STORE_READ)                                                               \
+    /* ── Rows 16-19: the workspace and memory signatures, frozen. The                         \
+     * first two are LIVE; the last two are still RESERVED — advertised                          \
+     * nowhere and callable nowhere until their status flips, each row already                     \
+     * complete so the flip is one token. See the prose block below each name                      \
+     * in this header for the argument and output contract.                                        \
+     *                                                                                             \
+     * record_memory is LIVE on NO TIER. Two zeroes, deliberately: the tiered                      \
+     * profiles state read-only in their own description, so a writer admitted                     \
+     * to one would break that promise rather than widen the surface. The                          \
+     * agent that can write memory is the one on the full server, and the                          \
+     * server's initialize instructions are where it is taught. */                                 \
+    X("record_memory", NULL, 0, 0, HYP_PROFILE_GENERATION_WORKSPACE_MEMORY, HYP_TOOL_LIVE, NULL,   \
+      HYP_TOOL_ANN_APPEND)                                                                         \
+    X("search_memory", NULL, 1, 0, HYP_PROFILE_GENERATION_WORKSPACE_MEMORY, HYP_TOOL_LIVE, NULL,   \
+      HYP_TOOL_ANN_STORE_READ)                                                                     \
     X("workspace_status", NULL, 1, 1, HYP_PROFILE_GENERATION_WORKSPACE_MEMORY, HYP_TOOL_RESERVED,  \
       NULL, HYP_TOOL_ANN_STORE_READ)                                                               \
     X("sync_memory", NULL, 0, 0, HYP_PROFILE_GENERATION_WORKSPACE_MEMORY, HYP_TOOL_RESERVED, NULL, \

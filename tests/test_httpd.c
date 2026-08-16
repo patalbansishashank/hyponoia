@@ -1097,8 +1097,11 @@ TEST(ui_server_rpc_allows_only_ui_read_tools) {
     ASSERT_EQ(th_status(resp), 200);
     ASSERT_NOT_NULL(strstr(resp, "\"jsonrpc\""));
 
+    /* record_memory joins the list the day it goes live: the UI RPC surface is
+     * a positive allowlist of two readers, and a durable writer reachable from
+     * a browser would be a trust boundary nobody reviewed. */
     static const char *blocked_tools[] = {"delete_project", "manage_adr", "ingest_traces",
-                                          "index_repository"};
+                                          "index_repository", "record_memory"};
     for (size_t i = 0; i < sizeof(blocked_tools) / sizeof(blocked_tools[0]); i++) {
         char blocked_body[512];
         snprintf(blocked_body, sizeof(blocked_body),

@@ -120,7 +120,7 @@ Every one of them also runs as a one-shot command:
 |---|---|
 | [**`ask` — the semantic lane**](docs/ASK.md) | How it works, what it scores, where it stops |
 | [Installation](docs/INSTALL.md) | Build, install, MCP config, updating |
-| [MCP tools & CLI](docs/TOOLS.md) | All 16 tools, one-shot invocation |
+| [MCP tools & CLI](docs/TOOLS.md) | All 18 tools, one-shot invocation |
 | [Graph data model](docs/GRAPH.md) | Labels, edges, qualified names, Cypher subset |
 | [Architecture](docs/ARCHITECTURE.md) | Pipeline, Hybrid LSP, language tiers, performance |
 | [Agent surfaces](docs/AGENTS.md) | The 43-client matrix, hooks, subagent profiles |

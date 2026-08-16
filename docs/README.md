@@ -17,7 +17,7 @@
 |---|---|
 | [**`ask` — the semantic lane**](ASK.md) | One question, ranked declarations. How it works, what it scores on a public benchmark, and where it stops working. |
 | [Installation](INSTALL.md) | Build from source, MCP configuration, updating, uninstall. |
-| [MCP tools & CLI mode](TOOLS.md) | All 16 tools, and running any of them as a one-shot command. |
+| [MCP tools & CLI mode](TOOLS.md) | All 18 tools, and running any of them as a one-shot command. |
 
 ## Reference
 
