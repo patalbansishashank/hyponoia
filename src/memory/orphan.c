@@ -192,8 +192,7 @@ static bool orph_attaches(hyp_anchor_status_t status) {
 static void orph_render_into(orph_buf_t *b, const hyp_orphan_entry_t *e) {
     const hyp_anchor_res_t *r = &e->res;
     orph_addf(b, "record: %s\n", e->record && e->record->id ? e->record->id : "");
-    orph_addf(b, "anchor: %s\n",
-              e->record && e->record->anchor ? e->record->anchor : "");
+    orph_addf(b, "anchor: %s\n", e->record && e->record->anchor ? e->record->anchor : "");
     orph_addf(b, "anchor_status: %s\n", hyp_anchor_status_str(r->status));
 
     if (orph_attaches(r->status)) {

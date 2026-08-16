@@ -669,15 +669,19 @@ TEST(orphan_ness_is_a_property_of_record_and_index_state) {
 
     hyp_orphan_view_t *v1 = NULL;
     ASSERT_EQ(hyp_orphan_view_build(rs, live, NULL, NULL, &v1), HYP_ORPHAN_OK);
-    ASSERT_EQ(hyp_orphan_view_at(v1, 0)->res.status, HYP_ANCHOR_RESOLVED);
+    const hyp_orphan_entry_t *e1 = hyp_orphan_view_at(v1, 0);
+    ASSERT_NOT_NULL(e1);
+    ASSERT_EQ(e1->res.status, HYP_ANCHOR_RESOLVED);
 
     hyp_orphan_view_t *v2 = NULL;
     ASSERT_EQ(hyp_orphan_view_build(rs, bare, NULL, NULL, &v2), HYP_ORPHAN_OK);
-    ASSERT_EQ(hyp_orphan_view_at(v2, 0)->res.status, HYP_ANCHOR_ORPHANED);
+    const hyp_orphan_entry_t *e2 = hyp_orphan_view_at(v2, 0);
+    ASSERT_NOT_NULL(e2);
+    ASSERT_EQ(e2->res.status, HYP_ANCHOR_ORPHANED);
 
     /* Same record on both sides. */
-    ASSERT_STR_EQ(hyp_orphan_view_at(v1, 0)->record->id, id);
-    ASSERT_STR_EQ(hyp_orphan_view_at(v2, 0)->record->id, id);
+    ASSERT_STR_EQ(e1->record->id, id);
+    ASSERT_STR_EQ(e2->record->id, id);
 
     /* And the disagreement cost the store nothing. */
     char digest[HYP_RECORD_ID_LEN + 1];

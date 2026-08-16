@@ -98,12 +98,12 @@
 
 typedef enum {
     HYP_ORPHAN_OK = 0,
-    HYP_ORPHAN_ERR_NULL,          /* a required argument was NULL */
-    HYP_ORPHAN_ERR_QUERY,         /* a query that contradicts what a view is */
-    HYP_ORPHAN_ERR_STORE,         /* the record store refused */
-    HYP_ORPHAN_ERR_NOT_ORPHANED,  /* asked to signal an entry that attaches */
-    HYP_ORPHAN_ERR_RECORD,        /* the record contract refused the signal */
-    HYP_ORPHAN_ERR_ALLOC          /* out of memory */
+    HYP_ORPHAN_ERR_NULL,         /* a required argument was NULL */
+    HYP_ORPHAN_ERR_QUERY,        /* a query that contradicts what a view is */
+    HYP_ORPHAN_ERR_STORE,        /* the record store refused */
+    HYP_ORPHAN_ERR_NOT_ORPHANED, /* asked to signal an entry that attaches */
+    HYP_ORPHAN_ERR_RECORD,       /* the record contract refused the signal */
+    HYP_ORPHAN_ERR_ALLOC         /* out of memory */
 } hyp_orphan_status_t;
 
 /* Stable, human-facing reason for a status. Never NULL. */
