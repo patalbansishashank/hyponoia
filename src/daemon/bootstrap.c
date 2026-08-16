@@ -183,6 +183,12 @@ hyp_daemon_process_role_t hyp_daemon_process_role(int argc, char *const argv[]) 
          * It also has to work when the daemon cannot start, which is exactly
          * when someone is trying to get the `ask` lane running. */
         "fetch-model",
+        /* sync merges two record stores and touches no project, no index and
+         * no daemon state. It carries the same hazard fetch-model documents
+         * above: unlisted, a top-level command falls through to MCP_CLIENT,
+         * so `hyponoia sync` would attach to a daemon and then serve MCP on
+         * stdin — a hang where a merge was asked for. */
+        "sync",
     };
     /* Stop at the first top-level mode token. Tool names, flag values, and JSON
      * following `cli` are opaque user input: a search query named "install"
