@@ -325,6 +325,8 @@ static void onboard_cost_probe(const hyp_onboard_probe_opts_t *opts, hyp_onboard
         free(vec);
         if (done > 0 && ns > 0) {
             r->encode_measured = true;
+            r->encode_sampled = done;
+            r->encode_elapsed_ns = ns;
             r->encode_docs_per_sec = (double)done / (ns / (double)ONBOARD_NS_PER_SEC);
             (void)snprintf(
                 r->encode_method, sizeof(r->encode_method),
@@ -444,6 +446,13 @@ char *hyp_onboard_probe_json(const hyp_onboard_probe_t *p) {
 
     yyjson_mut_val *cost = yyjson_mut_obj(doc);
     yyjson_mut_obj_add_bool(doc, cost, "encode_measured", p->encode_measured);
+    if (p->encode_measured) {
+        /* The quotient's operands, so a reader can recompute the rate and a
+         * test can assert the sample RAN rather than that a flag was set.
+         * Absent when nothing was sampled — absent means "look elsewhere". */
+        yyjson_mut_obj_add_int(doc, cost, "encode_sampled", p->encode_sampled);
+        yyjson_mut_obj_add_real(doc, cost, "encode_elapsed_ns", p->encode_elapsed_ns);
+    }
     yyjson_mut_obj_add_real(doc, cost, "encode_docs_per_sec", p->encode_docs_per_sec);
     yyjson_mut_obj_add_strcpy(doc, cost, "encode_method", p->encode_method);
     if (p->embed_estimate_known) {

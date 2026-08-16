@@ -447,6 +447,25 @@ TEST(onboard_probe_cost_states_its_method) {
     ASSERT_TRUE(p.embed_estimate_known);
     ASSERT_NOT_NULL(strstr(p.cost_method, "floor"));
 
+    /* THE FLAG IS NOT THE MEASUREMENT. `encode_measured` says a sample ran;
+     * these say WHAT ran, and they are the assertion that survives a change of
+     * clock. The first version of this probe timed with a millisecond clock,
+     * read elapsed 0 on a sample that takes microseconds, and fell back to the
+     * compiled-in constant — a real measurement downgraded by its own
+     * stopwatch. A test that only checked the flag would have watched that
+     * happen and called it a pass, so the operands of the rate are asserted
+     * here and the rate is recomputed from them. */
+    ASSERT_EQ(p.encode_sampled, 2); /* the fixture's two files, both sampled */
+    ASSERT_TRUE(p.encode_elapsed_ns > 0);
+    double recomputed = (double)p.encode_sampled / (p.encode_elapsed_ns / 1e9);
+    ASSERT_TRUE(recomputed > p.encode_docs_per_sec * 0.99 &&
+                recomputed < p.encode_docs_per_sec * 1.01);
+    char *mjson = hyp_onboard_probe_json(&p);
+    ASSERT_NOT_NULL(mjson);
+    ASSERT_NOT_NULL(strstr(mjson, "\"encode_sampled\":2"));
+    ASSERT_NOT_NULL(strstr(mjson, "\"encode_elapsed_ns\""));
+    free(mjson);
+
     /* Without one (isolated cache: no weights, or no backend at all): the
      * constant is disclosed AS a constant, never passed off as a number about
      * this machine. */
@@ -455,6 +474,14 @@ TEST(onboard_probe_cost_states_its_method) {
     ASSERT_FALSE(p.encode_measured);
     ASSERT_NOT_NULL(strstr(p.encode_method, "NOT measured"));
     ASSERT_TRUE(p.embed_estimate_known); /* still extrapolated, from the constant */
+    /* And the operands are ABSENT, not zero: nothing was sampled, so there is
+     * nothing to report — the two are different answers. */
+    ASSERT_EQ(p.encode_sampled, 0);
+    mjson = hyp_onboard_probe_json(&p);
+    ASSERT_NOT_NULL(mjson);
+    ASSERT_NULL(strstr(mjson, "\"encode_sampled\""));
+    ASSERT_NULL(strstr(mjson, "\"encode_elapsed_ns\""));
+    free(mjson);
 
     th_cleanup(dir);
     free(dir);

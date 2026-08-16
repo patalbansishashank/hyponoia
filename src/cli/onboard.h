@@ -112,6 +112,15 @@ typedef struct {
     /* first-index cost — measured where an encoder exists, and the method is
      * always stated so a constant is never mistaken for a measurement. */
     bool encode_measured;
+    /* THE MEASUREMENT'S OWN EVIDENCE, structured, not just narrated. A rate is
+     * a quotient, and a quotient whose operands are not reported cannot be
+     * checked: the first version of this probe timed the sample with a
+     * millisecond clock, read elapsed 0, and answered with the compiled-in
+     * constant while honestly disclosing that it had — a real measurement
+     * downgraded by its own stopwatch, and no assertion on `encode_measured`
+     * alone can see it. These two are ABSENT (and zero) unless a sample ran. */
+    int encode_sampled;       /* documents actually encoded */
+    double encode_elapsed_ns; /* wall clock of that sample */
     double encode_docs_per_sec;
     char encode_method[HYP_SZ_512];
     bool embed_estimate_known;
