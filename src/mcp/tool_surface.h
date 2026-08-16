@@ -258,26 +258,40 @@ typedef enum {
  * count. So the field is `missing`, and it means "records I do not have" — never
  * `behind`, which would be a number nothing can produce.
  *
- * Phase 1 adds two SIBLING objects. They are never merged into one status, and
- * neither is derived from the other:
+ * F3 SHIPPED the two SIBLING objects. They are never merged into one status,
+ * and neither is derived from the other:
  *
  *   "code":   { "status": "ready" | "empty" | "stale" | "unknown",
- *               "indexed_at": <iso8601>, "nodes": n, "edges": n,
+ *               "indexed_at": <iso8601>,       // absent if the store has none
+ *               "nodes": n, "edges": n,
  *               "files_behind": n }            // absent if not computed
  *
- *   "memory": { "status": "current" | "incomplete" | "unknown",
- *               "feed": "<adapter name>",
+ *   "memory": { "feed": "<adapter name>",      // absent if none configured
  *               "records_local": n,
+ *               "status": "current" | "incomplete" | "unknown",
  *               "records_upstream": n,         // ABSENT unless actually read
  *               "missing": n,                  // ABSENT unless actually read
- *               "checked_at": <iso8601> }
+ *               "missing_ids": [ids],          // with `missing`; the NAMES —
+ *                                              // a count alone cannot be
+ *                                              // acted on. Capped, and the
+ *                                              // cap is disclosed:
+ *               "missing_ids_withheld": n,     // only when the list was capped
+ *               "checked_at": <iso8601> }      // only when a compare RAN
+ *
+ * `code` restates today's top-level answer under its own key; the top-level
+ * keys are the shipped surface and stay byte-identical, so existing consumers
+ * read what they always read. `code.files_behind` and the "stale"/"unknown"
+ * statuses are declared, not yet computed — a key must not appear until
+ * something computes it.
  *
  * THE RULE THAT MATTERS, and the one a Phase 1 author will get wrong if it is
  * not written down:
  *
  *   "memory" absent entirely   -> this build has no memory store configured.
  *                                 Look elsewhere. NOT "you are up to date".
- *   status "unknown"           -> the upstream set could not be read.
+ *   status "unknown"           -> no upstream provider is configured (the
+ *                                 shipped state until C6u lands sync), or the
+ *                                 configured one could not read the set.
  *                                 `missing` and `records_upstream` are ABSENT.
  *   "missing": 0               -> checked, and nothing is missing.
  *
@@ -286,12 +300,17 @@ typedef enum {
  * F3 exists to prevent, and it is more dangerous than the staleness it hides,
  * because an agent that is told it is current stops checking.
  *
- * These keys are NOT in the schema below and must not be added until they are
- * emitted. Declaring `required: ["memory"]` here before F3 ships is the
- * planted negative control in tests/test_tool_surface.c: it makes a tool
- * promise a field the text path never sends, which is `structuredContent: {}`
- * in its general form, and the client-view test fails on it. Watch it fail
- * before trusting it.
+ * And it is `missing`, never `behind` — a union has no total order, so "N
+ * behind" is a number nothing can produce. The set-digest compare is the free
+ * yes/no; the id walk is the count plus the names. mcp.h documents the seam
+ * (hyp_mcp_server_set_memory_store / _set_memory_upstream).
+ *
+ * These keys are in `properties` below and NOT in `required`, because their
+ * ABSENCE CARRIES MEANING. Declaring `required: ["memory"]` is the planted
+ * negative control in tests/test_tool_surface.c and scripts/ci/
+ * mcp-client-view.py: it makes the tool promise a field the no-store path
+ * never sends, which is `structuredContent: {}` in its general form, and both
+ * client-view checks fail on it. Watch it fail before trusting it.
  */
 #define HYP_TOOL_SCHEMA_INDEX_STATUS                                                            \
     "{\"type\":\"object\","                                                                     \
@@ -302,7 +321,16 @@ typedef enum {
     "\"project_source\":{\"type\":\"string\"},"                                                 \
     "\"nodes\":{\"type\":\"integer\"},"                                                         \
     "\"edges\":{\"type\":\"integer\"},"                                                         \
-    "\"root_path\":{\"type\":\"string\"}"                                                       \
+    "\"root_path\":{\"type\":\"string\"},"                                                      \
+    "\"code\":{\"type\":\"object\",\"description\":\"Freshness of this machine's code index, "  \
+    "as a sibling of memory — the two are independent axes and are never merged. Absent when "  \
+    "status is no_project.\"},"                                                                 \
+    "\"memory\":{\"type\":\"object\",\"description\":\"Freshness of the record (memory) "       \
+    "store. ABSENT entirely when no record store is configured — look elsewhere, it does NOT "  \
+    "mean current. memory.missing counts upstream records this machine does not hold (a set "   \
+    "difference — a union has no order to be behind in) and is absent, with "                   \
+    "status=unknown, whenever the upstream set could not be read; missing=0 means checked "     \
+    "and complete. missing_ids names them.\"}"                                                  \
     "},"                                                                                        \
     "\"required\":[\"status\"]}"
 

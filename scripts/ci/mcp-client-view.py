@@ -50,9 +50,10 @@ int main(void) { printf("%d\\n", compute(3)); return 0; }
 
 
 class Client:
-    def __init__(self, binary, env, args=()):
+    def __init__(self, binary, env, args=(), cwd=None):
         self.p = subprocess.Popen([binary, *args], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                                  stderr=subprocess.DEVNULL, text=True, bufsize=1, env=env)
+                                  stderr=subprocess.DEVNULL, text=True, bufsize=1, env=env,
+                                  cwd=cwd)
 
     def send(self, obj):
         self.p.stdin.write(json.dumps(obj) + "\n")
@@ -147,6 +148,77 @@ def profile_view(binary, env, project):
     return bad
 
 
+def no_project_view(binary):
+    """§4 F3, first half: index_status in an UNINDEXED directory, at the client.
+
+    handle_index_status documents a structured answer for "no project could be
+    resolved" — {"status":"no_project"}, not an error — and that branch was
+    dead from the day it shipped: it needed store != NULL with project == NULL,
+    and resolve_store returns NULL the moment project is NULL, so
+    REQUIRE_STORE answered with isError prose first, every time. This spawns a
+    real stdio server in a directory that is not a project, with a cache
+    holding no project at all, and asserts what the CLIENT holds: a non-error
+    result whose object says status == "no_project". Returns a list of
+    failures.
+    """
+    bad = []
+    tmp = tempfile.mkdtemp(prefix="hyp-mcp-noproj-")
+    try:
+        cwd = os.path.join(tmp, "not-a-project")
+        os.makedirs(cwd)
+        env = dict(os.environ)
+        env["HYP_CACHE_DIR"] = os.path.join(tmp, "cache")
+        runtime_parent = os.path.join(tmp, "run")
+        os.makedirs(runtime_parent, mode=0o700, exist_ok=True)
+        env["HYP_TEST_DAEMON_RUNTIME_PARENT"] = runtime_parent
+        # The normal-build cohort escape: the test seam above exists only under
+        # HYP_ENABLE_TEST_SEAMS, and without either a dev binary refuses to
+        # start whenever an installed build's daemon is already serving this
+        # account. Legal here because HYP_CACHE_DIR is non-default (above).
+        env["HYP_DAEMON_RUNTIME_PARENT"] = runtime_parent
+
+        c = Client(binary, env, cwd=cwd)
+        c.send({"jsonrpc": "2.0", "id": 1, "method": "initialize",
+                "params": {"protocolVersion": "2025-06-18", "capabilities": {},
+                           "clientInfo": {"name": "mcp-client-view", "version": "0"}}})
+        if c.read() is None:
+            print("FAIL: unindexed-dir server sent no initialize response")
+            c.close()
+            return ["no_project:no-init"]
+        c.send({"jsonrpc": "2.0", "method": "notifications/initialized"})
+        c.send({"jsonrpc": "2.0", "id": 2, "method": "tools/call",
+                "params": {"name": "index_status", "arguments": {}}})
+        resp = c.read() or {}
+        c.close()
+        res = resp.get("result") or {}
+        content = res.get("content") or []
+        text = content[0].get("text", "") if content else ""
+        sc = res.get("structuredContent")
+        seen = sc if isinstance(sc, dict) and sc else None
+        if seen is None and text:
+            try:
+                parsed = json.loads(text)
+                seen = parsed if isinstance(parsed, dict) else None
+            except Exception:
+                seen = None
+        if res.get("isError"):
+            print("FAIL: index_status in an unindexed directory answers isError, "
+                  "not the structured no_project status it documents")
+            bad.append("no_project:is-error")
+        elif seen is None:
+            print("FAIL: index_status in an unindexed directory gives a client no object")
+            bad.append("no_project:no-object")
+        elif seen.get("status") != "no_project":
+            print("FAIL: index_status in an unindexed directory answers %r, not status=no_project"
+                  % (seen.get("status"),))
+            bad.append("no_project:wrong-status")
+        else:
+            print("index_status (unindexed dir) -> structured status=no_project, reachable")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    return bad
+
+
 def main():
     binary = os.path.abspath(BINARY)
     if not os.path.exists(binary):
@@ -168,6 +240,11 @@ def main():
     runtime_parent = os.path.join(tmp, "run")
     os.makedirs(runtime_parent, mode=0o700, exist_ok=True)
     env["HYP_TEST_DAEMON_RUNTIME_PARENT"] = runtime_parent
+    # Normal-build cohort escape (see no_project_view): without it a binary
+    # built without HYP_ENABLE_TEST_SEAMS cannot run beside an installed
+    # daemon at all. HYP_CACHE_DIR is non-default above, which is what makes
+    # an isolated rendezvous legal.
+    env["HYP_DAEMON_RUNTIME_PARENT"] = runtime_parent
 
     try:
         # Index the fixture through the CLI so the graph tools have rows to return.
@@ -274,6 +351,8 @@ def main():
                 bad.append(t)
 
         c.close()
+        print()
+        bad.extend(no_project_view(binary))
         print()
         bad.extend(profile_view(binary, env, project))
         print()

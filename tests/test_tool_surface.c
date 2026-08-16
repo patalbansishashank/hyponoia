@@ -27,6 +27,7 @@
 #include "test_framework.h"
 
 #include <cli/agent_profiles.h>
+#include <foundation/record.h>
 #include <mcp/mcp.h>
 #include <mcp/tool_surface.h>
 #include <store/store.h>
@@ -109,27 +110,18 @@ static bool surface_names_contain(const char *names, const char *tool) {
     return names && strstr(names, needle) != NULL;
 }
 
-/* What a client actually ends up with for one tools/call: structuredContent if
- * it is a non-empty object, otherwise content[0].text parsed as JSON if it is
- * one. Returns a doc the caller frees, or NULL when the client sees no object
- * at all. `is_error_out` reports result.isError. */
-static yyjson_doc *surface_client_object(hyp_mcp_tool_profile_t profile, const char *tool,
-                                         const char *arguments_json, bool *is_error_out) {
+/* What a client actually ends up with for one tool result object:
+ * structuredContent if it is a non-empty object, otherwise content[0].text
+ * parsed as JSON if it is one. Returns a NEW doc the caller frees, or NULL
+ * when the client sees no object at all. An EMPTY structuredContent is the
+ * defect, not a fallback: it is indistinguishable from "the answer is
+ * nothing", so it is reported as no object rather than silently falling
+ * through to content. `is_error_out` reports isError. */
+static yyjson_doc *surface_object_from_result(yyjson_val *result, bool *is_error_out) {
     if (is_error_out) {
         *is_error_out = false;
     }
-    char params[1024];
-    snprintf(params, sizeof(params), "\"params\":{\"name\":\"%s\",\"arguments\":%s}", tool,
-             arguments_json ? arguments_json : "{}");
-    char *resp = surface_call(profile, "tools/call", params);
-    if (!resp) {
-        return NULL;
-    }
-    yyjson_doc *doc = yyjson_read(resp, strlen(resp), 0);
-    free(resp);
-    yyjson_val *result = doc ? yyjson_obj_get(yyjson_doc_get_root(doc), "result") : NULL;
     if (!result) {
-        yyjson_doc_free(doc);
         return NULL;
     }
     yyjson_val *is_error = yyjson_obj_get(result, "isError");
@@ -137,18 +129,12 @@ static yyjson_doc *surface_client_object(hyp_mcp_tool_profile_t profile, const c
         *is_error_out = is_error && yyjson_is_true(is_error);
     }
 
-    /* A client prefers structuredContent when it is there and non-empty. An
-     * EMPTY object is the defect, not a fallback: it is indistinguishable from
-     * "the answer is nothing", so it is reported as no object rather than
-     * silently falling through to content. */
     yyjson_val *structured = yyjson_obj_get(result, "structuredContent");
     if (structured && yyjson_is_obj(structured)) {
         if (yyjson_obj_size(structured) == 0U) {
-            yyjson_doc_free(doc);
             return NULL;
         }
         char *text = yyjson_val_write(structured, 0, NULL);
-        yyjson_doc_free(doc);
         if (!text) {
             return NULL;
         }
@@ -162,15 +148,112 @@ static yyjson_doc *surface_client_object(hyp_mcp_tool_profile_t profile, const c
     yyjson_val *text_val = first ? yyjson_obj_get(first, "text") : NULL;
     const char *text = text_val && yyjson_is_str(text_val) ? yyjson_get_str(text_val) : NULL;
     if (!text) {
-        yyjson_doc_free(doc);
         return NULL;
     }
     yyjson_doc *parsed = yyjson_read(text, strlen(text), 0);
-    yyjson_doc_free(doc);
     if (parsed && yyjson_is_obj(yyjson_doc_get_root(parsed))) {
         return parsed;
     }
     yyjson_doc_free(parsed);
+    return NULL;
+}
+
+/* The client's object for one tools/call through a throwaway server. */
+static yyjson_doc *surface_client_object(hyp_mcp_tool_profile_t profile, const char *tool,
+                                         const char *arguments_json, bool *is_error_out) {
+    char params[1024];
+    snprintf(params, sizeof(params), "\"params\":{\"name\":\"%s\",\"arguments\":%s}", tool,
+             arguments_json ? arguments_json : "{}");
+    char *resp = surface_call(profile, "tools/call", params);
+    if (!resp) {
+        if (is_error_out) {
+            *is_error_out = false;
+        }
+        return NULL;
+    }
+    yyjson_doc *doc = yyjson_read(resp, strlen(resp), 0);
+    free(resp);
+    yyjson_val *result = doc ? yyjson_obj_get(yyjson_doc_get_root(doc), "result") : NULL;
+    yyjson_doc *out = surface_object_from_result(result, is_error_out);
+    yyjson_doc_free(doc);
+    return out;
+}
+
+/* The client's object for one call against a CONFIGURED server. The §4 F3
+ * memory tests attach record sets to the server first, which surface_call's
+ * throwaway instance cannot carry. */
+static yyjson_doc *surface_client_object_on(hyp_mcp_server_t *srv, const char *tool,
+                                            const char *arguments_json, bool *is_error_out) {
+    char *resp = srv ? hyp_mcp_handle_tool(srv, tool, arguments_json ? arguments_json : "{}")
+                     : NULL;
+    if (!resp) {
+        if (is_error_out) {
+            *is_error_out = false;
+        }
+        return NULL;
+    }
+    yyjson_doc *doc = yyjson_read(resp, strlen(resp), 0);
+    free(resp);
+    yyjson_doc *out = surface_object_from_result(doc ? yyjson_doc_get_root(doc) : NULL,
+                                                 is_error_out);
+    yyjson_doc_free(doc);
+    return out;
+}
+
+/* ── §4 F3 fixtures ────────────────────────────────────────────────────
+ *
+ * A fresh, empty cache pointed at by HYP_CACHE_DIR for one test: zero indexed
+ * projects, deterministically, so "no project could be resolved" is a fact of
+ * the fixture rather than of whatever suite ran before this one. */
+typedef struct {
+    char dir[256];
+    char *saved;
+} surface_cache_fixture_t;
+
+static bool surface_cache_begin(surface_cache_fixture_t *fx) {
+    snprintf(fx->dir, sizeof(fx->dir), "/tmp/hyp-tool-surface-XXXXXX");
+    if (!hyp_mkdtemp(fx->dir)) {
+        return false;
+    }
+    const char *saved = getenv("HYP_CACHE_DIR");
+    fx->saved = saved ? strdup(saved) : NULL;
+    hyp_setenv("HYP_CACHE_DIR", fx->dir, 1);
+    return true;
+}
+
+static void surface_cache_end(surface_cache_fixture_t *fx) {
+    if (fx->saved) {
+        hyp_setenv("HYP_CACHE_DIR", fx->saved, 1);
+        free(fx->saved);
+        fx->saved = NULL;
+    } else {
+        hyp_unsetenv("HYP_CACHE_DIR");
+    }
+}
+
+/* A record whose only varying field is content. C2's id commits to every
+ * field, so distinct contents are distinct ids — all these tests need. The
+ * timestamp is fixed and caller-supplied; nothing here reads a clock. */
+static const hyp_record_t *surface_record(const char *content) {
+    hyp_record_input_t in;
+    memset(&in, 0, sizeof(in));
+    in.kind = HYP_RECORD_DECISION;
+    in.author = "agent:f3-test";
+    in.timestamp_ms = INT64_C(1770985600000);
+    in.content = content;
+    const hyp_record_t *rec = NULL;
+    return hyp_record_build(&in, &rec) == HYP_RECORD_OK ? rec : NULL;
+}
+
+/* Upstream providers for the seam: one lends the comparison set, one reports
+ * "could not read" — which is NULL, never an empty set, because an empty set
+ * says "upstream has nothing" and that is a different (and here false) claim. */
+static const hyp_record_set_t *surface_upstream_borrow(void *ctx) {
+    return (const hyp_record_set_t *)ctx;
+}
+
+static const hyp_record_set_t *surface_upstream_unreadable(void *ctx) {
+    (void)ctx;
     return NULL;
 }
 
@@ -356,18 +439,14 @@ TEST(tool_surface_declared_output_schemas_reach_the_client) {
     /* A real project in a real store, because the promise is only meaningful on
      * a call that succeeds, and because the whole family of defects here comes
      * from checking a shape the product never produced. */
-    char cache[256];
-    snprintf(cache, sizeof(cache), "/tmp/hyp-tool-surface-XXXXXX");
-    if (!hyp_mkdtemp(cache)) {
+    surface_cache_fixture_t fx;
+    if (!surface_cache_begin(&fx)) {
         FAIL("could not create a temporary cache for the client-view probe");
     }
-    const char *saved_cache = getenv("HYP_CACHE_DIR");
-    char *saved_cache_copy = saved_cache ? strdup(saved_cache) : NULL;
-    hyp_setenv("HYP_CACHE_DIR", cache, 1);
 
     const char *project = "tool-surface-probe";
     char db_path[512];
-    snprintf(db_path, sizeof(db_path), "%s/%s.db", cache, project);
+    snprintf(db_path, sizeof(db_path), "%s/%s.db", fx.dir, project);
     hyp_store_t *setup = hyp_store_open_path(db_path);
     int seeded = setup && hyp_store_upsert_project(setup, project, "/tmp/tool-surface-probe") ==
                               HYP_STORE_OK;
@@ -441,12 +520,7 @@ TEST(tool_surface_declared_output_schemas_reach_the_client) {
         yyjson_doc_free(schema_doc);
     }
 
-    if (saved_cache_copy) {
-        hyp_setenv("HYP_CACHE_DIR", saved_cache_copy, 1);
-        free(saved_cache_copy);
-    } else {
-        hyp_unsetenv("HYP_CACHE_DIR");
-    }
+    surface_cache_end(&fx);
     if (!seeded) {
         FAIL("could not seed a project for the client-view probe");
     }
@@ -460,59 +534,392 @@ TEST(tool_surface_declared_output_schemas_reach_the_client) {
     PASS();
 }
 
-/* ── 4b · index_status has an answer it cannot deliver ─────────────────
+/* ── 4b · index_status's no_project answer REACHES the client ──────────
  *
- * FOUND BY WRITING THIS CONTRACT, and pinned here so the fix is not lost.
- *
- * handle_index_status ends with `else { status: "no_project" }` — a documented,
- * structured answer for "no project resolved". It is UNREACHABLE. The branch
- * needs store != NULL with project == NULL, and resolve_store_internal returns
- * NULL the moment project is NULL ("project is required — no implicit
- * fallback"), so REQUIRE_STORE returns an error string first, every time.
- *
- * An agent in an unindexed directory therefore gets isError with prose, not the
- * `no_project` status the tool advertises. That is the absent/empty rule broken
- * at the exact tool §4 F3 extends to carry TWO freshnesses: F3 needs
- * index_status to distinguish "no memory store configured" from "memory store
- * is current", and a tool that cannot yet say "no project" in structure will
- * not manage "no memory" in structure either.
- *
- * Phase 0 changes no behaviour, so this test asserts what SHIPS — including
- * that the error is at least machine-readable — and the Phase 1 fix is to make
- * the no_project branch reachable. When it is, this test's expectation flips
- * and the schema check above starts covering the no-project path too. */
-TEST(tool_surface_index_status_no_project_answer_is_unreachable_today) {
+ * THE PHASE 0 DEAD BRANCH, made live by §4 F3 — this test held the finding
+ * and has flipped to holding the fix. handle_index_status documented a
+ * structured answer for "no project resolved" ({"status":"no_project"}) that
+ * was UNREACHABLE from the day it shipped: the branch needed store != NULL
+ * with project == NULL, and resolve_store returns NULL the moment project is
+ * NULL, so REQUIRE_STORE answered isError prose first, every time. The fix
+ * answers before touching the store. This asserts the CLIENT's view of it —
+ * a non-error object saying status=no_project — with a fresh empty cache so
+ * "nothing resolves" is a property of the fixture, not of suite order.
+ * scripts/ci/mcp-client-view.py asserts the same thing against a real stdio
+ * subprocess in an unindexed directory. */
+TEST(tool_surface_index_status_no_project_answer_reaches_the_client) {
+    surface_cache_fixture_t fx;
+    if (!surface_cache_begin(&fx)) {
+        FAIL("could not create a fresh cache for the no-project probe");
+    }
     bool is_error = false;
     yyjson_doc *seen =
         surface_client_object(HYP_MCP_TOOL_PROFILE_ALL, "index_status", "{}", &is_error);
-    if (!is_error) {
-        /* The Phase 1 fix landed: assert the documented shape instead. */
-        if (!seen) {
-            FAIL("index_status succeeded without a project and a client read no object");
-        }
-        yyjson_val *status = yyjson_obj_get(yyjson_doc_get_root(seen), "status");
-        const char *text = status && yyjson_is_str(status) ? yyjson_get_str(status) : NULL;
-        bool ok = text && strcmp(text, "no_project") == 0;
+    surface_cache_end(&fx);
+    if (is_error) {
         yyjson_doc_free(seen);
-        if (!ok) {
-            FAIL("index_status resolved no project and did not answer status=no_project");
-        }
-        PASS();
+        FAIL("index_status in an unindexed directory answers isError again — the Phase 0 "
+             "dead branch is back");
     }
-    /* Today's behaviour. An error is honest — it is not a wrong answer — but it
-     * is prose where a structure was documented, and the structuredContent a
-     * client gets carries only `error`. */
-    if (seen) {
-        yyjson_val *root = yyjson_doc_get_root(seen);
-        bool has_error = yyjson_obj_get(root, "error") != NULL;
-        bool has_status = yyjson_obj_get(root, "status") != NULL;
+    if (!seen) {
+        FAIL("index_status succeeded without a project and a client read no object");
+    }
+    yyjson_val *root = yyjson_doc_get_root(seen);
+    yyjson_val *status = yyjson_obj_get(root, "status");
+    const char *text = status && yyjson_is_str(status) ? yyjson_get_str(status) : NULL;
+    bool ok = text && strcmp(text, "no_project") == 0;
+    /* Absence discipline on this path: no project key (the schema says so),
+     * no code block (there is no project whose code could have a freshness),
+     * and no memory block (no record store is configured here) — each absent
+     * key is a real answer, not an omission. */
+    bool clean = !yyjson_obj_get(root, "project") && !yyjson_obj_get(root, "code") &&
+                 !yyjson_obj_get(root, "memory");
+    yyjson_doc_free(seen);
+    if (!ok) {
+        FAIL("index_status resolved no project and did not answer status=no_project");
+    }
+    if (!clean) {
+        FAIL("the no_project answer carries keys whose absence was the documented answer");
+    }
+    PASS();
+}
+
+/* ── 4c · §4 F3: memory absent means "no store", never "up to date" ────
+ *
+ * The `memory` sibling must be ABSENT ENTIRELY when no record store is
+ * configured. Absent means "look elsewhere"; an empty object, a status, or a
+ * zero here would each be a confident answer about a store that does not
+ * exist — and an agent that believes it has current decisions while missing
+ * 40 will confidently explain why `foo` looked the way it did last week. */
+TEST(tool_surface_index_status_memory_absent_without_a_record_store) {
+    surface_cache_fixture_t fx;
+    if (!surface_cache_begin(&fx)) {
+        FAIL("could not create a fresh cache");
+    }
+    hyp_mcp_server_t *srv = hyp_mcp_server_new(NULL);
+    ASSERT_NOT_NULL(srv);
+    bool is_error = false;
+    yyjson_doc *seen = surface_client_object_on(srv, "index_status", "{}", &is_error);
+    hyp_mcp_server_free(srv);
+    surface_cache_end(&fx);
+    ASSERT_FALSE(is_error);
+    ASSERT_NOT_NULL(seen);
+    bool absent = yyjson_obj_get(yyjson_doc_get_root(seen), "memory") == NULL;
+    yyjson_doc_free(seen);
+    if (!absent) {
+        FAIL("no record store is configured and index_status reports a memory block anyway — "
+             "absent means look elsewhere, and this answer invents one");
+    }
+    PASS();
+}
+
+/* ── 4d · §4 F3: unknowable is `unknown` + ABSENT, never a number ──────
+ *
+ * Two ways the upstream set can be unknowable — no provider configured (the
+ * shipped state until C6u lands sync) and a configured provider that cannot
+ * read — and one honest answer for both: status "unknown" with `missing` and
+ * `records_upstream` ABSENT. `missing: 0` here would be the confident wrong
+ * answer F3 exists to prevent: told it is current, an agent stops checking.
+ * The negative control for this test is planting exactly that (emit 0 on the
+ * unreadable path) and watching it fail. */
+TEST(tool_surface_index_status_memory_unknown_when_upstream_unreadable) {
+    surface_cache_fixture_t fx;
+    if (!surface_cache_begin(&fx)) {
+        FAIL("could not create a fresh cache");
+    }
+    hyp_record_set_t *local = hyp_record_set_create();
+    const hyp_record_t *rec = surface_record("a decision this machine holds");
+    bool seeded = local && rec && hyp_record_set_add(local, rec, NULL) == HYP_RECORD_OK;
+    hyp_record_free(rec);
+
+    const char *failure = NULL;
+    /* Case 1: no provider at all. Case 2: a provider that cannot read. */
+    for (int unreadable = 0; seeded && !failure && unreadable < 2; unreadable++) {
+        hyp_mcp_server_t *srv = hyp_mcp_server_new(NULL);
+        if (!srv) {
+            failure = "server construction failed";
+            break;
+        }
+        hyp_mcp_server_set_memory_store(srv, local);
+        if (unreadable) {
+            hyp_mcp_server_set_memory_upstream(srv, "test-feed", surface_upstream_unreadable,
+                                               NULL);
+        }
+        bool is_error = false;
+        yyjson_doc *seen = surface_client_object_on(srv, "index_status", "{}", &is_error);
+        hyp_mcp_server_free(srv);
+        if (is_error || !seen) {
+            yyjson_doc_free(seen);
+            failure = "index_status did not answer";
+            break;
+        }
+        yyjson_val *memory = yyjson_obj_get(yyjson_doc_get_root(seen), "memory");
+        yyjson_val *status = memory ? yyjson_obj_get(memory, "status") : NULL;
+        const char *word = status && yyjson_is_str(status) ? yyjson_get_str(status) : NULL;
+        yyjson_val *records_local = memory ? yyjson_obj_get(memory, "records_local") : NULL;
+        if (!memory) {
+            failure = "a record store is configured and the memory block is absent — absent "
+                      "must mean no store, and here there is one";
+        } else if (!word || strcmp(word, "unknown") != 0) {
+            failure = "the upstream set was unreadable and memory.status is not \"unknown\"";
+        } else if (yyjson_obj_get(memory, "missing")) {
+            failure = "the upstream set was unreadable and `missing` carries a value — the "
+                      "confident wrong answer: a count nobody computed";
+        } else if (yyjson_obj_get(memory, "records_upstream") ||
+                   yyjson_obj_get(memory, "checked_at") ||
+                   yyjson_obj_get(memory, "missing_ids")) {
+            failure = "the upstream set was unreadable and a key that means \"actually read\" "
+                      "is present";
+        } else if (!records_local || yyjson_get_uint(records_local) != 1U) {
+            failure = "records_local must still be reported — the LOCAL set was readable";
+        }
         yyjson_doc_free(seen);
-        if (!has_error) {
-            FAIL("index_status failed with no machine-readable error for a client to read");
+    }
+    hyp_record_set_free(local);
+    surface_cache_end(&fx);
+    if (!seeded) {
+        FAIL("could not build the local record set");
+    }
+    if (failure) {
+        FAIL(failure);
+    }
+    PASS();
+}
+
+/* ── 4e · §4 F3: checked-and-complete is `0`, a different sentence ─────
+ *
+ * Equal sets → `missing: 0`, PRESENT. Zero and absent must never be the same
+ * bytes: 0 is "checked, nothing is missing", absent is "could not check". */
+TEST(tool_surface_index_status_memory_missing_zero_when_sets_equal) {
+    surface_cache_fixture_t fx;
+    if (!surface_cache_begin(&fx)) {
+        FAIL("could not create a fresh cache");
+    }
+    hyp_record_set_t *local = hyp_record_set_create();
+    hyp_record_set_t *upstream = hyp_record_set_create();
+    const hyp_record_t *first = surface_record("both sides hold this");
+    const hyp_record_t *second = surface_record("and this");
+    bool seeded = local && upstream && first && second &&
+                  hyp_record_set_add(local, first, NULL) == HYP_RECORD_OK &&
+                  hyp_record_set_add(local, second, NULL) == HYP_RECORD_OK &&
+                  hyp_record_set_add(upstream, first, NULL) == HYP_RECORD_OK &&
+                  hyp_record_set_add(upstream, second, NULL) == HYP_RECORD_OK;
+    hyp_record_free(first);
+    hyp_record_free(second);
+
+    const char *failure = NULL;
+    if (seeded) {
+        hyp_mcp_server_t *srv = hyp_mcp_server_new(NULL);
+        hyp_mcp_server_set_memory_store(srv, local);
+        hyp_mcp_server_set_memory_upstream(srv, "test-feed", surface_upstream_borrow, upstream);
+        bool is_error = false;
+        yyjson_doc *seen = surface_client_object_on(srv, "index_status", "{}", &is_error);
+        hyp_mcp_server_free(srv);
+        yyjson_val *memory =
+            seen && !is_error ? yyjson_obj_get(yyjson_doc_get_root(seen), "memory") : NULL;
+        yyjson_val *status = memory ? yyjson_obj_get(memory, "status") : NULL;
+        const char *word = status && yyjson_is_str(status) ? yyjson_get_str(status) : NULL;
+        yyjson_val *missing = memory ? yyjson_obj_get(memory, "missing") : NULL;
+        yyjson_val *upstream_count = memory ? yyjson_obj_get(memory, "records_upstream") : NULL;
+        yyjson_val *ids = memory ? yyjson_obj_get(memory, "missing_ids") : NULL;
+        if (!memory) {
+            failure = "no memory block on a configured server";
+        } else if (!word || strcmp(word, "current") != 0) {
+            failure = "equal sets and memory.status is not \"current\"";
+        } else if (!missing || !yyjson_is_int(missing) || yyjson_get_int(missing) != 0) {
+            failure = "equal sets and `missing` is not the PRESENT integer 0 — \"checked, "
+                      "complete\" must be different bytes from \"could not check\"";
+        } else if (!upstream_count || yyjson_get_uint(upstream_count) != 2U) {
+            failure = "records_upstream must report the count that was actually read";
+        } else if (!ids || !yyjson_is_arr(ids) || yyjson_arr_size(ids) != 0U) {
+            failure = "equal sets and missing_ids is not the empty array — there are zero "
+                      "names to name, which is an answer, not an omission";
+        } else if (!yyjson_obj_get(memory, "checked_at")) {
+            failure = "a compare ran and checked_at is absent";
         }
-        if (has_status) {
-            FAIL("index_status now reports a status on the error path — update this test");
+        yyjson_doc_free(seen);
+    }
+    hyp_record_set_free(local);
+    hyp_record_set_free(upstream);
+    surface_cache_end(&fx);
+    if (!seeded) {
+        FAIL("could not build the record sets");
+    }
+    if (failure) {
+        FAIL(failure);
+    }
+    PASS();
+}
+
+/* ── 4f · §4 F3: N differ → the count PLUS the names ──────────────────
+ *
+ * `missing` is a set difference — upstream records this machine does not
+ * hold — never a lag: the store is an id-keyed set with no order to be
+ * "behind" in. Records only the local side holds are writes a push has not
+ * delivered yet, and must not be counted. And the ids are named, because a
+ * bare count is a number nobody can act on. */
+TEST(tool_surface_index_status_memory_missing_counts_and_names_the_ids) {
+    surface_cache_fixture_t fx;
+    if (!surface_cache_begin(&fx)) {
+        FAIL("could not create a fresh cache");
+    }
+    hyp_record_set_t *local = hyp_record_set_create();
+    hyp_record_set_t *upstream = hyp_record_set_create();
+    const hyp_record_t *shared = surface_record("both sides hold this");
+    const hyp_record_t *theirs_a = surface_record("upstream-only decision A");
+    const hyp_record_t *theirs_b = surface_record("upstream-only decision B");
+    const hyp_record_t *ours = surface_record("local-only, not yet pushed");
+    bool seeded = local && upstream && shared && theirs_a && theirs_b && ours &&
+                  hyp_record_set_add(local, shared, NULL) == HYP_RECORD_OK &&
+                  hyp_record_set_add(local, ours, NULL) == HYP_RECORD_OK &&
+                  hyp_record_set_add(upstream, shared, NULL) == HYP_RECORD_OK &&
+                  hyp_record_set_add(upstream, theirs_a, NULL) == HYP_RECORD_OK &&
+                  hyp_record_set_add(upstream, theirs_b, NULL) == HYP_RECORD_OK;
+    char id_a[HYP_RECORD_ID_LEN + 1] = "";
+    char id_b[HYP_RECORD_ID_LEN + 1] = "";
+    if (seeded) {
+        snprintf(id_a, sizeof(id_a), "%s", theirs_a->id);
+        snprintf(id_b, sizeof(id_b), "%s", theirs_b->id);
+    }
+    hyp_record_free(shared);
+    hyp_record_free(theirs_a);
+    hyp_record_free(theirs_b);
+    hyp_record_free(ours);
+
+    const char *failure = NULL;
+    if (seeded) {
+        hyp_mcp_server_t *srv = hyp_mcp_server_new(NULL);
+        hyp_mcp_server_set_memory_store(srv, local);
+        hyp_mcp_server_set_memory_upstream(srv, "test-feed", surface_upstream_borrow, upstream);
+        bool is_error = false;
+        yyjson_doc *seen = surface_client_object_on(srv, "index_status", "{}", &is_error);
+        hyp_mcp_server_free(srv);
+        yyjson_val *memory =
+            seen && !is_error ? yyjson_obj_get(yyjson_doc_get_root(seen), "memory") : NULL;
+        yyjson_val *status = memory ? yyjson_obj_get(memory, "status") : NULL;
+        const char *word = status && yyjson_is_str(status) ? yyjson_get_str(status) : NULL;
+        yyjson_val *missing = memory ? yyjson_obj_get(memory, "missing") : NULL;
+        yyjson_val *ids = memory ? yyjson_obj_get(memory, "missing_ids") : NULL;
+        bool named_a = false;
+        bool named_b = false;
+        if (ids && yyjson_is_arr(ids)) {
+            size_t index = 0U;
+            size_t max = 0U;
+            yyjson_val *id = NULL;
+            yyjson_arr_foreach(ids, index, max, id) {
+                const char *s = yyjson_is_str(id) ? yyjson_get_str(id) : NULL;
+                named_a = named_a || (s && strcmp(s, id_a) == 0);
+                named_b = named_b || (s && strcmp(s, id_b) == 0);
+            }
         }
+        if (!memory) {
+            failure = "no memory block on a configured server";
+        } else if (!word || strcmp(word, "incomplete") != 0) {
+            failure = "records are missing and memory.status is not \"incomplete\"";
+        } else if (!missing || yyjson_get_uint(missing) != 2U) {
+            failure = "two upstream records are absent locally and `missing` is not 2 — either "
+                      "the difference is wrong or the local-only record was counted, which "
+                      "would be a lag reading of a set";
+        } else if (!ids || !yyjson_is_arr(ids) || yyjson_arr_size(ids) != 2U || !named_a ||
+                   !named_b) {
+            failure = "`missing` counts 2 and missing_ids does not name exactly those two — "
+                      "a count without the names is a number nobody can act on";
+        } else if (yyjson_obj_get(memory, "missing_ids_withheld")) {
+            failure = "nothing was withheld and missing_ids_withheld is present — a "
+                      "truncation disclosure must say NOTHING when nothing was held back";
+        }
+        yyjson_doc_free(seen);
+    }
+    hyp_record_set_free(local);
+    hyp_record_set_free(upstream);
+    surface_cache_end(&fx);
+    if (!seeded) {
+        FAIL("could not build the record sets");
+    }
+    if (failure) {
+        FAIL(failure);
+    }
+    PASS();
+}
+
+/* ── 4g · §4 F3: two freshnesses, SIBLINGS, on a real project ──────────
+ *
+ * With a project resolved the answer carries BOTH `code` and `memory`, never
+ * merged into one verdict and neither derived from the other — and the
+ * pre-F3 top-level keys stay present, because index_status is a live tool
+ * and this change is additions only. */
+TEST(tool_surface_index_status_reports_two_freshnesses_separately) {
+    surface_cache_fixture_t fx;
+    if (!surface_cache_begin(&fx)) {
+        FAIL("could not create a fresh cache");
+    }
+    const char *project = "f3-freshness-probe";
+    char db_path[512];
+    snprintf(db_path, sizeof(db_path), "%s/%s.db", fx.dir, project);
+    hyp_store_t *setup = hyp_store_open_path(db_path);
+    bool seeded =
+        setup && hyp_store_upsert_project(setup, project, "/tmp/f3-freshness-probe") ==
+                     HYP_STORE_OK;
+    if (setup) {
+        hyp_store_close(setup);
+    }
+    hyp_record_set_t *local = hyp_record_set_create();
+    hyp_record_set_t *upstream = hyp_record_set_create();
+    const hyp_record_t *theirs = surface_record("upstream-only decision");
+    seeded = seeded && local && upstream && theirs &&
+             hyp_record_set_add(upstream, theirs, NULL) == HYP_RECORD_OK;
+    hyp_record_free(theirs);
+
+    const char *failure = NULL;
+    if (seeded) {
+        char arguments[256];
+        snprintf(arguments, sizeof(arguments), "{\"project\":\"%s\"}", project);
+        hyp_mcp_server_t *srv = hyp_mcp_server_new(NULL);
+        hyp_mcp_server_set_memory_store(srv, local);
+        hyp_mcp_server_set_memory_upstream(srv, "test-feed", surface_upstream_borrow, upstream);
+        bool is_error = false;
+        yyjson_doc *seen = surface_client_object_on(srv, "index_status", arguments, &is_error);
+        hyp_mcp_server_free(srv);
+        yyjson_val *root = seen && !is_error ? yyjson_doc_get_root(seen) : NULL;
+        yyjson_val *code = root ? yyjson_obj_get(root, "code") : NULL;
+        yyjson_val *memory = root ? yyjson_obj_get(root, "memory") : NULL;
+        yyjson_val *top_status = root ? yyjson_obj_get(root, "status") : NULL;
+        yyjson_val *code_status = code ? yyjson_obj_get(code, "status") : NULL;
+        yyjson_val *mem_status = memory ? yyjson_obj_get(memory, "status") : NULL;
+        const char *top = top_status && yyjson_is_str(top_status) ? yyjson_get_str(top_status)
+                                                                  : NULL;
+        const char *code_word =
+            code_status && yyjson_is_str(code_status) ? yyjson_get_str(code_status) : NULL;
+        const char *mem_word =
+            mem_status && yyjson_is_str(mem_status) ? yyjson_get_str(mem_status) : NULL;
+        if (!root) {
+            failure = "index_status did not answer on a seeded project";
+        } else if (!top || !yyjson_obj_get(root, "project") ||
+                   !yyjson_obj_get(root, "nodes") || !yyjson_obj_get(root, "edges")) {
+            failure = "a pre-F3 top-level key is gone — index_status is LIVE and this change "
+                      "is additions only";
+        } else if (!code || !memory) {
+            failure = "the two freshnesses are not both present as siblings";
+        } else if (!code_word || strcmp(code_word, top) != 0) {
+            failure = "code.status does not restate the top-level status it exists to restate";
+        } else if (!yyjson_obj_get(code, "indexed_at")) {
+            failure = "the project row carries indexed_at and code does not report it";
+        } else if (!mem_word || strcmp(mem_word, "incomplete") != 0 ||
+                   !yyjson_obj_get(memory, "missing")) {
+            failure = "code is fresh while memory is missing a record, and the answer does not "
+                      "say BOTH — the case F3 exists for: an agent must not read code-current "
+                      "as memory-current";
+        }
+        yyjson_doc_free(seen);
+    }
+    hyp_record_set_free(local);
+    hyp_record_set_free(upstream);
+    surface_cache_end(&fx);
+    if (!seeded) {
+        FAIL("could not seed the project and record sets");
+    }
+    if (failure) {
+        FAIL(failure);
     }
     PASS();
 }
@@ -747,7 +1154,12 @@ SUITE(tool_surface) {
     RUN_TEST(tool_surface_both_ends_advertise_exactly_the_same_live_tools);
     RUN_TEST(tool_surface_reserved_rows_are_invisible_and_fail_closed);
     RUN_TEST(tool_surface_declared_output_schemas_reach_the_client);
-    RUN_TEST(tool_surface_index_status_no_project_answer_is_unreachable_today);
+    RUN_TEST(tool_surface_index_status_no_project_answer_reaches_the_client);
+    RUN_TEST(tool_surface_index_status_memory_absent_without_a_record_store);
+    RUN_TEST(tool_surface_index_status_memory_unknown_when_upstream_unreadable);
+    RUN_TEST(tool_surface_index_status_memory_missing_zero_when_sets_equal);
+    RUN_TEST(tool_surface_index_status_memory_missing_counts_and_names_the_ids);
+    RUN_TEST(tool_surface_index_status_reports_two_freshnesses_separately);
     RUN_TEST(tool_surface_every_advertised_tool_dispatches);
     RUN_TEST(tool_surface_declared_aliases_dispatch_and_are_never_advertised);
     RUN_TEST(tool_surface_every_advertised_tool_carries_complete_annotations);

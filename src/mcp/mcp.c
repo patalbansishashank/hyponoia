@@ -39,11 +39,18 @@ enum {
     MCP_TOOLS_PAGE_SIZE = 8,
     MCP_HELP_TOOLS_WRAP_COL = 74, /* --help tool list stays readable on 80-col terminals */
     MCP_MAX_CROSS_REPO_TARGETS = 4096,
+    /* §4 F3: index_status names the missing memory records. The names are the
+     * point — "40 missing" with no ids is a number nobody can act on — but a
+     * status answer must not become a context bomb, so the list is capped and
+     * the withheld remainder is DISCLOSED (§3.3: a truncated answer says what
+     * was withheld; it says nothing when nothing was). */
+    MCP_MEMORY_MISSING_IDS_MAX = 64,
 };
 #define MCP_MS_TO_US 1000LL
 #define MCP_S_TO_US 1000000LL
 
 #define SLEN(s) (sizeof(s) - 1)
+#include "foundation/record.h"
 #include "mcp/mcp.h"
 #include "mcp/mcp_internal.h"
 #include "mcp/tool_surface.h"
@@ -2031,6 +2038,14 @@ struct hyp_mcp_server {
     int64_t active_request_id;       /* JSON-RPC id of the in-progress tool call */
     char *active_request_id_str;     /* string JSON-RPC id of the in-progress tool call */
     hyp_mcp_tool_profile_t tool_profile;
+
+    /* §4 F3: the memory freshness seam (see mcp.h). All borrowed except the
+     * feed name; NULL local set means no record store is configured and the
+     * `memory` block is ABSENT from index_status entirely. */
+    const hyp_record_set_t *memory_local;
+    hyp_mcp_memory_upstream_fn memory_upstream;
+    void *memory_upstream_ctx;
+    char *memory_feed; /* heap; adapter name the answer discloses */
 };
 
 hyp_mcp_server_t *hyp_mcp_server_new(const char *store_path) {
@@ -2202,8 +2217,28 @@ void hyp_mcp_server_free(hyp_mcp_server_t *srv) {
     free(srv->current_project);
     free(srv->allowed_root);
     free(srv->active_request_id_str);
+    free(srv->memory_feed);
     hyp_mutex_destroy(&srv->request_scope_mutex);
     free(srv);
+}
+
+/* ── §4 F3: memory freshness seam (contract in mcp.h) ─────────── */
+
+void hyp_mcp_server_set_memory_store(hyp_mcp_server_t *srv, const hyp_record_set_t *local) {
+    if (srv) {
+        srv->memory_local = local;
+    }
+}
+
+void hyp_mcp_server_set_memory_upstream(hyp_mcp_server_t *srv, const char *feed,
+                                        hyp_mcp_memory_upstream_fn read_upstream, void *context) {
+    if (!srv) {
+        return;
+    }
+    free(srv->memory_feed);
+    srv->memory_feed = feed ? heap_strdup(feed) : NULL;
+    srv->memory_upstream = read_upstream;
+    srv->memory_upstream_ctx = read_upstream ? context : NULL;
 }
 
 /* ── Idle store eviction ──────────────────────────────────────── */
@@ -6986,9 +7021,126 @@ static char *handle_check_index_coverage(hyp_mcp_server_t *srv, const char *args
     return result;
 }
 
+/* ── §4 F3: two freshnesses, reported separately ──────────────────────
+ *
+ * index_status answers "your code is current" and "your memory is missing N
+ * records" as SIBLING objects, never merged into one verdict: they are
+ * independent axes, and a record count moves for reasons the code index never
+ * sees. The full shape and the absent-vs-zero rule live in tool_surface.h
+ * beside the outputSchema; the seam that feeds the memory half lives in mcp.h.
+ */
+
+static void iso8601_utc_now(char *buf, size_t sz) {
+    time_t t = time(NULL);
+    struct tm tm_utc;
+    if (!hyp_gmtime_r(&t, &tm_utc)) {
+        buf[0] = '\0';
+        return;
+    }
+    (void)strftime(buf, sz, "%Y-%m-%dT%H:%M:%SZ",
+                   &tm_utc); // cert-err33-c: only fails if the buffer is too small — the 21-byte
+                             // ISO timestamp always fits in caller-provided buffers
+}
+
+/* The `memory` sibling. Adds NOTHING when no record store is configured:
+ * absent means "look elsewhere", and emitting anything here — a 0, an empty
+ * object — would convert "could not check" into a confident answer. The
+ * comparison is a set difference, never a lag: the store is an id-keyed set
+ * with no order to be "behind" in, so the field is `missing` — records the
+ * upstream set holds that the local one does not. Digest compare first (the
+ * free yes/no), then an id walk for the count plus the names. */
+static void add_memory_freshness(hyp_mcp_server_t *srv, yyjson_mut_doc *doc, yyjson_mut_val *root) {
+    if (!srv || !srv->memory_local) {
+        return; /* no record store configured — `memory` ABSENT entirely */
+    }
+    yyjson_mut_val *memory = yyjson_mut_obj(doc);
+    if (srv->memory_feed) {
+        yyjson_mut_obj_add_strcpy(doc, memory, "feed", srv->memory_feed);
+    }
+    yyjson_mut_obj_add_uint(doc, memory, "records_local",
+                            (uint64_t)hyp_record_set_count(srv->memory_local));
+
+    const hyp_record_set_t *upstream =
+        srv->memory_upstream ? srv->memory_upstream(srv->memory_upstream_ctx) : NULL;
+    if (!upstream) {
+        /* No provider configured (the shipped state until C6u lands sync), or
+         * the provider could not read the upstream set. Either way the honest
+         * answer is the same: status "unknown" with `missing` and
+         * `records_upstream` ABSENT — never 0. "missing: 0" emitted when
+         * nobody could reach the feed is the exact confident wrong answer F3
+         * exists to prevent: an agent told it is current stops checking. */
+        yyjson_mut_obj_add_str(doc, memory, "status", "unknown");
+        yyjson_mut_obj_add_val(doc, root, "memory", memory);
+        return;
+    }
+
+    /* The upstream set was READ, so every count below is a checked fact and
+     * `missing: 0` means exactly "checked, and nothing is missing". */
+    char local_digest[HYP_RECORD_ID_LEN + 1];
+    char upstream_digest[HYP_RECORD_ID_LEN + 1];
+    hyp_record_set_digest(srv->memory_local, local_digest);
+    hyp_record_set_digest(upstream, upstream_digest);
+
+    size_t missing = 0U;
+    yyjson_mut_val *missing_ids = yyjson_mut_arr(doc);
+    if (strcmp(local_digest, upstream_digest) != 0) {
+        /* Digests differ: walk the upstream ids for the exact count and the
+         * names. Records only THIS side holds are deliberately not counted —
+         * they are writes a push has not delivered yet, not staleness here,
+         * and a union has no ordering that could call them anything else. */
+        size_t upstream_count = hyp_record_set_count(upstream);
+        for (size_t i = 0U; i < upstream_count; i++) {
+            const hyp_record_t *rec = hyp_record_set_at(upstream, i);
+            if (!rec || hyp_record_set_get(srv->memory_local, rec->id)) {
+                continue;
+            }
+            if (missing < (size_t)MCP_MEMORY_MISSING_IDS_MAX) {
+                yyjson_mut_arr_add_strcpy(doc, missing_ids, rec->id);
+            }
+            missing++;
+        }
+    }
+    yyjson_mut_obj_add_str(doc, memory, "status", missing > 0U ? "incomplete" : "current");
+    yyjson_mut_obj_add_uint(doc, memory, "records_upstream",
+                            (uint64_t)hyp_record_set_count(upstream));
+    yyjson_mut_obj_add_uint(doc, memory, "missing", (uint64_t)missing);
+    yyjson_mut_obj_add_val(doc, memory, "missing_ids", missing_ids);
+    if (missing > (size_t)MCP_MEMORY_MISSING_IDS_MAX) {
+        yyjson_mut_obj_add_uint(doc, memory, "missing_ids_withheld",
+                                (uint64_t)(missing - (size_t)MCP_MEMORY_MISSING_IDS_MAX));
+    }
+    char checked_at[32];
+    iso8601_utc_now(checked_at, sizeof(checked_at));
+    if (checked_at[0]) {
+        yyjson_mut_obj_add_strcpy(doc, memory, "checked_at", checked_at);
+    }
+    yyjson_mut_obj_add_val(doc, root, "memory", memory);
+}
+
 static char *handle_index_status(hyp_mcp_server_t *srv, const char *args) {
     project_choice_t choice;
     char *project = resolve_project_arg(srv, args, &choice);
+    if (!project) {
+        /* THE PHASE 0 DEAD BRANCH, MADE LIVE. The structured no_project answer
+         * below shipped dead: it needed store != NULL with project == NULL,
+         * and resolve_store returns NULL the moment project is NULL, so
+         * REQUIRE_STORE answered isError prose first, every time — an agent in
+         * an unindexed directory got an error where the tool documents a
+         * status. Answer BEFORE touching the store: "no project could be
+         * resolved" is not an error and not an empty project. The `memory`
+         * sibling still applies — records are global and their freshness does
+         * not depend on a project resolving. */
+        yyjson_mut_doc *doc = yyjson_mut_doc_new(NULL);
+        yyjson_mut_val *root = yyjson_mut_obj(doc);
+        yyjson_mut_doc_set_root(doc, root);
+        yyjson_mut_obj_add_str(doc, root, "status", "no_project");
+        add_memory_freshness(srv, doc, root);
+        char *json = yy_doc_to_str(doc);
+        yyjson_mut_doc_free(doc);
+        char *result = hyp_mcp_text_result(json, false);
+        free(json);
+        return result;
+    }
     hyp_store_t *store = resolve_store(srv, project);
     REQUIRE_STORE(store, project);
     /* The git context block (worktree/shadow path variants) only matters when
@@ -7000,34 +7152,45 @@ static char *handle_index_status(hyp_mcp_server_t *srv, const char *args) {
     yyjson_mut_val *root = yyjson_mut_obj(doc);
     yyjson_mut_doc_set_root(doc, root);
 
-    if (project) {
-        int nodes = hyp_store_count_nodes(store, project);
-        int edges = hyp_store_count_edges(store, project);
-        yyjson_mut_obj_add_str(doc, root, "project", project);
-        add_project_source_json(doc, root, &choice);
-        yyjson_mut_obj_add_int(doc, root, "nodes", nodes);
-        yyjson_mut_obj_add_int(doc, root, "edges", edges);
-        yyjson_mut_obj_add_str(doc, root, "status", nodes > 0 ? "ready" : "empty");
-        hyp_project_t proj_info = {0};
-        if (hyp_store_get_project(store, project, &proj_info) == HYP_STORE_OK) {
-            yyjson_mut_obj_add_strcpy(doc, root, "root_path",
-                                      proj_info.root_path ? proj_info.root_path : "");
-            if (verbose) {
-                add_git_context_json(doc, root, proj_info.root_path);
-            }
-            safe_str_free(&proj_info.name);
-            safe_str_free(&proj_info.indexed_at);
-            safe_str_free(&proj_info.root_path);
+    int nodes = hyp_store_count_nodes(store, project);
+    int edges = hyp_store_count_edges(store, project);
+    yyjson_mut_obj_add_str(doc, root, "project", project);
+    add_project_source_json(doc, root, &choice);
+    yyjson_mut_obj_add_int(doc, root, "nodes", nodes);
+    yyjson_mut_obj_add_int(doc, root, "edges", edges);
+    yyjson_mut_obj_add_str(doc, root, "status", nodes > 0 ? "ready" : "empty");
+    /* §4 F3: the same code-freshness answer, restated under its own `code` key
+     * as the sibling of `memory`. The top-level keys above are the shipped
+     * surface and stay byte-identical — this ADDS a key, renames nothing.
+     * `files_behind` is deliberately not emitted: it is not computed here, and
+     * a key must not appear until something computes it (absent = "not
+     * computed", which no invented value may impersonate). */
+    yyjson_mut_val *code = yyjson_mut_obj(doc);
+    yyjson_mut_obj_add_str(doc, code, "status", nodes > 0 ? "ready" : "empty");
+    hyp_project_t proj_info = {0};
+    if (hyp_store_get_project(store, project, &proj_info) == HYP_STORE_OK) {
+        yyjson_mut_obj_add_strcpy(doc, root, "root_path",
+                                  proj_info.root_path ? proj_info.root_path : "");
+        if (verbose) {
+            add_git_context_json(doc, root, proj_info.root_path);
         }
-        add_coverage_report(doc, root, store, project);
-        if (nodes == 0) {
-            yyjson_mut_obj_add_str(
-                doc, root, "hint",
-                "Project is empty. Re-run index_repository(repo_path=...) to populate.");
+        if (proj_info.indexed_at && proj_info.indexed_at[0]) {
+            yyjson_mut_obj_add_strcpy(doc, code, "indexed_at", proj_info.indexed_at);
         }
-    } else {
-        yyjson_mut_obj_add_str(doc, root, "status", "no_project");
+        safe_str_free(&proj_info.name);
+        safe_str_free(&proj_info.indexed_at);
+        safe_str_free(&proj_info.root_path);
     }
+    yyjson_mut_obj_add_int(doc, code, "nodes", nodes);
+    yyjson_mut_obj_add_int(doc, code, "edges", edges);
+    add_coverage_report(doc, root, store, project);
+    if (nodes == 0) {
+        yyjson_mut_obj_add_str(
+            doc, root, "hint",
+            "Project is empty. Re-run index_repository(repo_path=...) to populate.");
+    }
+    yyjson_mut_obj_add_val(doc, root, "code", code);
+    add_memory_freshness(srv, doc, root);
 
     char *json = yy_doc_to_str(doc);
     yyjson_mut_doc_free(doc);
