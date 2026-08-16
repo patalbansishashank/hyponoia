@@ -343,8 +343,7 @@ SQLITE_WRITER_SRC = $(HYP_DIR)/sqlite_writer.c
 # (NEXT-STEPS.md §2.1). It shares no code with the static token vectors.
 # record_store.c is the durable id-keyed set under the C2 record contract
 # (§4 C1u/C2u) — not a log; see src/store/record_store.h.
-STORE_SRCS = src/store/store.c src/store/ask_index.c src/store/record_store.c
-STORE_SRCS = src/store/store.c src/store/workspace_resolve.c src/store/ask_index.c
+STORE_SRCS = src/store/store.c src/store/workspace_resolve.c src/store/ask_index.c src/store/record_store.c
 
 # Cypher module (new)
 CYPHER_SRCS = src/cypher/cypher.c
@@ -1473,11 +1472,8 @@ SYSROOT = $(shell xcrun --show-sdk-path 2>/dev/null)
 SYSROOT_FLAG = $(if $(SYSROOT),-isysroot $(SYSROOT),)
 
 # Our source files (excluding vendored, grammars, tree-sitter runtime)
-LINT_SRCS = $(FOUNDATION_SRCS) $(STORE_SRCS) $(CYPHER_SRCS) $(MCP_SRCS) $(DAEMON_SRCS) \
-            $(DISCOVER_SRCS) $(GRAPH_BUFFER_SRCS) $(PIPELINE_SRCS) $(MEMORY_SRCS) $(SIMHASH_SRCS) $(SEMANTIC_SRCS) \
 LINT_SRCS = $(FOUNDATION_SRCS) $(FEED_SRCS) $(STORE_SRCS) $(CYPHER_SRCS) $(MCP_SRCS) $(DAEMON_SRCS) \
-            $(DISCOVER_SRCS) $(GRAPH_BUFFER_SRCS) $(PIPELINE_SRCS) $(SIMHASH_SRCS) $(SEMANTIC_SRCS) \
-            $(TRACES_SRCS) $(WATCHER_SRCS) $(CLI_SRCS) $(EXTRACTION_SRCS) $(AC_LZ4_SRCS) \
+            $(DISCOVER_SRCS) $(GRAPH_BUFFER_SRCS) $(PIPELINE_SRCS) $(MEMORY_SRCS) $(SIMHASH_SRCS) $(SEMANTIC_SRCS) \
             $(TRACES_SRCS) $(WATCHER_SRCS) $(INGEST_SRCS) $(CLI_SRCS) $(EXTRACTION_SRCS) $(AC_LZ4_SRCS) \
             $(ZSTD_SRCS) $(SQLITE_WRITER_SRC) $(MAIN_SRC)
 LINT_HDRS = $(wildcard src/**/*.h src/*.h $(HYP_DIR)/*.h)
