@@ -8160,8 +8160,17 @@ void hyp_adr_sections_free(hyp_adr_sections_t *s) {
 }
 
 int hyp_store_adr_store(hyp_store_t *s, const char *project, const char *content) {
-    char now[HYP_SZ_32];
-    iso_now(now, sizeof(now));
+    return hyp_store_adr_store_at(s, project, content, NULL);
+}
+
+int hyp_store_adr_store_at(hyp_store_t *s, const char *project, const char *content,
+                           const char *updated_at) {
+    char captured[HYP_SZ_32];
+    if (!updated_at || !updated_at[0]) {
+        iso_now(captured, sizeof(captured));
+        updated_at = captured;
+    }
+    const char *now = updated_at;
 
     const char *sql =
         "INSERT INTO project_summaries (project, summary, source_hash, created_at, updated_at) "
@@ -8275,6 +8284,88 @@ int hyp_store_adr_delete(hyp_store_t *s, const char *project) {
         return HYP_STORE_NOT_FOUND;
     }
     return HYP_STORE_OK;
+}
+
+int hyp_store_adr_list_projects(hyp_store_t *s, char ***out, int *count) {
+    if (!s || !s->db || !out || !count) {
+        return HYP_STORE_ERR;
+    }
+    *out = NULL;
+    *count = 0;
+
+    /* A generation predating the ADR table simply holds no documents. Absent
+     * is an answer here, not a read failure. */
+    sqlite3_stmt *probe = NULL;
+    if (sqlite3_prepare_v2(
+            s->db,
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='project_summaries' LIMIT 1;",
+            HYP_NOT_FOUND, &probe, NULL) != SQLITE_OK) {
+        store_set_error_sqlite(s, "adr_list_projects table probe");
+        return HYP_STORE_ERR;
+    }
+    int probe_rc = sqlite3_step(probe);
+    sqlite3_finalize(probe);
+    if (probe_rc == SQLITE_DONE) {
+        return HYP_STORE_OK;
+    }
+    if (probe_rc != SQLITE_ROW) {
+        store_set_error_sqlite(s, "adr_list_projects table probe step");
+        return HYP_STORE_ERR;
+    }
+
+    sqlite3_stmt *stmt = NULL;
+    if (sqlite3_prepare_v2(s->db, "SELECT project FROM project_summaries ORDER BY project ASC;",
+                           HYP_NOT_FOUND, &stmt, NULL) != SQLITE_OK) {
+        store_set_error_sqlite(s, "adr_list_projects");
+        return HYP_STORE_ERR;
+    }
+
+    int cap = 0;
+    char **names = NULL;
+    int n = 0;
+    int rc = HYP_STORE_OK;
+    while (sqlite3_step(stmt) == SQLITE_ROW) {
+        const char *name = (const char *)sqlite3_column_text(stmt, 0);
+        if (!name) {
+            continue;
+        }
+        if (n == cap) {
+            int next_cap = cap ? cap * 2 : HYP_SZ_8;
+            char **grown = realloc(names, (size_t)next_cap * sizeof(*names));
+            if (!grown) {
+                rc = HYP_STORE_ERR;
+                break;
+            }
+            names = grown;
+            cap = next_cap;
+        }
+        names[n] = heap_strdup(name);
+        if (!names[n]) {
+            rc = HYP_STORE_ERR;
+            break;
+        }
+        n++;
+    }
+    sqlite3_finalize(stmt);
+
+    if (rc != HYP_STORE_OK) {
+        hyp_store_adr_free_project_list(names, n);
+        store_set_error(s, "adr_list_projects: out of memory");
+        return rc;
+    }
+    *out = names;
+    *count = n;
+    return HYP_STORE_OK;
+}
+
+void hyp_store_adr_free_project_list(char **list, int count) {
+    if (!list) {
+        return;
+    }
+    for (int i = 0; i < count; i++) {
+        free(list[i]);
+    }
+    free(list);
 }
 
 int hyp_store_adr_update_sections(hyp_store_t *s, const char *project, const char **keys,
