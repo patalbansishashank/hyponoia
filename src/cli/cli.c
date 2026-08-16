@@ -21,6 +21,7 @@
 #include "foundation/platform.h"
 #include "foundation/constants.h"
 #include "foundation/log.h"
+#include "foundation/scrub.h"
 #include "foundation/sha256.h"
 #include "cli/client_adapter.h"
 #include "cli/integration_assets.h"
@@ -6465,9 +6466,11 @@ int hyp_config_get_int(hyp_config_t *cfg, const char *key, int default_val) {
  * guard-rail, not a proof — an all-uppercase key would still pass — so it is
  * paired with the documentation rather than replacing it. */
 static bool config_looks_like_a_secret(const char *s) {
-    static const char *const VENDOR_PREFIXES[] = {"sk-", "pa-", "jina_", "AIza", "sk_", "voy-"};
-    for (size_t i = 0; i < sizeof(VENDOR_PREFIXES) / sizeof(VENDOR_PREFIXES[0]); i++) {
-        if (strncmp(s, VENDOR_PREFIXES[i], strlen(VENDOR_PREFIXES[i])) == 0) {
+    /* The vendor prefix table lives in foundation/scrub.c — one table shared
+     * by this guard, the transcript scrub (D2), and the pre-push history
+     * scanner, so a prefix added there is enforced here with no second list. */
+    for (size_t i = 0; i < hyp_vendor_prefix_count; i++) {
+        if (strncmp(s, hyp_vendor_prefixes[i], strlen(hyp_vendor_prefixes[i])) == 0) {
             return true;
         }
     }

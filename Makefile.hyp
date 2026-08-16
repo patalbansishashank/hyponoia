@@ -265,6 +265,7 @@ FOUNDATION_SRCS = \
     src/foundation/sha256.c \
     src/foundation/record.c \
     src/foundation/record_clock.c \
+    src/foundation/scrub.c \
     src/foundation/secure_random.c \
     src/foundation/macos_acl.c \
     src/foundation/private_file_lock.c \
@@ -733,6 +734,7 @@ TEST_FOUNDATION_SUITE_SRCS = \
     tests/test_dyn_array.c \
     tests/test_str_intern.c \
     tests/test_record.c \
+    tests/test_scrub.c \
     tests/test_log.c \
     tests/test_str_util.c \
     tests/test_workspace.c \
