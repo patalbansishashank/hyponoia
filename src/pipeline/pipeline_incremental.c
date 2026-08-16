@@ -1463,10 +1463,10 @@ static int run_postpasses(hyp_pipeline_ctx_t *ctx, hyp_file_info_t *changed_file
 }
 /* Publish the test-only legacy partial result through the same atomic
  * generation boundary as full indexing. */
-static int dump_and_persist(hyp_gbuf_t *gbuf, const char *db_path, const char *project,
-                            atomic_int *cancelled, const hyp_file_hash_t *manifest,
-                            int manifest_count, const char *adr_content, const char *repo_path,
-                            const hyp_coverage_row_t *cov, int cov_count,
+static int dump_and_persist(hyp_gbuf_t *gbuf, const char *db_path, const char *previous_db_path,
+                            const char *project, atomic_int *cancelled,
+                            const hyp_file_hash_t *manifest, int manifest_count,
+                            const char *repo_path, const hyp_coverage_row_t *cov, int cov_count,
                             const hyp_coverage_meta_t *meta_template,
                             const hyp_lsp_surface_row_t *surface_rows, int surface_row_count) {
     struct timespec t;
@@ -1474,11 +1474,11 @@ static int dump_and_persist(hyp_gbuf_t *gbuf, const char *db_path, const char *p
     hyp_pipeline_generation_t generation = {
         .gbuf = gbuf,
         .final_db_path = db_path,
+        .previous_db_path = previous_db_path,
         .project = project,
         .cancelled = cancelled,
         .manifest = manifest,
         .manifest_count = manifest_count,
-        .adr_content = adr_content,
         .coverage = cov,
         .coverage_count = cov_count,
         .coverage_meta = meta_template ? *meta_template : (hyp_coverage_meta_t){0},
@@ -2280,7 +2280,10 @@ static int run_closure_delta(hyp_pipeline_t *p, const char *db_path, const char 
             .cancelled = hyp_pipeline_cancelled_ptr(p),
             .manifest = manifest,
             .manifest_count = manifest_count,
-            .adr_content = NULL, /* the clone already carries the ADR rows */
+            /* The clone IS the previous generation, so there is nothing to
+             * carry into it and carrying from itself would be a no-op with a
+             * transaction attached. */
+            .previous_db_path = NULL,
             .coverage = cov,
             .coverage_count = cov_n,
             .coverage_meta =
@@ -2571,42 +2574,6 @@ int hyp_pipeline_run_incremental(hyp_pipeline_t *p, const char *db_path, hyp_fil
         return HYP_NOT_FOUND;
     }
 
-    char *saved_adr = NULL;
-    hyp_adr_t existing_adr = {0};
-    int adr_rc = hyp_store_adr_get(store, project, &existing_adr);
-    if (adr_rc == HYP_STORE_OK) {
-        bool had_adr_content = existing_adr.content != NULL;
-        if (had_adr_content) {
-            saved_adr = strdup(existing_adr.content);
-        }
-        hyp_store_adr_free(&existing_adr);
-        if (had_adr_content && !saved_adr) {
-            hyp_gbuf_free(existing);
-            free(changed_files);
-            for (int i = 0; i < deleted_count; i++) {
-                free(deleted[i]);
-            }
-            free(deleted);
-            free_mode_skipped(mode_skipped, mode_skipped_count);
-            hyp_store_free_coverage(old_cov, old_cov_count);
-            hyp_store_close(store);
-            closure_plan_free(&closure_plan);
-            return HYP_PIPELINE_ABORT_PRESERVE_DB;
-        }
-    } else if (adr_rc != HYP_STORE_NOT_FOUND) {
-        hyp_store_adr_free(&existing_adr);
-        hyp_gbuf_free(existing);
-        free(changed_files);
-        for (int i = 0; i < deleted_count; i++) {
-            free(deleted[i]);
-        }
-        free(deleted);
-        free_mode_skipped(mode_skipped, mode_skipped_count);
-        hyp_store_free_coverage(old_cov, old_cov_count);
-        hyp_store_close(store);
-        closure_plan_free(&closure_plan);
-        return HYP_PIPELINE_ABORT_PRESERVE_DB;
-    }
 
     hyp_store_close(store);
 
@@ -2727,7 +2694,6 @@ int hyp_pipeline_run_incremental(hyp_pipeline_t *p, const char *db_path, hyp_fil
         incr_free_edge_capture(&edge_cap);
         hyp_store_free_coverage(old_cov, old_cov_count);
         free_mode_skipped(mode_skipped, mode_skipped_count);
-        free(saved_adr);
         hyp_gbuf_free(existing);
         return HYP_PIPELINE_ABORT_PRESERVE_DB;
     }
@@ -2819,7 +2785,6 @@ int hyp_pipeline_run_incremental(hyp_pipeline_t *p, const char *db_path, hyp_fil
         free(cov);
         hyp_store_free_coverage(old_cov, old_cov_count);
         free_mode_skipped(mode_skipped, mode_skipped_count);
-        free(saved_adr);
         hyp_gbuf_free(existing);
         return HYP_PIPELINE_ABORT_PRESERVE_DB;
     }
@@ -2847,11 +2812,11 @@ int hyp_pipeline_run_incremental(hyp_pipeline_t *p, const char *db_path, hyp_fil
      * re-parsed files have no codec output, and publishing a stale row
      * would satisfy a future closure plan with yesterday's surface; an
      * empty table just routes the next incremental to a full rebuild. */
-    int persist_rc = dump_and_persist(
-        existing, db_path, project, hyp_pipeline_cancelled_ptr(p), manifest, manifest_count,
-        saved_adr, hyp_pipeline_repo_path(p), cov, cov_n, &coverage_meta, NULL, 0);
+    int persist_rc = dump_and_persist(existing, db_path, hyp_pipeline_live_db_path(p), project,
+                                      hyp_pipeline_cancelled_ptr(p), manifest, manifest_count,
+                                      hyp_pipeline_repo_path(p), cov, cov_n, &coverage_meta, NULL,
+                                      0);
     hyp_pipeline_free_semantic_manifest(manifest, manifest_count);
-    free(saved_adr);
     free(cov);
     hyp_store_free_coverage(old_cov, old_cov_count);
     free_mode_skipped(mode_skipped, mode_skipped_count);

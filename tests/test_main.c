@@ -655,6 +655,7 @@ extern void suite_fqn_differential(void);
 extern void suite_identity(void);
 extern void suite_anchor(void);
 extern void suite_workspace_resolve(void);
+extern void suite_generation_carry(void);
 extern void suite_route_canon(void);
 extern void suite_path_alias(void);
 extern void suite_watcher(void);
@@ -958,6 +959,7 @@ int main(int argc, char **argv) {
     RUN_SELECTED_SUITE(identity);
     RUN_SELECTED_SUITE(anchor);
     RUN_SELECTED_SUITE(workspace_resolve);
+    RUN_SELECTED_SUITE(generation_carry);
     RUN_SELECTED_SUITE(route_canon);
     RUN_SELECTED_SUITE(path_alias);
 

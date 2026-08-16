@@ -343,7 +343,7 @@ SQLITE_WRITER_SRC = $(HYP_DIR)/sqlite_writer.c
 # (NEXT-STEPS.md §2.1). It shares no code with the static token vectors.
 # record_store.c is the durable id-keyed set under the C2 record contract
 # (§4 C1u/C2u) — not a log; see src/store/record_store.h.
-STORE_SRCS = src/store/store.c src/store/workspace_resolve.c src/store/ask_index.c src/store/record_store.c
+STORE_SRCS = src/store/store.c src/store/workspace_resolve.c src/store/ask_index.c src/store/record_store.c src/store/generation_carry.c
 
 # Cypher module (new)
 CYPHER_SRCS = src/cypher/cypher.c
@@ -784,6 +784,7 @@ TEST_EXTRACTION_SRCS = \
 
 TEST_STORE_SRCS = \
     tests/test_workspace_resolve.c \
+    tests/test_generation_carry.c \
     tests/test_store_nodes.c \
     tests/test_store_edges.c \
     tests/test_store_search.c \

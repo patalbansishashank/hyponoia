@@ -2948,7 +2948,6 @@ TEST(pipeline_publication_never_uses_a_predictable_staging_path) {
         .cancelled = NULL,
         .manifest = NULL,
         .manifest_count = 0,
-        .adr_content = NULL,
         .coverage = NULL,
         .coverage_count = 0,
     };
@@ -3670,10 +3669,10 @@ TEST(pipeline_incremental_successful_publication_preserves_adr) {
     PASS();
 }
 
-/* A forced-full rebuild must never erase an ADR merely because the old
- * generation could not be read completely. The capture is part of the
- * publication transaction: failure preserves both graph and ADR. */
-TEST(pipeline_full_adr_capture_failure_preserves_previous_generation) {
+/* A forced-full rebuild must never erase durable state merely because the old
+ * generation could not be carried across. The carry is part of the publication
+ * transaction: failure preserves both graph and ADR. */
+TEST(pipeline_full_carry_forward_failure_preserves_previous_generation) {
     char tmp[256];
     snprintf(tmp, sizeof(tmp), "/tmp/hyp_publish_adr_capture_XXXXXX");
     ASSERT_NOT_NULL(hyp_mkdtemp(tmp));
@@ -3696,7 +3695,7 @@ TEST(pipeline_full_adr_capture_failure_preserves_previous_generation) {
     hyp_store_close(adr_store);
 
     write_temp_file(tmp, "generation.py", "def AfterAdrCapture():\n    return 2\n");
-    hyp_pipeline_incremental_test_fail_adr_capture_once();
+    hyp_pipeline_incremental_test_fail_carry_forward_once();
     hyp_pipeline_t *faulted = hyp_pipeline_new(tmp, db_path, HYP_MODE_FULL);
     ASSERT_NOT_NULL(faulted);
     int faulted_rc = hyp_pipeline_run(faulted);
@@ -11923,7 +11922,7 @@ SUITE(pipeline_semantic_manifest_repro) {
     RUN_TEST(pipeline_full_persist_failure_after_stage_dump_preserves_previous_generation);
     RUN_TEST(pipeline_incremental_persist_failure_preserves_previous_generation_and_retries);
     RUN_TEST(pipeline_incremental_successful_publication_preserves_adr);
-    RUN_TEST(pipeline_full_adr_capture_failure_preserves_previous_generation);
+    RUN_TEST(pipeline_full_carry_forward_failure_preserves_previous_generation);
     RUN_TEST(pipeline_semantic_manifest_rejects_non_directory_root);
     RUN_TEST(pipeline_full_reindex_quarantines_corrupt_destination_without_overwrite);
     RUN_TEST(pipeline_full_reindex_replaces_legacy_schema_without_quarantine);
