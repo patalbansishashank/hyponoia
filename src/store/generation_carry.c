@@ -22,6 +22,7 @@
 #include "store/store.h" /* hyp_store_coverage_shadow_project */
 
 #include <sqlite3.h>
+#include <stdarg.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -185,11 +186,22 @@ const char *hyp_generation_class_name(hyp_table_class_t klass) {
 
 /* ── Reading the schema ──────────────────────────────────────────── */
 
-static void gc_fail(char *err, size_t err_sz, const char *fmt, const char *a, const char *b) {
+/* Variadic with the printf attribute rather than two forwarded const char *:
+ * a fixed pair means every format is handed two arguments whatever its
+ * placeholders say, so a message with no %s silently swallows the detail a
+ * caller passed and the refusal reports less than it was told. Here -Wformat
+ * makes that a compile error instead. */
+static void gc_fail(char *err, size_t err_sz, const char *fmt, ...)
+    __attribute__((format(printf, 3, 4)));
+
+static void gc_fail(char *err, size_t err_sz, const char *fmt, ...) {
     if (!err || err_sz == 0) {
         return;
     }
-    snprintf(err, err_sz, fmt, a ? a : "", b ? b : "");
+    va_list ap;
+    va_start(ap, fmt);
+    vsnprintf(err, err_sz, fmt, ap);
+    va_end(ap);
 }
 
 /* Every table in `schema` that is independent state: SQLite's own tables and
@@ -572,7 +584,7 @@ int hyp_generation_carry_forward(const char *dest_db_path, const char *prev_db_p
         err[0] = '\0';
     }
     if (!dest_db_path || !rebuilt_project) {
-        gc_fail(err, err_sz, "carry forward called without a destination or a project", NULL, NULL);
+        gc_fail(err, err_sz, "carry forward called without a destination or a project");
         return HYP_GEN_CARRY_ERR;
     }
     /* No previous generation is not a failure — a first index has nothing to
@@ -586,7 +598,7 @@ int hyp_generation_carry_forward(const char *dest_db_path, const char *prev_db_p
     {
         hyp_store_t *seed = hyp_store_open_path(dest_db_path);
         if (!seed) {
-            gc_fail(err, err_sz, "cannot prepare the staging schema", NULL, NULL);
+            gc_fail(err, err_sz, "cannot prepare the staging schema");
             return HYP_GEN_CARRY_ERR;
         }
         hyp_store_close(seed);
@@ -594,7 +606,7 @@ int hyp_generation_carry_forward(const char *dest_db_path, const char *prev_db_p
 
     char prev_uri[HYP_SZ_4K];
     if (!gc_read_only_uri(prev_db_path, prev_uri, sizeof(prev_uri))) {
-        gc_fail(err, err_sz, "previous generation path is too long to read", NULL, NULL);
+        gc_fail(err, err_sz, "previous generation path is too long to read");
         return HYP_GEN_CARRY_ERR;
     }
 
@@ -603,7 +615,7 @@ int hyp_generation_carry_forward(const char *dest_db_path, const char *prev_db_p
      * rather than taken for a filename. */
     if (sqlite3_open_v2(dest_db_path, &db, SQLITE_OPEN_READWRITE | SQLITE_OPEN_URI, NULL) !=
         SQLITE_OK) {
-        gc_fail(err, err_sz, "cannot open the staging generation: %s", sqlite3_errmsg(db), NULL);
+        gc_fail(err, err_sz, "cannot open the staging generation: %s", sqlite3_errmsg(db));
         sqlite3_close(db);
         return HYP_GEN_CARRY_ERR;
     }
@@ -611,7 +623,7 @@ int hyp_generation_carry_forward(const char *dest_db_path, const char *prev_db_p
     int rc = HYP_GEN_CARRY_OK;
     sqlite3_stmt *att = NULL;
     if (sqlite3_prepare_v2(db, "ATTACH DATABASE ?1 AS prev;", -1, &att, NULL) != SQLITE_OK) {
-        gc_fail(err, err_sz, "cannot attach the previous generation: %s", sqlite3_errmsg(db), NULL);
+        gc_fail(err, err_sz, "cannot attach the previous generation: %s", sqlite3_errmsg(db));
         sqlite3_close(db);
         return HYP_GEN_CARRY_ERR;
     }
@@ -619,7 +631,7 @@ int hyp_generation_carry_forward(const char *dest_db_path, const char *prev_db_p
     bool attached = sqlite3_step(att) == SQLITE_DONE;
     int attach_code = sqlite3_errcode(db);
     if (!attached) {
-        gc_fail(err, err_sz, "cannot attach the previous generation: %s", sqlite3_errmsg(db), NULL);
+        gc_fail(err, err_sz, "cannot attach the previous generation: %s", sqlite3_errmsg(db));
         sqlite3_finalize(att);
         sqlite3_close(db);
         if (attach_code == SQLITE_NOTADB) {
@@ -652,7 +664,7 @@ int hyp_generation_carry_forward(const char *dest_db_path, const char *prev_db_p
             sqlite3_close(db);
             return HYP_GEN_CARRY_OK;
         }
-        gc_fail(err, err_sz, "cannot read the previous generation: %s", sqlite3_errmsg(db), NULL);
+        gc_fail(err, err_sz, "cannot read the previous generation: %s", sqlite3_errmsg(db));
         (void)sqlite3_exec(db, "DETACH DATABASE prev;", NULL, NULL, NULL);
         sqlite3_close(db);
         return HYP_GEN_CARRY_ERR;
@@ -668,13 +680,13 @@ int hyp_generation_carry_forward(const char *dest_db_path, const char *prev_db_p
     int unknown_prev = gc_collect_unclassified(db, false, unknown, sizeof(unknown), &used);
     int unknown_dest = gc_collect_unclassified(db, true, unknown, sizeof(unknown), &used);
     if (unknown_prev < 0 || unknown_dest < 0) {
-        gc_fail(err, err_sz, "cannot read the schema: %s", sqlite3_errmsg(db), NULL);
+        gc_fail(err, err_sz, "cannot read the schema: %s", sqlite3_errmsg(db));
         rc = HYP_GEN_CARRY_ERR;
     } else if (unknown_prev + unknown_dest > 0) {
         gc_fail(err, err_sz,
                 "publication cannot judge whether these tables are derived, so it refuses "
                 "rather than guess: %s",
-                unknown, NULL);
+                unknown);
         rc = HYP_GEN_CARRY_UNCLASSIFIED;
     }
 
@@ -683,7 +695,7 @@ int hyp_generation_carry_forward(const char *dest_db_path, const char *prev_db_p
 
     if (rc == HYP_GEN_CARRY_OK &&
         sqlite3_exec(db, "BEGIN IMMEDIATE;", NULL, NULL, NULL) != SQLITE_OK) {
-        gc_fail(err, err_sz, "cannot begin the carry: %s", sqlite3_errmsg(db), NULL);
+        gc_fail(err, err_sz, "cannot begin the carry: %s", sqlite3_errmsg(db));
         rc = HYP_GEN_CARRY_ERR;
     } else if (rc == HYP_GEN_CARRY_OK) {
         for (size_t i = 0; i < sizeof(GC_POLICY) / sizeof(GC_POLICY[0]); i++) {
@@ -697,7 +709,7 @@ int hyp_generation_carry_forward(const char *dest_db_path, const char *prev_db_p
         }
         if (rc == HYP_GEN_CARRY_OK) {
             if (sqlite3_exec(db, "COMMIT;", NULL, NULL, NULL) != SQLITE_OK) {
-                gc_fail(err, err_sz, "cannot commit the carry: %s", sqlite3_errmsg(db), NULL);
+                gc_fail(err, err_sz, "cannot commit the carry: %s", sqlite3_errmsg(db));
                 rc = HYP_GEN_CARRY_ERR;
             }
         } else {
