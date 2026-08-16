@@ -159,9 +159,13 @@ TEST(record_id_golden_vector) {
  * would hold one id and two payloads with no way out but picking one. Picking
  * one is last-writer-wins, which this contract does not have.
  *
- * tests/test_record_contract.sh derives the field list from record.h and fails
- * if any field lacks its marker below, so a tenth field cannot be added without
- * a control that proves the id notices it.
+ * tests/test_record_contract.sh derives the field list from record.h and reads
+ * the controls below OUT OF THIS FUNCTION'S BODY, comments stripped: a field
+ * counts as controlled only when some block here perturbs exactly that field,
+ * derives an id, and asserts the id moved. So a tenth field cannot be added
+ * without a control, and a control cannot be deleted by leaving its comment
+ * behind — which is what the marker-comment version of that check permitted.
+ * The `id-sensitivity:` comments are for a reader; they satisfy nothing.
  */
 TEST(record_id_commits_to_every_field) {
     hyp_record_input_t base = base_input();
@@ -855,8 +859,31 @@ TEST(merge_is_commutative) {
     ASSERT_TRUE(fill(a2, side_a, 3));
     ASSERT_TRUE(fill(b2, side_b, 2));
 
+    /* ABSOLUTE, BEFORE ANYTHING IS COMPARED. Every assertion below this point
+     * compares one product of the set implementation against another product of
+     * the same implementation, and two such values agree perfectly when the sets
+     * are both EMPTY. Against an add that silently does nothing, the digests
+     * still match, the counts still match, and the loop over them runs zero
+     * times — the flagship evidence for I9 passes while the union does not
+     * exist. Pin what the sets actually hold first, by id, so the comparison
+     * afterwards is evidence about a union rather than about a vacuum. */
+    ASSERT_EQ(hyp_record_set_count(a1), 3);
+    ASSERT_EQ(hyp_record_set_count(b1), 2);
+    ASSERT_EQ(hyp_record_set_count(a2), 3);
+    ASSERT_EQ(hyp_record_set_count(b2), 2);
+
     ASSERT_EQ(hyp_record_set_merge(a1, b1), HYP_RECORD_OK); /* A then B */
     ASSERT_EQ(hyp_record_set_merge(b2, a2), HYP_RECORD_OK); /* B then A */
+
+    /* {1,2,3} ∪ {3,4} is four records — named, not counted, so a merge that
+     * produced four of the wrong things would still fail here. */
+    const hyp_record_t *all[] = {r1, r2, r3, r4};
+    ASSERT_EQ(hyp_record_set_count(a1), 4);
+    ASSERT_EQ(hyp_record_set_count(b2), 4);
+    for (size_t i = 0; i < sizeof(all) / sizeof(all[0]); i++) {
+        ASSERT_NOT_NULL(hyp_record_set_get(a1, all[i]->id));
+        ASSERT_NOT_NULL(hyp_record_set_get(b2, all[i]->id));
+    }
 
     ASSERT_EQ(hyp_record_set_count(a1), hyp_record_set_count(b2));
 
@@ -949,18 +976,39 @@ TEST(merge_with_an_empty_set_is_identity) {
     ASSERT_NOT_NULL(empty);
     ASSERT_EQ(hyp_record_set_add(a, r1, NULL), HYP_RECORD_OK);
 
+    /* Both directions below assert that two digests AGREE, and the cheapest way
+     * to make two digests agree is for both sets to be empty. So: state what is
+     * in each set absolutely, and prove in this test that the digest can tell
+     * "one record" from "no records" at all — otherwise "identity" is satisfied
+     * by an add that never happened. */
+    ASSERT_EQ(hyp_record_set_count(a), 1);
+    ASSERT_EQ(hyp_record_set_count(empty), 0);
+    ASSERT_NOT_NULL(hyp_record_set_get(a, r1->id));
+
     char before[HYP_RECORD_ID_LEN + 1];
+    char nothing[HYP_RECORD_ID_LEN + 1];
     hyp_record_set_digest(a, before);
+    hyp_record_set_digest(empty, nothing);
+    ASSERT_STR_NEQ(before, nothing);
 
     ASSERT_EQ(hyp_record_set_merge(a, empty), HYP_RECORD_OK);
     char after[HYP_RECORD_ID_LEN + 1];
     hyp_record_set_digest(a, after);
     ASSERT_STR_EQ(after, before);
+    ASSERT_EQ(hyp_record_set_count(a), 1);
+    ASSERT_NOT_NULL(hyp_record_set_get(a, r1->id));
+    ASSERT_TRUE(hyp_record_equal(hyp_record_set_at(a, 0), r1));
 
     ASSERT_EQ(hyp_record_set_merge(empty, a), HYP_RECORD_OK);
     char filled[HYP_RECORD_ID_LEN + 1];
     hyp_record_set_digest(empty, filled);
     ASSERT_STR_EQ(filled, before);
+    /* The receiving side really received it: absorbing nothing would leave the
+     * empty set empty, and `filled == before` would still hold if `before` were
+     * itself the digest of nothing. */
+    ASSERT_EQ(hyp_record_set_count(empty), 1);
+    ASSERT_NOT_NULL(hyp_record_set_get(empty, r1->id));
+    ASSERT_TRUE(hyp_record_equal(hyp_record_set_at(empty, 0), r1));
 
     hyp_record_free(r1);
     hyp_record_set_free(a);

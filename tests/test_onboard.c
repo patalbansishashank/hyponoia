@@ -195,7 +195,12 @@ static void ob_cache_end(ob_cache_t *c) {
 
 /* ── Fixture repo ────────────────────────────────────────────────── */
 
-/* Two functions whose span text the answer test reproduces byte for byte. */
+/* alpha's span, written ONCE and used to build the fixture file, so the text
+ * the indexer sees and the text this file calls "alpha's span" cannot drift
+ * apart. The B4 answer test asks a question that is the JSON escaping of this
+ * — the one spelling that cannot be shared, since a JSON string literal is not
+ * a C one — and it asserts a cosine above 0.99 on the top row, which is the
+ * assertion that fails loudly if the two ever stop matching. */
 #define OB_FIXTURE_ALPHA "int alpha(void) {\n    return 1;\n}"
 
 static char *ob_fixture_repo(void) {
@@ -205,12 +210,10 @@ static char *ob_fixture_repo(void) {
         return NULL;
     }
     if (th_write_file(TH_PATH(dir, "src/x.c"),
-                      "int alpha(void) {\n"
-                      "    return 1;\n"
-                      "}\n"
-                      "int beta(void) {\n"
-                      "    return 2;\n"
-                      "}\n") != 0 ||
+                      OB_FIXTURE_ALPHA "\n"
+                                       "int beta(void) {\n"
+                                       "    return 2;\n"
+                                       "}\n") != 0 ||
         th_write_file(TH_PATH(dir, "src/y.c"), "int gamma(void) {\n    return 3;\n}\n") != 0) {
         th_cleanup(dir);
         free(dir);
@@ -644,10 +647,28 @@ TEST(onboard_resolve_zero_config_is_the_workspace_of_one) {
     ASSERT_STR_EQ(r.encoder, "local-nano");
     ASSERT_STR_EQ(r.device, "cpu");
     ASSERT_FALSE(r.shared_feeds);
-    /* C1: the workspace id of a workspace of one is the repo's own slug. */
+    /* C1: the workspace id of a workspace of one is the repo's own slug.
+     *
+     * Compared against hyp_project_name_from_path, which is the function the
+     * resolver itself calls — so on its own this line only says the two agree,
+     * and a deriver returning "" for everything satisfies it. Two absolute
+     * facts about the id go with it: it is non-empty, and it DISTINGUISHES.
+     * A workspace id that is the same string for two different repositories is
+     * A6's disjoint-address-space failure with the sign flipped — one address
+     * space where there should be two — and the union merges that silently. */
     char *slug = hyp_project_name_from_path(dir);
     ASSERT_NOT_NULL(slug);
+    ASSERT_GT((long long)strlen(slug), 0LL);
     ASSERT_STR_EQ(r.workspace, slug);
+
+    char *other = ob_fixture_repo();
+    ASSERT_NOT_NULL(other);
+    hyp_onboard_resolved_t r2;
+    ASSERT_EQ(hyp_onboard_resolve(other, &r2, err, sizeof(err)), 0);
+    ASSERT_STR_NEQ(r2.workspace, r.workspace);
+    th_cleanup(other);
+    free(other);
+
     free(slug);
     th_cleanup(dir);
     free(dir);
@@ -905,9 +926,23 @@ TEST(onboard_zero_config_indexes_and_answers) {
     ASSERT_GT(rep.embedded, 0);
     hyp_ask_embed_report_free(&rep);
 
-    /* 4 · The answer. The query backend shares the encoder's model id and
-     * hash, so a question byte-identical to alpha's span ranks alpha first —
-     * an exact expectation, not a vibe. */
+    /*
+     * 4 · The answer, and "answer" is a claim about RANK.
+     *
+     * The fixture holds three declarations, `limit` is 10, and `ask` applies no
+     * score threshold anywhere (mcp.c: "there is no score threshold in this
+     * tool"). So every span comes back on every call, in every ordering, and
+     * `strstr(text, "alpha")` is true of a reversed ranking, of a random score,
+     * and of a zero query vector alike. Presence proves the index was searched;
+     * it proves nothing about the answer, and this step is the one that claims
+     * `hyp` on a fresh repo can ANSWER.
+     *
+     * What makes the rank exact rather than a tendency: the document side and
+     * the query side share one axis hash, and hyp_ask_read_span_lines stops
+     * before the newline that ends the span, so alpha's indexed text is
+     * byte-identical to the question below. Cosine 1.0 for alpha, 0.0 for beta
+     * and gamma — the same construction test_ask.c uses to pin an order.
+     */
     ASSERT_EQ(hyp_ask_backend_install(&OB_BACKEND), 0);
     snprintf(args, sizeof(args),
              "{\"project\":\"%s\",\"limit\":10,"
@@ -920,7 +955,87 @@ TEST(onboard_zero_config_indexes_and_answers) {
     ASSERT_NOT_NULL(strstr(text, "available: true"));
     ASSERT_NOT_NULL(strstr(text, "alpha"));
     ASSERT_NOT_NULL(strstr(text, "src/x.c"));
+    /* Position, in the text an agent actually reads: the results table is
+     * emitted in rank order, so the first mention of each name follows the
+     * ranking. beta and gamma have to BE there for this to mean anything —
+     * an ordering over one row is not an ordering. */
+    const char *at_alpha = strstr(text, "alpha");
+    const char *at_beta = strstr(text, "beta");
+    const char *at_gamma = strstr(text, "gamma");
+    ASSERT_NOT_NULL(at_beta);
+    ASSERT_NOT_NULL(at_gamma);
+    ASSERT_LT((long long)(at_alpha - text), (long long)(at_beta - text));
+    ASSERT_LT((long long)(at_alpha - text), (long long)(at_gamma - text));
     free(text);
+    free(resp);
+
+    /* And the same question through the structured encoding, where rank is an
+     * ARRAY INDEX rather than a byte offset, and the score separation that
+     * produced it is readable. Column positions come from `cols`: the rows are
+     * column-ordered arrays, so an added column would silently shift an index
+     * written here by hand. */
+    snprintf(args, sizeof(args),
+             "{\"project\":\"%s\",\"limit\":10,\"format\":\"json\","
+             "\"include_source\":false,"
+             "\"question\":\"int alpha(void) {\\n    return 1;\\n}\"}",
+             r.workspace);
+    resp = hyp_mcp_handle_tool(srv, "ask", args);
+    ASSERT_NOT_NULL(resp);
+    char *jtext = ob_tool_text(resp);
+    ASSERT_NOT_NULL(jtext);
+    yyjson_doc *jdoc = yyjson_read(jtext, strlen(jtext), 0);
+    ASSERT_NOT_NULL(jdoc);
+    yyjson_val *jroot = yyjson_doc_get_root(jdoc);
+    ASSERT_NOT_NULL(jroot);
+    ASSERT_TRUE(yyjson_get_bool(yyjson_obj_get(jroot, "available")));
+
+    yyjson_val *cols = yyjson_obj_get(jroot, "cols");
+    ASSERT_NOT_NULL(cols);
+    int qn_col = -1;
+    int score_col = -1;
+    size_t ci = 0;
+    size_t cmax = 0;
+    yyjson_val *cv = NULL;
+    yyjson_arr_foreach(cols, ci, cmax, cv) {
+        const char *cname = yyjson_get_str(cv);
+        if (cname && strcmp(cname, "qn") == 0) {
+            qn_col = (int)ci;
+        } else if (cname && strcmp(cname, "score") == 0) {
+            score_col = (int)ci;
+        }
+    }
+    ASSERT_GTE(qn_col, 0);
+    ASSERT_GTE(score_col, 0);
+
+    yyjson_val *rows = yyjson_obj_get(jroot, "rows");
+    ASSERT_NOT_NULL(rows);
+    /* Three declarations were indexed and nothing filters them, so three rows
+     * is what a working lane returns. Pinned absolutely: a single-row answer
+     * would make every ordering assertion below vacuously true. */
+    ASSERT_EQ((long long)yyjson_arr_size(rows), 3);
+
+    yyjson_val *row0 = yyjson_arr_get(rows, 0);
+    ASSERT_NOT_NULL(row0);
+    const char *qn0 = yyjson_get_str(yyjson_arr_get(row0, (size_t)qn_col));
+    ASSERT_NOT_NULL(qn0);
+    ASSERT_NOT_NULL(strstr(qn0, "alpha"));
+    double s0 = yyjson_get_num(yyjson_arr_get(row0, (size_t)score_col));
+    /* The question IS alpha's span, so the top score is the exact cosine and
+     * not merely the largest of three numbers that happen to be equal. */
+    ASSERT_GT((long long)(s0 * 1000000.0), 990000LL);
+    for (size_t ri = 1; ri < yyjson_arr_size(rows); ri++) {
+        yyjson_val *row = yyjson_arr_get(rows, ri);
+        ASSERT_NOT_NULL(row);
+        const char *qn = yyjson_get_str(yyjson_arr_get(row, (size_t)qn_col));
+        ASSERT_NOT_NULL(qn);
+        ASSERT_NULL(strstr(qn, "alpha"));
+        double s = yyjson_get_num(yyjson_arr_get(row, (size_t)score_col));
+        /* Strictly below, so the order is a separation and not a tie the sort
+         * happened to break in our favour. */
+        ASSERT_LT((long long)(s * 1000000.0), (long long)(s0 * 1000000.0));
+    }
+    yyjson_doc_free(jdoc);
+    free(jtext);
     free(resp);
 
     hyp_ask_backend_install(NULL);
