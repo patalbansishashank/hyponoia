@@ -54,6 +54,16 @@
  *   ORPHANED          the QN is not in the index. When a hash was recorded,
  *                     the workspace is scanned for spans whose CURRENT content
  *                     hashes to it, and every one becomes a CANDIDATE.
+ *   AMBIGUOUS         the QN is in the index MORE THAN ONCE. The anchor names
+ *                     something real and names too much of it, which is a fact
+ *                     about the anchor and not a failure to classify — so it
+ *                     is a state of its own rather than an ERROR. Every
+ *                     colliding node is published as a candidate, they all
+ *                     share one address (that IS the collision), and nothing
+ *                     picks between them: handing back whichever row the index
+ *                     stepped first would report RESOLVED to a place the
+ *                     reader cannot audit, because the re-derived address
+ *                     compares equal either way.
  *   UNKNOWN_WORKSPACE the address names a workspace that matches none known.
  *                     A visible error NAMING the workspace, never an empty
  *                     result — empty would read as "nothing attached", which
@@ -145,13 +155,25 @@ typedef enum {
     HYP_ANCHOR_RESOLVED_EDITED,
     HYP_ANCHOR_ORPHANED,
     HYP_ANCHOR_UNKNOWN_WORKSPACE,
+    HYP_ANCHOR_AMBIGUOUS,
 } hyp_anchor_status_t;
 
 /* Stable, human-facing name. Never NULL, including for an unknown value. */
 const char *hyp_anchor_status_str(hyp_anchor_status_t status);
 
-/* One node whose CURRENT span content hashes to the anchor's recorded hash.
- * Evidence for C4u to present — never a re-attachment. */
+/* One node offered as evidence — never a re-attachment. Two states publish
+ * candidates, and the relation says which kind of evidence this is:
+ *
+ *   ORPHANED   a node whose CURRENT span content hashes to the anchor's
+ *              recorded hash at a DIFFERENT address: HYP_ADDR_REL_CONTENT_ONLY.
+ *   AMBIGUOUS  one of the nodes the anchor's own QN addresses. The address is
+ *              the anchor's, so the relation is the content comparison —
+ *              _SAME when that node still holds the recorded content, _EDITED
+ *              when it does not, _INVALID when there was nothing to compare or
+ *              the span could not be read.
+ *
+ * Presentation orders by address, then file, then line, so a collision whose
+ * candidates share one address still enumerates the same way twice. */
 typedef struct {
     char address[HYP_ADDR_MAX + 1]; /* the candidate's own canonical address */
     char qn[HYP_ADDR_QN_MAX + 1];
@@ -160,7 +182,7 @@ typedef struct {
     int start_line;
     int end_line;
     char label[64];          /* Function, Class, Module, … — presentation aid */
-    hyp_addr_rel_t relation; /* always HYP_ADDR_REL_CONTENT_ONLY */
+    hyp_addr_rel_t relation; /* see above — evidence, never a decision */
 } hyp_anchor_candidate_t;
 
 /* The classification, and everything observed while making it. */
@@ -183,16 +205,22 @@ typedef struct {
     hyp_addr_rel_t relation;
 
     /* ORPHANED with a recorded hash: every content-hash match in the
-     * workspace, sorted by address for deterministic presentation. NULL when
-     * none. Candidates are a FLOOR whenever scan_skipped > 0. */
+     * workspace. AMBIGUOUS: every node the QN addresses. Sorted for
+     * deterministic presentation. NULL when none.
+     *
+     * Two different claims share this one field and the reader must not
+     * conflate them: on ORPHANED without a recorded hash NOTHING WAS SCANNED,
+     * so an empty list means "look elsewhere"; with a recorded hash the scan
+     * ran, so an empty list means "there is nothing". Branch on
+     * anchor.has_hash. And the list is a FLOOR whenever scan_skipped > 0. */
     hyp_anchor_candidate_t *candidates;
     int candidate_count;
     /* Spans the scan could not read or address. Nonzero means the candidate
-     * list may be incomplete — C4u must disclose, not absorb. */
+     * list may be incomplete — a caller must disclose it, not absorb it. */
     int scan_skipped;
 
-    /* ERROR / UNKNOWN_WORKSPACE: what happened, naming names. Always
-     * non-empty for those two states. */
+    /* ERROR / UNKNOWN_WORKSPACE / AMBIGUOUS: what happened, naming names.
+     * Always non-empty for those three states. */
     char reason[512];
 } hyp_anchor_res_t;
 
