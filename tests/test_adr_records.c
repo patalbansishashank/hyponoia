@@ -148,6 +148,38 @@ TEST(adr_records_fold_maps_the_document_to_a_decision) {
     PASS();
 }
 
+/* ── 2b · A folded ADR is an ORDINARY record, carrying no marker ────────── */
+
+TEST(adr_records_folded_document_is_indistinguishable_from_any_other_record) {
+    /* The assertion row this unit carries says no new memory surface may
+     * depend on the deprecated tool. At the data layer that means a reader
+     * needs no ADR vocabulary to find a folded ADR: the record the fold
+     * produces must be byte-for-byte the record the plain contract produces
+     * from the same facts. A namespace prefix, a marker in the content, a
+     * synthetic anchor — any of them would make the memory surface learn what
+     * an ADR is in order to read one. */
+    hyp_record_input_t plain;
+    memset(&plain, 0, sizeof(plain));
+    plain.kind = HYP_RECORD_DECISION;
+    plain.author = HYP_ADR_RECORD_AUTHOR;
+    plain.timestamp_ms = ADR_T_2026;
+    plain.content = ADR_DOC_ONE;
+    plain.origin = "hyponoia";
+
+    const hyp_record_t *by_contract = NULL;
+    ASSERT_EQ(hyp_record_build(&plain, &by_contract), HYP_RECORD_OK);
+
+    const hyp_record_t *by_fold = NULL;
+    ASSERT_EQ(hyp_adr_record_build("hyponoia", ADR_DOC_ONE, ADR_T_2026, &by_fold), HYP_RECORD_OK);
+
+    ASSERT_TRUE(hyp_record_equal(by_contract, by_fold));
+    ASSERT_STR_EQ(by_contract->id, by_fold->id);
+
+    hyp_record_free(by_contract);
+    hyp_record_free(by_fold);
+    PASS();
+}
+
 /* ── 3 · ACCEPTANCE: folding twice yields one record set ────────────────── */
 
 TEST(adr_records_folding_twice_yields_one_record_set) {
@@ -480,6 +512,7 @@ TEST(adr_records_default_location_follows_the_cache_dir) {
 SUITE(adr_records) {
     RUN_TEST(adr_records_timestamp_encoding_is_an_exact_inverse);
     RUN_TEST(adr_records_fold_maps_the_document_to_a_decision);
+    RUN_TEST(adr_records_folded_document_is_indistinguishable_from_any_other_record);
     RUN_TEST(adr_records_folding_twice_yields_one_record_set);
     RUN_TEST(adr_records_two_machines_fold_to_the_same_records);
     RUN_TEST(adr_records_fold_covers_a_document_the_projects_table_forgot);

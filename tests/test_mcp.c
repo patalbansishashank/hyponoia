@@ -17,6 +17,7 @@
 #include <mcp/index_supervisor.h> /* spawn-count hook — #845 in-process guard */
 #include <mcp/mcp.h>
 #include <mcp/mcp_internal.h>
+#include <memory/adr_records.h>
 #include <pipeline/pipeline.h>
 #include <store/store.h>
 #include <watcher/watcher.h>
@@ -5061,10 +5062,48 @@ TEST(tool_manage_adr_get_with_existing_adr) {
     PASS();
 }
 
+/* An ADR update appends a record to the machine's decision store, so every
+ * test that performs one must point HYP_CACHE_DIR at a throwaway directory —
+ * a suite that writes into the real corpus is a suite with a side effect. */
+typedef struct {
+    char dir[HYP_SZ_256];
+    char *saved;
+    bool active;
+} adr_cache_scope_t;
+
+static bool adr_cache_scope_begin(adr_cache_scope_t *scope, const char *tag) {
+    memset(scope, 0, sizeof(*scope));
+    const char *made = th_mktempdir(tag);
+    if (!made) {
+        return false;
+    }
+    snprintf(scope->dir, sizeof(scope->dir), "%s", made);
+    const char *saved = getenv("HYP_CACHE_DIR");
+    scope->saved = saved ? hyp_strdup(saved) : NULL;
+    scope->active = hyp_setenv("HYP_CACHE_DIR", scope->dir, 1) == 0;
+    return scope->active;
+}
+
+static void adr_cache_scope_end(adr_cache_scope_t *scope) {
+    if (!scope->active) {
+        return;
+    }
+    restore_cache_dir(scope->saved);
+    free(scope->saved);
+    scope->saved = NULL;
+    (void)th_rmtree(scope->dir);
+    scope->active = false;
+}
+
 /* issue #256: manage_adr (MCP) and the UI /api/adr endpoints must share ONE
  * backend. A manage_adr(update) write must be readable via hyp_store_adr_get
- * (the exact API the UI's /api/adr GET uses). */
+ * (the exact API the UI's /api/adr GET uses). The backend they share is the
+ * append-only record set with that row as its projection, so the property the
+ * test was written for is the property still asserted. */
 TEST(tool_manage_adr_unified_backend_issue256) {
+    adr_cache_scope_t cache;
+    ASSERT_TRUE(adr_cache_scope_begin(&cache, "hyp_mcp_adr_unify"));
+
     hyp_mcp_server_t *srv = hyp_mcp_server_new(NULL);
     ASSERT_NOT_NULL(srv);
     hyp_store_t *st = hyp_mcp_server_store(srv);
@@ -5100,6 +5139,85 @@ TEST(tool_manage_adr_unified_backend_issue256) {
     free(resp);
 
     hyp_mcp_server_free(srv);
+    adr_cache_scope_end(&cache);
+    PASS();
+}
+
+/* The client's own view of what an update does. Two updates through the full
+ * JSON-RPC path leave TWO decision records — the superseded document is still
+ * there, where the UPSERT it replaced left one row and no way back — and the
+ * one field on the wire that described the old semantics describes the new
+ * ones. Everything else a client reads is byte-identical. */
+TEST(tool_manage_adr_update_keeps_the_document_it_supersedes) {
+    adr_cache_scope_t cache;
+    ASSERT_TRUE(adr_cache_scope_begin(&cache, "hyp_mcp_adr_append"));
+
+    hyp_mcp_server_t *srv = hyp_mcp_server_new(NULL);
+    ASSERT_NOT_NULL(srv);
+    hyp_store_t *st = hyp_mcp_server_store(srv);
+    ASSERT_NOT_NULL(st);
+    hyp_store_upsert_project(st, "adr-append", "/tmp/adr-append");
+    hyp_mcp_server_set_project(srv, "adr-append");
+
+    char *first = hyp_mcp_server_handle(
+        srv, "{\"jsonrpc\":\"2.0\",\"id\":130,\"method\":\"tools/call\","
+             "\"params\":{\"name\":\"manage_adr\",\"arguments\":{\"project\":\"adr-append\","
+             "\"mode\":\"update\",\"content\":\"## PURPOSE\\nThe first answer.\\n\"}}}");
+    ASSERT_NOT_NULL(first);
+    ASSERT_NOT_NULL(strstr(first, "updated"));
+    ASSERT_NULL(strstr(first, "\"isError\":true"));
+    /* The one client-visible byte change this unit makes: the field that
+     * announced a whole-document replacement announces an append instead,
+     * because the replacement is what stopped happening. */
+    ASSERT_TRUE(response_contains_json_fragment(first, "\"semantics\""));
+    ASSERT_TRUE(response_contains_json_fragment(first, "appended_decision_record"));
+    ASSERT_NULL(strstr(first, "whole_document_replaced"));
+    free(first);
+
+    /* A second update whose content differs. The mutable path would destroy
+     * the first document here. */
+    char *second = hyp_mcp_server_handle(
+        srv, "{\"jsonrpc\":\"2.0\",\"id\":131,\"method\":\"tools/call\","
+             "\"params\":{\"name\":\"manage_adr\",\"arguments\":{\"project\":\"adr-append\","
+             "\"mode\":\"update\",\"content\":\"## PURPOSE\\nThe second answer.\\n\"}}}");
+    ASSERT_NOT_NULL(second);
+    ASSERT_NOT_NULL(strstr(second, "updated"));
+    free(second);
+
+    /* mode:"get" answers with the current document, exactly as before. */
+    char *get = hyp_mcp_server_handle(
+        srv, "{\"jsonrpc\":\"2.0\",\"id\":132,\"method\":\"tools/call\","
+             "\"params\":{\"name\":\"manage_adr\",\"arguments\":{\"project\":\"adr-append\","
+             "\"mode\":\"get\"}}}");
+    ASSERT_NOT_NULL(get);
+    ASSERT_NOT_NULL(strstr(get, "The second answer."));
+    free(get);
+
+    /* And BOTH documents are in the record set, read back through the plain
+     * record store surface with no ADR vocabulary involved. */
+    hyp_record_store_t *records = NULL;
+    ASSERT_EQ(hyp_adr_records_open(NULL, &records), HYP_RECORD_STORE_OK);
+    hyp_record_store_query_t query;
+    memset(&query, 0, sizeof(query));
+    query.has_kind = true;
+    query.kind = HYP_RECORD_DECISION;
+    query.origin = "adr-append";
+    hyp_record_set_t *found = NULL;
+    ASSERT_EQ(hyp_record_store_query(records, &query, &found), HYP_RECORD_STORE_OK);
+    ASSERT_EQ(hyp_record_set_count(found), 2);
+    bool saw_first_document = false;
+    for (size_t i = 0; i < hyp_record_set_count(found); i++) {
+        const hyp_record_t *rec = hyp_record_set_at(found, i);
+        if (strstr(rec->content, "The first answer.")) {
+            saw_first_document = true;
+        }
+    }
+    ASSERT_TRUE(saw_first_document);
+    hyp_record_set_free(found);
+    hyp_record_store_close(records);
+
+    hyp_mcp_server_free(srv);
+    adr_cache_scope_end(&cache);
     PASS();
 }
 
@@ -5143,6 +5261,8 @@ TEST(tool_manage_adr_rejects_removed_sections_argument) {
 
 TEST(tool_manage_adr_mutation_guard_balances_success) {
     const char *project = "guard-adr-success";
+    adr_cache_scope_t cache;
+    ASSERT_TRUE(adr_cache_scope_begin(&cache, "hyp_mcp_adr_guard"));
     hyp_mcp_server_t *srv = hyp_mcp_server_new(NULL);
     ASSERT_NOT_NULL(srv);
     hyp_store_t *store = hyp_mcp_server_store(srv);
@@ -5166,6 +5286,7 @@ TEST(tool_manage_adr_mutation_guard_balances_success) {
     free(resp);
 
     hyp_mcp_server_free(srv);
+    adr_cache_scope_end(&cache);
     PASS();
 }
 
@@ -11126,6 +11247,7 @@ SUITE(mcp) {
     RUN_TEST(tool_manage_adr_no_project);
     RUN_TEST(tool_manage_adr_get_with_existing_adr);
     RUN_TEST(tool_manage_adr_unified_backend_issue256);
+    RUN_TEST(tool_manage_adr_update_keeps_the_document_it_supersedes);
     RUN_TEST(tool_manage_adr_rejects_removed_sections_argument);
     RUN_TEST(tool_index_repository_reports_store_backed_adr);
     RUN_TEST(tool_index_repository_resolves_root_path_from_project_name_issue1211);

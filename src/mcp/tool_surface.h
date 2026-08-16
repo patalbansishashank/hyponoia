@@ -397,18 +397,22 @@ typedef enum {
     /* keeps `project` REQUIRED, alone among the 14 tools that take it: a                          \
      * destructive tool does not infer its target. */                                              \
     X("delete_project", NULL, 0, 0, 0U, HYP_TOOL_LIVE, NULL, HYP_TOOL_ANN_DESTRUCTIVE)             \
-    /* DEPRECATED by §4's decision store, and live and unchanged on the wire                      \
-     * until Track C's C7u migrates it. `mode:"update"` REPLACES THE ENTIRE                        \
-     * DOCUMENT — mutable, last-writer-wins, which is precisely what §4's C2                    \
-     * forbids ("No mutation of records. Append-only is what makes sync a                          \
-     * union"). Shipping an append-only decision store beside a mutable one is                     \
-     * the CBMUIPK shape at the data layer: two stores of the same thing, each                     \
-     * correct on its own terms. C7u's shape: every existing ADR folds into the                    \
-     * append-only store as kind=decision records with `origin` = the ADR's                        \
-     * project id and a NULL anchor — they are decisions someone made, not                       \
-     * junk to drop — and manage_adr(mode=update) then becomes a thin writer                     \
-     * over record_memory until it is retired. No §4 surface may depend on this                   \
-     * row; test_tool_surface asserts that. */                                                     \
+    /* DEPRECATED by the append-only decision store, and live and unchanged on                     \
+     * the wire. `mode:"update"` writes THROUGH that store: the document becomes                   \
+     * a kind=decision record whose `origin` is the ADR's project id and whose                     \
+     * anchor is NULL, and the project_summaries row the UI and `mode:"get"`                       \
+     * read is refreshed from that record as a PROJECTION of it. What the row                      \
+     * no longer does is DESTROY the text it supersedes, which is what made it                     \
+     * a second, mutable, last-writer-wins store of the one thing the record                       \
+     * contract exists to keep — the same shape as two UI keys for one concept,                   \
+     * one level down at the data layer. Deprecation stays: no new memory                          \
+     * surface may depend on this row, and test_tool_surface asserts it from                       \
+     * both directions — no memory argument arrives here, no ADR vocabulary                       \
+     * leaves. src/memory/adr_records.h holds the fold and the attribution                         \
+     * argument. The annotation profile stays as it is even though `destructive`                   \
+     * reads pessimistically for a writer that destroys nothing: annotation                        \
+     * booleans are bytes a client branches on, and the unit that re-baselines                     \
+     * them is the one flipping a reserved row live, not this one. */                              \
     X("manage_adr", NULL, 0, 0, 0U, HYP_TOOL_DEPRECATED, NULL, HYP_TOOL_ANN_DOC_REPLACE)           \
     X("ingest_traces", NULL, 0, 0, 0U, HYP_TOOL_LIVE, NULL, HYP_TOOL_ANN_APPEND)                   \
                                                                                                    \

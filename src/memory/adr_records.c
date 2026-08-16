@@ -70,7 +70,7 @@ bool hyp_adr_timestamp_to_ms(const char *iso, int64_t *out_ms) {
     if (!iso || !out_ms) {
         return false;
     }
-    if (strlen(iso) != HYP_ADR_TIMESTAMP_LEN - 1) {
+    if (strlen(iso) != (size_t)(HYP_ADR_TIMESTAMP_LEN - 1)) {
         return false;
     }
     if (iso[4] != '-' || iso[7] != '-' || iso[10] != 'T' || iso[13] != ':' || iso[16] != ':' ||
@@ -110,7 +110,7 @@ bool hyp_adr_timestamp_to_ms(const char *iso, int64_t *out_ms) {
 }
 
 bool hyp_adr_timestamp_from_ms(int64_t ms, char *buf, size_t bufsz) {
-    if (!buf || bufsz < HYP_ADR_TIMESTAMP_LEN) {
+    if (!buf || bufsz < (size_t)HYP_ADR_TIMESTAMP_LEN) {
         return false;
     }
     if (ms < HYP_RECORD_MIN_TIMESTAMP_MS || ms > HYP_RECORD_MAX_TIMESTAMP_MS) {
