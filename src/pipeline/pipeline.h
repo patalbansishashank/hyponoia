@@ -87,6 +87,35 @@ bool hyp_pipeline_set_project_name(hyp_pipeline_t *p, const char *name);
 /* Get the index mode (HYP_MODE_FULL, HYP_MODE_MODERATE, HYP_MODE_FAST). */
 int hyp_pipeline_get_mode(const hyp_pipeline_t *p);
 
+/* ── Workspace membership (§4 Phase 1, unit A8) ─────────────────────
+ *
+ * Declare that this run indexes ONE member of a workspace containing
+ * `member_count` repositories. THE CALLER SUPPLIES IT; the pipeline never reads
+ * the workspace registry itself, and the reason is not layering taste — it is a
+ * cycle. The registry lives in the destination database, and a full run
+ * publishes by renaming a freshly built staging database OVER that destination,
+ * so the pipeline would have to read the registry out of the file it is about
+ * to replace. The caller has already run hyp_wsr_resolve() and therefore holds
+ * the member list; it passes the count in.
+ *
+ * THE CONTRACT, for whoever builds the multi-member index driver:
+ *   - Derive `member_count` from hyp_store_workspace_repos() (or the resolved
+ *     hyp_wsr_resolved_t.member_count), never from a hand-written list.
+ *   - Count the WHOLE workspace, including this member. A workspace of one
+ *     passes 1, which is the same as never calling this at all.
+ *   - Call it before hyp_pipeline_run().
+ *
+ * WHAT IT CHANGES: with a count above 1, the resolution passes record the two
+ * facts they otherwise drop on the floor — a callee that resolved to nothing in
+ * this member, and an import specifier that named no file in it — as
+ * workspace-scoped rendezvous nodes for hyp_workspace_calls_match() to resolve
+ * once every member is in one store. With 0 or 1 they record nothing and the
+ * graph is byte-identical to what it was before A8, which is deliberate:
+ * otherwise every printf() in every repository would mint a node.
+ *
+ * Values below 1 are stored as 0. */
+void hyp_pipeline_set_workspace_member_count(hyp_pipeline_t *p, int member_count);
+
 /* Get the list of directory subtrees skipped during discovery (#411).
  * *out receives a borrowed array of rel-path strings (owned by the pipeline,
  * valid until hyp_pipeline_free()); *count receives its length. Both are set
