@@ -500,18 +500,30 @@ static const tool_def_t TOOLS[] = {
      "ARRAY of keywords scored against a static per-token table. This takes ONE STRING and "
      "runs the model over whole declarations. "
      "RANKED, NEVER EXACT: there is no such thing as a guaranteed-correct ask result. Read "
-     "the top 2–3 and verify with get_code_snippet. "
+     "the top 2–3 candidates and verify. "
+     "ONE CALL: the answer CARRIES THE SOURCE for the top 2 candidates — verbatim lines, "
+     "capped at 40 lines / 1600 bytes each, in a fenced block after the rows — so a common-case "
+     "question does not need a second get_code_snippet round trip. A span that exceeds the cap "
+     "is marked CUT and NAMES ITS FULL RANGE; it is never silently shortened. Pass "
+     "include_source=false for coordinates only. "
      "AVAILABILITY: this lane reads a semantic index built by an OPT-IN second pass. Until "
      "that index exists the response is available=false with a reason and the exact remedy, "
      "and NO rows. That is not 'nothing matched' — ask never conflates the two, because "
      "'your codebase has no such code' is a claim about your code and 'the index is not "
      "built' is a claim about this tool. "
      "RESPONSE: available, then the disclosures (lane, query_encoder, index_encoder, model, "
-     "language, truncation, population), "
+     "language, language_source, truncation, population, whole_file_spans), "
      "then rows carrying qn/label/file/lines/score — the SAME span shape search_graph "
-     "returns, so an agent that can read one can read the other. A 'cut' column appears "
-     "only when the index reports truncated declarations. format=\"json\" returns cols plus "
-     "column-ordered row ARRAYS matching cols, never per-row key envelopes.",
+     "returns, so an agent that can read one can read the other — then the source block. "
+     "A 'cut' column appears only when the index reports truncated declarations. An 'exact' "
+     "column appears only when at least one row matched: exact=true means THE QUESTION SPELLS "
+     "THAT DECLARATION'S NAME (whole word, case-sensitive, or its Parent::name tail), which is "
+     "a fact about two strings and NOT a confidence — there is no score threshold anywhere in "
+     "this tool. exact=false is not evidence against a row, and the column's ABSENCE means no "
+     "row was spelled out in the question. format=\"json\" returns cols plus column-ordered "
+     "row ARRAYS matching cols, never per-row key envelopes, and the source block as a "
+     "'source' array of {rank,qn,file,lines,shown,truncated,text} — or {rank,qn,file,lines,"
+     "unavailable} for a span that could not be read.",
      "{\"type\":\"object\",\"properties\":{"
      "\"question\":{\"type\":\"string\",\"description\":\"ONE natural-language question as a "
      "plain string, e.g. \\\"how does the writer decide section ordering\\\". Not a keyword "
@@ -526,9 +538,19 @@ static const tool_def_t TOOLS[] = {
      "polyglot repo. Accepts an extension (\\\"cpp\\\", \\\"rs\\\", \\\"py\\\") or a display "
      "name (\\\"C++\\\", \\\"Rust\\\", \\\"Python\\\"); an unrecognised value is refused, never "
      "defaulted.\"},"
-     "\"limit\":{\"type\":\"integer\",\"default\":10,\"description\":\"Max ranked results. "
-     "Default 10: the lane is ranked, so the top few are the answer and the tail is noise. "
-     "Capped at 500. There is no offset — raise limit rather than page a ranking.\"},"
+     "\"limit\":{\"type\":\"integer\",\"default\":3,\"description\":\"Max ranked results. "
+     "Default 3: measured on the pinned corpus, rows 4-10 carried a fifth of the answers and "
+     "most of the bytes, so the tail is noise you pay for. Capped at 500 — raise it "
+     "deliberately for a survey. There is no offset: raise limit rather than page a ranking. "
+     "Only the top 2 rows ever carry source text, whatever limit is.\"},"
+     "\"include_source\":{\"type\":\"boolean\",\"default\":true,\"description\":\"Return the "
+     "VERBATIM SOURCE LINES of the top 2 candidates in the answer, capped at 40 lines / 1600 "
+     "bytes each and 3200 bytes in total. ON by default: the measured median was 5-6 turns "
+     "with a 0% one-shot rate, and the ask/get_code_snippet pair is the part of that this "
+     "removes for the common case. A span longer than the cap is marked CUT and names its "
+     "full line range so the rest is one get_code_snippet away — nothing is ever shortened "
+     "silently. Set false when you want coordinates only: a wide survey (limit=20+), or a "
+     "client that will read the files itself.\"},"
      "\"format\":{\"type\":\"string\",\"enum\":[\"tree\",\"json\"],\"default\":\"tree\","
      "\"description\":\"Response encoding. tree (default): compact text rows. json: cols + "
      "column-ordered row arrays (the SAME model, structured).\"},"
@@ -3886,12 +3908,62 @@ static char *handle_search_graph(hyp_mcp_server_t *srv, const char *args) {
  * either answers or errors; this one has a third outcome that is neither, and
  * getting it wrong is worse than getting the ranking wrong. See ask_emit_*. */
 
+/* ── The one-call answer (NEXT-STEPS.md §3.2 step 1) ─────────────────
+ *
+ * §3.1 measured this lane through a real client: 3,800 tool-result tokens per
+ * CORRECT answer against plain Read/Grep's 2,490, a 5-6 turn median and a
+ * ONE-SHOT RATE OF 0%. The profile the agents load tells them to read ask's top
+ * rows and verify with `get_code_snippet`, and that pair is a turn boundary the
+ * tool can remove by itself — so the answer below carries the source for the
+ * top candidates and stops at three rows instead of ten.
+ *
+ * EVERY CONSTANT HERE IS DERIVED FROM A MEASUREMENT ON THE PINNED CORPUS
+ * (~/ctxbench/repos/llvm/lld/ELF, the frozen 60 of runs/EMBED-SWAP), not
+ * chosen to make a number look good. The measurements, run with v0.3.1 at
+ * limit=10 over all 60 questions:
+ *
+ *   gold rank   1     2     3    4-5   6-10   never
+ *   questions   13    10    0     5      8      24
+ *
+ * ASK_SOURCE_ROWS = 2 because RANK 3 CARRIED NO GOLD AT ALL (0 of 60), while
+ * ranks 1-2 carry 23 of the 36 answers this lane finds. A third span would
+ * cost ~600 bytes on every question to buy nothing measurable here. The third
+ * ROW is still returned — a row is ~120 bytes and names a span the agent can
+ * fetch — it just does not carry text.
+ *
+ * ASK_SOURCE_SPAN_LINES_MAX / ASK_SOURCE_SPAN_BYTES_MAX are set so THE MEDIAN
+ * GOLD DECLARATION ARRIVES WHOLE: across the 75 gold spans the median is 37
+ * lines and 1,382 bytes (p75 71 lines / 2,793 bytes). 40 lines and 1,600 bytes
+ * clear both medians with a little room and cut the tail, which is the half of
+ * the distribution where a second call was going to happen anyway. A cut span
+ * NEVER goes out silently: it names its full range and the call that gets the
+ * rest.
+ *
+ * ASK_SOURCE_TOTAL_BYTES_MAX is the bound on the whole block, stated once so
+ * the answer's size is a fact rather than a consequence. It is a running pool,
+ * so raising ASK_SOURCE_ROWS later cannot quietly unbound the answer.
+ *
+ * ASK_DEFAULT_LIMIT drops 10 -> 3 for the same reason the table shows: rows
+ * 4-10 carry 13 of the 36 answers and cost ~900 bytes on EVERY question,
+ * answered or not. §3.1's harness put the same fact differently — top-3 55%
+ * local / 75% escalated against a top-10 of 68% / 85% — under its own gold-hit
+ * rule; the table above is this file's direct re-measurement and the two agree
+ * on the shape, which is all this constant needs. `limit` stays honourable to
+ * ASK_MAX_LIMIT for a caller that wants the tail. */
 enum {
-    ASK_DEFAULT_LIMIT = 10,
+    ASK_DEFAULT_LIMIT = 3,
     ASK_MAX_LIMIT = 500,
     ASK_QUESTION_MAX = 4096,
     ASK_MSG = HYP_SZ_1K,
     ASK_LANG_SAMPLE_MAX = 20000, /* distinct files sampled to derive the language */
+    ASK_SOURCE_ROWS = 2,
+    ASK_SOURCE_SPAN_LINES_MAX = 40,
+    ASK_SOURCE_SPAN_BYTES_MAX = 1600,
+    ASK_SOURCE_TOTAL_BYTES_MAX = 3200,
+    /* A one- or two-character declaration name matching a word in the question
+     * is a coincidence, not a naming. This is a floor on what "the question
+     * names it" can mean, NOT a confidence threshold — see ask_row_is_named. */
+    ASK_NAMED_MIN_LEN = 3,
 };
 
 /* Machine-readable reason tokens. Stable strings: a caller branches on these,
@@ -4060,8 +4132,9 @@ static HYPLanguage ask_derive_language(hyp_store_t *store, const char *project) 
 
 /* Column set. `cut` is present only when the index reports truncated rows —
  * a per-row flag that is always false costs every caller a column to learn
- * nothing, and the header declares the columns anyway. */
-static void ask_cols(const char *cols[], int *ncols, bool with_cut) {
+ * nothing, and the header declares the columns anyway. `exact` follows the
+ * same rule for the same reason. */
+static void ask_cols(const char *cols[], int *ncols, bool with_cut, bool with_exact) {
     int i = 0;
     cols[i++] = "qn";
     cols[i++] = "label";
@@ -4071,7 +4144,271 @@ static void ask_cols(const char *cols[], int *ncols, bool with_cut) {
     if (with_cut) {
         cols[i++] = "cut";
     }
+    if (with_exact) {
+        cols[i++] = "exact";
+    }
     *ncols = i;
+}
+
+/* ── The exactness marker ────────────────────────────────────────────
+ *
+ * §3.2 asks for "a marker for which candidate is exact rather than making the
+ * agent infer it from a score it has no calibration for". THIS IS NOT A
+ * CONFIDENCE. §2.4 closed score-margin gates by measurement — two corpora
+ * disagreed 3x on band width, so a constant fitted on one fires on every query
+ * of the other — and NEXT-STEPS repeats the prohibition. So the marker here is
+ * not derived from the scores at all.
+ *
+ * What it reports is A FACT ABOUT TWO STRINGS: the question spells this
+ * declaration's own name. That is computed identically on every corpus, has no
+ * tunable in it, and cannot drift. It says nothing more than it checks:
+ *
+ *   - true  — the declaration's bare name occurs in the question as a whole
+ *             word (case-sensitive), or the question contains its
+ *             `Parent::name` / `Parent.name` scoped tail.
+ *   - false — the question did not spell it. THIS IS NOT EVIDENCE AGAINST THE
+ *             ROW, and the whole column is omitted when no row matched, so a
+ *             caller never reads a wall of `false` as a wall of "no".
+ *
+ * MEASURED FIRE RATE, stated because it is the honest half: on the frozen 60
+ * (runs/EMBED-SWAP) this marker fires on 0 of 75 gold declarations. That set
+ * was CONSTRUCTED as a vocabulary-gap set — every question deliberately avoids
+ * the word the code uses — so it is the one corpus where an exact-name marker
+ * is guaranteed silent, and its silence there is a property of the query set,
+ * not of the marker. It stays because it costs nothing when it does not fire
+ * (no column, no prose) and because the alternative on offer was a fabricated
+ * confidence band. */
+#define ASK_EXACT_MARKER_TEXT                                                                      \
+    "exact=true means THE QUESTION SPELLS THIS DECLARATION'S NAME (whole word, case-sensitive, "   \
+    "or its Parent::name tail) — a fact about two strings, not a confidence and not a score. "     \
+    "exact=false means the question did not spell it, which is not evidence against the row. "     \
+    "The column is absent entirely when no row matched."
+
+static bool ask_ident_char(char c) {
+    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_';
+}
+
+/* `needle` occurs in `hay` bounded by non-identifier characters on both sides. */
+static bool ask_contains_whole_word(const char *hay, const char *needle) {
+    if (!hay || !needle || !needle[0]) {
+        return false;
+    }
+    size_t nlen = strlen(needle);
+    for (const char *p = strstr(hay, needle); p; p = strstr(p + 1, needle)) {
+        bool left_ok = (p == hay) || !ask_ident_char(p[-1]);
+        bool right_ok = !ask_ident_char(p[nlen]);
+        if (left_ok && right_ok) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static bool ask_row_is_named(const char *question, const hyp_ask_hit_t *hit) {
+    if (!question || !hit) {
+        return false;
+    }
+    const char *name = hit->name;
+    if (name && strlen(name) >= ASK_NAMED_MIN_LEN && ask_contains_whole_word(question, name)) {
+        return true;
+    }
+    /* The scoped tail, for a question that writes `ICF::run` rather than `run`.
+     * Built from the qualified name's last two segments — the separator the
+     * graph stores is '.', and a caller may have written either. */
+    const char *qn = hit->qualified_name;
+    if (!qn || !name || !name[0]) {
+        return false;
+    }
+    const char *last = strrchr(qn, '.');
+    if (!last || last == qn) {
+        return false;
+    }
+    const char *prev = last - 1;
+    while (prev > qn && prev[-1] != '.') {
+        prev--;
+    }
+    size_t parent_len = (size_t)(last - prev);
+    if (parent_len == 0 || parent_len > HYP_SZ_128) {
+        return false;
+    }
+    char scoped[HYP_SZ_256];
+    snprintf(scoped, sizeof(scoped), "%.*s::%s", (int)parent_len, prev, name);
+    if (strstr(question, scoped)) {
+        return true;
+    }
+    snprintf(scoped, sizeof(scoped), "%.*s.%s", (int)parent_len, prev, name);
+    return strstr(question, scoped) != NULL;
+}
+
+/* ── The span text ───────────────────────────────────────────────────
+ *
+ * One resolved span, capped. Read through hyp_ask_read_span — the SAME reader
+ * the embed pass used to build the text it encoded — so the lines an agent is
+ * handed are the lines that were ranked, rather than a second reader's idea of
+ * where line N starts. */
+typedef struct {
+    char *text;      /* NULL when nothing could be read; see `reason` */
+    const char *reason;
+    int shown_start; /* first line of `text` */
+    int shown_end;   /* last line of `text` */
+    int span_lines;  /* the declaration's full line count */
+    bool truncated;  /* `text` stops short of the declaration */
+} ask_span_text_t;
+
+/* utf8_is_cont and sanitize_utf8_lossy live with get_code_snippet, several
+ * thousand lines below; the span reader needs both. */
+static bool utf8_is_cont(unsigned char c);
+static char *sanitize_utf8_lossy(const char *s);
+
+/* Cap `text` (in place) at `budget` bytes on a LINE boundary, reporting how
+ * many lines survived. A single line longer than the budget is cut mid-line
+ * rather than dropped whole: a 4 KB one-liner is still worth its first 1.6 KB,
+ * and the caller marks it truncated either way. The cut lands on a UTF-8
+ * boundary so the answer is never invalid text. */
+static int ask_span_cap_bytes(char *text, size_t budget) {
+    size_t len = strlen(text);
+    int lines = 1;
+    if (len <= budget) {
+        for (size_t i = 0; i < len; i++) {
+            if (text[i] == '\n') {
+                lines++;
+            }
+        }
+        return lines;
+    }
+    size_t cut = 0;
+    lines = 0;
+    for (size_t i = 0; i < len && i < budget; i++) {
+        if (text[i] == '\n') {
+            cut = i;
+            lines++;
+        }
+    }
+    if (lines == 0) {
+        cut = budget;
+        while (cut > 0 && utf8_is_cont((unsigned char)text[cut])) {
+            cut--;
+        }
+        lines = 1;
+    }
+    text[cut] = '\0';
+    return lines;
+}
+
+static void ask_span_text_read(const char *root_path, const hyp_ask_hit_t *hit, size_t budget,
+                               ask_span_text_t *out) {
+    memset(out, 0, sizeof(*out));
+    out->span_lines = hit->start_line > 0 && hit->end_line >= hit->start_line
+                          ? hit->end_line - hit->start_line + 1
+                          : 0;
+    if (hit->start_line <= 0 || out->span_lines <= 0) {
+        out->reason = "the graph recorded no line range for this declaration";
+        return;
+    }
+    if (!root_path || !root_path[0]) {
+        out->reason = "this project has no root path recorded, so its files cannot be located";
+        return;
+    }
+    if (!hit->file_path || !hit->file_path[0]) {
+        out->reason = "the graph recorded no file for this declaration";
+        return;
+    }
+    size_t apsz = strlen(root_path) + strlen(hit->file_path) + MCP_SEPARATOR;
+    char *abs_path = malloc(apsz);
+    if (!abs_path) {
+        out->reason = "out of memory resolving the path";
+        return;
+    }
+    snprintf(abs_path, apsz, "%s/%s", root_path, hit->file_path);
+    /* Existence BEFORE containment, only so the reason is true. Containment
+     * canonicalises both sides, which fails on a path that is not there — and
+     * "outside the project root" is a security claim, not a staleness one.
+     * Reporting a deleted file as an escape attempt would be a lie in the
+     * direction that gets investigated. */
+    if (!hyp_file_exists(abs_path)) {
+        out->reason = "no file at the recorded path — the index is stale for this declaration";
+        free(abs_path);
+        return;
+    }
+    /* The same containment guard every other MCP file-read sink passes: an
+     * indexed path that resolves outside the project root (a `..` segment, or a
+     * symlink discovery followed) must not be read back into a response. */
+    if (!hyp_path_within_root(root_path, abs_path)) {
+        free(abs_path);
+        out->reason = "the recorded path resolves outside the project root and was not read";
+        return;
+    }
+
+    int want_end = hit->end_line;
+    if (out->span_lines > ASK_SOURCE_SPAN_LINES_MAX) {
+        want_end = hit->start_line + ASK_SOURCE_SPAN_LINES_MAX - 1;
+    }
+    char *raw = hyp_ask_read_span(abs_path, hit->start_line, want_end);
+    free(abs_path);
+    if (!raw) {
+        out->reason = "the file could not be read at the recorded path (moved, deleted, or the "
+                      "index is stale)";
+        return;
+    }
+    char *clean = sanitize_utf8_lossy(raw);
+    free(raw);
+    if (!clean) {
+        out->reason = "out of memory reading the span";
+        return;
+    }
+    int shown = ask_span_cap_bytes(clean, budget);
+    out->text = clean;
+    out->shown_start = hit->start_line;
+    out->shown_end = hit->start_line + shown - 1;
+    if (out->shown_end > hit->end_line) {
+        out->shown_end = hit->end_line;
+    }
+    out->truncated = out->shown_end < hit->end_line;
+}
+
+static void ask_span_text_free(ask_span_text_t *s) {
+    free(s->text);
+    s->text = NULL;
+}
+
+/* The fence a markdown-reading client can trust. CommonMark's own rule: a
+ * fence must be longer than any backtick run at the start of a line inside it,
+ * so a C++ raw string or an embedded markdown file cannot close the block
+ * early. Returns the number of backticks to use. */
+static int ask_fence_len(const char *text) {
+    enum { FENCE_MIN = 3 };
+    int longest = 0;
+    bool at_line_start = true;
+    for (const char *p = text; *p; p++) {
+        if (at_line_start && *p == '`') {
+            int run = 0;
+            while (p[run] == '`') {
+                run++;
+            }
+            if (run > longest) {
+                longest = run;
+            }
+            p += run - 1;
+            at_line_start = false;
+            continue;
+        }
+        at_line_start = (*p == '\n');
+    }
+    return longest >= FENCE_MIN ? longest + 1 : FENCE_MIN;
+}
+
+static void ask_emit_fence(hyp_sb_t *sb, const char *text) {
+    int n = ask_fence_len(text);
+    for (int i = 0; i < n; i++) {
+        hyp_sb_append(sb, "`");
+    }
+    hyp_sb_append(sb, "\n");
+    hyp_sb_append(sb, text);
+    hyp_sb_append(sb, "\n");
+    for (int i = 0; i < n; i++) {
+        hyp_sb_append(sb, "`");
+    }
+    hyp_sb_append(sb, "\n");
 }
 
 /* The unavailable answer. NO results table is emitted — not an empty one.
@@ -4122,6 +4459,19 @@ static char *ask_error(const char *msg, char *project, char *question) {
     return hyp_mcp_text_result(msg, true);
 }
 
+/* hyp_mcp_get_bool_arg reads an absent key as false, which is the wrong
+ * default for a flag whose whole point is that it is ON unless turned off. */
+static bool ask_bool_arg_default(const char *args_json, const char *key, bool def) {
+    yyjson_doc *doc = yyjson_read(args_json, strlen(args_json), 0);
+    if (!doc) {
+        return def;
+    }
+    yyjson_val *val = yyjson_obj_get(yyjson_doc_get_root(doc), key);
+    bool result = (val && yyjson_is_bool(val)) ? yyjson_get_bool(val) : def;
+    yyjson_doc_free(doc);
+    return result;
+}
+
 /* Defined below, with the rest of the project-root helpers. */
 static char *project_root_from_store(hyp_store_t *store, const char *project);
 
@@ -4130,8 +4480,14 @@ static char *project_root_from_store(hyp_store_t *store, const char *project);
  * scored against (zeroed when no vector was produced). It exists for ONE
  * caller — hyp_mcp_ask_view_overlay — so the 3-D view draws the question with
  * the very vector that ranked, rather than re-encoding and hoping the two
- * agree. handle_ask passes NULL and is otherwise identical. */
-static char *ask_run(hyp_mcp_server_t *srv, const char *args, bool force_json, float *qvec_out) {
+ * agree.
+ *
+ * `allow_source` is that same caller's second concession: the overlay embeds
+ * this tool's whole answer inside a 3-D view payload, where span text is
+ * several kilobytes of code nobody is going to read in a scatter plot. It
+ * passes false; handle_ask passes true and lets `include_source` decide. */
+static char *ask_run(hyp_mcp_server_t *srv, const char *args, bool force_json, bool allow_source,
+                     float *qvec_out) {
     if (qvec_out) {
         memset(qvec_out, 0, (size_t)HYP_ASK_DIM * sizeof(float));
     }
@@ -4189,6 +4545,14 @@ static char *ask_run(hyp_mcp_server_t *srv, const char *args, bool force_json, f
     if (limit > ASK_MAX_LIMIT) {
         limit = ASK_MAX_LIMIT;
     }
+
+    /* THE SOURCE IS ON BY DEFAULT, because the measurement says the default is
+     * where the cost is: a 5-6 turn median and a ONE-SHOT RATE OF 0% in every
+     * column of runs/ASK-REACHABLE. A switch that has to be discovered would
+     * have been read by nobody and changed nothing. Off is for the caller who
+     * already knows it only wants coordinates — a wide survey at limit=50, or a
+     * client that will fetch the file itself. */
+    bool include_source = allow_source && ask_bool_arg_default(args, "include_source", true);
 
     int search_limit = limit;
 
@@ -4578,9 +4942,47 @@ static char *ask_run(hyp_mcp_server_t *srv, const char *args, bool force_json, f
     char trunc_text[ASK_MSG];
     ask_truncation_text(&st, trunc_text, sizeof(trunc_text));
     bool with_cut = st.trunc == HYP_ASK_TRUNC_SOME;
-    const char *cols[7];
+
+    /* The exactness marker, per row. Computed for every returned row, emitted
+     * as a column only when at least one row matched — the `cut` rule, for the
+     * `cut` reason: a column of `false` costs every caller bytes to learn
+     * nothing, and worse here, a wall of `false` reads as a verdict. */
+    bool *named = hit_count > 0 ? (bool *)calloc((size_t)hit_count, sizeof(bool)) : NULL;
+    bool with_exact = false;
+    for (int i = 0; i < hit_count && named; i++) {
+        named[i] = ask_row_is_named(question, &hits[i]);
+        with_exact = with_exact || named[i];
+    }
+
+    const char *cols[8];
     int ncols = 0;
-    ask_cols(cols, &ncols, with_cut);
+    ask_cols(cols, &ncols, with_cut, with_exact);
+
+    /* THE SPAN TEXT. Read for the top ASK_SOURCE_ROWS rows out of one shared
+     * byte pool, so the block is bounded no matter what the rows contain. */
+    ask_span_text_t spans[ASK_SOURCE_ROWS];
+    memset(spans, 0, sizeof(spans));
+    int span_count = 0;
+    char *root_path = NULL;
+    if (include_source && hit_count > 0) {
+        root_path = project_root_from_store(store, project);
+        size_t pool = ASK_SOURCE_TOTAL_BYTES_MAX;
+        int want = hit_count < ASK_SOURCE_ROWS ? hit_count : ASK_SOURCE_ROWS;
+        for (int i = 0; i < want; i++) {
+            size_t budget = pool < (size_t)ASK_SOURCE_SPAN_BYTES_MAX
+                                ? pool
+                                : (size_t)ASK_SOURCE_SPAN_BYTES_MAX;
+            if (budget == 0) {
+                break;
+            }
+            ask_span_text_read(root_path, &hits[i], budget, &spans[span_count]);
+            if (spans[span_count].text) {
+                size_t used = strlen(spans[span_count].text);
+                pool = used >= pool ? 0 : pool - used;
+            }
+            span_count++;
+        }
+    }
 
     char *result = NULL;
     if (json) {
@@ -4621,9 +5023,42 @@ static char *ask_run(hyp_mcp_server_t *srv, const char *args, bool force_json, f
             if (with_cut) {
                 yyjson_mut_arr_add_bool(doc, row, hits[i].truncated);
             }
+            if (with_exact) {
+                yyjson_mut_arr_add_bool(doc, row, named && named[i]);
+            }
             yyjson_mut_arr_add_val(rows, row);
         }
         yyjson_mut_obj_add_val(doc, root, "rows", rows);
+        if (with_exact) {
+            yyjson_mut_obj_add_str(doc, root, "exact_marker", ASK_EXACT_MARKER_TEXT);
+        }
+        /* `source` is present iff it was asked for, and every entry says either
+         * what it read or why it could not. An ABSENT key means "not requested";
+         * an entry with `unavailable` means "requested and there is nothing" —
+         * the two claims that 505ee69d exists to keep apart. */
+        if (include_source) {
+            yyjson_mut_val *src = yyjson_mut_arr(doc);
+            for (int i = 0; i < span_count; i++) {
+                yyjson_mut_val *e = yyjson_mut_obj(doc);
+                yyjson_mut_obj_add_int(doc, e, "rank", i + 1);
+                yyjson_mut_obj_add_strcpy(doc, e, "qn", hits[i].qualified_name);
+                yyjson_mut_obj_add_strcpy(doc, e, "file", hits[i].file_path);
+                char full[HYP_SZ_32];
+                sg_lines_str(full, sizeof(full), hits[i].start_line, hits[i].end_line);
+                yyjson_mut_obj_add_strcpy(doc, e, "lines", full);
+                if (spans[i].text) {
+                    char shown[HYP_SZ_32];
+                    sg_lines_str(shown, sizeof(shown), spans[i].shown_start, spans[i].shown_end);
+                    yyjson_mut_obj_add_strcpy(doc, e, "shown", shown);
+                    yyjson_mut_obj_add_bool(doc, e, "truncated", spans[i].truncated);
+                    yyjson_mut_obj_add_strcpy(doc, e, "text", spans[i].text);
+                } else {
+                    yyjson_mut_obj_add_str(doc, e, "unavailable", spans[i].reason);
+                }
+                yyjson_mut_arr_add_val(src, e);
+            }
+            yyjson_mut_obj_add_val(doc, root, "source", src);
+        }
         char *json_text = yy_doc_to_str(doc);
         yyjson_mut_doc_free(doc);
         result = hyp_mcp_text_result(json_text ? json_text : "{}", false);
@@ -4657,7 +5092,13 @@ static char *ask_run(hyp_mcp_server_t *srv, const char *args, bool force_json, f
             if (with_cut) {
                 hyp_tree_cell_bool(&sb, hits[i].truncated, false);
             }
+            if (with_exact) {
+                hyp_tree_cell_bool(&sb, named && named[i], false);
+            }
             hyp_tree_row_end(&sb);
+        }
+        if (with_exact) {
+            hyp_tree_scalar_str(&sb, "exact_marker", ASK_EXACT_MARKER_TEXT);
         }
         if (hit_count == 0) {
             /* A REAL empty result: the index exists, the question encoded, and
@@ -4667,11 +5108,56 @@ static char *ask_run(hyp_mcp_server_t *srv, const char *args, bool force_json, f
                                 "the index was searched and returned nothing. Unlike "
                                 "available=false, this IS a statement about the code.");
         }
+        /* THE SPAN BLOCK. Not a TOON table: a table cell is one line, and a
+         * declaration is not. Each entry is a header line naming exactly which
+         * lines follow, then the lines themselves inside a backtick fence long
+         * enough that nothing in the code can close it early. */
+        if (include_source && span_count > 0) {
+            char head[HYP_SZ_512];
+            snprintf(head, sizeof(head),
+                     "\nsource: %d  (verbatim lines for the top %d row(s), capped at %d lines / "
+                     "%d bytes each; a CUT span names its full range and get_code_snippet "
+                     "returns the rest. Pass include_source=false for coordinates only.)\n",
+                     span_count, span_count, ASK_SOURCE_SPAN_LINES_MAX,
+                     ASK_SOURCE_SPAN_BYTES_MAX);
+            hyp_sb_append(&sb, head);
+            for (int i = 0; i < span_count; i++) {
+                char full[HYP_SZ_32];
+                sg_lines_str(full, sizeof(full), hits[i].start_line, hits[i].end_line);
+                char line[HYP_SZ_1K];
+                if (!spans[i].text) {
+                    snprintf(line, sizeof(line), "#%d %s %s:%s — NOT READ: %s\n", i + 1,
+                             hits[i].qualified_name ? hits[i].qualified_name : "",
+                             hits[i].file_path ? hits[i].file_path : "", full, spans[i].reason);
+                    hyp_sb_append(&sb, line);
+                    continue;
+                }
+                if (spans[i].truncated) {
+                    snprintf(line, sizeof(line),
+                             "#%d %s %s:%d-%d of %s — CUT at %d of %d lines\n", i + 1,
+                             hits[i].qualified_name ? hits[i].qualified_name : "",
+                             hits[i].file_path ? hits[i].file_path : "", spans[i].shown_start,
+                             spans[i].shown_end, full,
+                             spans[i].shown_end - spans[i].shown_start + 1, spans[i].span_lines);
+                } else {
+                    snprintf(line, sizeof(line), "#%d %s %s:%s — whole, %d lines\n", i + 1,
+                             hits[i].qualified_name ? hits[i].qualified_name : "",
+                             hits[i].file_path ? hits[i].file_path : "", full, spans[i].span_lines);
+                }
+                hyp_sb_append(&sb, line);
+                ask_emit_fence(&sb, spans[i].text);
+            }
+        }
         char *text = hyp_sb_finish(&sb);
         result = hyp_mcp_text_result(text ? text : "out of memory", text == NULL);
         free(text);
     }
 
+    for (int i = 0; i < span_count; i++) {
+        ask_span_text_free(&spans[i]);
+    }
+    free(root_path);
+    free(named);
     hyp_ask_free_hits(hits, hit_count);
     free(project);
     free(question);
@@ -4679,7 +5165,7 @@ static char *ask_run(hyp_mcp_server_t *srv, const char *args, bool force_json, f
 }
 
 static char *handle_ask(hyp_mcp_server_t *srv, const char *args) {
-    return ask_run(srv, args, false, NULL);
+    return ask_run(srv, args, false, true, NULL);
 }
 
 /* ── The 3-D view's query overlay (NEXT-STEPS §3.1 step 5) ─────────
@@ -4713,7 +5199,10 @@ char *hyp_mcp_ask_view_overlay(hyp_mcp_server_t *srv, const char *args_json) {
     if (!qvec) {
         return NULL;
     }
-    char *tool_result = ask_run(srv, args_json, true, qvec);
+    /* allow_source=false: the overlay carries the tool's whole answer inside a
+     * 3-D view payload, and kilobytes of source in a scatter plot is weight no
+     * viewer reads. The rows, the ranking and every disclosure are unchanged. */
+    char *tool_result = ask_run(srv, args_json, true, false, qvec);
 
     yyjson_mut_doc *doc = yyjson_mut_doc_new(NULL);
     yyjson_mut_val *root = yyjson_mut_obj(doc);
