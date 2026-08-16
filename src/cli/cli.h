@@ -479,6 +479,20 @@ void hyp_cli_set_activation_ops_for_test(const hyp_cli_activation_ops_t *ops);
  * command-line or environment override. */
 void hyp_cli_set_activation_runtime_parent_for_test(const char *runtime_parent);
 
+/* Internal test seam: stage from THIS file instead of the running executable.
+ *
+ * `install` copies /proc/self/exe, so the C suite was implicitly installing
+ * the 600 MB test-runner out of the checkout — and the transaction refuses any
+ * source whose directory chain is group- or world-writable, which is a normal
+ * state for a workstation checkout (/media/DEV here is 0777). Seven install
+ * tests failed for that reason alone and were written off as "environmental".
+ * With this set, the test owns the source: a few hundred bytes in its own
+ * 0700 mkdtemp directory, so the tests assert activation behaviour instead of
+ * asserting where the repository happens to live. NULL restores the running
+ * executable. It overrides only the staging source; the running binary's own
+ * path still drives runtime-asset resolution. */
+void hyp_cli_set_install_candidate_for_test(const char *candidate_path);
+
 /* ── Subcommands (wired from main.c) ─────────────────────────── */
 
 /* install: copy binary, install skills, install editor MCP configs, ensure PATH.

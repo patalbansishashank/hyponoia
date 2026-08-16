@@ -101,6 +101,47 @@ enum {
 #define HYP_VERSION "dev"
 #endif
 
+/* Optional, injected by scripts/build.sh --build-sha. Deliberately not a git
+ * call inside the Makefile: BUILD_CONFIG_SIG carries CFLAGS_EXTRA, so a SHA
+ * that changed on every commit would force the whole one-shot compile+link on
+ * every commit. See Makefile.hyp's note next to LLAMA_VERSION_DEFINES for the
+ * same objection to build-time entropy in a compile line. */
+#ifndef HYP_BUILD_SHA
+#define HYP_BUILD_SHA ""
+#endif
+
+/* Hex characters of the executable fingerprint shown to a human. Matches the
+ * `%.12s` that `hyponoia daemon status` prints on its `build:` line, so a bug
+ * report and a running daemon can be compared by eye. */
+#define MAIN_VERSION_BUILD_HEX 12
+
+/* `hyponoia --version` used to print "hyponoia dev" and nothing else, so a bug
+ * report from any build that CI did not stamp could not be tied to a tree at
+ * all. The daemon has always known exactly which bytes it is running -- the
+ * SHA-256 of its own executable image -- and prints it in `daemon status`.
+ * This prints the SAME identifier, so the two are comparable, and stays one
+ * line because scripts/smoke-test.sh phase 4c requires exactly one.
+ *
+ * The hash costs one full read of the executable (~0.2 s for the shipped
+ * ~340 MB image, warm). That is paid only here and only when the build did not
+ * record a source SHA of its own; every other caller reuses the process-wide
+ * capture. */
+static void main_print_version(void) {
+    const char *source_sha = HYP_BUILD_SHA;
+    if (source_sha[0]) {
+        printf("hyponoia %s (%s)\n", HYP_VERSION, source_sha);
+        return;
+    }
+    const char *fingerprint = hyp_index_supervisor_capture_build_fingerprint()
+                                  ? hyp_index_supervisor_build_fingerprint()
+                                  : NULL;
+    if (fingerprint && fingerprint[0]) {
+        printf("hyponoia %s (%.*s)\n", HYP_VERSION, MAIN_VERSION_BUILD_HEX, fingerprint);
+        return;
+    }
+    printf("hyponoia %s\n", HYP_VERSION);
+}
+
 /* ── Globals for signal handling ────────────────────────────────── */
 
 static atomic_int g_shutdown = 0;
@@ -1055,7 +1096,7 @@ static int handle_subcommand(int argc, char **argv, hyp_project_lock_manager_t *
             return hyp_cmd_verify_runtime_assets();
         }
         if (strcmp(argv[i], "--version") == 0) {
-            printf("hyponoia %s\n", HYP_VERSION);
+            main_print_version();
             return 0;
         }
         if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) {
@@ -2633,6 +2674,9 @@ int main(int argc, char **argv) {
             }
             (void)fprintf(stderr, "HYP index worker could not start: %s\n",
                           formatted ? message : "exact-build admission failed");
+            if (worker_cohort_status == HYP_VERSION_COHORT_CONFLICT) {
+                (void)fprintf(stderr, "hyponoia: %s\n", hyp_daemon_conflict_escape_hint());
+            }
             goto worker_cleanup;
         }
 
@@ -2791,6 +2835,9 @@ int main(int argc, char **argv) {
         }
         (void)fprintf(stderr, "hyponoia: %s\n",
                       formatted ? message : "client exact-build admission failed");
+        if (client_cohort_status == HYP_VERSION_COHORT_CONFLICT) {
+            (void)fprintf(stderr, "hyponoia: %s\n", hyp_daemon_conflict_escape_hint());
+        }
         if (role == HYP_DAEMON_PROCESS_HOOK_CLIENT &&
             client_cohort_status == HYP_VERSION_COHORT_CONFLICT) {
             main_hook_report_conflicted_daemon(hook_dialect);

@@ -222,6 +222,35 @@ scripts/build.sh --with-ui          # with graph visualization
 
 Every platform builds a **verified runtime set**: the native executable, `hyp-integrations.json`, and—when `--with-ui` is selected—exactly one content-addressed `hyp-ui-<sha256>.pack`. These files are authenticated and published together; do not separate the executable from its sidecars.
 
+`build/c/hyponoia --version` prints the semantic version and a build identifier
+— the first 12 hex characters of the SHA-256 of the executable itself, the same
+value `hyponoia daemon status` shows on its `build:` line. A build made without
+an injected version therefore reports `hyponoia dev (37fce2c7b9f8)` rather than
+a bare `dev`, so a bug report from a development build names exactly one
+binary. `scripts/build.sh --build-sha <value>` replaces it with a source
+identifier of your choosing (for example `git rev-parse --short=12 HEAD`).
+
+**Installing from a world-writable location is refused.** `install` copies the
+running executable, and it will not do so while any directory above that
+executable is group- or world-writable — otherwise another account could
+substitute the file between the safety check and the copy. Checkouts on shared
+mounts frequently hit this (`/media`, `/srv`, some `/mnt` layouts). The refusal
+names the exact directory and its mode, changes nothing, and exits non-zero:
+
+```
+error: install refused before any file was changed: the source directory "/media/DEV"
+is group- and world-writable (mode 0777; install requires the 0022 bits clear on every
+directory above the binary being installed, so that no other account can substitute the
+file between the safety check and the copy)
+```
+
+Copy the runtime set into a directory you own privately and install from there:
+
+```bash
+mkdir -p ~/hyp-install && cp build/c/hyponoia build/c/hyp-* ~/hyp-install/
+~/hyp-install/hyponoia install
+```
+
 Run the test suite (6,768 tests across 120 suites):
 
 ```bash

@@ -813,7 +813,24 @@ def main():
             check(version_result.returncode == 0, "--version failed: " + version_result.stderr)
             version_prefix = "hyponoia "
             check(version_result.stdout.startswith(version_prefix), "unexpected --version output")
-            semantic_version = version_result.stdout.strip()[len(version_prefix) :]
+            check(
+                len(version_result.stdout.strip().splitlines()) == 1,
+                "--version must stay one line: " + repr(version_result.stdout),
+            )
+            # "hyponoia <version> (<build identifier>)". The parenthetical is
+            # per-BINARY, and this test deliberately activates a different
+            # build of the same version, so only the semantic token may be
+            # compared across binaries.
+            version_banner = version_result.stdout.strip()
+            semantic_version = version_banner[len(version_prefix) :].split(" ", 1)[0]
+            build_identifier = ""
+            if "(" in version_banner and version_banner.endswith(")"):
+                build_identifier = version_banner[version_banner.index("(") + 1 : -1]
+            check(
+                bool(build_identifier),
+                "--version carries no build identifier, so a bug report cannot be tied to a "
+                "tree: " + repr(version_banner),
+            )
 
             local_cli = subprocess.run(
                 [str(binary), "cli", "--progress", "--json", "list_projects"],
@@ -2074,8 +2091,9 @@ def main():
             )
             check(
                 installed_version.returncode == 0
-                and installed_version.stdout.strip()
-                == "hyponoia " + semantic_version,
+                and installed_version.stdout.strip().startswith(
+                    "hyponoia " + semantic_version
+                ),
                 "different-build install target is not executable: "
                 + installed_version.stderr,
             )
@@ -2169,8 +2187,9 @@ def main():
             )
             check(
                 updated_version.returncode == 0
-                and updated_version.stdout.strip()
-                == "hyponoia " + semantic_version,
+                and updated_version.stdout.strip().startswith(
+                    "hyponoia " + semantic_version
+                ),
                 "updated target is not executable: " + updated_version.stderr,
             )
             updated_status = os.lstat(target_binary)

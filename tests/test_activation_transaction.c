@@ -1011,6 +1011,101 @@ TEST(activation_transaction_revalidates_macos_target_file_acl_before_commit) {
     PASS();
 }
 
+/* §3.2 defect 2. Staging refuses a source whose directory chain is group- or
+ * world-writable. That rule is deliberate — it is what stops another account
+ * from substituting the file between the safety check and the copy — but the
+ * POSIX half of the transaction reported it as the bare status text
+ * "activation transaction I/O failed", naming an I/O error that never
+ * happened, no path, and no remedy. On a workstation whose checkout sits under
+ * a 0777 directory (this repository lives under /media/DEV) that is every
+ * install, and it read as a bug in HYP rather than a fact about the checkout.
+ * Seven install tests failed on it for a week and were written off. */
+TEST(activation_transaction_world_writable_source_names_the_path_and_the_rule) {
+#ifdef _WIN32
+    SKIP_PLATFORM("windows refuses through DACL inspection, with its own note");
+#else
+    char fixture[ACTIVATION_TEST_PATH_CAP];
+    ASSERT_TRUE(activation_test_fixture(fixture));
+
+    char source_dir[ACTIVATION_TEST_PATH_CAP];
+    char source[ACTIVATION_TEST_PATH_CAP];
+    char target[ACTIVATION_TEST_PATH_CAP];
+    ASSERT_TRUE(activation_test_path(source_dir, fixture, "world-writable-source"));
+    ASSERT_EQ(hyp_mkdir_p(source_dir, 0700), true);
+    ASSERT_TRUE(activation_test_path(source, source_dir, "hyponoia"));
+    ASSERT_TRUE(activation_test_path(target, fixture, "installed"));
+    ASSERT_TRUE(activation_test_write(source, "candidate bytes"));
+
+    /* The one thing the fixture changes: the directory the source lives in
+     * becomes writable by everyone, exactly as a checkout under a 0777 mount
+     * point is. */
+    ASSERT_EQ(chmod(source_dir, 0777), 0);
+
+    hyp_activation_transaction_t *transaction = NULL;
+    hyp_activation_transaction_status_t status =
+        hyp_activation_transaction_stage_file(target, source, &transaction);
+    const char *note = hyp_activation_transaction_refusal_note();
+    char captured[ACTIVATION_TEST_PATH_CAP];
+    (void)snprintf(captured, sizeof(captured), "%s", note ? note : "");
+    (void)hyp_activation_transaction_close(&transaction);
+
+    bool target_absent = !activation_test_exists(target);
+    (void)chmod(source_dir, 0700);
+    th_rmtree(fixture);
+
+    ASSERT_EQ(status, HYP_ACTIVATION_TRANSACTION_IO);
+    ASSERT_TRUE(target_absent);
+    /* The refusal must say WHICH path, WHICH permission, and WHY. A message
+     * that says only "I/O failed" is what made this environmental-looking. */
+    ASSERT_NOT_NULL(strstr(captured, source_dir));
+    ASSERT_NOT_NULL(strstr(captured, "world-writable"));
+    ASSERT_NOT_NULL(strstr(captured, "0777"));
+    ASSERT_NOT_NULL(strstr(captured, "substitute the file"));
+    PASS();
+#endif
+}
+
+/* The same rule applied to an ANCESTOR rather than the leaf: the note must
+ * name the ancestor that was rejected, not the directory the user typed. */
+TEST(activation_transaction_world_writable_ancestor_names_the_ancestor) {
+#ifdef _WIN32
+    SKIP_PLATFORM("windows walks the chain through DACL inspection");
+#else
+    char fixture[ACTIVATION_TEST_PATH_CAP];
+    ASSERT_TRUE(activation_test_fixture(fixture));
+
+    char middle[ACTIVATION_TEST_PATH_CAP];
+    char source_dir[ACTIVATION_TEST_PATH_CAP];
+    char source[ACTIVATION_TEST_PATH_CAP];
+    char target[ACTIVATION_TEST_PATH_CAP];
+    ASSERT_TRUE(activation_test_path(middle, fixture, "shared"));
+    ASSERT_EQ(hyp_mkdir_p(middle, 0700), true);
+    ASSERT_TRUE(activation_test_path(source_dir, middle, "checkout"));
+    ASSERT_EQ(hyp_mkdir_p(source_dir, 0700), true);
+    ASSERT_TRUE(activation_test_path(source, source_dir, "hyponoia"));
+    ASSERT_TRUE(activation_test_path(target, fixture, "installed"));
+    ASSERT_TRUE(activation_test_write(source, "candidate bytes"));
+
+    ASSERT_EQ(chmod(middle, 0777), 0);
+
+    hyp_activation_transaction_t *transaction = NULL;
+    hyp_activation_transaction_status_t status =
+        hyp_activation_transaction_stage_file(target, source, &transaction);
+    const char *note = hyp_activation_transaction_refusal_note();
+    char captured[ACTIVATION_TEST_PATH_CAP];
+    (void)snprintf(captured, sizeof(captured), "%s", note ? note : "");
+    (void)hyp_activation_transaction_close(&transaction);
+
+    (void)chmod(middle, 0700);
+    th_rmtree(fixture);
+
+    ASSERT_EQ(status, HYP_ACTIVATION_TRANSACTION_IO);
+    ASSERT_NOT_NULL(strstr(captured, middle));
+    ASSERT_NOT_NULL(strstr(captured, "world-writable"));
+    PASS();
+#endif
+}
+
 SUITE(activation_transaction) {
     RUN_TEST(activation_transaction_stages_same_directory_private_executable_and_aborts);
     RUN_TEST(activation_transaction_commit_keeps_backup_until_finalize);
@@ -1023,6 +1118,8 @@ SUITE(activation_transaction) {
     RUN_TEST(activation_transaction_removal_survives_transient_rename_locks);
 #endif
     RUN_TEST(activation_transaction_rejects_cross_account_writable_target_directory);
+    RUN_TEST(activation_transaction_world_writable_source_names_the_path_and_the_rule);
+    RUN_TEST(activation_transaction_world_writable_ancestor_names_the_ancestor);
     RUN_TEST(activation_transaction_rejects_windows_callback_allow_directory_ace);
     RUN_TEST(activation_transaction_rejects_symlink_candidate_target_and_parent);
     RUN_TEST(activation_transaction_fails_closed_if_target_directory_is_replaced);

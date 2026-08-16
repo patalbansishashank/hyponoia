@@ -1016,6 +1016,9 @@ int hyp_daemon_host_run(const hyp_daemon_host_config_t *config) {
         }
         (void)fprintf(stderr, "hyponoia: %s\n",
                       formatted ? message : "daemon exact-build admission failed");
+        if (cohort_status == HYP_VERSION_COHORT_CONFLICT) {
+            (void)fprintf(stderr, "hyponoia: %s\n", hyp_daemon_conflict_escape_hint());
+        }
         host_cohort_close(&cohort_lease, &cohort_manager);
         host_log_close();
         return -1;
