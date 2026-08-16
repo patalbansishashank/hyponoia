@@ -438,15 +438,17 @@ TEST(agent_profiles_tiers_agree_with_the_server_profile_they_run_against) {
 /* An installer only replaces a profile whose bytes it can prove it wrote, so
  * every generation it ever shipped must still render exactly. Generation 0 is
  * the eleven-tool set; 1 added `ask` to analysis (tools list only); 2 makes
- * the analysis prompt teach ask and the project-name rule. Scout is
- * byte-identical across all of them. */
+ * the analysis prompt teach ask and the project-name rule; 3 DELETES the
+ * project-name rule, because the server derives the project itself and the
+ * prose now contradicts it. Scout is byte-identical across all of them. */
 static const char ASK_GUIDANCE_MARK[] =
     "call ask first with the question as one string; read its top 2\xe2\x80\x93"
     "3 rows";
 static const char PROJECT_RULE_MARK[] = "/home/u/repo \xe2\x86\x92 home-u-repo";
+static const char PROJECT_DEFAULT_MARK[] = "Omit the project argument";
 
 TEST(agent_profiles_earlier_generations_still_render_for_migration) {
-    ASSERT_EQ(hyp_graph_profile_generation(), 2U);
+    ASSERT_EQ(hyp_graph_profile_generation(), 3U);
     for (size_t d = 0U; d < sizeof(direct_dialects) / sizeof(direct_dialects[0]); d++) {
         hyp_graph_profile_dialect_t dialect = direct_dialects[d].dialect;
         const char *binary = dialect == HYP_GRAPH_DIALECT_KIRO || dialect == HYP_GRAPH_DIALECT_CODEX
@@ -457,6 +459,8 @@ TEST(agent_profiles_earlier_generations_still_render_for_migration) {
             bool scout = tier == HYP_GRAPH_TIER_SCOUT;
             char *current =
                 hyp_render_graph_profile(dialect, tier, HYP_GRAPH_ACCESS_DIRECT, binary);
+            char *gen3 = hyp_render_graph_profile_generation(dialect, tier, HYP_GRAPH_ACCESS_DIRECT,
+                                                             binary, 3U);
             char *gen2 = hyp_render_graph_profile_generation(dialect, tier, HYP_GRAPH_ACCESS_DIRECT,
                                                              binary, 2U);
             char *gen1 = hyp_render_graph_profile_generation(dialect, tier, HYP_GRAPH_ACCESS_DIRECT,
@@ -464,31 +468,40 @@ TEST(agent_profiles_earlier_generations_still_render_for_migration) {
             char *gen0 = hyp_render_graph_profile_generation(dialect, tier, HYP_GRAPH_ACCESS_DIRECT,
                                                              binary, 0U);
             char *future = hyp_render_graph_profile_generation(dialect, tier,
-                                                               HYP_GRAPH_ACCESS_DIRECT, binary, 3U);
-            bool ok = current && gen2 && gen1 && gen0 && !future && strcmp(current, gen2) == 0;
+                                                               HYP_GRAPH_ACCESS_DIRECT, binary, 4U);
+            bool ok =
+                current && gen3 && gen2 && gen1 && gen0 && !future && strcmp(current, gen3) == 0;
             if (ok) {
                 /* 0 -> 1: the tools list, so Junie (names a server) never
                  * moved and scout never moves. 1 -> 2: the prompt, so every
                  * analysis profile that carries the prompt moved — Junie
                  * included, Vibe excluded (its prompt is a separate file,
                  * covered below) — and scout still did not. The guidance
-                 * words appear exactly at 2. */
+                 * words appear exactly at 2. 2 -> 3: the same prompt again,
+                 * this time swapping the project-name rule for "omit it" —
+                 * the rule is present at exactly 2 and gone at 3. */
                 bool tools_moved = dialect != HYP_GRAPH_DIALECT_JUNIE && !scout;
                 bool prompt_moved = dialect != HYP_GRAPH_DIALECT_VIBE && !scout;
                 ok = (strcmp(gen1, gen0) != 0) == tools_moved &&
                      (strcmp(gen2, gen1) != 0) == prompt_moved &&
+                     (strcmp(gen3, gen2) != 0) == prompt_moved &&
                      (strstr(gen2, ASK_GUIDANCE_MARK) != NULL) == prompt_moved &&
+                     (strstr(gen3, ASK_GUIDANCE_MARK) != NULL) == prompt_moved &&
                      (strstr(gen2, PROJECT_RULE_MARK) != NULL) == prompt_moved &&
+                     (strstr(gen3, PROJECT_DEFAULT_MARK) != NULL) == prompt_moved &&
+                     !strstr(gen3, PROJECT_RULE_MARK) && !strstr(gen2, PROJECT_DEFAULT_MARK) &&
                      !strstr(gen1, ASK_GUIDANCE_MARK) && !strstr(gen0, ASK_GUIDANCE_MARK);
             }
             free(current);
+            free(gen3);
             free(gen2);
             free(gen1);
             free(gen0);
             free(future);
             if (!ok) {
                 FAIL("every shipped generation must render; 0->1 is ask in the tools list, "
-                     "1->2 is the analysis prompt, scout never moves");
+                     "1->2 is the analysis prompt, 2->3 drops the project-name rule, scout "
+                     "never moves");
             }
         }
     }
@@ -497,25 +510,32 @@ TEST(agent_profiles_earlier_generations_still_render_for_migration) {
         hyp_graph_tier_t tier = (hyp_graph_tier_t)value;
         bool scout = tier == HYP_GRAPH_TIER_SCOUT;
         char *current = hyp_render_graph_prompt(tier, HYP_GRAPH_ACCESS_DIRECT);
+        char *gen3 = hyp_render_graph_prompt_generation(tier, HYP_GRAPH_ACCESS_DIRECT, 3U);
         char *gen2 = hyp_render_graph_prompt_generation(tier, HYP_GRAPH_ACCESS_DIRECT, 2U);
         char *gen1 = hyp_render_graph_prompt_generation(tier, HYP_GRAPH_ACCESS_DIRECT, 1U);
         char *gen0 = hyp_render_graph_prompt_generation(tier, HYP_GRAPH_ACCESS_DIRECT, 0U);
         char *handoff = hyp_render_graph_prompt(tier, HYP_GRAPH_ACCESS_HANDOFF);
         char *handoff0 = hyp_render_graph_prompt_generation(tier, HYP_GRAPH_ACCESS_HANDOFF, 0U);
-        bool ok = current && gen2 && gen1 && gen0 && handoff && handoff0 &&
-                  strcmp(current, gen2) == 0 && strcmp(gen1, gen0) == 0 &&
-                  (strcmp(gen2, gen1) != 0) == !scout &&
+        bool ok = current && gen3 && gen2 && gen1 && gen0 && handoff && handoff0 &&
+                  strcmp(current, gen3) == 0 && strcmp(gen1, gen0) == 0 &&
+                  (strcmp(gen2, gen1) != 0) == !scout && (strcmp(gen3, gen2) != 0) == !scout &&
                   (strstr(gen2, ASK_GUIDANCE_MARK) != NULL) == !scout &&
+                  (strstr(gen3, ASK_GUIDANCE_MARK) != NULL) == !scout &&
+                  (strstr(gen2, PROJECT_RULE_MARK) != NULL) == !scout &&
+                  (strstr(gen3, PROJECT_DEFAULT_MARK) != NULL) == !scout &&
+                  !strstr(gen3, PROJECT_RULE_MARK) && !strstr(gen2, PROJECT_DEFAULT_MARK) &&
                   strcmp(handoff, handoff0) == 0 && !strstr(handoff, ASK_GUIDANCE_MARK) &&
-                  !hyp_render_graph_prompt_generation(tier, HYP_GRAPH_ACCESS_DIRECT, 3U);
+                  !hyp_render_graph_prompt_generation(tier, HYP_GRAPH_ACCESS_DIRECT, 4U);
         free(current);
+        free(gen3);
         free(gen2);
         free(gen1);
         free(gen0);
         free(handoff);
         free(handoff0);
         if (!ok) {
-            FAIL("prompt generations: 0 == 1, 2 adds ask guidance to analysis only, handoff never");
+            FAIL("prompt generations: 0 == 1, 2 adds ask guidance to analysis only, 3 swaps the "
+                 "project-name rule for the omit-it rule, handoff never");
         }
     }
     char *rc1 = hyp_render_graph_profile_codex_rc1(HYP_GRAPH_TIER_VERIFY);

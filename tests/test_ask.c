@@ -1915,9 +1915,14 @@ TEST(ask_schema_describes_both_escalation_modes_and_the_lane_values) {
 
 /* §2 cost a measurement round to `search_graph --help` documenting an
  * array-flag spelling that did not work. So the schema is pinned against the
- * invocation the description tells a caller to type: both required flags are
- * declared required, and `question` is declared a STRING (which is what makes
- * the CLI pass it through as one rather than splicing it into an array). */
+ * invocation the description tells a caller to type: `question` is the ONE
+ * required flag, and it is declared a STRING (which is what makes the CLI
+ * pass it through as one rather than splicing it into an array).
+ *
+ * `project` left the required list in §3.2 step 2 — the server derives it
+ * from its working directory and every answer says so — but it must stay a
+ * declared PROPERTY carrying that contract, or a caller has no way to learn
+ * either that it may be omitted or how to read the answer's disclosure. */
 TEST(ask_schema_declares_what_the_help_promises) {
     const char *schema = hyp_mcp_tool_input_schema("ask");
     ASSERT_NOT_NULL(schema);
@@ -1937,9 +1942,16 @@ TEST(ask_schema_declares_what_the_help_promises) {
     ASSERT_STR_EQ(yyjson_get_str(yyjson_obj_get(yyjson_obj_get(props, "limit"), "type")),
                   "integer");
 
+    const char *pdesc =
+        yyjson_get_str(yyjson_obj_get(yyjson_obj_get(props, "project"), "description"));
+    ASSERT_NOT_NULL(pdesc);
+    ASSERT_NOT_NULL(strstr(pdesc, "OPTIONAL"));
+    ASSERT_NOT_NULL(strstr(pdesc, "working directory"));
+    ASSERT_NOT_NULL(strstr(pdesc, "project_source"));
+
     yyjson_val *required = yyjson_obj_get(root, "required");
     ASSERT_NOT_NULL(required);
-    ASSERT_EQ(yyjson_arr_size(required), 2U);
+    ASSERT_EQ(yyjson_arr_size(required), 1U);
     bool has_q = false;
     bool has_p = false;
     size_t i, max;
@@ -1950,7 +1962,7 @@ TEST(ask_schema_declares_what_the_help_promises) {
         has_p = has_p || (s && strcmp(s, "project") == 0);
     }
     ASSERT_TRUE(has_q);
-    ASSERT_TRUE(has_p);
+    ASSERT_FALSE(has_p);
     yyjson_doc_free(doc);
     PASS();
 }

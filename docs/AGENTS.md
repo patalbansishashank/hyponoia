@@ -17,6 +17,15 @@ exact-owned definitions from one canonical contract:
 - **Verify (Tier 2, default)** — task-directed graph evidence, exact source checks, path coverage for every cited file, and scope coverage before negative claims.
 - **Auditor (Tier 3)** — bounded scope, current index generation, complete relevant pagination, broader relationship checks, and explicit unresolved limitations.
 
+`project` is optional on every tool but `delete_project`: the server derives it
+from the working directory it was started in — the client's own, since the
+client spawns it — falling back to the single indexed project when there is
+exactly one, and refusing with the candidates listed when there are several.
+Every answer carries `project` and `project_source` (`supplied`, `derived from
+working directory <path>`, or `the only indexed project`), so an agent can see
+which project answered. An explicit argument always wins. See
+[TOOLS.md](TOOLS.md#the-project-argument).
+
 Every direct tier batches `check_index_coverage` for its evidence paths and reads
 flagged ranges or skipped/excluded files directly. A clean coverage result means
 only “no recorded gap,” never proof of completeness. Clients without safe child
