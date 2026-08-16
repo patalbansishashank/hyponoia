@@ -1513,6 +1513,228 @@ TEST(tool_surface_the_deprecated_adr_tool_shares_no_vocabulary_with_the_memory_s
     PASS();
 }
 
+/* ── G6 check C · every declared default is one the handler takes ──────
+ *
+ * THE THIRD SURFACE OF "the repository asserts something no execution has
+ * touched". A module with no caller is inert; a command absent from help is
+ * unfindable; and an ARGUMENT IN A SCHEMA THAT THE HANDLER REFUSES is worse
+ * than either, because a client generated from the schema sends it BY DEFAULT
+ * and is refused for obeying the contract it was handed.
+ *
+ * It is live in this tree. search_memory advertises
+ *
+ *     "status":{"enum":["attached","orphaned","any"],"default":"attached"}
+ *
+ * and its handler refuses every value but "any" — including the schema's own
+ * declared default. Both ends are individually right: the handler fails closed
+ * because this build has no anchor resolver, and refusing a filter it cannot
+ * compute is correct (an ignored filter returns a superset that reads exactly
+ * like a match). What is wrong is that the SCHEMA still promises what the
+ * handler cannot do. Nothing could see it, because each end has a test that
+ * agrees with itself.
+ *
+ * DERIVED, NOT LISTED. The set is walked: every advertised tool, every
+ * property of its own inputSchema, every property carrying a `default`. A
+ * tool added tomorrow with a default nothing accepts is in the set without
+ * this file learning its name.
+ *
+ * ATTRIBUTED BY DIFFERENCE, so a refusal for an unrelated reason cannot be
+ * blamed on an argument. Each tool is called twice: once with {} and once with
+ * {property: default}. Only a tool that ANSWERS the empty call and REFUSES the
+ * defaulted one is a finding. A tool that already refuses {} is skipped and
+ * said so, because nothing about the argument can be concluded from it.
+ *
+ * PROBE-SAFE ONLY, derived from the annotation profile — a writer excludes
+ * itself by its own row rather than by a skip list someone has to extend.
+ *
+ * RATCHETED, like the module ledger in tests/test_wired_contract.sh: the known
+ * rows are pinned with the unit that closes each, a new one fails naming it,
+ * and a row that is no longer a violation ALSO fails, naming the row to
+ * strike. EXIT CONDITION: the table below is empty and the count is 0.
+ */
+
+typedef struct {
+    const char *tool;
+    const char *property;
+    const char *unit;
+    const char *why;
+} surface_default_exemption_t;
+
+static const surface_default_exemption_t SURFACE_DEFAULT_EXEMPTIONS[] = {
+    {"search_memory", "status", "C8u",
+     "the schema declares default \"attached\" and an enum of three; this build "
+     "has no anchor resolver, so the handler answers only \"any\" and refuses "
+     "the rest fail-closed. The handler is right and the SCHEMA is the half "
+     "that must change until C8u wires src/memory/orphan.c behind it."},
+};
+
+static const size_t SURFACE_DEFAULT_EXEMPTION_COUNT =
+    sizeof(SURFACE_DEFAULT_EXEMPTIONS) / sizeof(SURFACE_DEFAULT_EXEMPTIONS[0]);
+
+/* Did this exact (tool, property) get called and refused? Kept beside the
+ * table so a stale row can be named, which is the half that lets the count
+ * converge. */
+static bool surface_default_seen[
+    sizeof(SURFACE_DEFAULT_EXEMPTIONS) / sizeof(SURFACE_DEFAULT_EXEMPTIONS[0])];
+
+static bool surface_default_is_exempt(const char *tool, const char *property) {
+    for (size_t i = 0; i < SURFACE_DEFAULT_EXEMPTION_COUNT; i++) {
+        if (strcmp(SURFACE_DEFAULT_EXEMPTIONS[i].tool, tool) == 0 &&
+            strcmp(SURFACE_DEFAULT_EXEMPTIONS[i].property, property) == 0) {
+            surface_default_seen[i] = true;
+            return true;
+        }
+    }
+    return false;
+}
+
+/* Call a tool on a fresh server and report only whether a CLIENT would read an
+ * error. Not the emitted shape: the `isError` a client branches on. */
+static bool surface_call_is_error(const char *tool, const char *arguments_json, bool *answered) {
+    if (answered) {
+        *answered = false;
+    }
+    hyp_mcp_server_t *srv = hyp_mcp_server_new(NULL);
+    if (!srv) {
+        return false;
+    }
+    char *resp = hyp_mcp_handle_tool(srv, tool, arguments_json);
+    hyp_mcp_server_free(srv);
+    if (!resp) {
+        return false;
+    }
+    yyjson_doc *doc = yyjson_read(resp, strlen(resp), 0);
+    yyjson_val *root = doc ? yyjson_doc_get_root(doc) : NULL;
+    yyjson_val *err = root ? yyjson_obj_get(root, "isError") : NULL;
+    bool is_error = err && yyjson_is_true(err);
+    if (answered && root) {
+        *answered = true;
+    }
+    yyjson_doc_free(doc);
+    free(resp);
+    return is_error;
+}
+
+TEST(tool_surface_every_declared_default_is_one_the_handler_takes) {
+    surface_memory_fixture_t fx;
+    if (!surface_memory_begin(&fx)) {
+        FAIL("could not create a temporary memory store directory");
+    }
+    for (size_t i = 0; i < SURFACE_DEFAULT_EXEMPTION_COUNT; i++) {
+        surface_default_seen[i] = false;
+    }
+
+    int walked_tools = 0;
+    int walked_defaults = 0;
+    int unattributable = 0;
+    int findings = 0;
+    int pinned = 0;
+    char report[4096];
+    report[0] = '\0';
+
+    for (int i = 0; i < hyp_mcp_tool_count(); i++) {
+        const char *name = hyp_mcp_tool_name(i);
+        if (!name || !hyp_mcp_tool_is_probe_safe(name)) {
+            continue;
+        }
+        const char *schema = hyp_mcp_tool_input_schema(name);
+        if (!schema) {
+            continue;
+        }
+        yyjson_doc *sdoc = yyjson_read(schema, strlen(schema), 0);
+        yyjson_val *sroot = sdoc ? yyjson_doc_get_root(sdoc) : NULL;
+        yyjson_val *props = sroot ? yyjson_obj_get(sroot, "properties") : NULL;
+        if (!props || !yyjson_is_obj(props)) {
+            yyjson_doc_free(sdoc);
+            continue;
+        }
+        walked_tools++;
+
+        /* The baseline. A tool that cannot answer an empty call tells us
+         * nothing about any argument, so it is counted and skipped rather than
+         * blamed. */
+        bool answered = false;
+        bool empty_is_error = surface_call_is_error(name, "{}", &answered);
+        if (!answered) {
+            yyjson_doc_free(sdoc);
+            FAIL("a probe-safe tool returned nothing a client can parse");
+        }
+
+        yyjson_obj_iter it;
+        yyjson_obj_iter_init(props, &it);
+        yyjson_val *key = NULL;
+        while ((key = yyjson_obj_iter_next(&it)) != NULL) {
+            yyjson_val *spec = yyjson_obj_iter_get_val(key);
+            yyjson_val *dflt = yyjson_is_obj(spec) ? yyjson_obj_get(spec, "default") : NULL;
+            if (!dflt) {
+                continue;
+            }
+            const char *prop = yyjson_get_str(key);
+            if (!prop) {
+                continue;
+            }
+            char *rendered = yyjson_val_write(dflt, 0, NULL);
+            if (!rendered) {
+                continue;
+            }
+            walked_defaults++;
+            if (empty_is_error) {
+                unattributable++;
+                free(rendered);
+                continue;
+            }
+            char args[1024];
+            snprintf(args, sizeof(args), "{\"%s\":%s}", prop, rendered);
+            free(rendered);
+
+            if (!surface_call_is_error(name, args, NULL)) {
+                continue;
+            }
+            if (surface_default_is_exempt(name, prop)) {
+                pinned++;
+                continue;
+            }
+            findings++;
+            char line[256];
+            snprintf(line, sizeof(line),
+                     "\n      %s advertises \"%s\" with a default its handler refuses (%s)", name,
+                     prop, args);
+            strncat(report, line, sizeof(report) - strlen(report) - 1U);
+        }
+        yyjson_doc_free(sdoc);
+    }
+    surface_memory_end(&fx);
+
+    /* The instrument, before anything that trusts it. A walk that visited no
+     * declared default would pass this test on every tree forever. */
+    if (walked_tools == 0 || walked_defaults == 0) {
+        FAIL("check C walked no tool schema carrying a declared default; the set "
+             "derivation is broken, not the surface");
+    }
+
+    /* The ratchet's other direction. */
+    for (size_t i = 0; i < SURFACE_DEFAULT_EXEMPTION_COUNT; i++) {
+        if (!surface_default_seen[i]) {
+            printf("\n    %s/%s is no longer refused — STRIKE its row from "
+                   "SURFACE_DEFAULT_EXEMPTIONS.\n"
+                   "      A pinned count the tree has already beaten cannot converge.\n",
+                   SURFACE_DEFAULT_EXEMPTIONS[i].tool, SURFACE_DEFAULT_EXEMPTIONS[i].property);
+            FAIL("a pinned schema-default refusal no longer reproduces; strike its row");
+        }
+    }
+
+    if (findings > 0) {
+        printf("\n    check C: %d tool schemas walked, %d declared defaults, %d pinned, "
+               "%d unattributable (the tool refuses {} too).%s\n"
+               "      A client generated from the schema sends the default and is refused "
+               "for obeying the contract.\n",
+               walked_tools, walked_defaults, pinned, unattributable, report);
+        FAIL("a tool advertises a default its own handler will not take");
+    }
+    ASSERT_EQ(pinned, (int)SURFACE_DEFAULT_EXEMPTION_COUNT);
+    PASS();
+}
+
 SUITE(tool_surface) {
     RUN_TEST(tool_surface_registry_and_table_describe_the_same_tools);
     RUN_TEST(tool_surface_both_ends_advertise_exactly_the_same_live_tools);
@@ -1533,4 +1755,5 @@ SUITE(tool_surface) {
     RUN_TEST(tool_surface_transcript_kinds_are_not_authorable);
     RUN_TEST(tool_surface_no_reserved_surface_depends_on_the_deprecated_tool);
     RUN_TEST(tool_surface_the_deprecated_adr_tool_shares_no_vocabulary_with_the_memory_surface);
+    RUN_TEST(tool_surface_every_declared_default_is_one_the_handler_takes);
 }
