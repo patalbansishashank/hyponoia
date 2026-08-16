@@ -979,7 +979,7 @@ PP_OBJ_TSAN = $(BUILD_DIR)/tsan_preprocessor.o
 
 # ── Targets ──────────────────────────────────────────────────────
 
-.PHONY: test test-par test-repro test-foundation test-tsan test-daemon-smoke test-ask-batching hyp hyp-with-ui frontend ui-pack clean-c lint lint-tidy lint-cppcheck lint-format security
+.PHONY: test test-par test-repro test-foundation test-tsan test-daemon-smoke test-ask-batching hyp hyp-with-ui frontend ui-pack clean-c lint lint-tidy lint-cppcheck lint-format format security
 
 $(BUILD_DIR):
 	mkdir -p $(BUILD_DIR)
@@ -1474,6 +1474,16 @@ lint-cppcheck: $(INTEGRATIONS_HASH_HDR)
 lint-format:
 	@echo "=== clang-format ==="
 	@$(CLANG_FORMAT) --dry-run --Werror $(LINT_SRCS) $(LINT_HDRS)
+
+# The in-place counterpart, and the reason it needs to exist: without a supported
+# way to reformat with the PINNED clang-format, the reflex is to run whatever
+# `clang-format` is on $$PATH — which on a current workstation is a newer major
+# that rewrites code CI accepts, producing a red lint job an hour later. That is
+# commit 21e1e20e. Same file list and same $(CLANG_FORMAT) as the gate above, so
+# the fix and the check cannot disagree.
+format:
+	@echo "=== clang-format -i ==="
+	@$(CLANG_FORMAT) -i $(LINT_SRCS) $(LINT_HDRS)
 
 # Ban ALL NOLINT variants EXCEPT whitelisted NOLINT(misc-no-recursion).
 # The whitelist is in src/foundation/recursion_whitelist.h with documented reasoning.

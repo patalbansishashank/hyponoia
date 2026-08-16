@@ -16,4 +16,4 @@ install -m 755 "$ROOT/scripts/git-hooks/commit-msg" "$HOOKS_DIR/commit-msg"
 echo "installed: $HOOKS_DIR/commit-msg (DCO sign-off required on every commit)"
 
 install -m 755 "$ROOT/scripts/git-hooks/pre-push" "$HOOKS_DIR/pre-push"
-echo "installed: $HOOKS_DIR/pre-push (scans the commits a push would publish for vendor API keys)"
+echo "installed: $HOOKS_DIR/pre-push (lints in CI's own container, then scans the commits a push would publish for vendor API keys)"
