@@ -7537,8 +7537,16 @@ static void reconcile_cline_context_hooks(const char *cline_root, const char *bi
 static void install_agent_skill(const char *label, const char *skills_dir, bool force,
                                 bool dry_run) {
     char skill_path[CLI_BUF_1K];
-    int written = snprintf(skill_path, sizeof(skill_path), "%s/hyponoia/SKILL.md", skills_dir);
+    int written = skills_dir
+                      ? snprintf(skill_path, sizeof(skill_path), "%s/hyponoia/SKILL.md", skills_dir)
+                      : -1;
+    /* A skill path this vendor's config root cannot express is a vendor the
+     * install cannot serve, and returning quietly leaves the caller holding a
+     * success it did not earn: the plan lists the file, the run prints nothing,
+     * and the missing skill surfaces as an agent that never finds the graph.
+     * Refuse instead, and name the vendor and the directory that defeated it. */
     if (written < 0 || (size_t)written >= sizeof(skill_path)) {
+        record_agent_config_error(false, label, "skill_path_resolve", skills_dir);
         return;
     }
     if (g_install_plan) {
