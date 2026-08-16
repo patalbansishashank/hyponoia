@@ -398,6 +398,23 @@ int hyp_ask_vectors_finish_build(hyp_ask_vectors_t *v, bool truncation_known);
 int hyp_ask_vectors_stored_hash(hyp_ask_vectors_t *v, const char *qualified_name, char *out_hash,
                                 bool *out_truncated);
 
+/* Refresh the CITATION on a row whose vector is being reused.
+ *
+ * A pull that inserts lines above a declaration moves its span and re-mints
+ * its node id while leaving its bytes alone — so the hash matches and the
+ * vector is reused — but the read path cites file and lines straight off this
+ * row (store/ask_index.c), and a citation frozen at encode time would name
+ * lines the checkout no longer has. The vector, the content hash and the
+ * truncation flag are NOT touched: the bytes are identical, so all three are
+ * still true — and the 3-D view coordinates survive for the same reason (the
+ * vector did not move; see ask_view.h). label and lang are not refreshed
+ * either: both are derived from the path and the declaration, and a change to
+ * either changes the qualified name, which is a new row and never a reuse.
+ * Writes nothing when nothing differs, so a no-change re-run stays
+ * write-free. */
+int hyp_ask_vectors_refresh_span(hyp_ask_vectors_t *v, const char *qualified_name, int64_t node_id,
+                                 const char *file_path, int start_line, int end_line);
+
 /* Correct the truncation flag on rows whose VECTOR was reused.
  *
  * This exists because of one specific way the three states can be corrupted. A

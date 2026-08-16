@@ -788,6 +788,20 @@ int hyp_ask_embed_run(const hyp_ask_encoder_t *enc, const hyp_ask_embed_opts_t *
             if (hyp_ask_vectors_stored_hash(store, qn, stored, &stored_trunc) == HYP_ASK_VEC_OK &&
                 strcmp(stored, doc.hash) == 0) {
                 rep.reused++;
+                /* The vector is licensed for reuse; the CITATION is not
+                 * frozen with it. A pull that inserts lines above this
+                 * declaration moved its span and re-minted its node id while
+                 * leaving its bytes alone, and the read path cites file and
+                 * lines straight off this row (store/ask_index.c) — so the
+                 * row is updated to say where the span IS, not where it was
+                 * when it was encoded. */
+                if (hyp_ask_vectors_refresh_span(store, qn, node_id, rel, start_line, end_line) !=
+                    HYP_ASK_VEC_OK) {
+                    hyp_log_error("ask.embed.refresh_span", "err", hyp_ask_vectors_error(store));
+                    free(text);
+                    rc = -1;
+                    break;
+                }
                 /* The vector is licensed for reuse; the DISCLOSURE is not.
                  * Re-probe the truncation flag when the stored index could not
                  * say — otherwise an unattested zero would be republished as an

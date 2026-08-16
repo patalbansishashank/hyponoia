@@ -849,6 +849,40 @@ int hyp_ask_vectors_stored_hash(hyp_ask_vectors_t *v, const char *qualified_name
     return rc;
 }
 
+int hyp_ask_vectors_refresh_span(hyp_ask_vectors_t *v, const char *qualified_name, int64_t node_id,
+                                 const char *file_path, int start_line, int end_line) {
+    if (!v || !qualified_name) {
+        av_err(v, "refresh_span: bad arguments");
+        return HYP_ASK_VEC_ERR;
+    }
+    sqlite3_stmt *st = NULL;
+    /* The WHERE repeats the new values so a row that already cites them is
+     * not rewritten: the common nothing-changed re-run must stay write-free,
+     * and the view columns must survive (only put() may NULL them, because
+     * only put() moves the vector). */
+    const char *sql = "UPDATE ask_vectors SET node_id = ?2, file_path = ?3,"
+                      "       start_line = ?4, end_line = ?5"
+                      " WHERE qualified_name = ?1"
+                      "   AND (node_id <> ?2 OR file_path <> ?3"
+                      "        OR start_line <> ?4 OR end_line <> ?5)";
+    if (sqlite3_prepare_v2(v->db, sql, -1, &st, NULL) != SQLITE_OK) {
+        av_err_sqlite(v, "refresh_span prepare");
+        return HYP_ASK_VEC_ERR;
+    }
+    sqlite3_bind_text(st, 1, qualified_name, -1, SQLITE_STATIC);
+    sqlite3_bind_int64(st, 2, node_id);
+    sqlite3_bind_text(st, 3, file_path ? file_path : "", -1, AV_TRANSIENT);
+    sqlite3_bind_int(st, 4, start_line);
+    sqlite3_bind_int(st, 5, end_line);
+    int step = sqlite3_step(st);
+    sqlite3_finalize(st);
+    if (step != SQLITE_DONE) {
+        av_err_sqlite(v, "refresh_span");
+        return HYP_ASK_VEC_ERR;
+    }
+    return HYP_ASK_VEC_OK;
+}
+
 int hyp_ask_vectors_set_truncated_batch(hyp_ask_vectors_t *v, const char *const *qualified_names,
                                         const bool *flags, int count) {
     if (!v || (count > 0 && (!qualified_names || !flags))) {
