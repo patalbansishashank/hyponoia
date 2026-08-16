@@ -196,6 +196,9 @@ struct hyp_pipeline {
     /* ADR (project_summaries) captured before a full-reindex DB delete, so it
      * can be restored after the rebuild. NULL when no ADR existed. Issue #516. */
     char *saved_adr;
+    /* Its stored instant, carried with it. A rebuild copies the row; it does
+     * not author one, so the time must survive the copy unchanged. */
+    char *saved_adr_updated_at;
 
     /* Per-file LSP surfaces serialized at the collect_all_defs seam (the only
      * moment the result cache is alive), persisted by dump_and_persist_hashes
@@ -364,6 +367,8 @@ void hyp_pipeline_free(hyp_pipeline_t *p) {
     free(p->saved_adr); /* freed here too: error paths can exit before the
                          * restore in dump_and_persist_hashes runs. Issue #516. */
     p->saved_adr = NULL;
+    free(p->saved_adr_updated_at);
+    p->saved_adr_updated_at = NULL;
     hyp_store_free_lsp_surfaces(p->surface_rows, p->surface_row_count);
     p->surface_rows = NULL;
     p->surface_row_count = 0;
@@ -1345,6 +1350,8 @@ static int capture_existing_adr(hyp_pipeline_t *p, const char *db_path) {
         hyp_store_close(adr_store);
         free(p->saved_adr);
         p->saved_adr = NULL;
+        free(p->saved_adr_updated_at);
+        p->saved_adr_updated_at = NULL;
         return 0;
     }
     if (adr_rc != HYP_STORE_OK || !existing.content) {
@@ -1353,13 +1360,22 @@ static int capture_existing_adr(hyp_pipeline_t *p, const char *db_path) {
         return HYP_PIPELINE_ABORT_PRESERVE_DB;
     }
     char *saved = strdup(existing.content);
+    /* The instant travels with the text. A rebuild COPIES this row; restamping
+     * it would tell the UI that an index run edited the architecture, and would
+     * make the same document a second decision record every time. */
+    char *saved_at = existing.updated_at ? strdup(existing.updated_at) : NULL;
+    bool instant_lost = existing.updated_at != NULL && saved_at == NULL;
     hyp_store_adr_free(&existing);
     hyp_store_close(adr_store);
-    if (!saved) {
+    if (!saved || instant_lost) {
+        free(saved);
+        free(saved_at);
         return HYP_PIPELINE_ABORT_PRESERVE_DB;
     }
     free(p->saved_adr);
     p->saved_adr = saved;
+    free(p->saved_adr_updated_at);
+    p->saved_adr_updated_at = saved_at;
     return 0;
 }
 
@@ -1736,8 +1752,8 @@ int hyp_pipeline_publish_staged(char *stage_path, const hyp_pipeline_generation_
                                                 generation->surface_row_count) == HYP_STORE_OK;
     }
     if (ok && generation->adr_content) {
-        ok = hyp_store_adr_store(store, generation->project, generation->adr_content) ==
-             HYP_STORE_OK;
+        ok = hyp_store_adr_store_at(store, generation->project, generation->adr_content,
+                                    generation->adr_updated_at) == HYP_STORE_OK;
     }
     hyp_log_info("publish.timing", "block", "writes", "elapsed_ms",
                  itoa_buf((int)elapsed_ms(t_pub)));
@@ -1943,6 +1959,7 @@ static int dump_and_persist_hashes(hyp_pipeline_t *p, const hyp_file_hash_t *bas
         .manifest = manifest,
         .manifest_count = manifest_count,
         .adr_content = p->saved_adr,
+        .adr_updated_at = p->saved_adr_updated_at,
         .coverage = cov,
         .coverage_count = cov_count,
         .coverage_meta =
@@ -1986,6 +2003,8 @@ static int dump_and_persist_hashes(hyp_pipeline_t *p, const hyp_file_hash_t *bas
     }
     free(p->saved_adr);
     p->saved_adr = NULL;
+    free(p->saved_adr_updated_at);
+    p->saved_adr_updated_at = NULL;
 
     /* The SQLite generation is the commit point. Automatic refresh of an
      * existing artifact is best-effort, but an explicitly requested artifact

@@ -55,6 +55,7 @@ enum {
 #include "mcp/mcp_internal.h"
 #include "mcp/tool_surface.h"
 #include "store/record_store.h"
+#include "memory/adr_records.h"
 #include "store/store.h"
 #include <sqlite3.h>
 #include "cypher/cypher.h"
@@ -13594,8 +13595,19 @@ static char *handle_manage_adr(hyp_mcp_server_t *srv, const char *args) {
     bool is_error = false;
     const char *adr_content = have_adr ? adr.content : legacy;
     if (write_request) {
-        if (hyp_store_adr_store(store, project, content) == HYP_STORE_OK) {
+        /* The ADR document goes into the append-only record set as a
+         * kind=decision record, and the project_summaries row is refreshed from
+         * that record as a projection the UI and mode:"get" read. A record
+         * store that will not open is a FAILED write: falling back to replacing
+         * the row would leave the mutable path in the tree with a different
+         * entry condition, which is not removing it. */
+        if (hyp_adr_write_via_records(store, project, content) == HYP_STORE_OK) {
             yyjson_mut_obj_add_str(doc, root_obj, "status", "updated");
+            /* Byte-identical to what a client has always read, deliberately.
+             * It describes the INTERFACE — this call does supply the whole
+             * document — and the deprecated row is not the place to move
+             * bytes. What changed is underneath: the superseded text is a
+             * permanent record instead of an overwrite. */
             yyjson_mut_obj_add_str(doc, root_obj, "semantics", "whole_document_replaced");
         } else {
             yyjson_mut_obj_add_str(doc, root_obj, "status", "write_error");

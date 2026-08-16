@@ -422,6 +422,23 @@ typedef enum {
      * manage_adr(mode=update) then becomes a thin writer over record_memory                       \
      * until it is retired. No new surface may depend on this row;                                 \
      * test_tool_surface asserts that. */                                                          \
+     * the wire. `mode:"update"` writes THROUGH that store: the document becomes                   \
+     * a kind=decision record whose `origin` is the ADR's project id and whose                     \
+     * anchor is NULL, and the project_summaries row the UI and `mode:"get"`                       \
+     * read is refreshed from that record as a PROJECTION of it. What the row                      \
+     * no longer does is DESTROY the text it supersedes, which is what made it                     \
+     * a second, mutable, last-writer-wins store of the one thing the record                       \
+     * contract exists to keep — the same shape as two UI keys for one concept,                  \
+     * one level down at the data layer. Deprecation stays: no new memory                          \
+     * surface may depend on this row, and test_tool_surface asserts it from                       \
+     * both directions — no memory argument arrives here, no ADR vocabulary                      \
+     * leaves. src/memory/adr_records.h holds the fold and the attribution                         \
+     * argument. NOT ONE BYTE a client reads moves — annotations, input schema                   \
+     * and the `semantics` field in the answer are all what they were. The                         \
+     * annotation profile reads pessimistically for a writer that destroys                         \
+     * nothing, and stays anyway: those four booleans are bytes a client                           \
+     * branches on, and the unit that re-baselines them is the one flipping a                      \
+     * reserved row live, not this one. */                                                         \
     X("manage_adr", NULL, 0, 0, 0U, HYP_TOOL_DEPRECATED, NULL, HYP_TOOL_ANN_DOC_REPLACE)           \
     X("ingest_traces", NULL, 0, 0, 0U, HYP_TOOL_LIVE, NULL, HYP_TOOL_ANN_APPEND)                   \
                                                                                                    \

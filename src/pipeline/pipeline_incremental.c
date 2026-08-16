@@ -1465,8 +1465,8 @@ static int run_postpasses(hyp_pipeline_ctx_t *ctx, hyp_file_info_t *changed_file
  * generation boundary as full indexing. */
 static int dump_and_persist(hyp_gbuf_t *gbuf, const char *db_path, const char *project,
                             atomic_int *cancelled, const hyp_file_hash_t *manifest,
-                            int manifest_count, const char *adr_content, const char *repo_path,
-                            const hyp_coverage_row_t *cov, int cov_count,
+                            int manifest_count, const char *adr_content, const char *adr_updated_at,
+                            const char *repo_path, const hyp_coverage_row_t *cov, int cov_count,
                             const hyp_coverage_meta_t *meta_template,
                             const hyp_lsp_surface_row_t *surface_rows, int surface_row_count) {
     struct timespec t;
@@ -1479,6 +1479,7 @@ static int dump_and_persist(hyp_gbuf_t *gbuf, const char *db_path, const char *p
         .manifest = manifest,
         .manifest_count = manifest_count,
         .adr_content = adr_content,
+        .adr_updated_at = adr_updated_at,
         .coverage = cov,
         .coverage_count = cov_count,
         .coverage_meta = meta_template ? *meta_template : (hyp_coverage_meta_t){0},
@@ -2572,15 +2573,24 @@ int hyp_pipeline_run_incremental(hyp_pipeline_t *p, const char *db_path, hyp_fil
     }
 
     char *saved_adr = NULL;
+    /* Carried with the text, never re-read from a clock: a rebuild copies the
+     * ADR row, and a copy that restamps the instant is an edit nobody made. */
+    char *saved_adr_updated_at = NULL;
     hyp_adr_t existing_adr = {0};
     int adr_rc = hyp_store_adr_get(store, project, &existing_adr);
     if (adr_rc == HYP_STORE_OK) {
         bool had_adr_content = existing_adr.content != NULL;
         if (had_adr_content) {
             saved_adr = strdup(existing_adr.content);
+            if (existing_adr.updated_at) {
+                saved_adr_updated_at = strdup(existing_adr.updated_at);
+            }
         }
+        bool instant_lost = had_adr_content && existing_adr.updated_at && !saved_adr_updated_at;
         hyp_store_adr_free(&existing_adr);
-        if (had_adr_content && !saved_adr) {
+        if (had_adr_content && (!saved_adr || instant_lost)) {
+            free(saved_adr);
+            free(saved_adr_updated_at);
             hyp_gbuf_free(existing);
             free(changed_files);
             for (int i = 0; i < deleted_count; i++) {
@@ -2728,6 +2738,7 @@ int hyp_pipeline_run_incremental(hyp_pipeline_t *p, const char *db_path, hyp_fil
         hyp_store_free_coverage(old_cov, old_cov_count);
         free_mode_skipped(mode_skipped, mode_skipped_count);
         free(saved_adr);
+        free(saved_adr_updated_at);
         hyp_gbuf_free(existing);
         return HYP_PIPELINE_ABORT_PRESERVE_DB;
     }
@@ -2820,6 +2831,7 @@ int hyp_pipeline_run_incremental(hyp_pipeline_t *p, const char *db_path, hyp_fil
         hyp_store_free_coverage(old_cov, old_cov_count);
         free_mode_skipped(mode_skipped, mode_skipped_count);
         free(saved_adr);
+        free(saved_adr_updated_at);
         hyp_gbuf_free(existing);
         return HYP_PIPELINE_ABORT_PRESERVE_DB;
     }
@@ -2847,11 +2859,13 @@ int hyp_pipeline_run_incremental(hyp_pipeline_t *p, const char *db_path, hyp_fil
      * re-parsed files have no codec output, and publishing a stale row
      * would satisfy a future closure plan with yesterday's surface; an
      * empty table just routes the next incremental to a full rebuild. */
-    int persist_rc = dump_and_persist(
-        existing, db_path, project, hyp_pipeline_cancelled_ptr(p), manifest, manifest_count,
-        saved_adr, hyp_pipeline_repo_path(p), cov, cov_n, &coverage_meta, NULL, 0);
+    int persist_rc =
+        dump_and_persist(existing, db_path, project, hyp_pipeline_cancelled_ptr(p), manifest,
+                         manifest_count, saved_adr, saved_adr_updated_at, hyp_pipeline_repo_path(p),
+                         cov, cov_n, &coverage_meta, NULL, 0);
     hyp_pipeline_free_semantic_manifest(manifest, manifest_count);
     free(saved_adr);
+    free(saved_adr_updated_at);
     free(cov);
     hyp_store_free_coverage(old_cov, old_cov_count);
     free_mode_skipped(mode_skipped, mode_skipped_count);

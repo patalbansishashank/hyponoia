@@ -414,6 +414,8 @@ PIPELINE_SRCS = \
 # the comment-prose migration that relocates history-shaped comments into the
 # decision store instead of deleting them.
 MEMORY_SRCS = src/memory/anchor.c src/memory/comment_migrate.c src/memory/sync.c src/memory/sync_cmd.c
+# Memory module (§4 Track C): anchor resolution against the live index.
+MEMORY_SRCS = src/memory/anchor.c src/memory/adr_records.c
 
 # SimHash / MinHash module
 SIMHASH_SRCS = src/simhash/minhash.c
@@ -829,7 +831,7 @@ TEST_GRAPH_BUFFER_SRCS = tests/test_graph_buffer.c
 
 TEST_PIPELINE_SRCS = tests/test_registry.c tests/test_pipeline.c tests/test_cross_repo.c tests/test_fqn.c tests/test_identity.c tests/test_route_canon.c tests/test_path_alias.c tests/test_configlink.c tests/test_infrascan.c tests/test_worker_pool.c tests/test_parallel.c tests/test_index_resilience.c tests/test_call_reference_contract.c tests/repro/repro_call_scope_usages.c tests/repro/repro_call_argument_usages.c tests/repro/repro_reference_precision.c tests/repro/repro_lexical_binding_precision.c tests/repro/repro_call_argument_matrix_a.c tests/repro/repro_call_argument_matrix_b.c tests/repro/repro_call_node_behaviors.c tests/repro/repro_language_registry.c tests/repro/repro_call_node_manifest.c tests/repro/repro_lsp_ordered_signatures.c tests/repro/repro_lsp_ordered_local.c tests/repro/repro_ts_overload_return_chains.c tests/repro/repro_harness_cleanup.c tests/repro/repro_runner_filter.c tests/test_workspace_calls.c
 
-TEST_MEMORY_SRCS = tests/test_anchor.c tests/test_comment_migrate.c tests/test_sync.c
+TEST_MEMORY_SRCS = tests/test_anchor.c tests/test_comment_migrate.c tests/test_sync.c tests/test_adr_records.c
 TEST_PIPELINE_SRCS += tests/test_fqn_differential.c
 
 TEST_WATCHER_SRCS = tests/test_watcher.c

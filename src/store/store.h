@@ -809,8 +809,23 @@ typedef struct {
 } hyp_adr_t;
 
 int hyp_store_adr_store(hyp_store_t *s, const char *project, const char *content);
+/* Same write, with the instant supplied instead of captured. The append-only
+ * record a decision write produces commits to its timestamp, so the row and the
+ * record must denote ONE instant; two clock reads a microsecond apart can
+ * straddle a second boundary and leave the projection dated differently from
+ * the record it projects. `updated_at` NULL falls back to the wall clock, which
+ * is exactly what hyp_store_adr_store does. */
+int hyp_store_adr_store_at(hyp_store_t *s, const char *project, const char *content,
+                           const char *updated_at);
 int hyp_store_adr_get(hyp_store_t *s, const char *project, hyp_adr_t *out);
 int hyp_store_adr_delete(hyp_store_t *s, const char *project);
+/* Every project the ADR table holds a document for, ascending by name. Read
+ * from project_summaries ITSELF and never from the projects table: deleting a
+ * project leaves its ADR row standing, so enumerating projects would skip
+ * documents that are still on disk, and a decision skipped by a fold is a
+ * decision lost. Caller frees with hyp_store_adr_free_project_list(). */
+int hyp_store_adr_list_projects(hyp_store_t *s, char ***out, int *count);
+void hyp_store_adr_free_project_list(char **list, int count);
 int hyp_store_adr_update_sections(hyp_store_t *s, const char *project, const char **keys,
                                   const char **values, int count, hyp_adr_t *out);
 void hyp_store_adr_free(hyp_adr_t *adr);

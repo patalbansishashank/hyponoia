@@ -1460,6 +1460,59 @@ TEST(tool_surface_no_reserved_surface_depends_on_the_deprecated_tool) {
     PASS();
 }
 
+/* The other half of that row, and the one C7u makes assertable. The ADR
+ * document is folded into the append-only record set, so the deprecated tool
+ * is a PRODUCER for the memory surface and never something the memory surface
+ * consults. Two ways that could stop being true, and both are checkable from
+ * the client's side of the wire:
+ *
+ *   - the deprecated tool grows a memory argument, which would make an ADR
+ *     write a second way to author a record;
+ *   - a memory tool grows ADR vocabulary, which would make the record surface
+ *     need to know what an ADR is in order to read one.
+ *
+ * Either one is a new surface depending on the deprecated row. */
+TEST(tool_surface_the_deprecated_adr_tool_shares_no_vocabulary_with_the_memory_surface) {
+    const char *adr_schema = hyp_mcp_tool_input_schema("manage_adr");
+    ASSERT_NOT_NULL(adr_schema); /* advertised and callable, unchanged on the wire */
+    ASSERT_NOT_NULL(strstr(adr_schema, "\"mode\""));
+    ASSERT_NOT_NULL(strstr(adr_schema, "\"content\""));
+
+    /* No memory-surface argument arrived on the deprecated tool. record_memory
+     * is the one writer; an ADR update reaching the record set through
+     * manage_adr's own arguments would be a second one. */
+    ASSERT_NULL(strstr(adr_schema, "\"kind\""));
+    ASSERT_NULL(strstr(adr_schema, "\"anchor\""));
+    ASSERT_NULL(strstr(adr_schema, "\"origin\""));
+    ASSERT_NULL(strstr(adr_schema, "\"thread\""));
+    ASSERT_NULL(strstr(adr_schema, "\"parent\""));
+    /* `sections` survives as a READ mode and must never return as an argument:
+     * an argument that edits part of a document is a mutation primitive, and
+     * there is no such thing on this path. The mode set is exactly the three
+     * it has always been, so no new mode arrived either. */
+    ASSERT_NOT_NULL(strstr(adr_schema, "\"enum\":[\"get\",\"update\",\"sections\"]"));
+    ASSERT_NULL(strstr(adr_schema, "\"sections\":{"));
+
+    /* Nothing else advertised speaks of ADRs. The record set holds the folded
+     * documents as ordinary decision records, so a reader needs no ADR
+     * vocabulary to find one — which is exactly what "no new surface depends
+     * on it" has to mean at the data layer. */
+    for (int i = 0; i < hyp_mcp_tool_surface_count(); i++) {
+        const char *name = hyp_mcp_tool_surface_name(i);
+        if (strcmp(name, "manage_adr") == 0) {
+            continue;
+        }
+        const char *schema = hyp_mcp_tool_input_schema(name);
+        if (!schema) {
+            continue;
+        }
+        if (strstr(schema, "adr") || strstr(schema, "ADR")) {
+            FAIL("a tool other than manage_adr advertises ADR vocabulary");
+        }
+    }
+    PASS();
+}
+
 SUITE(tool_surface) {
     RUN_TEST(tool_surface_registry_and_table_describe_the_same_tools);
     RUN_TEST(tool_surface_both_ends_advertise_exactly_the_same_live_tools);
@@ -1479,4 +1532,5 @@ SUITE(tool_surface) {
     RUN_TEST(tool_surface_every_advertised_tool_carries_complete_annotations);
     RUN_TEST(tool_surface_transcript_kinds_are_not_authorable);
     RUN_TEST(tool_surface_no_reserved_surface_depends_on_the_deprecated_tool);
+    RUN_TEST(tool_surface_the_deprecated_adr_tool_shares_no_vocabulary_with_the_memory_surface);
 }

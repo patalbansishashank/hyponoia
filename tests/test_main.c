@@ -657,6 +657,7 @@ extern void suite_identity(void);
 extern void suite_anchor(void);
 extern void suite_comment_migrate(void);
 extern void suite_sync(void);
+extern void suite_adr_records(void);
 extern void suite_workspace_resolve(void);
 extern void suite_workspace_calls(void);
 extern void suite_route_canon(void);
@@ -964,6 +965,7 @@ int main(int argc, char **argv) {
     RUN_SELECTED_SUITE(anchor);
     RUN_SELECTED_SUITE(comment_migrate);
     RUN_SELECTED_SUITE(sync);
+    RUN_SELECTED_SUITE(adr_records);
     RUN_SELECTED_SUITE(workspace_resolve);
     RUN_SELECTED_SUITE(workspace_calls);
     RUN_SELECTED_SUITE(route_canon);

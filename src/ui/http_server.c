@@ -18,6 +18,7 @@
 #include "ui/asset_pack.h"
 #include "ui/layout3d.h"
 #include "mcp/mcp.h"
+#include "memory/adr_records.h"
 #include "store/store.h"
 #include "watcher/watcher.h"
 #include "cli/cli.h"
@@ -864,7 +865,11 @@ static void handle_adr_save(hyp_http_server_t *srv, hyp_http_conn_t *c, const hy
         return;
     }
 
-    int rc = hyp_store_adr_store(store, proj, content);
+    /* The same writer the MCP tool uses: the document becomes an append-only
+     * decision record and the row it reads back is a projection of that record.
+     * Two writers into one concept is how a store starts disagreeing with
+     * itself, so there is one function and both ends call it. */
+    int rc = hyp_adr_write_via_records(store, proj, content);
     hyp_store_close(store);
     if (mutation_held) {
         srv->mutation_end(srv->mutation_context, proj);
