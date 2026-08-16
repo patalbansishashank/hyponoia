@@ -453,6 +453,62 @@ TEST(adr_records_refolding_the_writers_own_output_adds_nothing) {
     PASS();
 }
 
+/* ── 8b · A reindex copies the row; it does not author one ──────────────── */
+
+TEST(adr_records_a_rebuilt_generation_folds_to_the_same_record) {
+    const char *made = th_mktempdir("hyp_adr_rebuild");
+    ASSERT_NOT_NULL(made);
+    char tmp[256];
+    (void)snprintf(tmp, sizeof(tmp), "%s", made);
+
+    /* Publication REPLACES the database file, so the ADR row is copied into
+     * the new generation rather than surviving in place. A copy that restamped
+     * the instant would make the same document a second decision record after
+     * every reindex — and two machines that reindexed at different moments
+     * would hold two records for one document and never deduplicate. This is
+     * the property the copy has to have, asserted through the same store
+     * primitive publication uses. */
+    hyp_store_t *before = adr_fixture_store("proj", ADR_DOC_ONE, ADR_ISO_2026);
+    ASSERT_NOT_NULL(before);
+
+    hyp_adr_t carried;
+    memset(&carried, 0, sizeof(carried));
+    ASSERT_EQ(hyp_store_adr_get(before, "proj", &carried), HYP_STORE_OK);
+    ASSERT_STR_EQ(carried.updated_at, ADR_ISO_2026);
+
+    hyp_store_t *rebuilt = hyp_store_open_memory();
+    ASSERT_NOT_NULL(rebuilt);
+    ASSERT_EQ(hyp_store_upsert_project(rebuilt, "proj", "/tmp/adr-records-fixture"), HYP_STORE_OK);
+    ASSERT_EQ(hyp_store_adr_store_at(rebuilt, "proj", carried.content, carried.updated_at),
+              HYP_STORE_OK);
+    hyp_store_adr_free(&carried);
+
+    hyp_record_store_t *records = adr_fixture_records(tmp, "records");
+    ASSERT_NOT_NULL(records);
+    ASSERT_EQ(hyp_adr_fold_store(before, records, NULL), HYP_RECORD_STORE_OK);
+    char digest_before[HYP_RECORD_ID_LEN + 1];
+    ASSERT_EQ(hyp_record_store_digest(records, digest_before), HYP_RECORD_STORE_OK);
+
+    hyp_adr_fold_result_t after_rebuild = {0};
+    ASSERT_EQ(hyp_adr_fold_store(rebuilt, records, &after_rebuild), HYP_RECORD_STORE_OK);
+    ASSERT_EQ(after_rebuild.documents, 1);
+    ASSERT_EQ(after_rebuild.added, 0);
+    ASSERT_EQ(after_rebuild.present, 1);
+
+    size_t count = 0;
+    ASSERT_EQ(hyp_record_store_count(records, &count), HYP_RECORD_STORE_OK);
+    ASSERT_EQ(count, 1);
+    char digest_after[HYP_RECORD_ID_LEN + 1];
+    ASSERT_EQ(hyp_record_store_digest(records, digest_after), HYP_RECORD_STORE_OK);
+    ASSERT_STR_EQ(digest_after, digest_before);
+
+    hyp_record_store_close(records);
+    hyp_store_close(rebuilt);
+    hyp_store_close(before);
+    (void)th_rmtree(tmp);
+    PASS();
+}
+
 /* ── 9 · No record store, no write. There is no fallback path ───────────── */
 
 TEST(adr_records_write_fails_closed_without_a_record_store) {
@@ -519,6 +575,7 @@ SUITE(adr_records) {
     RUN_TEST(adr_records_refuses_a_document_whose_instant_cannot_be_read);
     RUN_TEST(adr_records_writer_keeps_every_superseded_document);
     RUN_TEST(adr_records_refolding_the_writers_own_output_adds_nothing);
+    RUN_TEST(adr_records_a_rebuilt_generation_folds_to_the_same_record);
     RUN_TEST(adr_records_write_fails_closed_without_a_record_store);
     RUN_TEST(adr_records_default_location_follows_the_cache_dir);
 }

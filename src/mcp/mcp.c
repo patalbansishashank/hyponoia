@@ -13561,7 +13561,12 @@ static char *handle_manage_adr(hyp_mcp_server_t *srv, const char *args) {
          * entry condition, which is not removing it. */
         if (hyp_adr_write_via_records(store, project, content) == HYP_STORE_OK) {
             yyjson_mut_obj_add_str(doc, root_obj, "status", "updated");
-            yyjson_mut_obj_add_str(doc, root_obj, "semantics", "appended_decision_record");
+            /* Byte-identical to what a client has always read, deliberately.
+             * It describes the INTERFACE — this call does supply the whole
+             * document — and the deprecated row is not the place to move
+             * bytes. What changed is underneath: the superseded text is a
+             * permanent record instead of an overwrite. */
+            yyjson_mut_obj_add_str(doc, root_obj, "semantics", "whole_document_replaced");
         } else {
             yyjson_mut_obj_add_str(doc, root_obj, "status", "write_error");
             is_error = true;

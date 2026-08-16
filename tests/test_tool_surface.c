@@ -1175,9 +1175,12 @@ TEST(tool_surface_the_deprecated_adr_tool_shares_no_vocabulary_with_the_memory_s
     ASSERT_NULL(strstr(adr_schema, "\"origin\""));
     ASSERT_NULL(strstr(adr_schema, "\"thread\""));
     ASSERT_NULL(strstr(adr_schema, "\"parent\""));
-    /* And the section primitive that was never an update primitive stays
-     * absent, rather than returning as a way to edit part of a record. */
-    ASSERT_NULL(strstr(adr_schema, "\"sections\""));
+    /* `sections` survives as a READ mode and must never return as an argument:
+     * an argument that edits part of a document is a mutation primitive, and
+     * there is no such thing on this path. The mode set is exactly the three
+     * it has always been, so no new mode arrived either. */
+    ASSERT_NOT_NULL(strstr(adr_schema, "\"enum\":[\"get\",\"update\",\"sections\"]"));
+    ASSERT_NULL(strstr(adr_schema, "\"sections\":{"));
 
     /* Nothing else advertised speaks of ADRs. The record set holds the folded
      * documents as ordinary decision records, so a reader needs no ADR

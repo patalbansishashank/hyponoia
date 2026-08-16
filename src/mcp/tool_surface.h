@@ -409,10 +409,12 @@ typedef enum {
      * surface may depend on this row, and test_tool_surface asserts it from                       \
      * both directions — no memory argument arrives here, no ADR vocabulary                      \
      * leaves. src/memory/adr_records.h holds the fold and the attribution                         \
-     * argument. The annotation profile stays as it is even though `destructive`                   \
-     * reads pessimistically for a writer that destroys nothing: annotation                        \
-     * booleans are bytes a client branches on, and the unit that re-baselines                     \
-     * them is the one flipping a reserved row live, not this one. */                              \
+     * argument. NOT ONE BYTE a client reads moves — annotations, input schema                   \
+     * and the `semantics` field in the answer are all what they were. The                         \
+     * annotation profile reads pessimistically for a writer that destroys                         \
+     * nothing, and stays anyway: those four booleans are bytes a client                           \
+     * branches on, and the unit that re-baselines them is the one flipping a                      \
+     * reserved row live, not this one. */                                                         \
     X("manage_adr", NULL, 0, 0, 0U, HYP_TOOL_DEPRECATED, NULL, HYP_TOOL_ANN_DOC_REPLACE)           \
     X("ingest_traces", NULL, 0, 0, 0U, HYP_TOOL_LIVE, NULL, HYP_TOOL_ANN_APPEND)                   \
                                                                                                    \

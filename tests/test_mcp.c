@@ -5143,11 +5143,18 @@ TEST(tool_manage_adr_unified_backend_issue256) {
     PASS();
 }
 
-/* The client's own view of what an update does. Two updates through the full
- * JSON-RPC path leave TWO decision records — the superseded document is still
- * there, where the UPSERT it replaced left one row and no way back — and the
- * one field on the wire that described the old semantics describes the new
- * ones. Everything else a client reads is byte-identical. */
+/* The client's own view of what an update does. Two claims at once, and they
+ * are only interesting together:
+ *
+ *   NOTHING ON THE WIRE MOVED. Every byte a client reads from update, get and
+ *   sections is what it always was, including the `semantics` field, which
+ *   describes the interface (this call supplies the whole document) and not
+ *   the storage. A deprecated row is a marker for a migration, never a place
+ *   to change a contract.
+ *
+ *   AND THE LOSS STOPPED. Two updates leave TWO decision records; the
+ *   superseded document is still readable, where the UPSERT it replaced left
+ *   one row and no way back to the text it destroyed. */
 TEST(tool_manage_adr_update_keeps_the_document_it_supersedes) {
     adr_cache_scope_t cache;
     ASSERT_TRUE(adr_cache_scope_begin(&cache, "hyp_mcp_adr_append"));
@@ -5166,12 +5173,9 @@ TEST(tool_manage_adr_update_keeps_the_document_it_supersedes) {
     ASSERT_NOT_NULL(first);
     ASSERT_NOT_NULL(strstr(first, "updated"));
     ASSERT_NULL(strstr(first, "\"isError\":true"));
-    /* The one client-visible byte change this unit makes: the field that
-     * announced a whole-document replacement announces an append instead,
-     * because the replacement is what stopped happening. */
+    /* Unchanged on the wire, asserted rather than assumed. */
     ASSERT_TRUE(response_contains_json_fragment(first, "\"semantics\""));
-    ASSERT_TRUE(response_contains_json_fragment(first, "appended_decision_record"));
-    ASSERT_NULL(strstr(first, "whole_document_replaced"));
+    ASSERT_TRUE(response_contains_json_fragment(first, "whole_document_replaced"));
     free(first);
 
     /* A second update whose content differs. The mutable path would destroy

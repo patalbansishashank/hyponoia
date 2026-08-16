@@ -693,6 +693,14 @@ typedef struct {
     const hyp_file_hash_t *manifest;
     int manifest_count;
     const char *adr_content;
+    /* The instant the carried ADR was last written, so the row crosses the
+     * generation boundary UNCHANGED. Restamping it makes a reindex look like
+     * an edit — to the UI, which shows the time, and to the decision store,
+     * where the same document under a new instant is a second record and two
+     * machines that reindexed at different moments would never deduplicate.
+     * NULL only when adr_content is NULL, or from a caller that has no
+     * instant to carry. */
+    const char *adr_updated_at;
     const hyp_coverage_row_t *coverage;
     int coverage_count;
     hyp_coverage_meta_t coverage_meta;
