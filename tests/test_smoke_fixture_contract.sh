@@ -337,14 +337,30 @@ require(
     "grep -Fq '=== soak-test: PASSED ==='" in soak_legs,
     "the canonical soak entry must completion-guard every leg on the soak summary",
 )
+# pr-smoke's matrix is [ubuntu-latest]. It once also declared a macOS and a
+# Windows step, guarded by `if: matrix.os == ...` values the matrix never
+# produced, so neither could run — and both rotted where nobody could see it:
+# each still invoked smoke-local.sh in its default `standard` mode against a
+# release that publishes only -ui archives, which is the bug that kept pr.yml
+# red from 2026-08-14. They are gone. macOS is a RETIRED platform; Windows is
+# built by _build.yml and smoked by _smoke.yml, and
+# tests/test_windows_bundle_contract.sh asserts that there rather than here.
+# So this pins ONE Ubuntu smoke, in the ui variant that actually ships.
+pr_smoke_local_calls = re.findall(r"scripts/smoke-local\.sh[^\n]*", pr_workflow)
 require(
-    pr_workflow.count("scripts/smoke-local.sh") >= 2,
-    "PR Ubuntu and macOS smoke steps must run smoke-local.sh",
+    len(pr_smoke_local_calls) == 1,
+    "PR smoke must run smoke-local.sh exactly once — one reachable Ubuntu leg, "
+    f"found {len(pr_smoke_local_calls)}",
 )
 require(
-    "SMOKE_ARCH=amd64" in pr_workflow
-    and "test-infrastructure/vm/vm-smoke.sh" in pr_workflow,
-    "PR Windows smoke must call vm-smoke.sh with SMOKE_ARCH=amd64",
+    all(call.rstrip().endswith(" ui") for call in pr_smoke_local_calls),
+    "the PR smoke must stage the ui variant, because the release publishes only "
+    "-ui archives and install.sh refuses --standard by name",
+)
+require(
+    "vm-smoke.sh" not in pr_workflow.split("pr-smoke:")[-1].split("\n  ci-ok:")[0],
+    "pr.yml must not invoke vm-smoke.sh: no reachable job can run it, and an "
+    "unreachable copy drifts out of step with _smoke.yml's real Windows leg",
 )
 smoke_test = read("scripts/smoke-test.sh")
 require(
@@ -531,8 +547,20 @@ require(
     "Phase 14 must assert update leaves the binary byte-identical",
 )
 
+# Search the DETECTOR LINE, not the whole workflow. Searching the whole file
+# let this pass by accident: "test-infrastructure/vm/vm-smoke" was satisfied by
+# the deleted Windows RUN STEP rather than by the path filter, so removing an
+# unreachable step failed a check about change detection. The filter writes the
+# pair as an alternation — test-infrastructure/vm/(vm-smoke\.sh|...) — so the
+# needles below are matched against the filter with its grouping removed.
+detector_line = next(
+    (line for line in pr_workflow.splitlines() if "grep -qE" in line and "src/" in line),
+    "",
+)
+require(bool(detector_line), "pr.yml must carry a product-change path filter")
+detector_flat = detector_line.replace("(", "").replace(")", "").replace("|", " ")
 for changed_path in (
-    "install\\.(sh|ps1)",
+    "install\\.sh",
     "scripts/smoke-local",
     "scripts/smoke-fixture-server",
     "scripts/gen-third-party-notices",
@@ -540,7 +568,7 @@ for changed_path in (
     "windows-user-path-guard",
 ):
     require(
-        changed_path in pr_workflow,
+        changed_path in detector_flat,
         f"PR product-change detector must include {changed_path}",
     )
 require(

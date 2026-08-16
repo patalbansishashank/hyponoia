@@ -838,39 +838,64 @@ require(
     "src/cli/cli.c must not retain any launcher-state API usage",
 )
 
-# ── 10. PR smoke delegates to the maintained native harness ──────────────────
+# ── 10. Windows smoke delegates to the maintained native harness ─────────────
+# This used to pin a copy of the recipe inside pr.yml's pr-smoke job. That job's
+# matrix is [ubuntu-latest], so the block it pinned COULD NEVER RUN: the contract
+# was asserting text rather than behaviour, and the text duly rotted — it still
+# carried the standard-variant invocation that kept pr.yml red from 2026-08-14,
+# against a release that publishes only -ui archives. A gate over a job that
+# cannot execute is the failure mode this project keeps paying for, so the
+# assertions now point at the venues that really do build and smoke Windows:
+# _build.yml's build-windows and _smoke.yml's smoke-windows. pr.yml is pinned to
+# carry NO Windows block at all, so decoration cannot come back.
+build_workflow = read(".github/workflows/_build.yml")
+win_build_blocks = [
+    block
+    for block in yaml_run_blocks(build_workflow)
+    if "scripts/build.sh" in block and "CC=clang CXX=clang++" in block
+]
+require(
+    len(win_build_blocks) >= 1,
+    "_build.yml must build the Windows binary with the clang toolchain",
+)
+require(
+    all("--with-ui" in block for block in win_build_blocks),
+    "the Windows build must produce the UI variant, which is the only one published",
+)
+
+smoke_workflow = read(".github/workflows/_smoke.yml")
+smoke_win_match = re.search(
+    r"(?ms)^  smoke-windows:\s*(.*?)(?=^  [A-Za-z0-9_-]+:\s*$|\Z)", smoke_workflow
+)
+smoke_win = smoke_win_match.group(1) if smoke_win_match else ""
+require(bool(smoke_win), "_smoke.yml must contain the smoke-windows job")
+require(
+    "test-infrastructure/vm/vm-smoke.sh" in smoke_win,
+    "Windows smoke must invoke the maintained native harness, not an inline copy of it",
+)
+require(
+    "SMOKE_ARCH" in smoke_win,
+    "Windows smoke must pass the artifact architecture to the harness",
+)
+require(
+    "scripts/smoke-test.sh" not in smoke_win,
+    "Windows smoke must not duplicate smoke-test staging the harness already owns",
+)
+
 pr_workflow = read(".github/workflows/pr.yml")
 pr_smoke_match = re.search(r"(?ms)^  pr-smoke:\s*(.*?)(?=^  [A-Za-z0-9_-]+:\s*$|\Z)", pr_workflow)
 pr_smoke = pr_smoke_match.group(1) if pr_smoke_match else ""
 require(bool(pr_smoke), "pr.yml must contain the pr-smoke job")
-pr_windows_blocks = [
-    block for block in yaml_run_blocks(pr_smoke) if "scripts/build.sh CC=clang CXX=clang++" in block
-]
 require(
-    len(pr_windows_blocks) == 1,
-    "PR smoke must contain exactly one Windows production build run block",
+    not [
+        block
+        for block in yaml_run_blocks(pr_smoke)
+        if "CC=clang CXX=clang++" in block or "vm-smoke.sh" in block
+    ],
+    "pr.yml must not carry a Windows block: pr-smoke's matrix is ubuntu-only, so one could "
+    "never run, and an unreachable copy of the recipe drifts out of step with the real one. "
+    "Windows coverage belongs to _build.yml (build-windows) and _smoke.yml (smoke-windows)",
 )
-if pr_windows_blocks:
-    pr_windows_block = re.sub(r"\\\s*\n\s*", " ", pr_windows_blocks[0])
-    pr_windows_block = re.sub(r"\s+", " ", pr_windows_block).strip()
-    require(
-        "SMOKE_ARCH=amd64 bash test-infrastructure/vm/vm-smoke.sh" in pr_windows_block,
-        "Windows PR smoke must invoke the maintained native harness with the authoritative "
-        "amd64 artifact architecture",
-    )
-    require(
-        pr_windows_block.find("scripts/build.sh CC=clang CXX=clang++")
-        < pr_windows_block.find("SMOKE_ARCH=amd64 bash test-infrastructure/vm/vm-smoke.sh"),
-        "Windows PR smoke must build before invoking the maintained harness",
-    )
-    require(
-        "scripts/smoke-test.sh" not in pr_windows_block and payload not in pr_windows_block,
-        "Windows PR workflow must not duplicate vm-smoke staging or smoke-test logic",
-    )
-    require(
-        "$RUNNER_TEMP" not in pr_windows_block,
-        "Windows PR smoke must not treat GitHub's shared RUNNER_TEMP ancestry as private",
-    )
 
 if failures:
     print("Windows one-executable runtime-set contract FAILED:", file=sys.stderr)
