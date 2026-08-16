@@ -321,6 +321,21 @@ static int init_schema(hyp_store_t *s) {
         "  ignored_files_total INTEGER NOT NULL DEFAULT 0,"
         "  coverage_version INTEGER NOT NULL DEFAULT 1,"
         "  hash_records_complete INTEGER NOT NULL DEFAULT 0"
+        ");"
+        /* Workspace registry (§4 A1): one workspace per DB file, described in
+         * the file. workspace_meta is the workspace's own id (single row,
+         * CHECKed); workspace_repos binds member repos under it. ABSENT rows =
+         * a pre-A1 per-repo store, a workspace of one derived from its single
+         * project — never "no workspace". No FK to projects: a member is
+         * registered before its first index run writes a projects row. */
+        "CREATE TABLE IF NOT EXISTS workspace_meta ("
+        "  ws_key INTEGER PRIMARY KEY CHECK (ws_key = 1),"
+        "  id TEXT NOT NULL"
+        ");"
+        "CREATE TABLE IF NOT EXISTS workspace_repos ("
+        "  slug TEXT PRIMARY KEY,"
+        "  root_path TEXT NOT NULL,"
+        "  role TEXT"
         ");";
 
     int rc = exec_sql(s, ddl);
@@ -948,14 +963,37 @@ bool hyp_store_check_integrity_deep(hyp_store_t *s) {
     return ok;
 }
 
+/* Registered workspace member count, or -1 when the registry is ABSENT (a
+ * pre-A1 per-repo store, or a read-only open of one — prepare fails on the
+ * missing table and that is the expected legacy answer, mirroring
+ * hyp_store_generation's store_meta probe). */
+static int ws_registry_member_count(hyp_store_t *s) {
+    sqlite3_stmt *stmt = NULL;
+    if (sqlite3_prepare_v2(s->db, "SELECT count(*) FROM workspace_repos;", HYP_NOT_FOUND, &stmt,
+                           NULL) != SQLITE_OK) {
+        return HYP_NOT_FOUND;
+    }
+    int n = HYP_NOT_FOUND;
+    if (sqlite3_step(stmt) == SQLITE_ROW) {
+        n = sqlite3_column_int(stmt, 0);
+    }
+    sqlite3_finalize(stmt);
+    return n > 0 ? n : HYP_NOT_FOUND;
+}
+
 bool hyp_store_check_integrity(hyp_store_t *s) {
     if (!s || !s->db) {
         return false;
     }
 
-    /* Each project gets its own .db file, so the projects table should have
-     * exactly 1 row. More than 5 rows is definitely corrupt (allows some slack
-     * for edge cases). Also check that root_path looks like a real path. */
+    /* A per-repo store (no workspace registry) holds one project, so more
+     * than ST_MAX_ROW_CHECK rows is definitely corrupt (slack for edge
+     * cases). A REGISTERED workspace of N members legitimately holds up to 2N
+     * rows — each member plus its "::missed" coverage shadow — so its ceiling
+     * is 2N plus that same slack, derived from the registry rather than left
+     * hardcoded at one repo's worth (§4 A1). The per-repo ceiling itself does
+     * not move: absent registry, absent workspace, unchanged number.
+     * Also check that root_path looks like a real path. */
     sqlite3_stmt *stmt = NULL;
     int rc =
         sqlite3_prepare_v2(s->db, "SELECT count(*) FROM projects;", HYP_NOT_FOUND, &stmt, NULL);
@@ -963,12 +1001,15 @@ bool hyp_store_check_integrity(hyp_store_t *s) {
         return false;
     }
 
+    int members = ws_registry_member_count(s);
+    int ceiling = members > 0 ? members * 2 + ST_MAX_ROW_CHECK : ST_MAX_ROW_CHECK;
+
     bool ok = true;
     if (sqlite3_step(stmt) == SQLITE_ROW) {
         int row_count = sqlite3_column_int(stmt, 0);
-        if (row_count > ST_MAX_ROW_CHECK) {
-            (void)fprintf(stderr, "ERROR store.corrupt table=projects rows=%d (expected 1)\n",
-                          row_count);
+        if (row_count > ceiling) {
+            (void)fprintf(stderr, "ERROR store.corrupt table=projects rows=%d (ceiling %d)\n",
+                          row_count, ceiling);
             ok = false;
         }
     }
@@ -1686,6 +1727,245 @@ int hyp_store_delete_project(hyp_store_t *s, const char *name) {
         return HYP_STORE_ERR;
     }
     return exec_sql(s, "COMMIT;");
+}
+
+/* ── Workspace registry (§4 A1) ─────────────────────────────────── */
+
+/* Refusal detail into the caller's buffer (optional) AND the store's errbuf,
+ * so a caller that passed no buffer still sees why via hyp_store_error. */
+static void ws_bind_refuse(hyp_store_t *s, char *err, size_t err_sz, const char *msg) {
+    store_set_error(s, msg);
+    if (err && err_sz > 0) {
+        snprintf(err, err_sz, "%s", msg);
+    }
+}
+
+int hyp_store_workspace_bind(hyp_store_t *s, const char *ws_id, const hyp_workspace_repo_t *repos,
+                             int count, char *err, size_t err_sz) {
+    if (!s || !s->db || !ws_id || !repos || count < 1) {
+        return HYP_STORE_ERR;
+    }
+    if (!hyp_validate_project_name(ws_id)) {
+        ws_bind_refuse(s, err, err_sz, "workspace id is not a valid slug");
+        return HYP_STORE_ERR;
+    }
+    char msg[HYP_SZ_1K];
+    for (int i = 0; i < count; i++) {
+        if (!repos[i].slug || !hyp_validate_project_name(repos[i].slug) || !repos[i].root_path ||
+            repos[i].root_path[0] == '\0') {
+            ws_bind_refuse(s, err, err_sz, "workspace member has an invalid slug or root");
+            return HYP_STORE_ERR;
+        }
+        if (repos[i].role && repos[i].role[0] == '\0') {
+            /* NULL means "not yet derived"; "" would silently claim a third
+             * state that absent-vs-empty rules out. */
+            ws_bind_refuse(s, err, err_sz, "workspace member role must be NULL or non-empty");
+            return HYP_STORE_ERR;
+        }
+        /* The collision gate A1's migration inherits from A6: two roots, one
+         * slug, refused NAMING BOTH PATHS. */
+        for (int j = 0; j < i; j++) {
+            if (strcmp(repos[i].slug, repos[j].slug) == 0) {
+                snprintf(msg, sizeof(msg),
+                         "slug collision inside workspace '%s': '%s' and '%s' both slug to '%s'",
+                         ws_id, repos[j].root_path, repos[i].root_path, repos[i].slug);
+                ws_bind_refuse(s, err, err_sz, msg);
+                return HYP_STORE_ERR;
+            }
+        }
+    }
+
+    if (exec_sql(s, "BEGIN IMMEDIATE;") != HYP_STORE_OK) {
+        return HYP_STORE_ERR;
+    }
+
+    /* A store already bound to a DIFFERENT workspace refuses: stamping over it
+     * would silently re-home every address in the file. */
+    sqlite3_stmt *stmt = NULL;
+    if (sqlite3_prepare_v2(s->db, "SELECT id FROM workspace_meta WHERE ws_key = 1;", HYP_NOT_FOUND,
+                           &stmt, NULL) != SQLITE_OK) {
+        store_set_error_sqlite(s, "workspace_bind: meta select");
+        (void)exec_sql(s, "ROLLBACK;");
+        return HYP_STORE_ERR;
+    }
+    bool mismatch = false;
+    if (sqlite3_step(stmt) == SQLITE_ROW) {
+        const char *bound = (const char *)sqlite3_column_text(stmt, 0);
+        if (!bound || strcmp(bound, ws_id) != 0) {
+            snprintf(msg, sizeof(msg),
+                     "store is bound to workspace '%s'; refusing to rebind as '%s'",
+                     bound ? bound : "(null)", ws_id);
+            mismatch = true;
+        }
+    }
+    sqlite3_finalize(stmt);
+    if (mismatch) {
+        ws_bind_refuse(s, err, err_sz, msg);
+        (void)exec_sql(s, "ROLLBACK;");
+        return HYP_STORE_ERR;
+    }
+
+    stmt = NULL;
+    if (sqlite3_prepare_v2(s->db,
+                           "INSERT OR IGNORE INTO workspace_meta (ws_key, id) VALUES (1, ?1);",
+                           HYP_NOT_FOUND, &stmt, NULL) != SQLITE_OK) {
+        store_set_error_sqlite(s, "workspace_bind: meta insert prepare");
+        (void)exec_sql(s, "ROLLBACK;");
+        return HYP_STORE_ERR;
+    }
+    bind_text(stmt, SKIP_ONE, ws_id);
+    int meta_rc = sqlite3_step(stmt);
+    sqlite3_finalize(stmt);
+    if (meta_rc != SQLITE_DONE) {
+        store_set_error_sqlite(s, "workspace_bind: meta insert");
+        (void)exec_sql(s, "ROLLBACK;");
+        return HYP_STORE_ERR;
+    }
+
+    for (int i = 0; i < count; i++) {
+        /* The same collision gate, separated in time: this slug registered
+         * before, from a different root. */
+        stmt = NULL;
+        if (sqlite3_prepare_v2(s->db, "SELECT root_path FROM workspace_repos WHERE slug = ?1;",
+                               HYP_NOT_FOUND, &stmt, NULL) != SQLITE_OK) {
+            store_set_error_sqlite(s, "workspace_bind: member select");
+            (void)exec_sql(s, "ROLLBACK;");
+            return HYP_STORE_ERR;
+        }
+        bind_text(stmt, SKIP_ONE, repos[i].slug);
+        bool collide = false;
+        if (sqlite3_step(stmt) == SQLITE_ROW) {
+            const char *have = (const char *)sqlite3_column_text(stmt, 0);
+            if (!have || strcmp(have, repos[i].root_path) != 0) {
+                snprintf(msg, sizeof(msg),
+                         "slug collision inside workspace '%s': '%s' (registered) and '%s' both "
+                         "slug to '%s'",
+                         ws_id, have ? have : "(null)", repos[i].root_path, repos[i].slug);
+                collide = true;
+            }
+        }
+        sqlite3_finalize(stmt);
+        if (collide) {
+            ws_bind_refuse(s, err, err_sz, msg);
+            (void)exec_sql(s, "ROLLBACK;");
+            return HYP_STORE_ERR;
+        }
+
+        /* Additive upsert; a NULL incoming role never clobbers a derived one. */
+        stmt = NULL;
+        if (sqlite3_prepare_v2(s->db,
+                               "INSERT INTO workspace_repos (slug, root_path, role) "
+                               "VALUES (?1, ?2, ?3) "
+                               "ON CONFLICT(slug) DO UPDATE SET "
+                               "role = COALESCE(excluded.role, workspace_repos.role);",
+                               HYP_NOT_FOUND, &stmt, NULL) != SQLITE_OK) {
+            store_set_error_sqlite(s, "workspace_bind: member upsert prepare");
+            (void)exec_sql(s, "ROLLBACK;");
+            return HYP_STORE_ERR;
+        }
+        bind_text(stmt, SKIP_ONE, repos[i].slug);
+        bind_text(stmt, ST_COL_2, repos[i].root_path);
+        bind_text(stmt, ST_COL_3, repos[i].role); /* NULL binds SQL NULL */
+        int step_rc = sqlite3_step(stmt);
+        sqlite3_finalize(stmt);
+        if (step_rc != SQLITE_DONE) {
+            store_set_error_sqlite(s, "workspace_bind: member upsert");
+            (void)exec_sql(s, "ROLLBACK;");
+            return HYP_STORE_ERR;
+        }
+    }
+
+    return exec_sql(s, "COMMIT;");
+}
+
+int hyp_store_workspace_id(hyp_store_t *s, char *out, size_t out_sz) {
+    if (!s || !s->db || !out || out_sz == 0) {
+        return HYP_STORE_ERR;
+    }
+    out[0] = '\0';
+    sqlite3_stmt *stmt = NULL;
+    if (sqlite3_prepare_v2(s->db, "SELECT id FROM workspace_meta WHERE ws_key = 1;", HYP_NOT_FOUND,
+                           &stmt, NULL) != SQLITE_OK) {
+        /* Missing table: a pre-A1 store (or a read-only open of one). Absent,
+         * not error — the caller derives a workspace of one. */
+        return HYP_STORE_NOT_FOUND;
+    }
+    int rc = HYP_STORE_NOT_FOUND;
+    if (sqlite3_step(stmt) == SQLITE_ROW) {
+        const char *id = (const char *)sqlite3_column_text(stmt, 0);
+        if (id && (size_t)snprintf(out, out_sz, "%s", id) < out_sz) {
+            rc = HYP_STORE_OK;
+        } else {
+            out[0] = '\0';
+            rc = HYP_STORE_ERR; /* over-long id is corruption, not absence */
+        }
+    }
+    sqlite3_finalize(stmt);
+    return rc;
+}
+
+int hyp_store_workspace_repos(hyp_store_t *s, hyp_workspace_repo_t **out, int *count) {
+    if (!s || !s->db || !out || !count) {
+        return HYP_STORE_ERR;
+    }
+    *out = NULL;
+    *count = 0;
+
+    char id[HYP_SZ_512];
+    int id_rc = hyp_store_workspace_id(s, id, sizeof(id));
+    if (id_rc != HYP_STORE_OK) {
+        return id_rc;
+    }
+
+    sqlite3_stmt *stmt = NULL;
+    if (sqlite3_prepare_v2(s->db,
+                           "SELECT slug, root_path, role FROM workspace_repos ORDER BY slug;",
+                           HYP_NOT_FOUND, &stmt, NULL) != SQLITE_OK) {
+        store_set_error_sqlite(s, "workspace_repos");
+        return HYP_STORE_ERR;
+    }
+
+    int cap = ST_INIT_CAP_8;
+    int n = 0;
+    hyp_workspace_repo_t *arr = malloc((size_t)cap * sizeof(hyp_workspace_repo_t));
+    if (!arr) {
+        sqlite3_finalize(stmt);
+        return HYP_STORE_ERR;
+    }
+    int scan_rc;
+    while ((scan_rc = sqlite3_step(stmt)) == SQLITE_ROW) {
+        if (n >= cap) {
+            cap *= ST_GROWTH;
+            arr = safe_realloc(arr, (size_t)cap * sizeof(hyp_workspace_repo_t));
+        }
+        arr[n].slug = heap_strdup((const char *)sqlite3_column_text(stmt, 0));
+        arr[n].root_path = heap_strdup((const char *)sqlite3_column_text(stmt, SKIP_ONE));
+        const char *role = (const char *)sqlite3_column_text(stmt, ST_COL_2);
+        arr[n].role = role ? heap_strdup(role) : NULL; /* NULL stays absent */
+        n++;
+    }
+    sqlite3_finalize(stmt);
+    if (scan_rc != SQLITE_DONE) { /* SCANCHK:1:stmt */
+        store_set_error_sqlite(s, "row scan aborted");
+        hyp_store_free_workspace_repos(arr, n);
+        return HYP_STORE_ERR;
+    }
+
+    *out = arr;
+    *count = n;
+    return HYP_STORE_OK;
+}
+
+void hyp_store_free_workspace_repos(hyp_workspace_repo_t *rows, int count) {
+    if (!rows) {
+        return;
+    }
+    for (int i = 0; i < count; i++) {
+        free((void *)rows[i].slug);
+        free((void *)rows[i].root_path);
+        free((void *)rows[i].role);
+    }
+    free(rows);
 }
 
 /* ── Node CRUD ──────────────────────────────────────────────────── */
