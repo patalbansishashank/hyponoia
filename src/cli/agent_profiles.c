@@ -2,14 +2,14 @@
  * agent_profiles.c — Canonical Scout/Verify/Audit profile renderer.
  *
  * Tier behavior lives here once; the read-only tool set each tier requests is
- * mcp/tool_tiers.h, shared with the MCP server that enforces it. Dialect
+ * mcp/tool_surface.h, shared with the MCP server that enforces it. Dialect
  * renderers translate both to documented client syntax without granting any
  * graph mutation capability.
  */
 #include "cli/agent_profiles.h"
 
 #include "cli/config_toml_edit.h"
-#include "mcp/tool_tiers.h"
+#include "mcp/tool_surface.h"
 #include "yyjson/yyjson.h"
 
 #include <stdbool.h>
@@ -25,22 +25,26 @@ typedef struct {
     bool failed;
 } profile_buffer_t;
 
-/* The tool set each tier requests is mcp/tool_tiers.h — the table the MCP
+/* The tool set each tier requests is mcp/tool_surface.h — the table the MCP
  * server enforces for `--tool-profile analysis|scout`. Rendering from the same
  * rows the server allows is what keeps a profile from asking for a tool the
- * server refuses, or (as `ask` was) never asking for one it offers. */
+ * server refuses, or (as `ask` was) never asking for one it offers. This end
+ * reads three of the seven columns and ignores the rest; that is what makes it
+ * one table rather than a table per consumer. */
 typedef struct {
     const char *name;
     bool analysis;
     bool scout;
     unsigned generation;
+    hyp_tool_status_t status;
 } profile_tool_t;
 
 static const profile_tool_t profile_tools[] = {
-#define HYP_TOOL_TIER_ROW(name, analysis, scout, generation) \
-    {name, (analysis) != 0, (scout) != 0, generation},
-    HYP_TOOL_TIERS(HYP_TOOL_TIER_ROW)
-#undef HYP_TOOL_TIER_ROW
+#define HYP_TOOL_SURFACE_PROFILE_ROW(name, alias, analysis, scout, generation, status, \
+                                     output_schema, annotations)                       \
+    {name, (analysis) != 0, (scout) != 0, generation, status},
+    HYP_TOOL_SURFACE(HYP_TOOL_SURFACE_PROFILE_ROW)
+#undef HYP_TOOL_SURFACE_PROFILE_ROW
 };
 
 #define PROFILE_TOOL_COUNT (sizeof(profile_tools) / sizeof(profile_tools[0]))
@@ -48,9 +52,18 @@ static const profile_tool_t profile_tools[] = {
 /* Scout is the small surface; every other tier requests the analysis set. A
  * row newer than `generation` is left out — as are prompt words newer than
  * it, in hyp_render_graph_prompt_generation — so an earlier generation's
- * profile still renders byte-for-byte for the installer to recognise. */
+ * profile still renders byte-for-byte for the installer to recognise.
+ *
+ * A RESERVED row renders nowhere at any generation: its signature is published
+ * and its tool does not exist, so asking a client to request it would advertise
+ * a tool the server refuses. That is the same gate the server applies to
+ * tools/list, read from the same column — the two ends cannot disagree about
+ * which tools are real. */
 static bool tier_includes_tool(hyp_graph_tier_t tier, const profile_tool_t *tool,
                                unsigned generation) {
+    if (tool->status == HYP_TOOL_RESERVED) {
+        return false;
+    }
     if (tool->generation > generation) {
         return false;
     }

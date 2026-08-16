@@ -64,13 +64,44 @@ bool hyp_mcp_cancel_request_matches(const char *params_json, int64_t active_id,
 char *hyp_mcp_tools_list(void);
 
 /* Return a tool's JSON input_schema string by name (static; do not free), or
- * NULL if the tool is unknown. Backs the CLI flag parser + per-tool --help. */
+ * NULL if the tool is unknown OR RESERVED. Backs the CLI flag parser +
+ * per-tool --help, neither of which may offer a tool the server refuses. */
 const char *hyp_mcp_tool_input_schema(const char *tool_name);
 
-/* Registry accessors: the number of tools tools/list advertises, and the name
- * of tool `index` (static, do not free; NULL when out of range). */
+/* THE LIVE SURFACE: the number of tools tools/list advertises, and the name of
+ * live tool `index` (static, do not free; NULL when out of range). Reserved
+ * rows — signatures published ahead of their implementation — are excluded. */
 int hyp_mcp_tool_count(void);
 const char *hyp_mcp_tool_name(int index);
+
+/* THE WHOLE TABLE, live and reserved: mcp/tool_surface.h, the one source both
+ * the server and the generated agent profiles read. A _Static_assert already
+ * pairs its row count against the registry's; these let a test pair the SETS,
+ * which is the case a count cannot catch, and check the status and output
+ * promise of any row. `status` returns hyp_tool_status_t, or -1 if unknown. */
+int hyp_mcp_tool_registry_count(void);
+const char *hyp_mcp_tool_registry_name(int index);
+int hyp_mcp_tool_surface_count(void);
+const char *hyp_mcp_tool_surface_name(int index);
+/* The legacy name dispatch also answers to for row `index`, or NULL. An alias
+ * is never advertised and never on a restricted profile. */
+const char *hyp_mcp_tool_surface_alias(int index);
+int hyp_mcp_tool_surface_status(const char *tool_name);
+
+/* The outputSchema a tool advertises, or NULL when it promises no shape.
+ * Declaring one is a promise that every `required` field is present in what a
+ * CLIENT reads — assert it by reading a response, never by inspecting this. */
+const char *hyp_mcp_tool_declared_output_schema(const char *tool_name);
+
+/* Whether a tool may be probed with no arguments: it neither writes nor leaves
+ * this machine. Derived from the row's annotation profile so a writer added
+ * later excludes itself. */
+bool hyp_mcp_tool_is_probe_safe(const char *tool_name);
+
+/* Whether an agent may author a record of this kind. Transcript kinds are
+ * refused: transcripts enter only through a feed, and a forgeable transcript
+ * writer would make the ingest completeness audit meaningless. */
+bool hyp_mcp_memory_kind_is_authorable(const char *kind);
 
 /* Render the top-level --help "Tools:" block from the registry so the help
  * text cannot drift from tools/list (#1361). Heap-allocated; caller frees. */
@@ -120,7 +151,7 @@ int hyp_mcp_parse_tool_profile_args(int argc, const char *const argv[const],
 bool hyp_mcp_tool_profile_allows_http(hyp_mcp_tool_profile_t profile);
 
 /* Whether `name` is advertised and callable under `profile`. ALL admits every
- * registered tool; ANALYSIS and SCOUT admit exactly the rows mcp/tool_tiers.h
+ * registered tool; ANALYSIS and SCOUT admit exactly the rows mcp/tool_surface.h
  * marks for them — the same table the generated agent profiles request their
  * tools from, so a test can hold both ends to one answer. */
 bool hyp_mcp_tool_profile_allows(hyp_mcp_tool_profile_t profile, const char *name);

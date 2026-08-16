@@ -46,7 +46,7 @@ enum {
 #define SLEN(s) (sizeof(s) - 1)
 #include "mcp/mcp.h"
 #include "mcp/mcp_internal.h"
-#include "mcp/tool_tiers.h"
+#include "mcp/tool_surface.h"
 #include "store/store.h"
 #include <sqlite3.h>
 #include "cypher/cypher.h"
@@ -822,59 +822,251 @@ static const tool_def_t TOOLS[] = {
      "\"object\",\"properties\":{\"caller\":{\"type\":\"string\"},\"callee\":{\"type\":\"string\"},"
      "\"count\":{\"type\":\"integer\"}},\"additionalProperties\":false}}," TOOL_PROJECT_ARG
      "},\"required\":[\"traces\"]}"},
+
+    /* ── RESERVED: §4 Phase 1 signatures ───────────────────────────────
+     *
+     * These four rows carry a published, frozen signature for a tool that does
+     * not exist yet. mcp/tool_surface.h marks them HYP_TOOL_RESERVED, so they
+     * are advertised nowhere, dispatched nowhere, and rendered into no agent
+     * profile; the contract they implement — output shapes, failure modes, and
+     * why each argument is shaped the way it is — is in that header beside its
+     * row. Going live is one token in one row, and the row is already complete,
+     * which is the entire point of publishing before implementing.
+     *
+     * They live HERE, in the registry, and not in some separate proposals file,
+     * because a signature kept somewhere else is a signature someone has to
+     * remember to move. */
+
+    {"record_memory", "Record memory",
+     "Append one record to the workspace memory store: a decision, a verdict, a summary or a "
+     "signal. APPEND-ONLY — there is no mode that edits or deletes, because merging two stores "
+     "must be a union with no conflict resolution. To supersede an earlier record, write a new "
+     "one naming it in 'supersedes'; the earlier record is never mutated. The 'kind' must be one "
+     "the tool accepts (transcript kinds are refused: transcripts enter only through a feed, and "
+     "a forgeable transcript writer would make the ingest completeness audit meaningless) — a "
+     "refusal names the accepted set. If 'anchor' is supplied it must resolve: a record is never "
+     "created already-orphaned and is never attached to the nearest plausible symbol. Omit "
+     "'anchor' for a record about code that does not exist yet. There is no author argument; the "
+     "server derives provenance.",
+     "{\"type\":\"object\",\"properties\":{" TOOL_PROJECT_ARG ","
+     "\"kind\":{\"type\":\"string\",\"description\":\"The record kind. Must be one of the "
+     "agent-authorable kinds; a refusal names them. Transcript kinds are refused.\"},"
+     "\"title\":{\"type\":\"string\"},"
+     "\"body\":{\"type\":\"string\"},"
+     "\"anchor\":{\"type\":\"string\",\"description\":\"OPTIONAL. A canonical span address. "
+     "Absent means the record is repo-scoped. Supplied and unresolvable is an error, not an "
+     "orphan; supplied and ambiguous is an error listing the candidates.\"},"
+     "\"supersedes\":{\"type\":\"string\",\"description\":\"OPTIONAL record id this one "
+     "replaces. The named record is not modified.\"},"
+     "\"tags\":{\"type\":\"array\",\"items\":{\"type\":\"string\"}}},"
+     "\"required\":[\"kind\",\"title\",\"body\"]}"},
+
+    {"search_memory", "Search memory",
+     "Read the workspace memory store: decisions, verdicts, summaries, signals and ingested "
+     "transcript messages, across every repository in the workspace. Use it to answer WHY code "
+     "is the way it is — get_code_snippet returns the code, this returns the reasoning. "
+     "RESPONSE: when 'anchor' is supplied, 'anchor_status' is always reported and decides how to "
+     "read the rest. anchor_status=resolved with an EMPTY records list means the anchor resolved "
+     "and nothing is attached — believe it. anchor_status=orphaned means the anchor did not "
+     "resolve and 'records' is ABSENT: look elsewhere, do not read it as 'nothing was recorded'. "
+     "anchor_status=ambiguous returns candidates and no records; no nearest-neighbour match is "
+     "ever returned in place of an exact one. Truncated answers state what was withheld and how "
+     "to get it, and say nothing when nothing was withheld.",
+     "{\"type\":\"object\",\"properties\":{" TOOL_PROJECT_ARG ","
+     "\"kind\":{\"type\":\"string\",\"description\":\"OPTIONAL. Absent means every kind — it "
+     "does not mean none.\"},"
+     "\"query\":{\"type\":\"string\",\"description\":\"OPTIONAL free-text search over record "
+     "text.\"},"
+     "\"anchor\":{\"type\":\"string\",\"description\":\"OPTIONAL canonical span address. Valid "
+     "only for kinds that carry an anchor; supplying it with a transcript kind is an error "
+     "rather than a silently ignored filter.\"},"
+     "\"status\":{\"type\":\"string\",\"enum\":[\"attached\",\"orphaned\",\"any\"],"
+     "\"default\":\"attached\",\"description\":\"orphaned lists records whose anchor no longer "
+     "resolves. An orphan no query can list is a silent drop by another name.\"},"
+     "\"since\":{\"type\":\"string\"},\"until\":{\"type\":\"string\"},"
+     "\"limit\":{\"type\":\"integer\",\"default\":50,\"minimum\":1,\"maximum\":500},"
+     "\"offset\":{\"type\":\"integer\",\"default\":0,\"minimum\":0},"
+     "\"format\":{\"type\":\"string\",\"enum\":[\"tree\",\"json\"],\"default\":\"tree\"}},"
+     "\"required\":[]}"},
+
+    {"workspace_status", "Workspace status",
+     "The workspace this server is serving: which repositories belong to it, what ROLE each one "
+     "has (member, vendored, generated, upstream, reference), and WHERE each role came from. "
+     "Check the role before editing: a repository whose role is vendored, generated, upstream or "
+     "reference is not yours to modify. Every role is reported with its 'role_source' — the "
+     "derivation that produced it — and the resolver's 'precedence' is reported with it, so a "
+     "role can be argued with rather than merely believed. 'contradictions' ABSENT means the "
+     "role audit did not run; an empty list means it ran and found none. Those are different "
+     "answers.",
+     "{\"type\":\"object\",\"properties\":{"
+     "\"workspace\":{\"type\":\"string\",\"description\":\"OPTIONAL. Omit it and the server "
+     "uses the workspace of its own working directory, or the only workspace when exactly one "
+     "exists. Never chosen among several. The answer reports workspace_source.\"},"
+     "\"verbose\":{\"type\":\"boolean\",\"default\":false,\"description\":\"Include per-repo "
+     "index detail and the full derivation trail for each role.\"}},"
+     "\"required\":[]}"},
+
+    {"sync_memory", "Sync memory",
+     "Push or pull memory records as a UNION of append-only records — no conflict resolution, no "
+     "last-writer-wins, no merge UI. 'direction' is required: an operation that moves records "
+     "between machines does not infer which way. RESPONSE carries the completeness audit: "
+     "'local_total' against the feed's own 'upstream_total', and 'complete'. When the upstream "
+     "count cannot be read, 'upstream_total' and 'complete' are ABSENT rather than zero or false "
+     "— a count that was never taken must not be reported as a count of zero.",
+     "{\"type\":\"object\",\"properties\":{"
+     "\"direction\":{\"type\":\"string\",\"enum\":[\"pull\",\"push\",\"both\"],"
+     "\"description\":\"REQUIRED. Not inferred.\"},"
+     "\"feed\":{\"type\":\"string\",\"description\":\"OPTIONAL adapter name. Absent means every "
+     "configured feed.\"},"
+     "\"dry_run\":{\"type\":\"boolean\",\"default\":false}},"
+     "\"required\":[\"direction\"]}"},
 };
 
+/* THE PAIRING THAT MAKES A MISSING ROW A BUILD ERROR.
+ *
+ * TOOLS[] carries a tool's prose — title, description, input schema — and
+ * mcp/tool_surface.h carries every fact both ends need about it. Neither can
+ * generate the other: descriptions are paragraphs, and row ORDER in the table
+ * is a shipped contract that TOOLS[]'s order is not. What CAN be enforced is
+ * that they describe the same number of tools, and this does it at compile
+ * time. Add a tool to one and forget the other and the build stops here, which
+ * is the strongest form of "impossible or loud" C has to offer.
+ *
+ * The set — not merely the count — is checked by tests/test_tool_surface.c,
+ * which catches the one case a count cannot: adding one tool while removing
+ * another. */
+_Static_assert(sizeof(TOOLS) / sizeof(TOOLS[0]) == (size_t)HYP_TOOL_SURFACE_ROW_COUNT,
+               "mcp.c TOOLS[] and mcp/tool_surface.h describe different numbers of tools. "
+               "Every tool has a row in BOTH, including tools on no tier and tools not yet live.");
+
+/* Rows in the registry, LIVE AND RESERVED. Every internal loop walks this and
+ * filters on status; nothing advertises or dispatches a reserved row. The
+ * public hyp_mcp_tool_count()/hyp_mcp_tool_name() pair below exposes the LIVE
+ * surface only, densely indexed, because every one of its callers — the CLI
+ * subcommand table, the client adapters, scripts/check-docs-claims.sh — is
+ * asking what this build actually offers. */
 static const int TOOL_COUNT = sizeof(TOOLS) / sizeof(TOOLS[0]);
 
-/* No outputSchema is advertised. It used to be
- * {"type":"object","additionalProperties":true} on every tool — a schema that
- * constrains nothing, so it told a client precisely one thing: "structuredContent
- * is the result of this call". Most tools answer in TOON, which is not a JSON
- * object, so structuredContent was empty and clients that honoured the
- * declaration read an empty result. A schema that conveys no shape is not free;
- * it is a promise, and this one could not be kept. Declare one again only
- * per-tool, and only for tools that genuinely return a JSON object. */
-
+/* ── The surface table, expanded ───────────────────────────────────────
+ *
+ * mcp/tool_surface.h is the one table. This end reads all seven columns: the
+ * two tier flags for the restricted profiles, the status for what is
+ * advertised and dispatchable, the output schema for what a client is promised,
+ * and the annotation profile for the four hints tools/list emits. The other
+ * end, cli/agent_profiles.c, reads three of the same columns from the same
+ * rows.
+ *
+ * WHAT THIS REPLACED, because it is worth being able to find again: a
+ * name-keyed TOOL_ANNOTATIONS[] with a SILENT FALLBACK — `def ? def->read_only
+ * : false` and, worse, `def ? def->destructive : true`. A tool present in
+ * TOOLS[] and missing from that list did not fail to build, did not fail a
+ * test, and shipped advertising destructiveHint=true and openWorldHint=true to
+ * every client. It was a fourth hand-written list of the same sixteen tools,
+ * beside the registry, the tier table and the dispatch chain. The fallback is
+ * gone: an annotation profile is a mandatory column, so a row without one does
+ * not compile, and there is nothing left to default to.
+ *
+ * The four booleans reaching the wire are byte-for-byte what they were. */
 typedef struct {
-    const char *name;
     bool read_only;
     bool destructive;
     bool idempotent;
     bool open_world;
 } tool_annotation_def_t;
 
-/* Tool annotations are deliberately explicit. All tools operate on the local
- * repository/index domain, so none cross an open-world trust boundary. */
-static const tool_annotation_def_t TOOL_ANNOTATIONS[] = {
-    {"index_repository", false, false, true, false},
-    {"search_graph", false, true, true, false},
-    /* read_only is false for the same reason search_graph's is: resolving a
-     * project can open (and, on a corrupt file, quarantine) a store. Nothing
-     * in the ask lane itself writes — it never CREATEs its own tables. */
-    {"ask", false, true, true, false},
-    {"query_graph", false, true, true, false},
-    {"trace_path", false, true, true, false},
-    {"get_code_snippet", false, true, true, false},
-    {"get_graph_schema", false, true, true, false},
-    {"get_architecture", false, true, true, false},
-    {"search_code", false, true, true, false},
-    {"list_projects", true, false, true, false},
-    {"delete_project", false, true, true, false},
-    {"index_status", false, true, true, false},
-    {"check_index_coverage", false, true, true, false},
-    {"detect_changes", false, true, true, false},
-    {"manage_adr", false, true, false, false},
-    {"ingest_traces", false, false, false, false},
+static const tool_annotation_def_t TOOL_ANNOTATION_PROFILES[] = {
+#define HYP_TOOL_ANN_PROFILE_ROW(profile, ro, destr, idem, open) {ro, destr, idem, open},
+    HYP_TOOL_ANNOTATION_PROFILES(HYP_TOOL_ANN_PROFILE_ROW)
+#undef HYP_TOOL_ANN_PROFILE_ROW
 };
 
-static const tool_annotation_def_t *mcp_tool_annotations(const char *name) {
-    size_t count = sizeof(TOOL_ANNOTATIONS) / sizeof(TOOL_ANNOTATIONS[0]);
-    for (size_t i = 0; i < count; i++) {
-        if (strcmp(TOOL_ANNOTATIONS[i].name, name) == 0) {
-            return &TOOL_ANNOTATIONS[i];
+_Static_assert(sizeof(TOOL_ANNOTATION_PROFILES) / sizeof(TOOL_ANNOTATION_PROFILES[0]) ==
+                   (size_t)HYP_TOOL_ANN_COUNT,
+               "annotation profile table and enum disagree");
+
+typedef struct {
+    const char *name;
+    const char *alias; /* NULL, or a legacy name dispatch also answers to */
+    bool analysis;
+    bool scout;
+    unsigned generation;
+    hyp_tool_status_t status;
+    const char *output_schema; /* NULL = no promise; the answer is in content */
+    hyp_tool_annotation_profile_t annotations;
+} tool_surface_row_t;
+
+static const tool_surface_row_t TOOL_SURFACE[] = {
+#define HYP_TOOL_SURFACE_SERVER_ROW(name, alias, analysis, scout, generation, status, \
+                                    output_schema, annotations)                       \
+    {name, alias, (analysis) != 0, (scout) != 0, generation, status, output_schema, annotations},
+    HYP_TOOL_SURFACE(HYP_TOOL_SURFACE_SERVER_ROW)
+#undef HYP_TOOL_SURFACE_SERVER_ROW
+};
+
+/* By wire name only. An alias is deliberately NOT resolved here: a row's
+ * status, annotations and output promise belong to the name tools/list
+ * advertises, and an alias is never advertised. */
+static const tool_surface_row_t *mcp_tool_row(const char *name) {
+    if (!name) {
+        return NULL;
+    }
+    for (size_t i = 0U; i < sizeof(TOOL_SURFACE) / sizeof(TOOL_SURFACE[0]); i++) {
+        if (strcmp(TOOL_SURFACE[i].name, name) == 0) {
+            return &TOOL_SURFACE[i];
         }
     }
     return NULL;
+}
+
+/* The row a legacy alias dispatches into, or NULL. `trace_call_path` is the
+ * only one, and until this table it was declared nowhere at all — dispatch
+ * answered to it, TOOLS[] did not contain it, tools/list never advertised it,
+ * and src/cli/cli.c tells users to prefer it. A name the server accepts and no
+ * end declares is the `ask` defect inverted. */
+static const tool_surface_row_t *mcp_tool_alias_row(const char *name) {
+    if (!name) {
+        return NULL;
+    }
+    for (size_t i = 0U; i < sizeof(TOOL_SURFACE) / sizeof(TOOL_SURFACE[0]); i++) {
+        if (TOOL_SURFACE[i].alias && strcmp(TOOL_SURFACE[i].alias, name) == 0) {
+            return &TOOL_SURFACE[i];
+        }
+    }
+    return NULL;
+}
+
+/* A reserved row is not advertised and not callable. A tool absent from the
+ * table entirely cannot exist — the _Static_assert above pairs the counts and
+ * test_tool_surface pairs the sets — but if one somehow did, it is treated as
+ * reserved rather than as live. Fail closed: an unknown tool is refused, never
+ * exposed with default hints. */
+static bool mcp_tool_is_advertised(const char *name) {
+    const tool_surface_row_t *row = mcp_tool_row(name);
+    return row && row->status != HYP_TOOL_RESERVED;
+}
+
+static const tool_annotation_def_t *mcp_tool_annotations(const char *name) {
+    const tool_surface_row_t *row = mcp_tool_row(name);
+    return row ? &TOOL_ANNOTATION_PROFILES[row->annotations] : NULL;
+}
+
+/* The outputSchema a tool declares, or NULL. It used to be
+ * {"type":"object","additionalProperties":true} on EVERY tool — a schema that
+ * constrains nothing, so it told a client precisely one thing:
+ * "structuredContent is the result of this call". Most tools answer in TOON,
+ * which is not a JSON object, so structuredContent was empty and clients that
+ * honoured the declaration read an empty result. A schema that conveys no
+ * shape is not free; it is a promise, and that one could not be kept.
+ *
+ * So a schema is declared per-tool, in the table, and only where the handler
+ * genuinely returns a JSON object on every path. Declaring one is a promise
+ * that every `required` field is present in what a CLIENT reads — checked by
+ * reading the response, in tests/test_tool_surface.c and in
+ * scripts/ci/mcp-client-view.py, never by inspecting the emitter. Four tests
+ * once asserted the broken output because all four asked what the server sent. */
+static const char *mcp_tool_output_schema(const char *name) {
+    const tool_surface_row_t *row = mcp_tool_row(name);
+    return row ? row->output_schema : NULL;
 }
 
 static void mcp_add_json_schema(yyjson_mut_doc *doc, yyjson_mut_val *obj, const char *key,
@@ -897,34 +1089,51 @@ static void mcp_add_tool_def(yyjson_mut_doc *doc, yyjson_mut_val *tools, int i) 
 
     mcp_add_json_schema(doc, tool, "inputSchema", TOOLS[i].input_schema);
 
+    /* Declared per-tool from the table, and only where the promise is keepable.
+     * See mcp_tool_output_schema. */
+    const char *output_schema = mcp_tool_output_schema(TOOLS[i].name);
+    if (output_schema) {
+        mcp_add_json_schema(doc, tool, "outputSchema", output_schema);
+    }
+
+    /* Never NULL: the annotation profile is a mandatory column of the one
+     * table, and the _Static_assert pairing that table with TOOLS[] means a
+     * registered tool always has a row. There is no default to fall back to,
+     * which is the point — the fallback that used to be here shipped
+     * destructiveHint=true on any tool somebody forgot to list. */
     const tool_annotation_def_t *def = mcp_tool_annotations(TOOLS[i].name);
     yyjson_mut_val *annotations = yyjson_mut_obj(doc);
-    yyjson_mut_obj_add_bool(doc, annotations, "readOnlyHint", def ? def->read_only : false);
-    yyjson_mut_obj_add_bool(doc, annotations, "destructiveHint", def ? def->destructive : true);
-    yyjson_mut_obj_add_bool(doc, annotations, "idempotentHint", def ? def->idempotent : false);
-    yyjson_mut_obj_add_bool(doc, annotations, "openWorldHint", def ? def->open_world : true);
+    yyjson_mut_obj_add_bool(doc, annotations, "readOnlyHint", def->read_only);
+    yyjson_mut_obj_add_bool(doc, annotations, "destructiveHint", def->destructive);
+    yyjson_mut_obj_add_bool(doc, annotations, "idempotentHint", def->idempotent);
+    yyjson_mut_obj_add_bool(doc, annotations, "openWorldHint", def->open_world);
     yyjson_mut_obj_add_val(doc, tool, "annotations", annotations);
 
     yyjson_mut_arr_add_val(tools, tool);
 }
 
-/* The restricted profiles' allowlists come from mcp/tool_tiers.h — the same
- * table agent_profiles.c renders into every generated agent definition. The
- * two ends used to keep separate lists; see that header for what it cost. */
-typedef struct {
-    const char *name;
-    bool analysis;
-    bool scout;
-} tool_tier_row_t;
-
-static const tool_tier_row_t TOOL_TIERS[] = {
-#define HYP_TOOL_TIER_ROW(name, analysis, scout, generation) {name, (analysis) != 0, (scout) != 0},
-    HYP_TOOL_TIERS(HYP_TOOL_TIER_ROW)
-#undef HYP_TOOL_TIER_ROW
-};
-
+/* Which tools a profile advertises and accepts, from mcp/tool_surface.h — the
+ * same rows agent_profiles.c renders into every generated agent definition.
+ * The two ends used to keep separate lists; see that header for what it cost,
+ * and for the three lists beside it that were not fixed at the same time.
+ *
+ * A RESERVED row is refused under EVERY profile including ALL: its signature is
+ * published and its tool does not exist. That is the same gate the profile
+ * renderer applies, read from the same column, so a reserved tool cannot be
+ * advertised at one end and hidden at the other. */
 static bool mcp_tool_allowed(hyp_mcp_tool_profile_t profile, const char *name) {
-    if (!name) {
+    const tool_surface_row_t *row = mcp_tool_row(name);
+    if (!row) {
+        /* A legacy alias stays callable on the full surface and is admitted by
+         * NO restricted profile — which is exactly what shipped before this
+         * table existed, and is the right rule stated rather than accidental: a
+         * compatibility shim for callers that already exist is not surface, so
+         * nothing new should learn it. */
+        const tool_surface_row_t *aliased = mcp_tool_alias_row(name);
+        return aliased && aliased->status != HYP_TOOL_RESERVED &&
+               profile == HYP_MCP_TOOL_PROFILE_ALL;
+    }
+    if (row->status == HYP_TOOL_RESERVED) {
         return false;
     }
     if (profile == HYP_MCP_TOOL_PROFILE_ALL) {
@@ -933,13 +1142,7 @@ static bool mcp_tool_allowed(hyp_mcp_tool_profile_t profile, const char *name) {
     if (profile != HYP_MCP_TOOL_PROFILE_ANALYSIS && profile != HYP_MCP_TOOL_PROFILE_SCOUT) {
         return false;
     }
-    for (size_t i = 0U; i < sizeof(TOOL_TIERS) / sizeof(TOOL_TIERS[0]); i++) {
-        if (strcmp(name, TOOL_TIERS[i].name) == 0) {
-            return profile == HYP_MCP_TOOL_PROFILE_ANALYSIS ? TOOL_TIERS[i].analysis
-                                                            : TOOL_TIERS[i].scout;
-        }
-    }
-    return false;
+    return profile == HYP_MCP_TOOL_PROFILE_ANALYSIS ? row->analysis : row->scout;
 }
 
 bool hyp_mcp_tool_profile_allows(hyp_mcp_tool_profile_t profile, const char *name) {
@@ -1055,11 +1258,13 @@ char *hyp_mcp_tools_list(void) {
     return hyp_mcp_tools_list_range(HYP_MCP_TOOL_PROFILE_ALL, 0, TOOL_COUNT, false);
 }
 
-/* Return the JSON input_schema string for a tool by name, or NULL if unknown.
- * Used by the CLI to build --flag arguments and per-tool --help from the same
- * source of truth the MCP tools/list advertises. Static lifetime; do not free. */
+/* Return the JSON input_schema string for a tool by name, or NULL if unknown
+ * OR RESERVED. Used by the CLI to build --flag arguments and per-tool --help
+ * from the same source of truth the MCP tools/list advertises — so a reserved
+ * tool must be invisible here too, or `hyp cli <reserved>` would offer flags
+ * for a tool the server refuses. Static lifetime; do not free. */
 const char *hyp_mcp_tool_input_schema(const char *tool_name) {
-    if (!tool_name) {
+    if (!tool_name || !mcp_tool_is_advertised(tool_name)) {
         return NULL;
     }
     for (int i = 0; i < TOOL_COUNT; i++) {
@@ -1070,15 +1275,102 @@ const char *hyp_mcp_tool_input_schema(const char *tool_name) {
     return NULL;
 }
 
+/* THE LIVE SURFACE, densely indexed. Every caller of this pair — the CLI
+ * subcommand table, the agent client adapters, the docs-claims check, the
+ * two-ends test — is asking what this build actually offers, so a reserved row
+ * must not appear. Reserved rows are appended to TOOLS[], but nothing here
+ * depends on that: both functions filter on status rather than on position. */
 int hyp_mcp_tool_count(void) {
-    return TOOL_COUNT;
+    int live = 0;
+    for (int i = 0; i < TOOL_COUNT; i++) {
+        if (mcp_tool_is_advertised(TOOLS[i].name)) {
+            live++;
+        }
+    }
+    return live;
 }
 
 const char *hyp_mcp_tool_name(int index) {
+    if (index < 0) {
+        return NULL;
+    }
+    int live = 0;
+    for (int i = 0; i < TOOL_COUNT; i++) {
+        if (!mcp_tool_is_advertised(TOOLS[i].name)) {
+            continue;
+        }
+        if (live == index) {
+            return TOOLS[i].name;
+        }
+        live++;
+    }
+    return NULL;
+}
+
+/* The whole registry and the whole table, live and reserved, so a test can hold
+ * the two to the same SET — the case a count-only _Static_assert cannot catch
+ * is adding one tool while removing another. */
+int hyp_mcp_tool_registry_count(void) {
+    return TOOL_COUNT;
+}
+
+const char *hyp_mcp_tool_registry_name(int index) {
     if (index < 0 || index >= TOOL_COUNT) {
         return NULL;
     }
     return TOOLS[index].name;
+}
+
+int hyp_mcp_tool_surface_count(void) {
+    return (int)(sizeof(TOOL_SURFACE) / sizeof(TOOL_SURFACE[0]));
+}
+
+const char *hyp_mcp_tool_surface_name(int index) {
+    if (index < 0 || index >= hyp_mcp_tool_surface_count()) {
+        return NULL;
+    }
+    return TOOL_SURFACE[index].name;
+}
+
+const char *hyp_mcp_tool_surface_alias(int index) {
+    if (index < 0 || index >= hyp_mcp_tool_surface_count()) {
+        return NULL;
+    }
+    return TOOL_SURFACE[index].alias;
+}
+
+int hyp_mcp_tool_surface_status(const char *tool_name) {
+    const tool_surface_row_t *row = mcp_tool_row(tool_name);
+    return row ? (int)row->status : -1;
+}
+
+const char *hyp_mcp_tool_declared_output_schema(const char *tool_name) {
+    return mcp_tool_output_schema(tool_name);
+}
+
+/* Whether a tool may be called with no arguments by a test probe: it neither
+ * writes nor leaves this machine. Derived from the row's annotation profile,
+ * so a writer added later is excluded by its own row and not by a skip list
+ * somebody has to remember to extend. */
+bool hyp_mcp_tool_is_probe_safe(const char *tool_name) {
+    const tool_surface_row_t *row = mcp_tool_row(tool_name);
+    return row && HYP_TOOL_ANN_IS_PROBE_SAFE(row->annotations);
+}
+
+/* The record kinds record_memory accepts, from the one kind table. The input
+ * schema deliberately does not restate them as a JSON enum: a second copy of
+ * the set is how the four tool lists drifted. */
+bool hyp_mcp_memory_kind_is_authorable(const char *kind) {
+    if (!kind) {
+        return false;
+    }
+#define HYP_MEMORY_KIND_CHECK(name, authorable) \
+    if (strcmp(kind, name) == 0) {              \
+        return (authorable);                    \
+    }
+    HYP_MEMORY_KINDS(HYP_MEMORY_KIND_CHECK)
+#undef HYP_MEMORY_KIND_CHECK
+    return false;
 }
 
 /* Render the top-level --help "Tools:" block from the registry tools/list
@@ -1112,9 +1404,14 @@ static size_t help_append(char *out, size_t cap, size_t len, const char *fmt, ..
 }
 
 char *hyp_mcp_tools_help_list(void) {
+    /* The LIVE surface: `--help` is read by a person deciding what to call, so
+     * a reserved row — a published signature with no tool behind it — must not
+     * appear here any more than it appears in tools/list. Both come from the
+     * same status column. */
+    const int live = hyp_mcp_tool_count();
     size_t cap = SLEN("Tools:") + 2; /* trailing newline + NUL */
-    for (int i = 0; i < TOOL_COUNT; i++) {
-        cap += strlen(TOOLS[i].name) + SLEN(" ,\n "); /* per-tool worst case incl. a wrap */
+    for (int i = 0; i < live; i++) {
+        cap += strlen(hyp_mcp_tool_name(i)) + SLEN(" ,\n "); /* worst case incl. a wrap */
     }
     char *out = malloc(cap);
     if (!out) {
@@ -1122,14 +1419,15 @@ char *hyp_mcp_tools_help_list(void) {
     }
     size_t len = help_append(out, cap, 0, "Tools:");
     size_t col = len;
-    for (int i = 0; i < TOOL_COUNT; i++) {
-        const char *sep = (i + 1 < TOOL_COUNT) ? "," : "";
-        size_t item = SLEN(" ") + strlen(TOOLS[i].name) + strlen(sep);
+    for (int i = 0; i < live; i++) {
+        const char *name = hyp_mcp_tool_name(i);
+        const char *sep = (i + 1 < live) ? "," : "";
+        size_t item = SLEN(" ") + strlen(name) + strlen(sep);
         if (i > 0 && col + item > MCP_HELP_TOOLS_WRAP_COL) {
             len += help_append(out, cap, len, "\n ");
             col = 1;
         }
-        size_t wrote = help_append(out, cap, len, " %s%s", TOOLS[i].name, sep);
+        size_t wrote = help_append(out, cap, len, " %s%s", name, sep);
         len += wrote;
         col += wrote;
     }
@@ -2559,7 +2857,7 @@ static bool project_has_adr(hyp_store_t *store, const char *project, const char 
  * MEASURED: 120 of 120 runs in the §3.1 token harness spent their FIRST tool
  * call on list_projects — after the analysis-tier profile body had been given
  * a sentence spelling out exactly how the name is derived from the repo path
- * (tool_tiers.h generation 2). Prose lost. Every session paid a round trip to
+ * (tool_surface.h generation 2). Prose lost. Every session paid a round trip to
  * learn something this process already knows.
  *
  * IT ALREADY KNOWS IT. The MCP server is spawned BY the client, so its own
@@ -13173,6 +13471,18 @@ static char *handle_ingest_traces(hyp_mcp_server_t *srv, const char *args) {
 static char *dispatch_tool(hyp_mcp_server_t *srv, const char *tool_name, const char *args_json) {
     if (!tool_name) {
         return hyp_mcp_text_result("missing tool name", true);
+    }
+    /* A reserved row is refused under every profile including ALL, so it must
+     * be answered before the profile message — which would otherwise blame a
+     * restricted profile for a tool no profile has. A published signature with
+     * no implementation is a distinct state and says so. */
+    if (hyp_mcp_tool_surface_status(tool_name) == (int)HYP_TOOL_RESERVED) {
+        char message[HYP_SZ_256];
+        snprintf(message, sizeof(message),
+                 "tool '%s' has a published signature but is not implemented in this build "
+                 "(mcp/tool_surface.h marks it reserved)",
+                 tool_name);
+        return hyp_mcp_text_result(message, true);
     }
     if (srv && !mcp_tool_allowed(srv->tool_profile, tool_name)) {
         char message[HYP_SZ_256];

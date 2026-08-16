@@ -55,7 +55,7 @@ bool hyp_graph_dialect_direct_capable(hyp_graph_profile_dialect_t dialect);
 char *hyp_render_graph_profile(hyp_graph_profile_dialect_t dialect, hyp_graph_tier_t tier,
                                hyp_graph_access_t access, const char *binary_path);
 
-/* The tool set a direct tier requests comes from mcp/tool_tiers.h, the table
+/* The tool set a direct tier requests comes from mcp/tool_surface.h, the table
  * the MCP server enforces. Every change to a rendered profile — that set or
  * the tier prompt text — is a new profile generation, and the installer only
  * replaces an agent file whose bytes equal the current rendering or one it

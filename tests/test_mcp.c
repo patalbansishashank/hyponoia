@@ -826,14 +826,41 @@ TEST(mcp_tools_list_latest_metadata) {
     ASSERT_NOT_NULL(strstr(json, "\"title\":\"Search graph\""));
     ASSERT_NOT_NULL(strstr(json, "\"title\":\"Index repository\""));
     ASSERT_NOT_NULL(strstr(json, "\"title\":\"Check index coverage\""));
-    /* NO outputSchema is advertised. It was
+    /* NO BLANKET outputSchema. It was
      * {"type":"object","additionalProperties":true} on every tool — a schema
      * constraining nothing, whose only effect was to tell clients
      * "structuredContent is the result". Most tools answer in TOON, which is
      * not a JSON object, so those clients read an empty result for
-     * query_graph and ask. Declare one again only per-tool, and only where the
-     * tool genuinely returns a JSON object. */
-    ASSERT_NULL(strstr(json, "\"outputSchema\""));
+     * query_graph and ask.
+     *
+     * This assertion USED to be `no outputSchema anywhere`, which was stricter
+     * than the rule its own comment stated — "declare one again only per-tool,
+     * and only where the tool genuinely returns a JSON object". index_status
+     * now does declare one (mcp/tool_surface.h), because its handler builds a
+     * yyjson object, so the promise is keepable. What must stay true is the
+     * rule, not the count: nothing constrains-nothing, and no tool that answers
+     * in TOON declares a shape.
+     *
+     * The other half of the promise — that a declared schema's `required`
+     * fields actually reach a client — cannot be checked here, because checking
+     * it against the emitted JSON is precisely the mistake that let four tests
+     * pass while three tools rendered blank. It is checked by reading a
+     * response, in tests/test_tool_surface.c and scripts/ci/mcp-client-view.py. */
+    ASSERT_NULL(strstr(json, "\"additionalProperties\":true"));
+    {
+        static const char *const toon_answerers[] = {
+            "query_graph", "search_graph",     "ask",             "trace_path",
+            "search_code", "get_code_snippet", "get_architecture",
+        };
+        for (size_t t = 0U; t < sizeof(toon_answerers) / sizeof(toon_answerers[0]); t++) {
+            if (hyp_mcp_tool_declared_output_schema(toon_answerers[t])) {
+                free(json);
+                FAIL("a tool that answers in TOON declares an outputSchema it cannot keep");
+            }
+        }
+        ASSERT_NOT_NULL(hyp_mcp_tool_declared_output_schema("index_status"));
+        ASSERT_NOT_NULL(strstr(json, "\"outputSchema\""));
+    }
     /* search_graph's compact degree columns intentionally count the graph
      * relationships used for call/reference/type centrality, not every edge
      * family (for example DEFINES or CONTAINS_FILE). Keep the public contract

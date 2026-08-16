@@ -7597,7 +7597,7 @@ static hyp_graph_access_t hyp_tiered_profile_set_access(hyp_tiered_profile_set_t
  * owned document is only replaced or removed when its bytes equal the current
  * rendering or one of these, so the set has to be complete: the other access
  * mode, the Codex rc.1 form, the pre-tier Verify text, and every earlier
- * profile generation in both access modes (mcp/tool_tiers.h; a generation is
+ * profile generation in both access modes (mcp/tool_surface.h; a generation is
  * a change to the tool set a tier requests). Missing one here would strand a
  * user on the older profile with a "preserved modified profile" notice for a
  * file they never touched. */
