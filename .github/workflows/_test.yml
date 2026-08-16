@@ -157,6 +157,14 @@ jobs:
     timeout-minutes: 240
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # fetch-depth: 0 because one suite replays this repository's own
+          # history: it rebuilds the working tree at 28 commit pairs and indexes
+          # both sides, which a one-commit clone cannot do. The suite refuses
+          # rather than reporting green on a shallow checkout, so the depth is a
+          # precondition of the gate, not a convenience. _lint.yml and ci.yml
+          # already pay the same cost for the same reason.
+          fetch-depth: 0
 
       - name: Install deps (Ubuntu)
         if: startsWith(matrix.os, 'ubuntu')
