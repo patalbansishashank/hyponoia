@@ -646,6 +646,7 @@ extern void suite_pipeline_semantic_manifest_repro(void);
 extern void suite_cross_repo(void);
 extern void suite_index_resilience(void);
 extern void suite_fqn(void);
+extern void suite_fqn_differential(void);
 extern void suite_identity(void);
 extern void suite_route_canon(void);
 extern void suite_path_alias(void);
@@ -937,6 +938,7 @@ int main(int argc, char **argv) {
     RUN_SELECTED_SUITE(cross_repo);
     RUN_SELECTED_SUITE(index_resilience);
     RUN_SELECTED_SUITE(fqn);
+    RUN_SELECTED_SUITE(fqn_differential);
     RUN_SELECTED_SUITE(identity);
     RUN_SELECTED_SUITE(route_canon);
     RUN_SELECTED_SUITE(path_alias);
