@@ -444,7 +444,8 @@ GIT_SRCS = src/git/git_context.c
 CLI_SRCS = src/cli/cli.c src/cli/progress_sink.c src/cli/hook_augment.c src/cli/client_adapter.c \
 	src/cli/agent_clients.c src/cli/agent_profiles.c src/cli/integration_assets.c \
 	src/cli/config_json_like.c src/cli/config_toml_edit.c src/cli/config_yaml_edit.c \
-	src/cli/config_text_edit.c src/cli/activation_transaction.c src/cli/model_fetch.c
+	src/cli/config_text_edit.c src/cli/activation_transaction.c src/cli/model_fetch.c \
+	src/cli/onboard.c
 
 # UI module (graph visualization). Production-standard builds deliberately link
 # only the no-I/O pack stub. Test binaries substitute the real parser plus the
@@ -862,7 +863,7 @@ TEST_CLI_SRCS = tests/test_cli.c tests/test_agent_clients.c tests/test_agent_pro
 	tests/test_tool_surface.c \
 	tests/test_config_json_like.c \
 	tests/test_config_toml_edit.c tests/test_config_yaml_edit.c tests/test_config_text_edit.c \
-	tests/test_activation_transaction.c tests/test_model_fetch.c
+	tests/test_activation_transaction.c tests/test_model_fetch.c tests/test_onboard.c
 
 TEST_MEM_SRCS = tests/test_mem.c
 
