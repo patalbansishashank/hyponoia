@@ -882,7 +882,8 @@ TEST_CLI_SRCS = tests/test_cli.c tests/test_agent_clients.c tests/test_agent_pro
 	tests/test_tool_surface.c \
 	tests/test_config_json_like.c \
 	tests/test_config_toml_edit.c tests/test_config_yaml_edit.c tests/test_config_text_edit.c \
-	tests/test_activation_transaction.c tests/test_model_fetch.c tests/test_onboard.c
+	tests/test_activation_transaction.c tests/test_model_fetch.c tests/test_onboard.c \
+	tests/test_g5_zero_config.c
 
 TEST_MEM_SRCS = tests/test_mem.c
 

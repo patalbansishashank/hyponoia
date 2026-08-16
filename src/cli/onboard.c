@@ -1333,6 +1333,14 @@ int hyp_cmd_onboard(int argc, char **argv) {
      * start a forty-minute pass under someone's enter key. */
     printf("next:\n");
     printf("  hyponoia cli index_repository --repo_path \"%s\"\n", plan.repos[0].path);
+    /* The recipe is for THIS machine, so it names the step THIS machine needs.
+     * The embed pass refuses without the weights and the projection head, and
+     * a step a user first meets as an error from the step after it is a step
+     * the recipe was missing. Both artifacts are required and either one
+     * missing is the same remedy, so they share a line. */
+    if (!hyp_model_ask_present() || !hyp_model_spec_present(hyp_model_ask_proj_spec())) {
+        printf("  %s\n", HYP_MODEL_ASK_COMMAND);
+    }
     printf("  hyponoia embed --project %s --device %s\n", plan.name, plan.device);
     if (plan.spend) {
         if (plan.key_env[0]) {
