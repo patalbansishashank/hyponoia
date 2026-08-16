@@ -30,9 +30,14 @@ name: CI
 # uncovered; all three are listed now.
 on:
   push:
-    branches: [main, dev, 'feat/**', 'fix/**', 'chore/**']
+    # integration is here because it is the branch that ACCUMULATES units, and
+    # so the one whose combination nothing else builds. Unit branches match
+    # feat/**; the branch that merges them matched nothing, and 82 commits ran
+    # no workflow at all. Same shape as ci.yml once covering only [main, dev]
+    # while a whole section's work sat on a feat/ branch.
+    branches: [main, dev, integration, 'feat/**', 'fix/**', 'chore/**']
   pull_request:
-    branches: [main, dev, 'feat/**', 'fix/**', 'chore/**']
+    branches: [main, dev, integration, 'feat/**', 'fix/**', 'chore/**']
   workflow_dispatch:
 
 permissions:
