@@ -2574,7 +2574,6 @@ int hyp_pipeline_run_incremental(hyp_pipeline_t *p, const char *db_path, hyp_fil
         return HYP_NOT_FOUND;
     }
 
-
     hyp_store_close(store);
 
     /* Snapshot inbound cross-file edges into changed files BEFORE purging, so
@@ -2812,10 +2811,9 @@ int hyp_pipeline_run_incremental(hyp_pipeline_t *p, const char *db_path, hyp_fil
      * re-parsed files have no codec output, and publishing a stale row
      * would satisfy a future closure plan with yesterday's surface; an
      * empty table just routes the next incremental to a full rebuild. */
-    int persist_rc = dump_and_persist(existing, db_path, hyp_pipeline_live_db_path(p), project,
-                                      hyp_pipeline_cancelled_ptr(p), manifest, manifest_count,
-                                      hyp_pipeline_repo_path(p), cov, cov_n, &coverage_meta, NULL,
-                                      0);
+    int persist_rc = dump_and_persist(
+        existing, db_path, hyp_pipeline_live_db_path(p), project, hyp_pipeline_cancelled_ptr(p),
+        manifest, manifest_count, hyp_pipeline_repo_path(p), cov, cov_n, &coverage_meta, NULL, 0);
     hyp_pipeline_free_semantic_manifest(manifest, manifest_count);
     free(cov);
     hyp_store_free_coverage(old_cov, old_cov_count);

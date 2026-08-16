@@ -18,6 +18,7 @@
 #include "store/generation_carry.h"
 
 #include "foundation/constants.h"
+#include "foundation/log.h"
 #include "store/store.h" /* hyp_store_coverage_shadow_project */
 
 #include <sqlite3.h>
@@ -197,17 +198,16 @@ static void gc_fail(char *err, size_t err_sz, const char *fmt, const char *a, co
  * virtual parent's name plus a suffix, and the parents are exactly the rows
  * whose DDL opens with CREATE VIRTUAL TABLE. */
 static const char *gc_table_scan_sql(bool main_schema) {
-    return main_schema
-               ? "SELECT m.name FROM main.sqlite_master m WHERE m.type = 'table' "
-                 "AND m.name NOT GLOB 'sqlite_*' AND NOT EXISTS (SELECT 1 FROM "
-                 "main.sqlite_master v WHERE v.type = 'table' AND v.name <> m.name AND "
-                 "upper(ltrim(v.sql)) GLOB 'CREATE VIRTUAL TABLE*' AND m.name GLOB (v.name "
-                 "|| '_*')) ORDER BY m.name;"
-               : "SELECT m.name FROM prev.sqlite_master m WHERE m.type = 'table' "
-                 "AND m.name NOT GLOB 'sqlite_*' AND NOT EXISTS (SELECT 1 FROM "
-                 "prev.sqlite_master v WHERE v.type = 'table' AND v.name <> m.name AND "
-                 "upper(ltrim(v.sql)) GLOB 'CREATE VIRTUAL TABLE*' AND m.name GLOB (v.name "
-                 "|| '_*')) ORDER BY m.name;";
+    return main_schema ? "SELECT m.name FROM main.sqlite_master m WHERE m.type = 'table' "
+                         "AND m.name NOT GLOB 'sqlite_*' AND NOT EXISTS (SELECT 1 FROM "
+                         "main.sqlite_master v WHERE v.type = 'table' AND v.name <> m.name AND "
+                         "upper(ltrim(v.sql)) GLOB 'CREATE VIRTUAL TABLE*' AND m.name GLOB (v.name "
+                         "|| '_*')) ORDER BY m.name;"
+                       : "SELECT m.name FROM prev.sqlite_master m WHERE m.type = 'table' "
+                         "AND m.name NOT GLOB 'sqlite_*' AND NOT EXISTS (SELECT 1 FROM "
+                         "prev.sqlite_master v WHERE v.type = 'table' AND v.name <> m.name AND "
+                         "upper(ltrim(v.sql)) GLOB 'CREATE VIRTUAL TABLE*' AND m.name GLOB (v.name "
+                         "|| '_*')) ORDER BY m.name;";
 }
 
 /* Append every unclassified table name in `schema` to out. Returns the number
@@ -401,16 +401,14 @@ static int gc_carry_table(sqlite3 *db, const gc_policy_t *pol, const char *rebui
     }
     char dest_ddl[GC_DDL_MAX];
     if (!gc_table_ddl(db, true, pol->table, dest_ddl, sizeof(dest_ddl))) {
-        /* The staging file does not have this table yet. Create it from the
-         * previous generation's own DDL rather than a copy of it kept here:
-         * one definition, and a durable table added elsewhere lands correctly
-         * without this file being edited. */
-        if (sqlite3_exec(db, prev_ddl, NULL, NULL, NULL) != SQLITE_OK) {
-            gc_fail(err, err_sz, "cannot create carried table '%s': %s", pol->table,
-                    sqlite3_errmsg(db));
-            return HYP_GEN_CARRY_ERR;
-        }
-        snprintf(dest_ddl, sizeof(dest_ddl), "%s", prev_ddl);
+        /* THE DESTINATION'S SCHEMA IS THE AUTHORITY, and the destination
+         * already carries every table this build creates. A judged table
+         * missing from it means the judgement outlived the schema; recreating
+         * it from the previous generation's DDL would revive whatever shape
+         * that file happened to have, damage included. */
+        gc_fail(err, err_sz, "table '%s' is judged '%s' but the current schema does not create it",
+                pol->table, hyp_generation_class_name(pol->klass));
+        return HYP_GEN_CARRY_UNCLASSIFIED;
     }
 
     gc_col_t dest_cols[GC_MAX_COLS];
@@ -431,8 +429,8 @@ static int gc_carry_table(sqlite3 *db, const gc_policy_t *pol, const char *rebui
     }
 
     gc_plan_t plan;
-    int plan_rc = gc_build_plan(pol, dest_cols, dest_n, prev_cols, prev_n, dest_ddl, &plan, err,
-                                err_sz);
+    int plan_rc =
+        gc_build_plan(pol, dest_cols, dest_n, prev_cols, prev_n, dest_ddl, &plan, err, err_sz);
     if (plan_rc != HYP_GEN_CARRY_OK) {
         return plan_rc;
     }
@@ -476,6 +474,71 @@ static int gc_carry_table(sqlite3 *db, const gc_policy_t *pol, const char *rebui
 
 /* ── Entry points ────────────────────────────────────────────────── */
 
+/* An immutable "file:" URI for the previous generation.
+ *
+ * Attaching it read-WRITE is destructive in a way that stays invisible until
+ * it matters: SQLite treats a stray -wal/-shm/-journal beside the file as
+ * state to recover, and DELETES all three on its way to deciding the main file
+ * is not a database — the very sidecars publication refuses to drop because
+ * they may hold the only committed pages left.
+ *
+ * Plain read-only is not enough either: with a hot journal present SQLite must
+ * roll it back before it will read anything, so it refuses with "attempt to
+ * write a readonly database" and the file's real problem never gets diagnosed.
+ * immutable=1 says the file will not change, which skips locking and journal
+ * recovery entirely — nothing is written, and the verdict on the contents is
+ * the contents'.
+ *
+ * The cost, stated: a previous generation left mid-transaction is read as its
+ * main file stands rather than as its journal would have made it. Publication
+ * seals every generation and removes its sidecars, so that state is already
+ * abnormal, and an incoherent read surfaces as corruption and refuses.
+ *
+ * The encoder lives here rather than being shared with the store's because the
+ * store's is private to that translation unit; what they share is the rule. */
+static bool gc_read_only_uri(const char *path, char *out, size_t out_sz) {
+    static const char PREFIX[] = "file://";
+    static const char SUFFIX[] = "?immutable=1";
+    static const char HEX[] = "0123456789ABCDEF";
+    size_t pos = sizeof(PREFIX) - 1;
+    if (pos + 1 > out_sz) {
+        return false;
+    }
+    memcpy(out, PREFIX, pos);
+    if (path[0] != '/') {
+        if (pos + 1 >= out_sz) {
+            return false;
+        }
+        out[pos++] = '/';
+    }
+    for (const unsigned char *p = (const unsigned char *)path; *p != '\0'; p++) {
+        unsigned char c = *p;
+        if (c == '\\') {
+            c = '/';
+        }
+        bool safe = (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') ||
+                    c == '/' || c == '.' || c == '-' || c == '_' || c == '~' || c == ':';
+        if (safe) {
+            if (pos + 1 >= out_sz) {
+                return false;
+            }
+            out[pos++] = (char)c;
+        } else {
+            if (pos + 3 >= out_sz) {
+                return false;
+            }
+            out[pos++] = '%';
+            out[pos++] = HEX[(c >> 4) & 0xF];
+            out[pos++] = HEX[c & 0xF];
+        }
+    }
+    if (pos + sizeof(SUFFIX) > out_sz) {
+        return false;
+    }
+    memcpy(out + pos, SUFFIX, sizeof(SUFFIX));
+    return true;
+}
+
 static bool gc_file_exists(const char *path) {
     FILE *f = fopen(path, "rb");
     if (!f) {
@@ -513,14 +576,33 @@ int hyp_generation_carry_forward(const char *dest_db_path, const char *prev_db_p
         return HYP_GEN_CARRY_ERR;
     }
     /* No previous generation is not a failure — a first index has nothing to
-     * carry. An UNREADABLE one is: "I could not tell" must never publish as
-     * "there was nothing there." */
+     * carry. */
     if (!prev_db_path || !gc_file_exists(prev_db_path)) {
         return HYP_GEN_CARRY_OK;
     }
+    /* Materialize the destination's own schema BEFORE anything is copied: the
+     * dump writer creates the graph tables and the store creates the rest, and
+     * a carry that ran between the two would have to invent the missing ones. */
+    {
+        hyp_store_t *seed = hyp_store_open_path(dest_db_path);
+        if (!seed) {
+            gc_fail(err, err_sz, "cannot prepare the staging schema", NULL, NULL);
+            return HYP_GEN_CARRY_ERR;
+        }
+        hyp_store_close(seed);
+    }
+
+    char prev_uri[HYP_SZ_4K];
+    if (!gc_read_only_uri(prev_db_path, prev_uri, sizeof(prev_uri))) {
+        gc_fail(err, err_sz, "previous generation path is too long to read", NULL, NULL);
+        return HYP_GEN_CARRY_ERR;
+    }
 
     sqlite3 *db = NULL;
-    if (sqlite3_open_v2(dest_db_path, &db, SQLITE_OPEN_READWRITE, NULL) != SQLITE_OK) {
+    /* SQLITE_OPEN_URI so the read-only ATTACH below is honoured as a URI
+     * rather than taken for a filename. */
+    if (sqlite3_open_v2(dest_db_path, &db, SQLITE_OPEN_READWRITE | SQLITE_OPEN_URI, NULL) !=
+        SQLITE_OK) {
         gc_fail(err, err_sz, "cannot open the staging generation: %s", sqlite3_errmsg(db), NULL);
         sqlite3_close(db);
         return HYP_GEN_CARRY_ERR;
@@ -533,11 +615,45 @@ int hyp_generation_carry_forward(const char *dest_db_path, const char *prev_db_p
         sqlite3_close(db);
         return HYP_GEN_CARRY_ERR;
     }
-    sqlite3_bind_text(att, 1, prev_db_path, -1, SQLITE_STATIC);
+    sqlite3_bind_text(att, 1, prev_uri, -1, SQLITE_STATIC);
     bool attached = sqlite3_step(att) == SQLITE_DONE;
-    sqlite3_finalize(att);
+    int attach_code = sqlite3_errcode(db);
     if (!attached) {
         gc_fail(err, err_sz, "cannot attach the previous generation: %s", sqlite3_errmsg(db), NULL);
+        sqlite3_finalize(att);
+        sqlite3_close(db);
+        if (attach_code == SQLITE_NOTADB) {
+            hyp_log_warn("carry_forward.previous_is_not_a_database", "path", prev_db_path);
+            return HYP_GEN_CARRY_OK;
+        }
+        return HYP_GEN_CARRY_ERR;
+    }
+    sqlite3_finalize(att);
+
+    /* An attach may succeed before it has looked inside, so the same verdict
+     * is taken again on the first read — which of the two reports it is an
+     * implementation detail, and only one of them must be relied upon.
+     *
+     * "These bytes are not a database" and "I could not read this database"
+     * are different answers, and only one of them is ever true. SQLite
+     * separates them: NOTADB means the file holds no database, so there is
+     * provably nothing to carry — and publication's own destination handling
+     * already quarantines such a file and rebuilds, so refusing here would
+     * mean a store that lost its header could never be repaired by
+     * reindexing. It is still a LOSS of whatever was there, so it is logged
+     * and never silent. Every other failure is "I could not tell", which must
+     * never publish as "there was nothing there". */
+    if (sqlite3_exec(db, "SELECT count(*) FROM prev.sqlite_master;", NULL, NULL, NULL) !=
+        SQLITE_OK) {
+        int probe_code = sqlite3_errcode(db);
+        if (probe_code == SQLITE_NOTADB) {
+            hyp_log_warn("carry_forward.previous_is_not_a_database", "path", prev_db_path);
+            (void)sqlite3_exec(db, "DETACH DATABASE prev;", NULL, NULL, NULL);
+            sqlite3_close(db);
+            return HYP_GEN_CARRY_OK;
+        }
+        gc_fail(err, err_sz, "cannot read the previous generation: %s", sqlite3_errmsg(db), NULL);
+        (void)sqlite3_exec(db, "DETACH DATABASE prev;", NULL, NULL, NULL);
         sqlite3_close(db);
         return HYP_GEN_CARRY_ERR;
     }

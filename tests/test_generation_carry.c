@@ -119,6 +119,16 @@ static bool gc_exec(const char *db_path, const char *sql) {
     return ok;
 }
 
+/* Route the next run down the path that REBUILDS the file rather than cloning
+ * it. Without the manifest an incremental run has nothing to diff against, so
+ * it forces a full rebuild — which is the only route that erases, and so the
+ * only one worth asserting against. The delta route clones the previous
+ * generation byte for byte and would make every test below pass without the
+ * carry existing at all. */
+static bool gc_force_full_rebuild(const char *db_path) {
+    return gc_exec(db_path, "DELETE FROM file_hashes;");
+}
+
 /* One integer out of a database file, or -1 when the query cannot run. */
 static int gc_scalar(const char *db_path, const char *sql) {
     sqlite3 *db = NULL;
@@ -231,11 +241,16 @@ TEST(a12_publication_refuses_a_table_it_cannot_judge) {
     ASSERT_EQ(hyp_generation_unclassified_tables(db, named, sizeof(named)), 1);
     ASSERT_NOT_NULL(strstr(named, "a12_unjudged"));
 
-    /* Now index again. The publish must refuse rather than quietly drop it. */
+    /* Now index again, down the route that rebuilds the file. The publish
+     * must refuse rather than quietly drop the table. */
     char file[HYP_SZ_1K];
     snprintf(file, sizeof(file), "%s/mod.py", root);
     ASSERT_EQ(th_write_file(file, "def after():\n    return 2\n"), 0);
+    ASSERT_TRUE(gc_force_full_rebuild(db));
+    hyp_pipeline_incremental_test_reset_faults();
     int rc = gc_index(root, db);
+    ASSERT_EQ((int)hyp_pipeline_incremental_test_last_route(),
+              (int)HYP_INCREMENTAL_ROUTE_FORCED_FULL);
     ASSERT_EQ(rc, HYP_PIPELINE_ABORT_PRESERVE_DB);
 
     /* The refusal preserved the previous generation, unjudged table included:
@@ -286,6 +301,7 @@ TEST(a12_workspace_registry_survives_a_full_index_of_a_member) {
         hyp_store_close(s);
     }
 
+    hyp_pipeline_incremental_test_reset_faults();
     ASSERT_EQ(gc_index(one, db), 0);
 
     hyp_store_t *s = hyp_store_open_path_query(db);
@@ -356,7 +372,15 @@ TEST(a12_three_members_assemble_into_one_workspace_store) {
     int nodes_after_own_index[MEMBERS] = {0, 0, 0};
     int edges_after_own_index[MEMBERS] = {0, 0, 0};
     for (int i = 0; i < MEMBERS; i++) {
+        hyp_pipeline_incremental_test_reset_faults();
         ASSERT_EQ(gc_index(roots[i], db), 0);
+        if (i > 0) {
+            /* A member the store has never seen has no manifest, so its run
+             * REBUILDS the file. That is the route that used to erase whoever
+             * was indexed before it. */
+            ASSERT_EQ((int)hyp_pipeline_incremental_test_last_route(),
+                      (int)HYP_INCREMENTAL_ROUTE_FORCED_FULL);
+        }
         hyp_store_t *s = hyp_store_open_path_query(db);
         ASSERT_NOT_NULL(s);
         nodes_after_own_index[i] = hyp_store_count_nodes(s, slugs[i]);
@@ -379,6 +403,70 @@ TEST(a12_three_members_assemble_into_one_workspace_store) {
     char id[HYP_SZ_512] = "";
     ASSERT_EQ(hyp_store_workspace_id(s, id, sizeof(id)), HYP_STORE_OK);
     ASSERT_STR_EQ(id, "trio");
+    hyp_store_close(s);
+
+    gc_fix_end(&fix);
+    PASS();
+}
+
+/* The same property through the entry point a caller actually has: a TOML on
+ * disk, the one resolver, the one open path, three members into one file. The
+ * first real USE of the mechanism is better evidence than the test written to
+ * prove it — this one would also catch a resolver, a store path or a registry
+ * bind that disagreed with the assembly, which the loop above cannot. */
+TEST(a12_a_declared_workspace_indexes_every_member_from_one_call) {
+    gc_fix_t fix;
+    if (!gc_fix_begin(&fix)) {
+        FAIL("fixture setup");
+    }
+    enum { MEMBERS = 3 };
+    static const char *const names[MEMBERS] = {"declared_a", "declared_b", "declared_c"};
+    char roots[MEMBERS][HYP_SZ_512];
+    char slugs[MEMBERS][HYP_SZ_256];
+    char body[HYP_SZ_256];
+    for (int i = 0; i < MEMBERS; i++) {
+        snprintf(body, sizeof(body), "def member_%d():\n    return %d\n", i, i);
+        ASSERT_TRUE(gc_make_member(&fix, names[i], body, roots[i], sizeof(roots[i]), slugs[i],
+                                   sizeof(slugs[i])));
+    }
+
+    char toml_path[HYP_SZ_512];
+    snprintf(toml_path, sizeof(toml_path), "%s/%s", fix.root, HYP_WSR_TOML_NAME);
+    char toml[HYP_SZ_1K];
+    snprintf(toml, sizeof(toml),
+             "name = \"declared\"\n"
+             "[[repos]]\npath = \"%s\"\nrole = \"member\"\n"
+             "[[repos]]\npath = \"%s\"\nrole = \"vendored\"\n"
+             "[[repos]]\npath = \"%s\"\nrole = \"reference\"\n",
+             roots[0], roots[1], roots[2]);
+    ASSERT_EQ(th_write_file(toml_path, toml), 0);
+
+    hyp_wsr_resolved_t ws;
+    char err[HYP_SZ_1K] = "";
+    ASSERT_EQ(hyp_wsr_resolve(roots[0], toml_path, NULL, &ws, err, sizeof(err)), HYP_WSR_OK);
+    ASSERT_EQ(ws.member_count, MEMBERS);
+
+    int indexed = 0;
+    ASSERT_EQ(hyp_pipeline_index_workspace(&ws, HYP_MODE_FULL, &indexed, err, sizeof(err)), 0);
+    ASSERT_EQ(indexed, MEMBERS);
+
+    /* One file, named by the workspace, holding all three — including the
+     * roles that say two of them must not be edited. */
+    char db[HYP_SZ_1K];
+    snprintf(db, sizeof(db), "%s/%s.db", fix.cache, ws.id);
+    hyp_store_t *s = hyp_store_open_path_query(db);
+    ASSERT_NOT_NULL(s);
+    for (int i = 0; i < MEMBERS; i++) {
+        ASSERT_TRUE(hyp_store_count_nodes(s, ws.members[i].slug) > 0);
+    }
+    char id[HYP_SZ_512] = "";
+    ASSERT_EQ(hyp_store_workspace_id(s, id, sizeof(id)), HYP_STORE_OK);
+    ASSERT_STR_EQ(id, "declared");
+    hyp_workspace_repo_t *rows = NULL;
+    int count = 0;
+    ASSERT_EQ(hyp_store_workspace_repos(s, &rows, &count), HYP_STORE_OK);
+    ASSERT_EQ(count, MEMBERS);
+    hyp_store_free_workspace_repos(rows, count);
     hyp_store_close(s);
 
     gc_fix_end(&fix);
@@ -424,7 +512,11 @@ TEST(a12_a_carried_row_keeps_its_own_timestamps) {
     char file[HYP_SZ_1K];
     snprintf(file, sizeof(file), "%s/mod.py", root);
     ASSERT_EQ(th_write_file(file, "def after():\n    return 2\n"), 0);
+    ASSERT_TRUE(gc_force_full_rebuild(db));
+    hyp_pipeline_incremental_test_reset_faults();
     ASSERT_EQ(gc_index(root, db), 0);
+    ASSERT_EQ((int)hyp_pipeline_incremental_test_last_route(),
+              (int)HYP_INCREMENTAL_ROUTE_FORCED_FULL);
 
     hyp_store_t *s = hyp_store_open_path_query(db);
     ASSERT_NOT_NULL(s);
@@ -474,7 +566,10 @@ TEST(a12_another_members_indexed_at_is_not_restamped) {
              slug_one);
     ASSERT_TRUE(gc_exec(db, sql));
 
+    hyp_pipeline_incremental_test_reset_faults();
     ASSERT_EQ(gc_index(two, db), 0);
+    ASSERT_EQ((int)hyp_pipeline_incremental_test_last_route(),
+              (int)HYP_INCREMENTAL_ROUTE_FORCED_FULL);
 
     hyp_store_t *s = hyp_store_open_path_query(db);
     ASSERT_NOT_NULL(s);
@@ -497,6 +592,7 @@ SUITE(generation_carry) {
     RUN_TEST(a12_publication_refuses_a_table_it_cannot_judge);
     RUN_TEST(a12_workspace_registry_survives_a_full_index_of_a_member);
     RUN_TEST(a12_three_members_assemble_into_one_workspace_store);
+    RUN_TEST(a12_a_declared_workspace_indexes_every_member_from_one_call);
     RUN_TEST(a12_a_carried_row_keeps_its_own_timestamps);
     RUN_TEST(a12_another_members_indexed_at_is_not_restamped);
 }

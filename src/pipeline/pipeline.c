@@ -24,6 +24,7 @@ enum { HYP_DIR_PERMS = 0755, PL_RING = 4, PL_RING_MASK = 3, PL_SEQ_PASSES = 6 };
 #include "git/git_context.h"
 #include "store/store.h"
 #include "store/generation_carry.h"
+#include "store/workspace_resolve.h"
 #include "macro_table.h"
 #include "arena.h"
 #include "discover/discover.h"
@@ -417,6 +418,66 @@ const char *hyp_pipeline_repo_path(const hyp_pipeline_t *p) {
 
 const char *hyp_pipeline_live_db_path(const hyp_pipeline_t *p) {
     return p ? p->live_db_path : NULL;
+}
+
+int hyp_pipeline_index_workspace(const hyp_wsr_resolved_t *ws, hyp_index_mode_t mode,
+                                 int *members_indexed, char *err, size_t err_sz) {
+    if (members_indexed) {
+        *members_indexed = 0;
+    }
+    if (err && err_sz > 0) {
+        err[0] = '\0';
+    }
+    if (!ws || ws->member_count < 1) {
+        if (err && err_sz > 0) {
+            snprintf(err, err_sz, "unresolved workspace");
+        }
+        return HYP_NOT_FOUND;
+    }
+
+    /* Open through the resolver's own open path, never by rebuilding the file
+     * name here: the naming rule has exactly one implementation, and this is
+     * also where the registry gets bound before any member is indexed. */
+    char db_path[HYP_SZ_1K];
+    {
+        hyp_store_t *store = hyp_wsr_store_open(ws, err, err_sz);
+        if (!store) {
+            return HYP_NOT_FOUND;
+        }
+        const char *path = hyp_store_db_path(store);
+        bool ok = path && (size_t)snprintf(db_path, sizeof(db_path), "%s", path) < sizeof(db_path);
+        hyp_store_close(store);
+        if (!ok) {
+            if (err && err_sz > 0) {
+                snprintf(err, err_sz, "workspace '%s' has no usable store path", ws->id);
+            }
+            return HYP_NOT_FOUND;
+        }
+    }
+
+    for (int i = 0; i < ws->member_count; i++) {
+        hyp_pipeline_t *p = hyp_pipeline_new(ws->members[i].root, db_path, mode);
+        if (!p) {
+            if (err && err_sz > 0) {
+                snprintf(err, err_sz, "cannot start indexing member '%s' at %s",
+                         ws->members[i].slug, ws->members[i].root);
+            }
+            return HYP_NOT_FOUND;
+        }
+        int rc = hyp_pipeline_run(p);
+        hyp_pipeline_free(p);
+        if (rc != 0) {
+            if (err && err_sz > 0) {
+                snprintf(err, err_sz, "member '%s' at %s did not publish (rc %d)",
+                         ws->members[i].slug, ws->members[i].root, rc);
+            }
+            return rc;
+        }
+        if (members_indexed) {
+            *members_indexed = i + 1;
+        }
+    }
+    return 0;
 }
 
 atomic_int *hyp_pipeline_cancelled_ptr(hyp_pipeline_t *p) {
@@ -1642,15 +1703,14 @@ int hyp_pipeline_publish_generation(const hyp_pipeline_generation_t *generation)
      * this staging file replaces it wholesale. Carry it across before any
      * metadata write, so the integrity ceiling and the FTS rebuild both see
      * the assembled store rather than one member of it. A refusal here means
-     * the previous generation could not be read or could not be judged; the
-     * rename has not happened, so it survives untouched. */
+     * the previous generation could not be judged; the rename has not
+     * happened, so it survives untouched. */
     {
         const char *previous =
             generation->previous_db_path ? generation->previous_db_path : generation->final_db_path;
         char carry_err[HYP_SZ_1K] = "";
-        int carry_rc =
-            hyp_generation_carry_forward(stage_path, previous, generation->project, carry_err,
-                                         sizeof(carry_err));
+        int carry_rc = hyp_generation_carry_forward(stage_path, previous, generation->project,
+                                                    carry_err, sizeof(carry_err));
 #if defined(HYP_INCREMENTAL_TEST_API) && HYP_INCREMENTAL_TEST_API
         if (hyp_pipeline_persist_test_take_failure_carry_forward()) {
             carry_rc = HYP_GEN_CARRY_ERR;
