@@ -1,0 +1,2096 @@
+{
+  "fixture_set": "G1 \u2014 anchor replay over real history",
+  "repo": "hyponoia (github.com/patalbansishashank/hyponoia), read-only",
+  "lineage": "every commit below is reachable from refs/heads/dev",
+  "project_slug_assumed": "hyponoia",
+  "address_scheme": "hyp1:<workspace>/<repo>#<qualified_name>; workspace==NULL is a workspace of one, so workspace==repo==the project slug (src/foundation/identity.c: `workspace ? workspace : repo`)",
+  "qualified_name_scheme": "hyp_pipeline_fqn_compute(project, rel_path, name) \u2014 project.dir.parts.stem.name, extension stripped (src/pipeline/fqn.c)",
+  "span_hash_scheme": "hyp_addr_span_hash: SHA-256 of the span text, lowercase hex, first 32 chars. The span text is the bytes from the first byte of start_line to, exclusive, the newline that ends end_line (src/ask/ask_embed.c hyp_ask_read_span_lines) \u2014 no trailing newline. start_line IS the declaration line.",
+  "status_vocabulary": "src/memory/anchor.h @ 213e01df (C3u)",
+  "fixtures": [
+    {
+      "id": "G1-MOVE-001",
+      "category": "moved_within_file",
+      "provenance": {
+        "commit_before": "52b6cfd3b986003499513ceb6524647e23337b08",
+        "commit_after": "4e27eed584846928761b0de60fcbd372513943d4",
+        "commit_after_date": "2026-08-10",
+        "commit_after_subject": "feat(ask): wire the rerank stage into the tool, behind rerank=N",
+        "derived_by": "mine_g1.py over `git diff-tree -r -M -C --find-copies-harder <sha>^ <sha>` on every non-merge commit reachable from dev; spans by C brace-matching, hashes by spanhash.py",
+        "re_derive": "git diff 52b6cfd3 4e27eed5 -- src/mcp/mcp.c"
+      },
+      "symbol": {
+        "before_name": "handle_query_graph",
+        "after_name": "handle_query_graph"
+      },
+      "before": {
+        "commit": "52b6cfd3b986003499513ceb6524647e23337b08",
+        "file_path": "src/mcp/mcp.c",
+        "start_line": 4285,
+        "end_line": 4414,
+        "qualified_name": "hyponoia.src.mcp.mcp.handle_query_graph",
+        "address": "hyp1:hyponoia/hyponoia#hyponoia.src.mcp.mcp.handle_query_graph",
+        "span_hash": "3f4c1f498985bc970ec6a2441a8562db",
+        "verify": "python3 spanhash.py 4e27eed5^ src/mcp/mcp.c 4285 4414"
+      },
+      "after": {
+        "commit": "4e27eed584846928761b0de60fcbd372513943d4",
+        "file_path": "src/mcp/mcp.c",
+        "start_line": 4560,
+        "end_line": 4689,
+        "qualified_name": "hyponoia.src.mcp.mcp.handle_query_graph",
+        "address": "hyp1:hyponoia/hyponoia#hyponoia.src.mcp.mcp.handle_query_graph",
+        "span_hash": "3f4c1f498985bc970ec6a2441a8562db",
+        "verify": "python3 spanhash.py 4e27eed5 src/mcp/mcp.c 4560 4689"
+      },
+      "anchor_written_at_commit_before": "3f4c1f498985bc970ec6a2441a8562db@hyp1:hyponoia/hyponoia#hyponoia.src.mcp.mcp.handle_query_graph",
+      "note": "moved +275 lines because the rerank stage was wired in above it",
+      "expected": {
+        "hyp_anchor_status": "HYP_ANCHOR_RESOLVED",
+        "hyp_addr_relate": "HYP_ADDR_REL_SAME",
+        "candidate_count": 0,
+        "resolved_to": {
+          "file_path": "src/mcp/mcp.c",
+          "start_line": 4560,
+          "end_line": 4689
+        },
+        "must_not": [
+          "HYP_ANCHOR_ORPHANED",
+          "HYP_ANCHOR_RESOLVED_EDITED",
+          "HYP_ANCHOR_ERROR"
+        ],
+        "why": "Same qualified name, same content. The line numbers moved by 275 and line numbers were never an input to resolution (anchor.h: 'symbol identity first, content hash second, LINE NUMBERS NEVER'). This is C5u's assertion."
+      }
+    },
+    {
+      "id": "G1-MOVE-002",
+      "category": "moved_within_file",
+      "provenance": {
+        "commit_before": "a08b4188abd01ebb56acae632b5b18c8123a9f47",
+        "commit_after": "08543e50ec57584964ce5f24c39adc77688601ce",
+        "commit_after_date": "2026-08-10",
+        "commit_after_subject": "ask: the MCP tool \u2014 schema, handler, and the unavailable state",
+        "derived_by": "mine_g1.py over `git diff-tree -r -M -C --find-copies-harder <sha>^ <sha>` on every non-merge commit reachable from dev; spans by C brace-matching, hashes by spanhash.py",
+        "re_derive": "git diff a08b4188 08543e50 -- src/mcp/mcp.c"
+      },
+      "symbol": {
+        "before_name": "release_request_store",
+        "after_name": "release_request_store"
+      },
+      "before": {
+        "commit": "a08b4188abd01ebb56acae632b5b18c8123a9f47",
+        "file_path": "src/mcp/mcp.c",
+        "start_line": 10963,
+        "end_line": 10978,
+        "qualified_name": "hyponoia.src.mcp.mcp.release_request_store",
+        "address": "hyp1:hyponoia/hyponoia#hyponoia.src.mcp.mcp.release_request_store",
+        "span_hash": "883bb47425e9690c21483e885e204032",
+        "verify": "python3 spanhash.py 08543e50^ src/mcp/mcp.c 10963 10978"
+      },
+      "after": {
+        "commit": "08543e50ec57584964ce5f24c39adc77688601ce",
+        "file_path": "src/mcp/mcp.c",
+        "start_line": 11451,
+        "end_line": 11466,
+        "qualified_name": "hyponoia.src.mcp.mcp.release_request_store",
+        "address": "hyp1:hyponoia/hyponoia#hyponoia.src.mcp.mcp.release_request_store",
+        "span_hash": "883bb47425e9690c21483e885e204032",
+        "verify": "python3 spanhash.py 08543e50 src/mcp/mcp.c 11451 11466"
+      },
+      "anchor_written_at_commit_before": "883bb47425e9690c21483e885e204032@hyp1:hyponoia/hyponoia#hyponoia.src.mcp.mcp.release_request_store",
+      "note": "moved +488 lines when the `ask` MCP tool was added above it",
+      "expected": {
+        "hyp_anchor_status": "HYP_ANCHOR_RESOLVED",
+        "hyp_addr_relate": "HYP_ADDR_REL_SAME",
+        "candidate_count": 0,
+        "resolved_to": {
+          "file_path": "src/mcp/mcp.c",
+          "start_line": 11451,
+          "end_line": 11466
+        },
+        "must_not": [
+          "HYP_ANCHOR_ORPHANED",
+          "HYP_ANCHOR_RESOLVED_EDITED",
+          "HYP_ANCHOR_ERROR"
+        ],
+        "why": "Same qualified name, same content. The line numbers moved by 488 and line numbers were never an input to resolution (anchor.h: 'symbol identity first, content hash second, LINE NUMBERS NEVER'). This is C5u's assertion."
+      }
+    },
+    {
+      "id": "G1-MOVE-003",
+      "category": "moved_within_file",
+      "provenance": {
+        "commit_before": "3f5ae18852f5b578edcb9fe364b3423ea22748be",
+        "commit_after": "130a82bd106b9dd2edd7939b2555623f300c741b",
+        "commit_after_date": "2026-07-18",
+        "commit_after_subject": "feat(mcp): real impact analysis + cycle detection (multi-source BFS, SCC)",
+        "derived_by": "mine_g1.py over `git diff-tree -r -M -C --find-copies-harder <sha>^ <sha>` on every non-merge commit reachable from dev; spans by C brace-matching, hashes by spanhash.py",
+        "re_derive": "git diff 3f5ae188 130a82bd -- src/mcp/mcp.c"
+      },
+      "symbol": {
+        "before_name": "adr_list_sections_from_content",
+        "after_name": "adr_list_sections_from_content"
+      },
+      "before": {
+        "commit": "3f5ae18852f5b578edcb9fe364b3423ea22748be",
+        "file_path": "src/mcp/mcp.c",
+        "start_line": 8262,
+        "end_line": 8287,
+        "qualified_name": "hyponoia.src.mcp.mcp.adr_list_sections_from_content",
+        "address": "hyp1:hyponoia/hyponoia#hyponoia.src.mcp.mcp.adr_list_sections_from_content",
+        "span_hash": "b2f5a5f1a8c98236bc4c2372e49c556e",
+        "verify": "python3 spanhash.py 130a82bd^ src/mcp/mcp.c 8262 8287"
+      },
+      "after": {
+        "commit": "130a82bd106b9dd2edd7939b2555623f300c741b",
+        "file_path": "src/mcp/mcp.c",
+        "start_line": 8961,
+        "end_line": 8986,
+        "qualified_name": "hyponoia.src.mcp.mcp.adr_list_sections_from_content",
+        "address": "hyp1:hyponoia/hyponoia#hyponoia.src.mcp.mcp.adr_list_sections_from_content",
+        "span_hash": "b2f5a5f1a8c98236bc4c2372e49c556e",
+        "verify": "python3 spanhash.py 130a82bd src/mcp/mcp.c 8961 8986"
+      },
+      "anchor_written_at_commit_before": "b2f5a5f1a8c98236bc4c2372e49c556e@hyp1:hyponoia/hyponoia#hyponoia.src.mcp.mcp.adr_list_sections_from_content",
+      "note": "moved +699 lines when impact analysis and cycle detection landed above it",
+      "expected": {
+        "hyp_anchor_status": "HYP_ANCHOR_RESOLVED",
+        "hyp_addr_relate": "HYP_ADDR_REL_SAME",
+        "candidate_count": 0,
+        "resolved_to": {
+          "file_path": "src/mcp/mcp.c",
+          "start_line": 8961,
+          "end_line": 8986
+        },
+        "must_not": [
+          "HYP_ANCHOR_ORPHANED",
+          "HYP_ANCHOR_RESOLVED_EDITED",
+          "HYP_ANCHOR_ERROR"
+        ],
+        "why": "Same qualified name, same content. The line numbers moved by 699 and line numbers were never an input to resolution (anchor.h: 'symbol identity first, content hash second, LINE NUMBERS NEVER'). This is C5u's assertion."
+      }
+    },
+    {
+      "id": "G1-MOVE-004",
+      "category": "moved_within_file",
+      "provenance": {
+        "commit_before": "0d216c7936e05100ba1208700f462e87829fba4b",
+        "commit_after": "18fa9979ee0aadfcba52d0850c6c177aaa7bad20",
+        "commit_after_date": "2026-03-17",
+        "commit_after_subject": "Replace vmem with mimalloc global allocator, add extraction-phase prescan, fix __init__.py QN collision",
+        "derived_by": "mine_g1.py over `git diff-tree -r -M -C --find-copies-harder <sha>^ <sha>` on every non-merge commit reachable from dev; spans by C brace-matching, hashes by spanhash.py",
+        "re_derive": "git diff 0d216c79 18fa9979 -- src/cypher/cypher.c"
+      },
+      "symbol": {
+        "before_name": "check_inline_props",
+        "after_name": "check_inline_props"
+      },
+      "before": {
+        "commit": "0d216c7936e05100ba1208700f462e87829fba4b",
+        "file_path": "src/cypher/cypher.c",
+        "start_line": 1226,
+        "end_line": 1234,
+        "qualified_name": "hyponoia.src.cypher.cypher.check_inline_props",
+        "address": "hyp1:hyponoia/hyponoia#hyponoia.src.cypher.cypher.check_inline_props",
+        "span_hash": "1d7b1909c814be5bb3b312f3d5b0804d",
+        "verify": "python3 spanhash.py 18fa9979^ src/cypher/cypher.c 1226 1234"
+      },
+      "after": {
+        "commit": "18fa9979ee0aadfcba52d0850c6c177aaa7bad20",
+        "file_path": "src/cypher/cypher.c",
+        "start_line": 1905,
+        "end_line": 1913,
+        "qualified_name": "hyponoia.src.cypher.cypher.check_inline_props",
+        "address": "hyp1:hyponoia/hyponoia#hyponoia.src.cypher.cypher.check_inline_props",
+        "span_hash": "1d7b1909c814be5bb3b312f3d5b0804d",
+        "verify": "python3 spanhash.py 18fa9979 src/cypher/cypher.c 1905 1913"
+      },
+      "anchor_written_at_commit_before": "1d7b1909c814be5bb3b312f3d5b0804d@hyp1:hyponoia/hyponoia#hyponoia.src.cypher.cypher.check_inline_props",
+      "note": "moved +679 lines in the mimalloc/prescan commit",
+      "expected": {
+        "hyp_anchor_status": "HYP_ANCHOR_RESOLVED",
+        "hyp_addr_relate": "HYP_ADDR_REL_SAME",
+        "candidate_count": 0,
+        "resolved_to": {
+          "file_path": "src/cypher/cypher.c",
+          "start_line": 1905,
+          "end_line": 1913
+        },
+        "must_not": [
+          "HYP_ANCHOR_ORPHANED",
+          "HYP_ANCHOR_RESOLVED_EDITED",
+          "HYP_ANCHOR_ERROR"
+        ],
+        "why": "Same qualified name, same content. The line numbers moved by 679 and line numbers were never an input to resolution (anchor.h: 'symbol identity first, content hash second, LINE NUMBERS NEVER'). This is C5u's assertion."
+      }
+    },
+    {
+      "id": "G1-MOVE-005",
+      "category": "moved_within_file",
+      "provenance": {
+        "commit_before": "b231af16e083abc4e4266b2826ccf9b65ba69bbc",
+        "commit_after": "6e2b688f3471aacabb6b0f7bbea86549f0a89368",
+        "commit_after_date": "2026-08-16",
+        "commit_after_subject": "mcp: the server already knows which project the client is in, so stop charging every session a call to find out",
+        "derived_by": "mine_g1.py over `git diff-tree -r -M -C --find-copies-harder <sha>^ <sha>` on every non-merge commit reachable from dev; spans by C brace-matching, hashes by spanhash.py",
+        "re_derive": "git diff b231af16 6e2b688f -- tests/test_mcp.c"
+      },
+      "symbol": {
+        "before_name": "mcp_cross_repo_create_project_store",
+        "after_name": "mcp_cross_repo_create_project_store"
+      },
+      "before": {
+        "commit": "b231af16e083abc4e4266b2826ccf9b65ba69bbc",
+        "file_path": "tests/test_mcp.c",
+        "start_line": 4988,
+        "end_line": 4999,
+        "qualified_name": "hyponoia.tests.test_mcp.mcp_cross_repo_create_project_store",
+        "address": "hyp1:hyponoia/hyponoia#hyponoia.tests.test_mcp.mcp_cross_repo_create_project_store",
+        "span_hash": "7c007c18ad1a81d595285d75960bd240",
+        "verify": "python3 spanhash.py 6e2b688f^ tests/test_mcp.c 4988 4999"
+      },
+      "after": {
+        "commit": "6e2b688f3471aacabb6b0f7bbea86549f0a89368",
+        "file_path": "tests/test_mcp.c",
+        "start_line": 5420,
+        "end_line": 5431,
+        "qualified_name": "hyponoia.tests.test_mcp.mcp_cross_repo_create_project_store",
+        "address": "hyp1:hyponoia/hyponoia#hyponoia.tests.test_mcp.mcp_cross_repo_create_project_store",
+        "span_hash": "7c007c18ad1a81d595285d75960bd240",
+        "verify": "python3 spanhash.py 6e2b688f tests/test_mcp.c 5420 5431"
+      },
+      "anchor_written_at_commit_before": "7c007c18ad1a81d595285d75960bd240@hyp1:hyponoia/hyponoia#hyponoia.tests.test_mcp.mcp_cross_repo_create_project_store",
+      "note": "moved +432 lines when the project-defaulting tests were added above it",
+      "expected": {
+        "hyp_anchor_status": "HYP_ANCHOR_RESOLVED",
+        "hyp_addr_relate": "HYP_ADDR_REL_SAME",
+        "candidate_count": 0,
+        "resolved_to": {
+          "file_path": "tests/test_mcp.c",
+          "start_line": 5420,
+          "end_line": 5431
+        },
+        "must_not": [
+          "HYP_ANCHOR_ORPHANED",
+          "HYP_ANCHOR_RESOLVED_EDITED",
+          "HYP_ANCHOR_ERROR"
+        ],
+        "why": "Same qualified name, same content. The line numbers moved by 432 and line numbers were never an input to resolution (anchor.h: 'symbol identity first, content hash second, LINE NUMBERS NEVER'). This is C5u's assertion."
+      }
+    },
+    {
+      "id": "G1-MOVE-006",
+      "category": "moved_within_file",
+      "provenance": {
+        "commit_before": "b231af16e083abc4e4266b2826ccf9b65ba69bbc",
+        "commit_after": "ecc20ba141e3df48c5378ddb75640969f4ab087e",
+        "commit_after_date": "2026-08-16",
+        "commit_after_subject": "ask: one call and the lines named \u2014 the top two candidates arrive with their source, and ten rows become three",
+        "derived_by": "mine_g1.py over `git diff-tree -r -M -C --find-copies-harder <sha>^ <sha>` on every non-merge commit reachable from dev; spans by C brace-matching, hashes by spanhash.py",
+        "re_derive": "git diff b231af16 ecc20ba1 -- tests/test_ask.c"
+      },
+      "symbol": {
+        "before_name": "json_str_at",
+        "after_name": "json_str_at"
+      },
+      "before": {
+        "commit": "b231af16e083abc4e4266b2826ccf9b65ba69bbc",
+        "file_path": "tests/test_ask.c",
+        "start_line": 1219,
+        "end_line": 1222,
+        "qualified_name": "hyponoia.tests.test_ask.json_str_at",
+        "address": "hyp1:hyponoia/hyponoia#hyponoia.tests.test_ask.json_str_at",
+        "span_hash": "4b3987980defd07c0e9bbb3268c97850",
+        "verify": "python3 spanhash.py ecc20ba1^ tests/test_ask.c 1219 1222"
+      },
+      "after": {
+        "commit": "ecc20ba141e3df48c5378ddb75640969f4ab087e",
+        "file_path": "tests/test_ask.c",
+        "start_line": 1815,
+        "end_line": 1818,
+        "qualified_name": "hyponoia.tests.test_ask.json_str_at",
+        "address": "hyp1:hyponoia/hyponoia#hyponoia.tests.test_ask.json_str_at",
+        "span_hash": "4b3987980defd07c0e9bbb3268c97850",
+        "verify": "python3 spanhash.py ecc20ba1 tests/test_ask.c 1815 1818"
+      },
+      "anchor_written_at_commit_before": "4b3987980defd07c0e9bbb3268c97850@hyp1:hyponoia/hyponoia#hyponoia.tests.test_ask.json_str_at",
+      "note": "moved +596 lines when the source-carrying `ask` tests were added above it",
+      "expected": {
+        "hyp_anchor_status": "HYP_ANCHOR_RESOLVED",
+        "hyp_addr_relate": "HYP_ADDR_REL_SAME",
+        "candidate_count": 0,
+        "resolved_to": {
+          "file_path": "tests/test_ask.c",
+          "start_line": 1815,
+          "end_line": 1818
+        },
+        "must_not": [
+          "HYP_ANCHOR_ORPHANED",
+          "HYP_ANCHOR_RESOLVED_EDITED",
+          "HYP_ANCHOR_ERROR"
+        ],
+        "why": "Same qualified name, same content. The line numbers moved by 596 and line numbers were never an input to resolution (anchor.h: 'symbol identity first, content hash second, LINE NUMBERS NEVER'). This is C5u's assertion."
+      }
+    },
+    {
+      "id": "G1-MOVE-007",
+      "category": "moved_within_file",
+      "provenance": {
+        "commit_before": "d201a5faa6905591a5210e54870eb8955dd026ee",
+        "commit_after": "522bd5b1fdbbf5ff808ba9198ec0c632692664fc",
+        "commit_after_date": "2026-03-13",
+        "commit_after_subject": "Expand C/C++ LSP resolver: template substitution, smart pointer chains, 700+ tests",
+        "derived_by": "mine_g1.py over `git diff-tree -r -M -C --find-copies-harder <sha>^ <sha>` on every non-merge commit reachable from dev; spans by C brace-matching, hashes by spanhash.py",
+        "re_derive": "git diff d201a5fa 522bd5b1 -- internal/cbm/lsp/c_lsp.c"
+      },
+      "symbol": {
+        "before_name": "cbm_run_c_lsp_cross",
+        "after_name": "cbm_run_c_lsp_cross"
+      },
+      "before": {
+        "commit": "d201a5faa6905591a5210e54870eb8955dd026ee",
+        "file_path": "internal/cbm/lsp/c_lsp.c",
+        "start_line": 3417,
+        "end_line": 3573,
+        "qualified_name": "hyponoia.internal.cbm.lsp.c_lsp.cbm_run_c_lsp_cross",
+        "address": "hyp1:hyponoia/hyponoia#hyponoia.internal.cbm.lsp.c_lsp.cbm_run_c_lsp_cross",
+        "span_hash": "481a372583e7498caa760e7e9f978b6e",
+        "verify": "python3 spanhash.py 522bd5b1^ internal/cbm/lsp/c_lsp.c 3417 3573"
+      },
+      "after": {
+        "commit": "522bd5b1fdbbf5ff808ba9198ec0c632692664fc",
+        "file_path": "internal/cbm/lsp/c_lsp.c",
+        "start_line": 4413,
+        "end_line": 4569,
+        "qualified_name": "hyponoia.internal.cbm.lsp.c_lsp.cbm_run_c_lsp_cross",
+        "address": "hyp1:hyponoia/hyponoia#hyponoia.internal.cbm.lsp.c_lsp.cbm_run_c_lsp_cross",
+        "span_hash": "481a372583e7498caa760e7e9f978b6e",
+        "verify": "python3 spanhash.py 522bd5b1 internal/cbm/lsp/c_lsp.c 4413 4569"
+      },
+      "anchor_written_at_commit_before": "481a372583e7498caa760e7e9f978b6e@hyp1:hyponoia/hyponoia#hyponoia.internal.cbm.lsp.c_lsp.cbm_run_c_lsp_cross",
+      "note": "moved +996 lines when the C/C++ resolver was expanded above it",
+      "expected": {
+        "hyp_anchor_status": "HYP_ANCHOR_RESOLVED",
+        "hyp_addr_relate": "HYP_ADDR_REL_SAME",
+        "candidate_count": 0,
+        "resolved_to": {
+          "file_path": "internal/cbm/lsp/c_lsp.c",
+          "start_line": 4413,
+          "end_line": 4569
+        },
+        "must_not": [
+          "HYP_ANCHOR_ORPHANED",
+          "HYP_ANCHOR_RESOLVED_EDITED",
+          "HYP_ANCHOR_ERROR"
+        ],
+        "why": "Same qualified name, same content. The line numbers moved by 996 and line numbers were never an input to resolution (anchor.h: 'symbol identity first, content hash second, LINE NUMBERS NEVER'). This is C5u's assertion."
+      }
+    },
+    {
+      "id": "G1-MOVE-008",
+      "category": "moved_within_file",
+      "provenance": {
+        "commit_before": "d82637457778a5c387956c4e519738eeeee7964b",
+        "commit_after": "0baddf788737b1b0792f5af7ac63e05de87f382a",
+        "commit_after_date": "2026-07-21",
+        "commit_after_subject": "daemon: permanent lifecycle, daemon-backed CLI/hooks, real-Windows hardening, long-path launcher transactions",
+        "derived_by": "mine_g1.py over `git diff-tree -r -M -C --find-copies-harder <sha>^ <sha>` on every non-merge commit reachable from dev; spans by C brace-matching, hashes by spanhash.py",
+        "re_derive": "git diff d8263745 0baddf78 -- src/daemon/runtime.c"
+      },
+      "symbol": {
+        "before_name": "cbm_daemon_runtime_client_application_request",
+        "after_name": "cbm_daemon_runtime_client_application_request"
+      },
+      "before": {
+        "commit": "d82637457778a5c387956c4e519738eeeee7964b",
+        "file_path": "src/daemon/runtime.c",
+        "start_line": 2654,
+        "end_line": 2677,
+        "qualified_name": "hyponoia.src.daemon.runtime.cbm_daemon_runtime_client_application_request",
+        "address": "hyp1:hyponoia/hyponoia#hyponoia.src.daemon.runtime.cbm_daemon_runtime_client_application_request",
+        "span_hash": "95ac705b4bd195a467ffe63a34ee98dd",
+        "verify": "python3 spanhash.py 0baddf78^ src/daemon/runtime.c 2654 2677"
+      },
+      "after": {
+        "commit": "0baddf788737b1b0792f5af7ac63e05de87f382a",
+        "file_path": "src/daemon/runtime.c",
+        "start_line": 2967,
+        "end_line": 2990,
+        "qualified_name": "hyponoia.src.daemon.runtime.cbm_daemon_runtime_client_application_request",
+        "address": "hyp1:hyponoia/hyponoia#hyponoia.src.daemon.runtime.cbm_daemon_runtime_client_application_request",
+        "span_hash": "95ac705b4bd195a467ffe63a34ee98dd",
+        "verify": "python3 spanhash.py 0baddf78 src/daemon/runtime.c 2967 2990"
+      },
+      "anchor_written_at_commit_before": "95ac705b4bd195a467ffe63a34ee98dd@hyp1:hyponoia/hyponoia#hyponoia.src.daemon.runtime.cbm_daemon_runtime_client_application_request",
+      "note": "moved +313 lines in the daemon lifecycle commit",
+      "expected": {
+        "hyp_anchor_status": "HYP_ANCHOR_RESOLVED",
+        "hyp_addr_relate": "HYP_ADDR_REL_SAME",
+        "candidate_count": 0,
+        "resolved_to": {
+          "file_path": "src/daemon/runtime.c",
+          "start_line": 2967,
+          "end_line": 2990
+        },
+        "must_not": [
+          "HYP_ANCHOR_ORPHANED",
+          "HYP_ANCHOR_RESOLVED_EDITED",
+          "HYP_ANCHOR_ERROR"
+        ],
+        "why": "Same qualified name, same content. The line numbers moved by 313 and line numbers were never an input to resolution (anchor.h: 'symbol identity first, content hash second, LINE NUMBERS NEVER'). This is C5u's assertion."
+      }
+    },
+    {
+      "id": "G1-EDIT-001",
+      "category": "body_changed",
+      "provenance": {
+        "commit_before": "6c79fce83b488add3eea3a1981f463441f42b71b",
+        "commit_after": "732775db539a2b78801352272787931ed8a83ffe",
+        "commit_after_date": "2026-08-15",
+        "commit_after_subject": "fix(mem): the soak reported a 17-trillion-megabyte leak because the meter was broken",
+        "derived_by": "mine_g1.py over `git diff-tree -r -M -C --find-copies-harder <sha>^ <sha>` on every non-merge commit reachable from dev; spans by C brace-matching, hashes by spanhash.py",
+        "re_derive": "git diff 6c79fce8 732775db -- src/foundation/diagnostics.c"
+      },
+      "symbol": {
+        "before_name": "write_diagnostics",
+        "after_name": "write_diagnostics"
+      },
+      "before": {
+        "commit": "6c79fce83b488add3eea3a1981f463441f42b71b",
+        "file_path": "src/foundation/diagnostics.c",
+        "start_line": 513,
+        "end_line": 614,
+        "qualified_name": "hyponoia.src.foundation.diagnostics.write_diagnostics",
+        "address": "hyp1:hyponoia/hyponoia#hyponoia.src.foundation.diagnostics.write_diagnostics",
+        "span_hash": "2265f33c1c2c23973299f539e09ba66e",
+        "verify": "python3 spanhash.py 732775db^ src/foundation/diagnostics.c 513 614"
+      },
+      "after": {
+        "commit": "732775db539a2b78801352272787931ed8a83ffe",
+        "file_path": "src/foundation/diagnostics.c",
+        "start_line": 513,
+        "end_line": 627,
+        "qualified_name": "hyponoia.src.foundation.diagnostics.write_diagnostics",
+        "address": "hyp1:hyponoia/hyponoia#hyponoia.src.foundation.diagnostics.write_diagnostics",
+        "span_hash": "a5cae8f7cffafb6defc602e0d0335a7a",
+        "verify": "python3 spanhash.py 732775db src/foundation/diagnostics.c 513 627"
+      },
+      "anchor_written_at_commit_before": "2265f33c1c2c23973299f539e09ba66e@hyp1:hyponoia/hyponoia#hyponoia.src.foundation.diagnostics.write_diagnostics",
+      "note": "body edited in place (start line unchanged): the wrapped-RSS meter fix",
+      "expected": {
+        "hyp_anchor_status": "HYP_ANCHOR_RESOLVED_EDITED",
+        "hyp_addr_relate": "HYP_ADDR_REL_EDITED",
+        "candidate_count": 0,
+        "resolved_to": {
+          "file_path": "src/foundation/diagnostics.c",
+          "start_line": 513,
+          "end_line": 627
+        },
+        "must_not": [
+          "HYP_ANCHOR_RESOLVED",
+          "HYP_ANCHOR_ORPHANED",
+          "HYP_ANCHOR_ERROR"
+        ],
+        "why": "Same qualified name, different content hash. STILL ATTACHED: the reasoning may be stale, which is a different problem from being lost. Reporting RESOLVED here would hide a real edit; reporting ORPHANED would lose a live decision."
+      }
+    },
+    {
+      "id": "G1-EDIT-002",
+      "category": "body_changed",
+      "provenance": {
+        "commit_before": "b231af16e083abc4e4266b2826ccf9b65ba69bbc",
+        "commit_after": "9ad2705690da50acb262f149d06a3e0fa9a5173e",
+        "commit_after_date": "2026-08-16",
+        "commit_after_subject": "extract: is_test reached the Module row and stopped, so 9,676 test functions ranked as production code",
+        "derived_by": "mine_g1.py over `git diff-tree -r -M -C --find-copies-harder <sha>^ <sha>` on every non-merge commit reachable from dev; spans by C brace-matching, hashes by spanhash.py",
+        "re_derive": "git diff b231af16 9ad27056 -- internal/hyp/helpers.c"
+      },
+      "symbol": {
+        "before_name": "hyp_is_test_file",
+        "after_name": "hyp_is_test_file"
+      },
+      "before": {
+        "commit": "b231af16e083abc4e4266b2826ccf9b65ba69bbc",
+        "file_path": "internal/hyp/helpers.c",
+        "start_line": 292,
+        "end_line": 338,
+        "qualified_name": "hyponoia.internal.hyp.helpers.hyp_is_test_file",
+        "address": "hyp1:hyponoia/hyponoia#hyponoia.internal.hyp.helpers.hyp_is_test_file",
+        "span_hash": "48cfe2b316e3d51179c71d7acb5b8943",
+        "verify": "python3 spanhash.py 9ad27056^ internal/hyp/helpers.c 292 338"
+      },
+      "after": {
+        "commit": "9ad2705690da50acb262f149d06a3e0fa9a5173e",
+        "file_path": "internal/hyp/helpers.c",
+        "start_line": 317,
+        "end_line": 366,
+        "qualified_name": "hyponoia.internal.hyp.helpers.hyp_is_test_file",
+        "address": "hyp1:hyponoia/hyponoia#hyponoia.internal.hyp.helpers.hyp_is_test_file",
+        "span_hash": "7b2960ff89fa67d91eb3300c2bc5dc24",
+        "verify": "python3 spanhash.py 9ad27056 internal/hyp/helpers.c 317 366"
+      },
+      "anchor_written_at_commit_before": "48cfe2b316e3d51179c71d7acb5b8943@hyp1:hyponoia/hyponoia#hyponoia.internal.hyp.helpers.hyp_is_test_file",
+      "note": "body edited AND slid +25: is_test reached the Module row and stopped",
+      "expected": {
+        "hyp_anchor_status": "HYP_ANCHOR_RESOLVED_EDITED",
+        "hyp_addr_relate": "HYP_ADDR_REL_EDITED",
+        "candidate_count": 0,
+        "resolved_to": {
+          "file_path": "internal/hyp/helpers.c",
+          "start_line": 317,
+          "end_line": 366
+        },
+        "must_not": [
+          "HYP_ANCHOR_RESOLVED",
+          "HYP_ANCHOR_ORPHANED",
+          "HYP_ANCHOR_ERROR"
+        ],
+        "why": "Same qualified name, different content hash. STILL ATTACHED: the reasoning may be stale, which is a different problem from being lost. Reporting RESOLVED here would hide a real edit; reporting ORPHANED would lose a live decision."
+      }
+    },
+    {
+      "id": "G1-EDIT-003",
+      "category": "body_changed",
+      "provenance": {
+        "commit_before": "d3e9806f440fa7e18e3d5e02f55db000bd3df5c7",
+        "commit_after": "eef774b0add41be82285494b48aca1ac569d875e",
+        "commit_after_date": "2026-08-16",
+        "commit_after_subject": "perf(mcp): search_graph answers a retrieval miss with ten rows, not fifty",
+        "derived_by": "mine_g1.py over `git diff-tree -r -M -C --find-copies-harder <sha>^ <sha>` on every non-merge commit reachable from dev; spans by C brace-matching, hashes by spanhash.py",
+        "re_derive": "git diff d3e9806f eef774b0 -- src/mcp/mcp.c"
+      },
+      "symbol": {
+        "before_name": "handle_search_graph",
+        "after_name": "handle_search_graph"
+      },
+      "before": {
+        "commit": "d3e9806f440fa7e18e3d5e02f55db000bd3df5c7",
+        "file_path": "src/mcp/mcp.c",
+        "start_line": 4044,
+        "end_line": 4312,
+        "qualified_name": "hyponoia.src.mcp.mcp.handle_search_graph",
+        "address": "hyp1:hyponoia/hyponoia#hyponoia.src.mcp.mcp.handle_search_graph",
+        "span_hash": "4b72db3fefe443c53b34583fc1e032de",
+        "verify": "python3 spanhash.py eef774b0^ src/mcp/mcp.c 4044 4312"
+      },
+      "after": {
+        "commit": "eef774b0add41be82285494b48aca1ac569d875e",
+        "file_path": "src/mcp/mcp.c",
+        "start_line": 4153,
+        "end_line": 4421,
+        "qualified_name": "hyponoia.src.mcp.mcp.handle_search_graph",
+        "address": "hyp1:hyponoia/hyponoia#hyponoia.src.mcp.mcp.handle_search_graph",
+        "span_hash": "67749b7abdcccddf7ad4288f7a1005b2",
+        "verify": "python3 spanhash.py eef774b0 src/mcp/mcp.c 4153 4421"
+      },
+      "anchor_written_at_commit_before": "4b72db3fefe443c53b34583fc1e032de@hyp1:hyponoia/hyponoia#hyponoia.src.mcp.mcp.handle_search_graph",
+      "note": "body edited AND slid +109 \u2014 the discriminator against the RESOLVED cases",
+      "expected": {
+        "hyp_anchor_status": "HYP_ANCHOR_RESOLVED_EDITED",
+        "hyp_addr_relate": "HYP_ADDR_REL_EDITED",
+        "candidate_count": 0,
+        "resolved_to": {
+          "file_path": "src/mcp/mcp.c",
+          "start_line": 4153,
+          "end_line": 4421
+        },
+        "must_not": [
+          "HYP_ANCHOR_RESOLVED",
+          "HYP_ANCHOR_ORPHANED",
+          "HYP_ANCHOR_ERROR"
+        ],
+        "why": "Same qualified name, different content hash. STILL ATTACHED: the reasoning may be stale, which is a different problem from being lost. Reporting RESOLVED here would hide a real edit; reporting ORPHANED would lose a live decision."
+      }
+    },
+    {
+      "id": "G1-EDIT-004",
+      "category": "body_changed",
+      "provenance": {
+        "commit_before": "98f292ecb506212ddb5276ebd2e456158f2edb04",
+        "commit_after": "f27f0a2a6cea53a0ab5e2989bdba43ef95c43c02",
+        "commit_after_date": "2026-08-07",
+        "commit_after_subject": "perf(mcp): stop repeating the payload in structuredContent (#1375)",
+        "derived_by": "mine_g1.py over `git diff-tree -r -M -C --find-copies-harder <sha>^ <sha>` on every non-merge commit reachable from dev; spans by C brace-matching, hashes by spanhash.py",
+        "re_derive": "git diff 98f292ec f27f0a2a -- src/mcp/mcp.c"
+      },
+      "symbol": {
+        "before_name": "cbm_mcp_text_result",
+        "after_name": "cbm_mcp_text_result"
+      },
+      "before": {
+        "commit": "98f292ecb506212ddb5276ebd2e456158f2edb04",
+        "file_path": "src/mcp/mcp.c",
+        "start_line": 277,
+        "end_line": 318,
+        "qualified_name": "hyponoia.src.mcp.mcp.cbm_mcp_text_result",
+        "address": "hyp1:hyponoia/hyponoia#hyponoia.src.mcp.mcp.cbm_mcp_text_result",
+        "span_hash": "e56d8f5d6b6bbade1a189707ff6a8ba7",
+        "verify": "python3 spanhash.py f27f0a2a^ src/mcp/mcp.c 277 318"
+      },
+      "after": {
+        "commit": "f27f0a2a6cea53a0ab5e2989bdba43ef95c43c02",
+        "file_path": "src/mcp/mcp.c",
+        "start_line": 277,
+        "end_line": 340,
+        "qualified_name": "hyponoia.src.mcp.mcp.cbm_mcp_text_result",
+        "address": "hyp1:hyponoia/hyponoia#hyponoia.src.mcp.mcp.cbm_mcp_text_result",
+        "span_hash": "56ae0fbef4861b6c9e7addab1790fde7",
+        "verify": "python3 spanhash.py f27f0a2a src/mcp/mcp.c 277 340"
+      },
+      "anchor_written_at_commit_before": "e56d8f5d6b6bbade1a189707ff6a8ba7@hyp1:hyponoia/hyponoia#hyponoia.src.mcp.mcp.cbm_mcp_text_result",
+      "note": "body edited in place: stop repeating the payload in structuredContent",
+      "expected": {
+        "hyp_anchor_status": "HYP_ANCHOR_RESOLVED_EDITED",
+        "hyp_addr_relate": "HYP_ADDR_REL_EDITED",
+        "candidate_count": 0,
+        "resolved_to": {
+          "file_path": "src/mcp/mcp.c",
+          "start_line": 277,
+          "end_line": 340
+        },
+        "must_not": [
+          "HYP_ANCHOR_RESOLVED",
+          "HYP_ANCHOR_ORPHANED",
+          "HYP_ANCHOR_ERROR"
+        ],
+        "why": "Same qualified name, different content hash. STILL ATTACHED: the reasoning may be stale, which is a different problem from being lost. Reporting RESOLVED here would hide a real edit; reporting ORPHANED would lose a live decision."
+      }
+    },
+    {
+      "id": "G1-EDIT-005",
+      "category": "body_changed",
+      "provenance": {
+        "commit_before": "98f292ecb506212ddb5276ebd2e456158f2edb04",
+        "commit_after": "5efa57492aa2bbe7f620342446029d6cf0f0b7b5",
+        "commit_after_date": "2026-08-07",
+        "commit_after_subject": "fix(daemon): answer an oversized MCP reply with an error, not process death (#1375)",
+        "derived_by": "mine_g1.py over `git diff-tree -r -M -C --find-copies-harder <sha>^ <sha>` on every non-merge commit reachable from dev; spans by C brace-matching, hashes by spanhash.py",
+        "re_derive": "git diff 98f292ec 5efa5749 -- src/daemon/application.c"
+      },
+      "symbol": {
+        "before_name": "application_mcp_request",
+        "after_name": "application_mcp_request"
+      },
+      "before": {
+        "commit": "98f292ecb506212ddb5276ebd2e456158f2edb04",
+        "file_path": "src/daemon/application.c",
+        "start_line": 2343,
+        "end_line": 2382,
+        "qualified_name": "hyponoia.src.daemon.application.application_mcp_request",
+        "address": "hyp1:hyponoia/hyponoia#hyponoia.src.daemon.application.application_mcp_request",
+        "span_hash": "9d11b65c683af5c23e85e721f27f6f7a",
+        "verify": "python3 spanhash.py 5efa5749^ src/daemon/application.c 2343 2382"
+      },
+      "after": {
+        "commit": "5efa57492aa2bbe7f620342446029d6cf0f0b7b5",
+        "file_path": "src/daemon/application.c",
+        "start_line": 2407,
+        "end_line": 2465,
+        "qualified_name": "hyponoia.src.daemon.application.application_mcp_request",
+        "address": "hyp1:hyponoia/hyponoia#hyponoia.src.daemon.application.application_mcp_request",
+        "span_hash": "2b34f75d2d0799e0a59c8466e989b53b",
+        "verify": "python3 spanhash.py 5efa5749 src/daemon/application.c 2407 2465"
+      },
+      "anchor_written_at_commit_before": "9d11b65c683af5c23e85e721f27f6f7a@hyp1:hyponoia/hyponoia#hyponoia.src.daemon.application.application_mcp_request",
+      "note": "body edited: answer an oversized MCP reply with an error, not process death",
+      "expected": {
+        "hyp_anchor_status": "HYP_ANCHOR_RESOLVED_EDITED",
+        "hyp_addr_relate": "HYP_ADDR_REL_EDITED",
+        "candidate_count": 0,
+        "resolved_to": {
+          "file_path": "src/daemon/application.c",
+          "start_line": 2407,
+          "end_line": 2465
+        },
+        "must_not": [
+          "HYP_ANCHOR_RESOLVED",
+          "HYP_ANCHOR_ORPHANED",
+          "HYP_ANCHOR_ERROR"
+        ],
+        "why": "Same qualified name, different content hash. STILL ATTACHED: the reasoning may be stale, which is a different problem from being lost. Reporting RESOLVED here would hide a real edit; reporting ORPHANED would lose a live decision."
+      }
+    },
+    {
+      "id": "G1-EDIT-006",
+      "category": "body_changed",
+      "provenance": {
+        "commit_before": "0d6f26a1708c1e1f0e6a59867bee4bee3fe076b5",
+        "commit_after": "452372eec5a208947846245550b3d85744723479",
+        "commit_after_date": "2026-08-06",
+        "commit_after_subject": "fix(mem): route ordinary malloc through mimalloc on Linux (#1360)",
+        "derived_by": "mine_g1.py over `git diff-tree -r -M -C --find-copies-harder <sha>^ <sha>` on every non-merge commit reachable from dev; spans by C brace-matching, hashes by spanhash.py",
+        "re_derive": "git diff 0d6f26a1 452372ee -- src/foundation/mem.c"
+      },
+      "symbol": {
+        "before_name": "cbm_mem_init_with_cap",
+        "after_name": "cbm_mem_init_with_cap"
+      },
+      "before": {
+        "commit": "0d6f26a1708c1e1f0e6a59867bee4bee3fe076b5",
+        "file_path": "src/foundation/mem.c",
+        "start_line": 233,
+        "end_line": 355,
+        "qualified_name": "hyponoia.src.foundation.mem.cbm_mem_init_with_cap",
+        "address": "hyp1:hyponoia/hyponoia#hyponoia.src.foundation.mem.cbm_mem_init_with_cap",
+        "span_hash": "e02ba2512500cb2f68e3b71291a9b266",
+        "verify": "python3 spanhash.py 452372ee^ src/foundation/mem.c 233 355"
+      },
+      "after": {
+        "commit": "452372eec5a208947846245550b3d85744723479",
+        "file_path": "src/foundation/mem.c",
+        "start_line": 259,
+        "end_line": 402,
+        "qualified_name": "hyponoia.src.foundation.mem.cbm_mem_init_with_cap",
+        "address": "hyp1:hyponoia/hyponoia#hyponoia.src.foundation.mem.cbm_mem_init_with_cap",
+        "span_hash": "575be42a4e977de16555091af0aaae41",
+        "verify": "python3 spanhash.py 452372ee src/foundation/mem.c 259 402"
+      },
+      "anchor_written_at_commit_before": "e02ba2512500cb2f68e3b71291a9b266@hyp1:hyponoia/hyponoia#hyponoia.src.foundation.mem.cbm_mem_init_with_cap",
+      "note": "body edited: route ordinary malloc through mimalloc on Linux",
+      "expected": {
+        "hyp_anchor_status": "HYP_ANCHOR_RESOLVED_EDITED",
+        "hyp_addr_relate": "HYP_ADDR_REL_EDITED",
+        "candidate_count": 0,
+        "resolved_to": {
+          "file_path": "src/foundation/mem.c",
+          "start_line": 259,
+          "end_line": 402
+        },
+        "must_not": [
+          "HYP_ANCHOR_RESOLVED",
+          "HYP_ANCHOR_ORPHANED",
+          "HYP_ANCHOR_ERROR"
+        ],
+        "why": "Same qualified name, different content hash. STILL ATTACHED: the reasoning may be stale, which is a different problem from being lost. Reporting RESOLVED here would hide a real edit; reporting ORPHANED would lose a live decision."
+      }
+    },
+    {
+      "id": "G1-EDIT-007",
+      "category": "body_changed",
+      "provenance": {
+        "commit_before": "1f566d0391cbba54fd1ef2cba5022b4284e9da8a",
+        "commit_after": "89c6a335bd768517deb6f05daaaaf1262b9c8c84",
+        "commit_after_date": "2026-08-12",
+        "commit_after_subject": "ask: bound the window by what one micro-batch can afford",
+        "derived_by": "mine_g1.py over `git diff-tree -r -M -C --find-copies-harder <sha>^ <sha>` on every non-merge commit reachable from dev; spans by C brace-matching, hashes by spanhash.py",
+        "re_derive": "git diff 1f566d03 89c6a335 -- src/ask/ask_llama.c"
+      },
+      "symbol": {
+        "before_name": "ask_llama_open",
+        "after_name": "ask_llama_open"
+      },
+      "before": {
+        "commit": "1f566d0391cbba54fd1ef2cba5022b4284e9da8a",
+        "file_path": "src/ask/ask_llama.c",
+        "start_line": 629,
+        "end_line": 762,
+        "qualified_name": "hyponoia.src.ask.ask_llama.ask_llama_open",
+        "address": "hyp1:hyponoia/hyponoia#hyponoia.src.ask.ask_llama.ask_llama_open",
+        "span_hash": "2ebfe4907030c5e416620ea8aca9b796",
+        "verify": "python3 spanhash.py 89c6a335^ src/ask/ask_llama.c 629 762"
+      },
+      "after": {
+        "commit": "89c6a335bd768517deb6f05daaaaf1262b9c8c84",
+        "file_path": "src/ask/ask_llama.c",
+        "start_line": 629,
+        "end_line": 778,
+        "qualified_name": "hyponoia.src.ask.ask_llama.ask_llama_open",
+        "address": "hyp1:hyponoia/hyponoia#hyponoia.src.ask.ask_llama.ask_llama_open",
+        "span_hash": "9f8fb9ffba4241506f384c5f80926e2a",
+        "verify": "python3 spanhash.py 89c6a335 src/ask/ask_llama.c 629 778"
+      },
+      "anchor_written_at_commit_before": "2ebfe4907030c5e416620ea8aca9b796@hyp1:hyponoia/hyponoia#hyponoia.src.ask.ask_llama.ask_llama_open",
+      "note": "body edited in place: bound the window by what one micro-batch can afford",
+      "expected": {
+        "hyp_anchor_status": "HYP_ANCHOR_RESOLVED_EDITED",
+        "hyp_addr_relate": "HYP_ADDR_REL_EDITED",
+        "candidate_count": 0,
+        "resolved_to": {
+          "file_path": "src/ask/ask_llama.c",
+          "start_line": 629,
+          "end_line": 778
+        },
+        "must_not": [
+          "HYP_ANCHOR_RESOLVED",
+          "HYP_ANCHOR_ORPHANED",
+          "HYP_ANCHOR_ERROR"
+        ],
+        "why": "Same qualified name, different content hash. STILL ATTACHED: the reasoning may be stale, which is a different problem from being lost. Reporting RESOLVED here would hide a real edit; reporting ORPHANED would lose a live decision."
+      }
+    },
+    {
+      "id": "G1-EDIT-008",
+      "category": "body_changed",
+      "provenance": {
+        "commit_before": "d26ce5a2ffb23b4c5f709cfc5c08ec550c3d592c",
+        "commit_after": "fe6ef34e08128afd66c5f5d6919935dba842a725",
+        "commit_after_date": "2026-08-10",
+        "commit_after_subject": "ask: point the read half at the store the write half actually creates",
+        "derived_by": "mine_g1.py over `git diff-tree -r -M -C --find-copies-harder <sha>^ <sha>` on every non-merge commit reachable from dev; spans by C brace-matching, hashes by spanhash.py",
+        "re_derive": "git diff d26ce5a2 fe6ef34e -- src/mcp/mcp.c"
+      },
+      "symbol": {
+        "before_name": "handle_ask",
+        "after_name": "handle_ask"
+      },
+      "before": {
+        "commit": "d26ce5a2ffb23b4c5f709cfc5c08ec550c3d592c",
+        "file_path": "src/mcp/mcp.c",
+        "start_line": 4069,
+        "end_line": 4283,
+        "qualified_name": "hyponoia.src.mcp.mcp.handle_ask",
+        "address": "hyp1:hyponoia/hyponoia#hyponoia.src.mcp.mcp.handle_ask",
+        "span_hash": "01e375ff567e7d4e22a4d29b10f9cbbd",
+        "verify": "python3 spanhash.py fe6ef34e^ src/mcp/mcp.c 4069 4283"
+      },
+      "after": {
+        "commit": "fe6ef34e08128afd66c5f5d6919935dba842a725",
+        "file_path": "src/mcp/mcp.c",
+        "start_line": 4070,
+        "end_line": 4283,
+        "qualified_name": "hyponoia.src.mcp.mcp.handle_ask",
+        "address": "hyp1:hyponoia/hyponoia#hyponoia.src.mcp.mcp.handle_ask",
+        "span_hash": "7cd2a9643bc78f7195415033c08b653a",
+        "verify": "python3 spanhash.py fe6ef34e src/mcp/mcp.c 4070 4283"
+      },
+      "anchor_written_at_commit_before": "01e375ff567e7d4e22a4d29b10f9cbbd@hyp1:hyponoia/hyponoia#hyponoia.src.mcp.mcp.handle_ask",
+      "note": "body edited and slid ONE line \u2014 the smallest real edit in the corpus",
+      "expected": {
+        "hyp_anchor_status": "HYP_ANCHOR_RESOLVED_EDITED",
+        "hyp_addr_relate": "HYP_ADDR_REL_EDITED",
+        "candidate_count": 0,
+        "resolved_to": {
+          "file_path": "src/mcp/mcp.c",
+          "start_line": 4070,
+          "end_line": 4283
+        },
+        "must_not": [
+          "HYP_ANCHOR_RESOLVED",
+          "HYP_ANCHOR_ORPHANED",
+          "HYP_ANCHOR_ERROR"
+        ],
+        "why": "Same qualified name, different content hash. STILL ATTACHED: the reasoning may be stale, which is a different problem from being lost. Reporting RESOLVED here would hide a real edit; reporting ORPHANED would lose a live decision."
+      }
+    },
+    {
+      "id": "G1-RENAME-001",
+      "category": "renamed",
+      "provenance": {
+        "commit_before": "93c0b865c4bacd24eea9f0cb81998ecc0f5032ad",
+        "commit_after": "c9ec1d1eb4b0b6f39d8d851f7f25415eb062df12",
+        "commit_after_date": "2026-03-18",
+        "commit_after_subject": "Fix Ubuntu CI: stack-use-after-return, L2 cache detection, memory leaks",
+        "derived_by": "mine_g1.py over `git diff-tree -r -M -C --find-copies-harder <sha>^ <sha>` on every non-merge commit reachable from dev; spans by C brace-matching, hashes by spanhash.py",
+        "re_derive": "git diff 93c0b865 c9ec1d1e -- src/store/store.c"
+      },
+      "symbol": {
+        "before_name": "free_node_fields",
+        "after_name": "cbm_node_free_fields"
+      },
+      "before": {
+        "commit": "93c0b865c4bacd24eea9f0cb81998ecc0f5032ad",
+        "file_path": "src/store/store.c",
+        "start_line": 4250,
+        "end_line": 4257,
+        "qualified_name": "hyponoia.src.store.store.free_node_fields",
+        "address": "hyp1:hyponoia/hyponoia#hyponoia.src.store.store.free_node_fields",
+        "span_hash": "6646d130d9ce83e83754dba85268701c",
+        "verify": "python3 spanhash.py c9ec1d1e^ src/store/store.c 4250 4257"
+      },
+      "after": {
+        "commit": "c9ec1d1eb4b0b6f39d8d851f7f25415eb062df12",
+        "file_path": "src/store/store.c",
+        "start_line": 4250,
+        "end_line": 4257,
+        "qualified_name": "hyponoia.src.store.store.cbm_node_free_fields",
+        "address": "hyp1:hyponoia/hyponoia#hyponoia.src.store.store.cbm_node_free_fields",
+        "span_hash": "e79d00a0a40229cdda86d51a83037817",
+        "verify": "python3 spanhash.py c9ec1d1e src/store/store.c 4250 4257"
+      },
+      "anchor_written_at_commit_before": "6646d130d9ce83e83754dba85268701c@hyp1:hyponoia/hyponoia#hyponoia.src.store.store.free_node_fields",
+      "note": "declaration line is the only changed line; same file, same line numbers",
+      "expected": {
+        "hyp_anchor_status": "HYP_ANCHOR_ORPHANED",
+        "hyp_addr_relate": "HYP_ADDR_REL_UNRELATED",
+        "candidate_count": 0,
+        "must_not_reattach_to": "hyp1:hyponoia/hyponoia#hyponoia.src.store.store.cbm_node_free_fields",
+        "must_not": [
+          "HYP_ANCHOR_RESOLVED",
+          "HYP_ANCHOR_RESOLVED_EDITED"
+        ],
+        "why": "The qualified name is not in the index after the rename, so the anchor is ORPHANED (I4: the span includes the decl line, so a rename changes the QN AND the hash). The recorded hash matches NOTHING in the after-tree, so there is not even a candidate. A resolver that re-attaches to hyponoia.src.store.store.cbm_node_free_fields has invented a link the data does not contain \u2014 C4u's exact failure mode."
+      }
+    },
+    {
+      "id": "G1-RENAME-002",
+      "category": "renamed",
+      "provenance": {
+        "commit_before": "6226972f13f867e332dd8721df763946926400de",
+        "commit_after": "75a0df688fef98af4d600110dba55f146ddfbabc",
+        "commit_after_date": "2026-05-21",
+        "commit_after_subject": "feat(pipeline): fuse cross-LSP into resolve worker + module-def filter",
+        "derived_by": "mine_g1.py over `git diff-tree -r -M -C --find-copies-harder <sha>^ <sha>` on every non-merge commit reachable from dev; spans by C brace-matching, hashes by spanhash.py",
+        "re_derive": "git diff 6226972f 75a0df68 -- src/pipeline/pass_lsp_cross.c"
+      },
+      "symbol": {
+        "before_name": "pxc_collect_all_defs",
+        "after_name": "cbm_pxc_collect_all_defs"
+      },
+      "before": {
+        "commit": "6226972f13f867e332dd8721df763946926400de",
+        "file_path": "src/pipeline/pass_lsp_cross.c",
+        "start_line": 149,
+        "end_line": 183,
+        "qualified_name": "hyponoia.src.pipeline.pass_lsp_cross.pxc_collect_all_defs",
+        "address": "hyp1:hyponoia/hyponoia#hyponoia.src.pipeline.pass_lsp_cross.pxc_collect_all_defs",
+        "span_hash": "dc723ca6fce2a4a788a307010232c4c2",
+        "verify": "python3 spanhash.py 75a0df68^ src/pipeline/pass_lsp_cross.c 149 183"
+      },
+      "after": {
+        "commit": "75a0df688fef98af4d600110dba55f146ddfbabc",
+        "file_path": "src/pipeline/pass_lsp_cross.c",
+        "start_line": 150,
+        "end_line": 184,
+        "qualified_name": "hyponoia.src.pipeline.pass_lsp_cross.cbm_pxc_collect_all_defs",
+        "address": "hyp1:hyponoia/hyponoia#hyponoia.src.pipeline.pass_lsp_cross.cbm_pxc_collect_all_defs",
+        "span_hash": "bb8e5bcd5f6db597b09c9d4fd8391e21",
+        "verify": "python3 spanhash.py 75a0df68 src/pipeline/pass_lsp_cross.c 150 184"
+      },
+      "anchor_written_at_commit_before": "dc723ca6fce2a4a788a307010232c4c2@hyp1:hyponoia/hyponoia#hyponoia.src.pipeline.pass_lsp_cross.pxc_collect_all_defs",
+      "note": "static helper promoted and prefixed; body otherwise identical",
+      "expected": {
+        "hyp_anchor_status": "HYP_ANCHOR_ORPHANED",
+        "hyp_addr_relate": "HYP_ADDR_REL_UNRELATED",
+        "candidate_count": 0,
+        "must_not_reattach_to": "hyp1:hyponoia/hyponoia#hyponoia.src.pipeline.pass_lsp_cross.cbm_pxc_collect_all_defs",
+        "must_not": [
+          "HYP_ANCHOR_RESOLVED",
+          "HYP_ANCHOR_RESOLVED_EDITED"
+        ],
+        "why": "The qualified name is not in the index after the rename, so the anchor is ORPHANED (I4: the span includes the decl line, so a rename changes the QN AND the hash). The recorded hash matches NOTHING in the after-tree, so there is not even a candidate. A resolver that re-attaches to hyponoia.src.pipeline.pass_lsp_cross.cbm_pxc_collect_all_defs has invented a link the data does not contain \u2014 C4u's exact failure mode."
+      }
+    },
+    {
+      "id": "G1-RENAME-003",
+      "category": "renamed",
+      "provenance": {
+        "commit_before": "639bac9c5da1b977dbf116bedeb8cf3124a241d0",
+        "commit_after": "6e6b34a9bbaa1919f8964d98e513ee82afa6c3ce",
+        "commit_after_date": "2026-06-27",
+        "commit_after_subject": "fix(extract): source calls to the enclosing callable for all grammars",
+        "derived_by": "mine_g1.py over `git diff-tree -r -M -C --find-copies-harder <sha>^ <sha>` on every non-merge commit reachable from dev; spans by C brace-matching, hashes by spanhash.py",
+        "re_derive": "git diff 639bac9c 6e6b34a9 -- internal/cbm/extract_defs.c"
+      },
+      "symbol": {
+        "before_name": "resolve_func_name",
+        "after_name": "cbm_resolve_func_name"
+      },
+      "before": {
+        "commit": "639bac9c5da1b977dbf116bedeb8cf3124a241d0",
+        "file_path": "internal/cbm/extract_defs.c",
+        "start_line": 642,
+        "end_line": 986,
+        "qualified_name": "hyponoia.internal.cbm.extract_defs.resolve_func_name",
+        "address": "hyp1:hyponoia/hyponoia#hyponoia.internal.cbm.extract_defs.resolve_func_name",
+        "span_hash": "971a640ed3f7a41f7a7ade2f9637a0d3",
+        "verify": "python3 spanhash.py 6e6b34a9^ internal/cbm/extract_defs.c 642 986"
+      },
+      "after": {
+        "commit": "6e6b34a9bbaa1919f8964d98e513ee82afa6c3ce",
+        "file_path": "internal/cbm/extract_defs.c",
+        "start_line": 643,
+        "end_line": 987,
+        "qualified_name": "hyponoia.internal.cbm.extract_defs.cbm_resolve_func_name",
+        "address": "hyp1:hyponoia/hyponoia#hyponoia.internal.cbm.extract_defs.cbm_resolve_func_name",
+        "span_hash": "f39b0ff6e4c855f0bbaf2af192d8d4b3",
+        "verify": "python3 spanhash.py 6e6b34a9 internal/cbm/extract_defs.c 643 987"
+      },
+      "anchor_written_at_commit_before": "971a640ed3f7a41f7a7ade2f9637a0d3@hyp1:hyponoia/hyponoia#hyponoia.internal.cbm.extract_defs.resolve_func_name",
+      "note": "static helper promoted and prefixed",
+      "expected": {
+        "hyp_anchor_status": "HYP_ANCHOR_ORPHANED",
+        "hyp_addr_relate": "HYP_ADDR_REL_UNRELATED",
+        "candidate_count": 0,
+        "must_not_reattach_to": "hyp1:hyponoia/hyponoia#hyponoia.internal.cbm.extract_defs.cbm_resolve_func_name",
+        "must_not": [
+          "HYP_ANCHOR_RESOLVED",
+          "HYP_ANCHOR_RESOLVED_EDITED"
+        ],
+        "why": "The qualified name is not in the index after the rename, so the anchor is ORPHANED (I4: the span includes the decl line, so a rename changes the QN AND the hash). The recorded hash matches NOTHING in the after-tree, so there is not even a candidate. A resolver that re-attaches to hyponoia.internal.cbm.extract_defs.cbm_resolve_func_name has invented a link the data does not contain \u2014 C4u's exact failure mode."
+      }
+    },
+    {
+      "id": "G1-RENAME-004",
+      "category": "renamed",
+      "provenance": {
+        "commit_before": "b9b4669a20cbf655981f15580e574328fc4f6920",
+        "commit_after": "3f754cf449f941508a6dcef6ee81321a8cb408a0",
+        "commit_after_date": "2026-06-27",
+        "commit_after_subject": "fix: 17 reproduce-first issue + new-bug fixes (per-case verified)",
+        "derived_by": "mine_g1.py over `git diff-tree -r -M -C --find-copies-harder <sha>^ <sha>` on every non-merge commit reachable from dev; spans by C brace-matching, hashes by spanhash.py",
+        "re_derive": "git diff b9b4669a 3f754cf4 -- internal/cbm/extract_defs.c"
+      },
+      "symbol": {
+        "before_name": "cpp_out_of_line_parent_class",
+        "after_name": "cbm_cpp_out_of_line_parent_class"
+      },
+      "before": {
+        "commit": "b9b4669a20cbf655981f15580e574328fc4f6920",
+        "file_path": "internal/cbm/extract_defs.c",
+        "start_line": 468,
+        "end_line": 510,
+        "qualified_name": "hyponoia.internal.cbm.extract_defs.cpp_out_of_line_parent_class",
+        "address": "hyp1:hyponoia/hyponoia#hyponoia.internal.cbm.extract_defs.cpp_out_of_line_parent_class",
+        "span_hash": "73c18280b2003ee1a6fac649e1c0e45b",
+        "verify": "python3 spanhash.py 3f754cf4^ internal/cbm/extract_defs.c 468 510"
+      },
+      "after": {
+        "commit": "3f754cf449f941508a6dcef6ee81321a8cb408a0",
+        "file_path": "internal/cbm/extract_defs.c",
+        "start_line": 468,
+        "end_line": 510,
+        "qualified_name": "hyponoia.internal.cbm.extract_defs.cbm_cpp_out_of_line_parent_class",
+        "address": "hyp1:hyponoia/hyponoia#hyponoia.internal.cbm.extract_defs.cbm_cpp_out_of_line_parent_class",
+        "span_hash": "a620c219a40e359f6e8ad72270d690ba",
+        "verify": "python3 spanhash.py 3f754cf4 internal/cbm/extract_defs.c 468 510"
+      },
+      "anchor_written_at_commit_before": "73c18280b2003ee1a6fac649e1c0e45b@hyp1:hyponoia/hyponoia#hyponoia.internal.cbm.extract_defs.cpp_out_of_line_parent_class",
+      "note": "static helper promoted and prefixed; same line numbers",
+      "expected": {
+        "hyp_anchor_status": "HYP_ANCHOR_ORPHANED",
+        "hyp_addr_relate": "HYP_ADDR_REL_UNRELATED",
+        "candidate_count": 0,
+        "must_not_reattach_to": "hyp1:hyponoia/hyponoia#hyponoia.internal.cbm.extract_defs.cbm_cpp_out_of_line_parent_class",
+        "must_not": [
+          "HYP_ANCHOR_RESOLVED",
+          "HYP_ANCHOR_RESOLVED_EDITED"
+        ],
+        "why": "The qualified name is not in the index after the rename, so the anchor is ORPHANED (I4: the span includes the decl line, so a rename changes the QN AND the hash). The recorded hash matches NOTHING in the after-tree, so there is not even a candidate. A resolver that re-attaches to hyponoia.internal.cbm.extract_defs.cbm_cpp_out_of_line_parent_class has invented a link the data does not contain \u2014 C4u's exact failure mode."
+      }
+    },
+    {
+      "id": "G1-RENAME-005",
+      "category": "renamed",
+      "provenance": {
+        "commit_before": "a688d85cc8fda6ef09b1ed4534f967faeef63cc3",
+        "commit_after": "0e00ef5702d4a67b6fed667cf66800a5a0fc75f1",
+        "commit_after_date": "2026-07-16",
+        "commit_after_subject": "feat: coordinate concurrent CBM sessions",
+        "derived_by": "mine_g1.py over `git diff-tree -r -M -C --find-copies-harder <sha>^ <sha>` on every non-merge commit reachable from dev; spans by C brace-matching, hashes by spanhash.py",
+        "re_derive": "git diff a688d85c 0e00ef57 -- src/cli/hook_augment.c"
+      },
+      "symbol": {
+        "before_name": "ha_read_stdin",
+        "after_name": "cbm_hook_augment_read_stdin"
+      },
+      "before": {
+        "commit": "a688d85cc8fda6ef09b1ed4534f967faeef63cc3",
+        "file_path": "src/cli/hook_augment.c",
+        "start_line": 157,
+        "end_line": 169,
+        "qualified_name": "hyponoia.src.cli.hook_augment.ha_read_stdin",
+        "address": "hyp1:hyponoia/hyponoia#hyponoia.src.cli.hook_augment.ha_read_stdin",
+        "span_hash": "07ffa00ef82b334890aac09a2d98f051",
+        "verify": "python3 spanhash.py 0e00ef57^ src/cli/hook_augment.c 157 169"
+      },
+      "after": {
+        "commit": "0e00ef5702d4a67b6fed667cf66800a5a0fc75f1",
+        "file_path": "src/cli/hook_augment.c",
+        "start_line": 157,
+        "end_line": 169,
+        "qualified_name": "hyponoia.src.cli.hook_augment.cbm_hook_augment_read_stdin",
+        "address": "hyp1:hyponoia/hyponoia#hyponoia.src.cli.hook_augment.cbm_hook_augment_read_stdin",
+        "span_hash": "cb2a5f92a64f1467032591f071ddf683",
+        "verify": "python3 spanhash.py 0e00ef57 src/cli/hook_augment.c 157 169"
+      },
+      "anchor_written_at_commit_before": "07ffa00ef82b334890aac09a2d98f051@hyp1:hyponoia/hyponoia#hyponoia.src.cli.hook_augment.ha_read_stdin",
+      "note": "renamed to a name that shares no prefix with the old one",
+      "expected": {
+        "hyp_anchor_status": "HYP_ANCHOR_ORPHANED",
+        "hyp_addr_relate": "HYP_ADDR_REL_UNRELATED",
+        "candidate_count": 0,
+        "must_not_reattach_to": "hyp1:hyponoia/hyponoia#hyponoia.src.cli.hook_augment.cbm_hook_augment_read_stdin",
+        "must_not": [
+          "HYP_ANCHOR_RESOLVED",
+          "HYP_ANCHOR_RESOLVED_EDITED"
+        ],
+        "why": "The qualified name is not in the index after the rename, so the anchor is ORPHANED (I4: the span includes the decl line, so a rename changes the QN AND the hash). The recorded hash matches NOTHING in the after-tree, so there is not even a candidate. A resolver that re-attaches to hyponoia.src.cli.hook_augment.cbm_hook_augment_read_stdin has invented a link the data does not contain \u2014 C4u's exact failure mode."
+      }
+    },
+    {
+      "id": "G1-RENAME-006",
+      "category": "renamed",
+      "provenance": {
+        "commit_before": "c5bffb7fe6cbe15efd3c84f513c9bcda302956e3",
+        "commit_after": "3f5ae18852f5b578edcb9fe364b3423ea22748be",
+        "commit_after_date": "2026-07-17",
+        "commit_after_subject": "feat(mcp): complete the tree-format migration \u2014 TOON pruned, json = stringified tree",
+        "derived_by": "mine_g1.py over `git diff-tree -r -M -C --find-copies-harder <sha>^ <sha>` on every non-merge commit reachable from dev; spans by C brace-matching, hashes by spanhash.py",
+        "re_derive": "git diff c5bffb7f 3f5ae188 -- src/mcp/compact_out.c"
+      },
+      "symbol": {
+        "before_name": "cbm_toon_scalar_str",
+        "after_name": "cbm_tree_scalar_str"
+      },
+      "before": {
+        "commit": "c5bffb7fe6cbe15efd3c84f513c9bcda302956e3",
+        "file_path": "src/mcp/compact_out.c",
+        "start_line": 156,
+        "end_line": 161,
+        "qualified_name": "hyponoia.src.mcp.compact_out.cbm_toon_scalar_str",
+        "address": "hyp1:hyponoia/hyponoia#hyponoia.src.mcp.compact_out.cbm_toon_scalar_str",
+        "span_hash": "0c0085cf50facdc85dd5b833f30e80c7",
+        "verify": "python3 spanhash.py 3f5ae188^ src/mcp/compact_out.c 156 161"
+      },
+      "after": {
+        "commit": "3f5ae18852f5b578edcb9fe364b3423ea22748be",
+        "file_path": "src/mcp/compact_out.c",
+        "start_line": 156,
+        "end_line": 161,
+        "qualified_name": "hyponoia.src.mcp.compact_out.cbm_tree_scalar_str",
+        "address": "hyp1:hyponoia/hyponoia#hyponoia.src.mcp.compact_out.cbm_tree_scalar_str",
+        "span_hash": "03307df26d207617044ccbcfb7b66884",
+        "verify": "python3 spanhash.py 3f5ae188 src/mcp/compact_out.c 156 161"
+      },
+      "anchor_written_at_commit_before": "0c0085cf50facdc85dd5b833f30e80c7@hyp1:hyponoia/hyponoia#hyponoia.src.mcp.compact_out.cbm_toon_scalar_str",
+      "note": "THE PLAUSIBLE-NEIGHBOUR TRAP: the same commit adds cbm_tree_scalar_bool, cbm_tree_cell_str and cbm_tree_cell_bool, three more near-identical bodies",
+      "expected": {
+        "hyp_anchor_status": "HYP_ANCHOR_ORPHANED",
+        "hyp_addr_relate": "HYP_ADDR_REL_UNRELATED",
+        "candidate_count": 0,
+        "must_not_reattach_to": "hyp1:hyponoia/hyponoia#hyponoia.src.mcp.compact_out.cbm_tree_scalar_str",
+        "must_not": [
+          "HYP_ANCHOR_RESOLVED",
+          "HYP_ANCHOR_RESOLVED_EDITED"
+        ],
+        "why": "The qualified name is not in the index after the rename, so the anchor is ORPHANED (I4: the span includes the decl line, so a rename changes the QN AND the hash). The recorded hash matches NOTHING in the after-tree, so there is not even a candidate. A resolver that re-attaches to hyponoia.src.mcp.compact_out.cbm_tree_scalar_str has invented a link the data does not contain \u2014 C4u's exact failure mode."
+      }
+    },
+    {
+      "id": "G1-RENAME-007",
+      "category": "renamed",
+      "provenance": {
+        "commit_before": "10cb0e03fbb03fc62435174df5a52cad3186c444",
+        "commit_after": "f95d684123bd2ab7fdf1886ad5c6f020e0c579cf",
+        "commit_after_date": "2026-08-09",
+        "commit_after_subject": "rename: codebase-memory-mcp -> hyponoia",
+        "derived_by": "mine_g1.py over `git diff-tree -r -M -C --find-copies-harder <sha>^ <sha>` on every non-merge commit reachable from dev; spans by C brace-matching, hashes by spanhash.py",
+        "re_derive": "git diff 10cb0e03 f95d6841 -- src/cli/activation_transaction.c"
+      },
+      "symbol": {
+        "before_name": "cbm_activation_transaction_refusal_note",
+        "after_name": "hyp_activation_transaction_refusal_note"
+      },
+      "before": {
+        "commit": "10cb0e03fbb03fc62435174df5a52cad3186c444",
+        "file_path": "src/cli/activation_transaction.c",
+        "start_line": 109,
+        "end_line": 111,
+        "qualified_name": "hyponoia.src.cli.activation_transaction.cbm_activation_transaction_refusal_note",
+        "address": "hyp1:hyponoia/hyponoia#hyponoia.src.cli.activation_transaction.cbm_activation_transaction_refusal_note",
+        "span_hash": "af8b575253a9b23c05de9656f2dbfb90",
+        "verify": "python3 spanhash.py f95d6841^ src/cli/activation_transaction.c 109 111"
+      },
+      "after": {
+        "commit": "f95d684123bd2ab7fdf1886ad5c6f020e0c579cf",
+        "file_path": "src/cli/activation_transaction.c",
+        "start_line": 109,
+        "end_line": 111,
+        "qualified_name": "hyponoia.src.cli.activation_transaction.hyp_activation_transaction_refusal_note",
+        "address": "hyp1:hyponoia/hyponoia#hyponoia.src.cli.activation_transaction.hyp_activation_transaction_refusal_note",
+        "span_hash": "58cb9c72d2994100cfc8b30108a5e513",
+        "verify": "python3 spanhash.py f95d6841 src/cli/activation_transaction.c 109 111"
+      },
+      "anchor_written_at_commit_before": "af8b575253a9b23c05de9656f2dbfb90@hyp1:hyponoia/hyponoia#hyponoia.src.cli.activation_transaction.cbm_activation_transaction_refusal_note",
+      "note": "the mass rename, in a file that did NOT move: name only",
+      "expected": {
+        "hyp_anchor_status": "HYP_ANCHOR_ORPHANED",
+        "hyp_addr_relate": "HYP_ADDR_REL_UNRELATED",
+        "candidate_count": 0,
+        "must_not_reattach_to": "hyp1:hyponoia/hyponoia#hyponoia.src.cli.activation_transaction.hyp_activation_transaction_refusal_note",
+        "must_not": [
+          "HYP_ANCHOR_RESOLVED",
+          "HYP_ANCHOR_RESOLVED_EDITED"
+        ],
+        "why": "The qualified name is not in the index after the rename, so the anchor is ORPHANED (I4: the span includes the decl line, so a rename changes the QN AND the hash). The recorded hash matches NOTHING in the after-tree, so there is not even a candidate. A resolver that re-attaches to hyponoia.src.cli.activation_transaction.hyp_activation_transaction_refusal_note has invented a link the data does not contain \u2014 C4u's exact failure mode."
+      }
+    },
+    {
+      "id": "G1-RENAME-008",
+      "category": "renamed",
+      "provenance": {
+        "commit_before": "eb50569bed508b71e1f18d2f2f516fec050f441b",
+        "commit_after": "955b87d3fd31552bbd8885b63f6e6194c50c50ff",
+        "commit_after_date": "2026-06-01",
+        "commit_after_subject": "feat(arch): replace single-level Louvain with multi-level Leiden community detection",
+        "derived_by": "mine_g1.py over `git diff-tree -r -M -C --find-copies-harder <sha>^ <sha>` on every non-merge commit reachable from dev; spans by C brace-matching, hashes by spanhash.py",
+        "re_derive": "git diff eb50569b 955b87d3 -- src/store/store.c"
+      },
+      "symbol": {
+        "before_name": "louvain_free_adj",
+        "after_name": "lg_free"
+      },
+      "before": {
+        "commit": "eb50569bed508b71e1f18d2f2f516fec050f441b",
+        "file_path": "src/store/store.c",
+        "start_line": 4246,
+        "end_line": 4255,
+        "qualified_name": "hyponoia.src.store.store.louvain_free_adj",
+        "address": "hyp1:hyponoia/hyponoia#hyponoia.src.store.store.louvain_free_adj",
+        "span_hash": "b6ab0bf339b83c935f6e2b8f361c30f2",
+        "verify": "python3 spanhash.py 955b87d3^ src/store/store.c 4246 4255"
+      },
+      "after": {
+        "commit": "955b87d3fd31552bbd8885b63f6e6194c50c50ff",
+        "file_path": "src/store/store.c",
+        "start_line": 4155,
+        "end_line": 4164,
+        "qualified_name": "hyponoia.src.store.store.lg_free",
+        "address": "hyp1:hyponoia/hyponoia#hyponoia.src.store.store.lg_free",
+        "span_hash": "bb39073094b17ec0edfbe0914424e698",
+        "verify": "python3 spanhash.py 955b87d3 src/store/store.c 4155 4164"
+      },
+      "anchor_written_at_commit_before": "b6ab0bf339b83c935f6e2b8f361c30f2@hyp1:hyponoia/hyponoia#hyponoia.src.store.store.louvain_free_adj",
+      "note": "renamed AND edited AND moved: nothing about it is recoverable by content",
+      "expected": {
+        "hyp_anchor_status": "HYP_ANCHOR_ORPHANED",
+        "hyp_addr_relate": "HYP_ADDR_REL_UNRELATED",
+        "candidate_count": 0,
+        "must_not_reattach_to": "hyp1:hyponoia/hyponoia#hyponoia.src.store.store.lg_free",
+        "must_not": [
+          "HYP_ANCHOR_RESOLVED",
+          "HYP_ANCHOR_RESOLVED_EDITED"
+        ],
+        "why": "The qualified name is not in the index after the rename, so the anchor is ORPHANED (I4: the span includes the decl line, so a rename changes the QN AND the hash). The recorded hash matches NOTHING in the after-tree, so there is not even a candidate. A resolver that re-attaches to hyponoia.src.store.store.lg_free has invented a link the data does not contain \u2014 C4u's exact failure mode."
+      }
+    },
+    {
+      "id": "G1-CROSSDIR-001",
+      "category": "cross_directory_move",
+      "provenance": {
+        "commit_before": "10cb0e03fbb03fc62435174df5a52cad3186c444",
+        "commit_after": "f95d684123bd2ab7fdf1886ad5c6f020e0c579cf",
+        "commit_after_date": "2026-08-09",
+        "commit_after_subject": "rename: codebase-memory-mcp -> hyponoia",
+        "derived_by": "mine_g1.py over `git diff-tree -r -M -C --find-copies-harder <sha>^ <sha>` on every non-merge commit reachable from dev; spans by C brace-matching, hashes by spanhash.py",
+        "re_derive": "git diff 10cb0e03 f95d6841 -- internal/hyp/lsp/py_lsp.c"
+      },
+      "symbol": {
+        "before_name": "py_invalidate_possible_bindings",
+        "after_name": "py_invalidate_possible_bindings"
+      },
+      "before": {
+        "commit": "10cb0e03fbb03fc62435174df5a52cad3186c444",
+        "file_path": "internal/cbm/lsp/py_lsp.c",
+        "start_line": 4457,
+        "end_line": 4594,
+        "qualified_name": "hyponoia.internal.cbm.lsp.py_lsp.py_invalidate_possible_bindings",
+        "address": "hyp1:hyponoia/hyponoia#hyponoia.internal.cbm.lsp.py_lsp.py_invalidate_possible_bindings",
+        "span_hash": "2d2a8578efb05167390f5b1907a12d27",
+        "verify": "python3 spanhash.py f95d6841^ internal/cbm/lsp/py_lsp.c 4457 4594"
+      },
+      "after": {
+        "commit": "f95d684123bd2ab7fdf1886ad5c6f020e0c579cf",
+        "file_path": "internal/hyp/lsp/py_lsp.c",
+        "start_line": 4457,
+        "end_line": 4594,
+        "qualified_name": "hyponoia.internal.hyp.lsp.py_lsp.py_invalidate_possible_bindings",
+        "address": "hyp1:hyponoia/hyponoia#hyponoia.internal.hyp.lsp.py_lsp.py_invalidate_possible_bindings",
+        "span_hash": "2d2a8578efb05167390f5b1907a12d27",
+        "verify": "python3 spanhash.py f95d6841 internal/hyp/lsp/py_lsp.c 4457 4594"
+      },
+      "anchor_written_at_commit_before": "2d2a8578efb05167390f5b1907a12d27@hyp1:hyponoia/hyponoia#hyponoia.internal.cbm.lsp.py_lsp.py_invalidate_possible_bindings",
+      "note": "138 lines, byte-identical, one directory over",
+      "expected": {
+        "hyp_anchor_status": "HYP_ANCHOR_ORPHANED",
+        "hyp_addr_relate": "HYP_ADDR_REL_CONTENT_ONLY",
+        "candidate_count": 1,
+        "candidates": [
+          {
+            "address": "hyp1:hyponoia/hyponoia#hyponoia.internal.hyp.lsp.py_lsp.py_invalidate_possible_bindings",
+            "file_path": "internal/hyp/lsp/py_lsp.c",
+            "start_line": 4457,
+            "end_line": 4594,
+            "relation": "HYP_ADDR_REL_CONTENT_ONLY"
+          }
+        ],
+        "must_not": [
+          "HYP_ANCHOR_RESOLVED",
+          "HYP_ANCHOR_RESOLVED_EDITED"
+        ],
+        "why": "Different address, byte-identical content. I5: cross-directory move, file rename and copy-paste are INDISTINGUISHABLE here, so the candidate is EVIDENCE and must be presented, never silently applied. Status is ORPHANED with one candidate \u2014 not RESOLVED."
+      }
+    },
+    {
+      "id": "G1-CROSSDIR-002",
+      "category": "cross_directory_move",
+      "provenance": {
+        "commit_before": "10cb0e03fbb03fc62435174df5a52cad3186c444",
+        "commit_after": "f95d684123bd2ab7fdf1886ad5c6f020e0c579cf",
+        "commit_after_date": "2026-08-09",
+        "commit_after_subject": "rename: codebase-memory-mcp -> hyponoia",
+        "derived_by": "mine_g1.py over `git diff-tree -r -M -C --find-copies-harder <sha>^ <sha>` on every non-merge commit reachable from dev; spans by C brace-matching, hashes by spanhash.py",
+        "re_derive": "git diff 10cb0e03 f95d6841 -- internal/hyp/lsp/rust_lsp.c"
+      },
+      "symbol": {
+        "before_name": "macro_consume_fragment",
+        "after_name": "macro_consume_fragment"
+      },
+      "before": {
+        "commit": "10cb0e03fbb03fc62435174df5a52cad3186c444",
+        "file_path": "internal/cbm/lsp/rust_lsp.c",
+        "start_line": 3237,
+        "end_line": 3333,
+        "qualified_name": "hyponoia.internal.cbm.lsp.rust_lsp.macro_consume_fragment",
+        "address": "hyp1:hyponoia/hyponoia#hyponoia.internal.cbm.lsp.rust_lsp.macro_consume_fragment",
+        "span_hash": "4051aa168f34034fa4d6664259dc547c",
+        "verify": "python3 spanhash.py f95d6841^ internal/cbm/lsp/rust_lsp.c 3237 3333"
+      },
+      "after": {
+        "commit": "f95d684123bd2ab7fdf1886ad5c6f020e0c579cf",
+        "file_path": "internal/hyp/lsp/rust_lsp.c",
+        "start_line": 3237,
+        "end_line": 3333,
+        "qualified_name": "hyponoia.internal.hyp.lsp.rust_lsp.macro_consume_fragment",
+        "address": "hyp1:hyponoia/hyponoia#hyponoia.internal.hyp.lsp.rust_lsp.macro_consume_fragment",
+        "span_hash": "4051aa168f34034fa4d6664259dc547c",
+        "verify": "python3 spanhash.py f95d6841 internal/hyp/lsp/rust_lsp.c 3237 3333"
+      },
+      "anchor_written_at_commit_before": "4051aa168f34034fa4d6664259dc547c@hyp1:hyponoia/hyponoia#hyponoia.internal.cbm.lsp.rust_lsp.macro_consume_fragment",
+      "note": "97 lines, byte-identical",
+      "expected": {
+        "hyp_anchor_status": "HYP_ANCHOR_ORPHANED",
+        "hyp_addr_relate": "HYP_ADDR_REL_CONTENT_ONLY",
+        "candidate_count": 1,
+        "candidates": [
+          {
+            "address": "hyp1:hyponoia/hyponoia#hyponoia.internal.hyp.lsp.rust_lsp.macro_consume_fragment",
+            "file_path": "internal/hyp/lsp/rust_lsp.c",
+            "start_line": 3237,
+            "end_line": 3333,
+            "relation": "HYP_ADDR_REL_CONTENT_ONLY"
+          }
+        ],
+        "must_not": [
+          "HYP_ANCHOR_RESOLVED",
+          "HYP_ANCHOR_RESOLVED_EDITED"
+        ],
+        "why": "Different address, byte-identical content. I5: cross-directory move, file rename and copy-paste are INDISTINGUISHABLE here, so the candidate is EVIDENCE and must be presented, never silently applied. Status is ORPHANED with one candidate \u2014 not RESOLVED."
+      }
+    },
+    {
+      "id": "G1-CROSSDIR-003",
+      "category": "cross_directory_move",
+      "provenance": {
+        "commit_before": "10cb0e03fbb03fc62435174df5a52cad3186c444",
+        "commit_after": "f95d684123bd2ab7fdf1886ad5c6f020e0c579cf",
+        "commit_after_date": "2026-08-09",
+        "commit_after_subject": "rename: codebase-memory-mcp -> hyponoia",
+        "derived_by": "mine_g1.py over `git diff-tree -r -M -C --find-copies-harder <sha>^ <sha>` on every non-merge commit reachable from dev; spans by C brace-matching, hashes by spanhash.py",
+        "re_derive": "git diff 10cb0e03 f95d6841 -- internal/hyp/service_patterns.c"
+      },
+      "symbol": {
+        "before_name": "has_filesystem_extension",
+        "after_name": "has_filesystem_extension"
+      },
+      "before": {
+        "commit": "10cb0e03fbb03fc62435174df5a52cad3186c444",
+        "file_path": "internal/cbm/service_patterns.c",
+        "start_line": 619,
+        "end_line": 665,
+        "qualified_name": "hyponoia.internal.cbm.service_patterns.has_filesystem_extension",
+        "address": "hyp1:hyponoia/hyponoia#hyponoia.internal.cbm.service_patterns.has_filesystem_extension",
+        "span_hash": "4c13d9c93d46f90fec8c59dda6f61d72",
+        "verify": "python3 spanhash.py f95d6841^ internal/cbm/service_patterns.c 619 665"
+      },
+      "after": {
+        "commit": "f95d684123bd2ab7fdf1886ad5c6f020e0c579cf",
+        "file_path": "internal/hyp/service_patterns.c",
+        "start_line": 619,
+        "end_line": 665,
+        "qualified_name": "hyponoia.internal.hyp.service_patterns.has_filesystem_extension",
+        "address": "hyp1:hyponoia/hyponoia#hyponoia.internal.hyp.service_patterns.has_filesystem_extension",
+        "span_hash": "4c13d9c93d46f90fec8c59dda6f61d72",
+        "verify": "python3 spanhash.py f95d6841 internal/hyp/service_patterns.c 619 665"
+      },
+      "anchor_written_at_commit_before": "4c13d9c93d46f90fec8c59dda6f61d72@hyp1:hyponoia/hyponoia#hyponoia.internal.cbm.service_patterns.has_filesystem_extension",
+      "note": "47 lines, byte-identical",
+      "expected": {
+        "hyp_anchor_status": "HYP_ANCHOR_ORPHANED",
+        "hyp_addr_relate": "HYP_ADDR_REL_CONTENT_ONLY",
+        "candidate_count": 1,
+        "candidates": [
+          {
+            "address": "hyp1:hyponoia/hyponoia#hyponoia.internal.hyp.service_patterns.has_filesystem_extension",
+            "file_path": "internal/hyp/service_patterns.c",
+            "start_line": 619,
+            "end_line": 665,
+            "relation": "HYP_ADDR_REL_CONTENT_ONLY"
+          }
+        ],
+        "must_not": [
+          "HYP_ANCHOR_RESOLVED",
+          "HYP_ANCHOR_RESOLVED_EDITED"
+        ],
+        "why": "Different address, byte-identical content. I5: cross-directory move, file rename and copy-paste are INDISTINGUISHABLE here, so the candidate is EVIDENCE and must be presented, never silently applied. Status is ORPHANED with one candidate \u2014 not RESOLVED."
+      }
+    },
+    {
+      "id": "G1-CROSSDIR-004",
+      "category": "cross_directory_move",
+      "provenance": {
+        "commit_before": "10cb0e03fbb03fc62435174df5a52cad3186c444",
+        "commit_after": "f95d684123bd2ab7fdf1886ad5c6f020e0c579cf",
+        "commit_after_date": "2026-08-09",
+        "commit_after_subject": "rename: codebase-memory-mcp -> hyponoia",
+        "derived_by": "mine_g1.py over `git diff-tree -r -M -C --find-copies-harder <sha>^ <sha>` on every non-merge commit reachable from dev; spans by C brace-matching, hashes by spanhash.py",
+        "re_derive": "git diff 10cb0e03 f95d6841 -- internal/hyp/helpers.c"
+      },
+      "symbol": {
+        "before_name": "ks_build",
+        "after_name": "ks_build"
+      },
+      "before": {
+        "commit": "10cb0e03fbb03fc62435174df5a52cad3186c444",
+        "file_path": "internal/cbm/helpers.c",
+        "start_line": 388,
+        "end_line": 430,
+        "qualified_name": "hyponoia.internal.cbm.helpers.ks_build",
+        "address": "hyp1:hyponoia/hyponoia#hyponoia.internal.cbm.helpers.ks_build",
+        "span_hash": "52fe01d2c1e275790c3398edaef26567",
+        "verify": "python3 spanhash.py f95d6841^ internal/cbm/helpers.c 388 430"
+      },
+      "after": {
+        "commit": "f95d684123bd2ab7fdf1886ad5c6f020e0c579cf",
+        "file_path": "internal/hyp/helpers.c",
+        "start_line": 388,
+        "end_line": 430,
+        "qualified_name": "hyponoia.internal.hyp.helpers.ks_build",
+        "address": "hyp1:hyponoia/hyponoia#hyponoia.internal.hyp.helpers.ks_build",
+        "span_hash": "52fe01d2c1e275790c3398edaef26567",
+        "verify": "python3 spanhash.py f95d6841 internal/hyp/helpers.c 388 430"
+      },
+      "anchor_written_at_commit_before": "52fe01d2c1e275790c3398edaef26567@hyp1:hyponoia/hyponoia#hyponoia.internal.cbm.helpers.ks_build",
+      "note": "43 lines, byte-identical",
+      "expected": {
+        "hyp_anchor_status": "HYP_ANCHOR_ORPHANED",
+        "hyp_addr_relate": "HYP_ADDR_REL_CONTENT_ONLY",
+        "candidate_count": 1,
+        "candidates": [
+          {
+            "address": "hyp1:hyponoia/hyponoia#hyponoia.internal.hyp.helpers.ks_build",
+            "file_path": "internal/hyp/helpers.c",
+            "start_line": 388,
+            "end_line": 430,
+            "relation": "HYP_ADDR_REL_CONTENT_ONLY"
+          }
+        ],
+        "must_not": [
+          "HYP_ANCHOR_RESOLVED",
+          "HYP_ANCHOR_RESOLVED_EDITED"
+        ],
+        "why": "Different address, byte-identical content. I5: cross-directory move, file rename and copy-paste are INDISTINGUISHABLE here, so the candidate is EVIDENCE and must be presented, never silently applied. Status is ORPHANED with one candidate \u2014 not RESOLVED."
+      }
+    },
+    {
+      "id": "G1-CROSSDIR-005",
+      "category": "cross_directory_move",
+      "provenance": {
+        "commit_before": "10cb0e03fbb03fc62435174df5a52cad3186c444",
+        "commit_after": "f95d684123bd2ab7fdf1886ad5c6f020e0c579cf",
+        "commit_after_date": "2026-08-09",
+        "commit_after_subject": "rename: codebase-memory-mcp -> hyponoia",
+        "derived_by": "mine_g1.py over `git diff-tree -r -M -C --find-copies-harder <sha>^ <sha>` on every non-merge commit reachable from dev; spans by C brace-matching, hashes by spanhash.py",
+        "re_derive": "git diff 10cb0e03 f95d6841 -- internal/hyp/iris_export_xml.c"
+      },
+      "symbol": {
+        "before_name": "emit_property",
+        "after_name": "emit_property"
+      },
+      "before": {
+        "commit": "10cb0e03fbb03fc62435174df5a52cad3186c444",
+        "file_path": "internal/cbm/iris_export_xml.c",
+        "start_line": 210,
+        "end_line": 259,
+        "qualified_name": "hyponoia.internal.cbm.iris_export_xml.emit_property",
+        "address": "hyp1:hyponoia/hyponoia#hyponoia.internal.cbm.iris_export_xml.emit_property",
+        "span_hash": "72be4d8fc72f2bbc81239edcede2e8b5",
+        "verify": "python3 spanhash.py f95d6841^ internal/cbm/iris_export_xml.c 210 259"
+      },
+      "after": {
+        "commit": "f95d684123bd2ab7fdf1886ad5c6f020e0c579cf",
+        "file_path": "internal/hyp/iris_export_xml.c",
+        "start_line": 210,
+        "end_line": 259,
+        "qualified_name": "hyponoia.internal.hyp.iris_export_xml.emit_property",
+        "address": "hyp1:hyponoia/hyponoia#hyponoia.internal.hyp.iris_export_xml.emit_property",
+        "span_hash": "72be4d8fc72f2bbc81239edcede2e8b5",
+        "verify": "python3 spanhash.py f95d6841 internal/hyp/iris_export_xml.c 210 259"
+      },
+      "anchor_written_at_commit_before": "72be4d8fc72f2bbc81239edcede2e8b5@hyp1:hyponoia/hyponoia#hyponoia.internal.cbm.iris_export_xml.emit_property",
+      "note": "50 lines, byte-identical",
+      "expected": {
+        "hyp_anchor_status": "HYP_ANCHOR_ORPHANED",
+        "hyp_addr_relate": "HYP_ADDR_REL_CONTENT_ONLY",
+        "candidate_count": 1,
+        "candidates": [
+          {
+            "address": "hyp1:hyponoia/hyponoia#hyponoia.internal.hyp.iris_export_xml.emit_property",
+            "file_path": "internal/hyp/iris_export_xml.c",
+            "start_line": 210,
+            "end_line": 259,
+            "relation": "HYP_ADDR_REL_CONTENT_ONLY"
+          }
+        ],
+        "must_not": [
+          "HYP_ANCHOR_RESOLVED",
+          "HYP_ANCHOR_RESOLVED_EDITED"
+        ],
+        "why": "Different address, byte-identical content. I5: cross-directory move, file rename and copy-paste are INDISTINGUISHABLE here, so the candidate is EVIDENCE and must be presented, never silently applied. Status is ORPHANED with one candidate \u2014 not RESOLVED."
+      }
+    },
+    {
+      "id": "G1-FILERENAME-001",
+      "category": "file_rename_same_directory",
+      "provenance": {
+        "commit_before": "632278a245069943f1385b5769c49202f6cf3b7d",
+        "commit_after": "1468c636ee2bab294e085103f2cff749c26c0dd9",
+        "commit_after_date": "2026-05-08",
+        "commit_after_subject": "refactor(extract): rename ts_node_stack.h to extract_node_stack.h",
+        "derived_by": "mine_g1.py over `git diff-tree -r -M -C --find-copies-harder <sha>^ <sha>` on every non-merge commit reachable from dev; spans by C brace-matching, hashes by spanhash.py",
+        "re_derive": "git diff 632278a2 1468c636 -- internal/cbm/extract_node_stack.h"
+      },
+      "symbol": {
+        "before_name": "ts_nstack_push",
+        "after_name": "ts_nstack_push"
+      },
+      "before": {
+        "commit": "632278a245069943f1385b5769c49202f6cf3b7d",
+        "file_path": "internal/cbm/ts_node_stack.h",
+        "start_line": 33,
+        "end_line": 46,
+        "qualified_name": "hyponoia.internal.cbm.ts_node_stack.ts_nstack_push",
+        "address": "hyp1:hyponoia/hyponoia#hyponoia.internal.cbm.ts_node_stack.ts_nstack_push",
+        "span_hash": "00053f0b8f7f116d0b22b1e2e7e01224",
+        "verify": "python3 spanhash.py 1468c636^ internal/cbm/ts_node_stack.h 33 46"
+      },
+      "after": {
+        "commit": "1468c636ee2bab294e085103f2cff749c26c0dd9",
+        "file_path": "internal/cbm/extract_node_stack.h",
+        "start_line": 33,
+        "end_line": 46,
+        "qualified_name": "hyponoia.internal.cbm.extract_node_stack.ts_nstack_push",
+        "address": "hyp1:hyponoia/hyponoia#hyponoia.internal.cbm.extract_node_stack.ts_nstack_push",
+        "span_hash": "00053f0b8f7f116d0b22b1e2e7e01224",
+        "verify": "python3 spanhash.py 1468c636 internal/cbm/extract_node_stack.h 33 46"
+      },
+      "anchor_written_at_commit_before": "00053f0b8f7f116d0b22b1e2e7e01224@hyp1:hyponoia/hyponoia#hyponoia.internal.cbm.ts_node_stack.ts_nstack_push",
+      "note": "14 lines, byte-identical, same directory, renamed file",
+      "expected": {
+        "hyp_anchor_status": "HYP_ANCHOR_ORPHANED",
+        "hyp_addr_relate": "HYP_ADDR_REL_CONTENT_ONLY",
+        "candidate_count": 1,
+        "candidates": [
+          {
+            "address": "hyp1:hyponoia/hyponoia#hyponoia.internal.cbm.extract_node_stack.ts_nstack_push",
+            "file_path": "internal/cbm/extract_node_stack.h",
+            "start_line": 33,
+            "end_line": 46,
+            "relation": "HYP_ADDR_REL_CONTENT_ONLY"
+          }
+        ],
+        "must_not": [
+          "HYP_ANCHOR_RESOLVED",
+          "HYP_ANCHOR_RESOLVED_EDITED"
+        ],
+        "why": "I5 names three shapes that land in CONTENT_ONLY and this is the second: the file was renamed inside its own directory, so the QN changed and the content did not. It is indistinguishable from the cross-directory case by design \u2014 which is the point of carrying both in the corpus."
+      }
+    },
+    {
+      "id": "G1-FILERENAME-002",
+      "category": "file_rename_same_directory",
+      "provenance": {
+        "commit_before": "632278a245069943f1385b5769c49202f6cf3b7d",
+        "commit_after": "1468c636ee2bab294e085103f2cff749c26c0dd9",
+        "commit_after_date": "2026-05-08",
+        "commit_after_subject": "refactor(extract): rename ts_node_stack.h to extract_node_stack.h",
+        "derived_by": "mine_g1.py over `git diff-tree -r -M -C --find-copies-harder <sha>^ <sha>` on every non-merge commit reachable from dev; spans by C brace-matching, hashes by spanhash.py",
+        "re_derive": "git diff 632278a2 1468c636 -- internal/cbm/extract_node_stack.h"
+      },
+      "symbol": {
+        "before_name": "ts_nstack_init",
+        "after_name": "ts_nstack_init"
+      },
+      "before": {
+        "commit": "632278a245069943f1385b5769c49202f6cf3b7d",
+        "file_path": "internal/cbm/ts_node_stack.h",
+        "start_line": 26,
+        "end_line": 30,
+        "qualified_name": "hyponoia.internal.cbm.ts_node_stack.ts_nstack_init",
+        "address": "hyp1:hyponoia/hyponoia#hyponoia.internal.cbm.ts_node_stack.ts_nstack_init",
+        "span_hash": "6962ad4ea8bb6f0abcbc1222aab97c2d",
+        "verify": "python3 spanhash.py 1468c636^ internal/cbm/ts_node_stack.h 26 30"
+      },
+      "after": {
+        "commit": "1468c636ee2bab294e085103f2cff749c26c0dd9",
+        "file_path": "internal/cbm/extract_node_stack.h",
+        "start_line": 26,
+        "end_line": 30,
+        "qualified_name": "hyponoia.internal.cbm.extract_node_stack.ts_nstack_init",
+        "address": "hyp1:hyponoia/hyponoia#hyponoia.internal.cbm.extract_node_stack.ts_nstack_init",
+        "span_hash": "6962ad4ea8bb6f0abcbc1222aab97c2d",
+        "verify": "python3 spanhash.py 1468c636 internal/cbm/extract_node_stack.h 26 30"
+      },
+      "anchor_written_at_commit_before": "6962ad4ea8bb6f0abcbc1222aab97c2d@hyp1:hyponoia/hyponoia#hyponoia.internal.cbm.ts_node_stack.ts_nstack_init",
+      "note": "5 lines, byte-identical, same directory, renamed file",
+      "expected": {
+        "hyp_anchor_status": "HYP_ANCHOR_ORPHANED",
+        "hyp_addr_relate": "HYP_ADDR_REL_CONTENT_ONLY",
+        "candidate_count": 1,
+        "candidates": [
+          {
+            "address": "hyp1:hyponoia/hyponoia#hyponoia.internal.cbm.extract_node_stack.ts_nstack_init",
+            "file_path": "internal/cbm/extract_node_stack.h",
+            "start_line": 26,
+            "end_line": 30,
+            "relation": "HYP_ADDR_REL_CONTENT_ONLY"
+          }
+        ],
+        "must_not": [
+          "HYP_ANCHOR_RESOLVED",
+          "HYP_ANCHOR_RESOLVED_EDITED"
+        ],
+        "why": "I5 names three shapes that land in CONTENT_ONLY and this is the second: the file was renamed inside its own directory, so the QN changed and the content did not. It is indistinguishable from the cross-directory case by design \u2014 which is the point of carrying both in the corpus."
+      }
+    },
+    {
+      "id": "G1-COPY-001",
+      "category": "copy_paste",
+      "provenance": {
+        "commit_before": "648f0d399cfffd4dbea5996edc2493405fd6053d",
+        "commit_after": "2128f2b118e0343c7630e50c7db1c9466caaf6cb",
+        "commit_after_date": "2026-06-26",
+        "commit_after_subject": "test(repro): LSP-pass invariants \u2014 TS, Java/C#, Kotlin/PHP/Rust",
+        "derived_by": "mine_copies.py (cross-file byte-identical spans in a tree) + attribute_copies.py (`git log -S<decl line>` per path for the commit that put each copy there)",
+        "re_derive": "git show 2128f2b1 --stat | grep repro"
+      },
+      "symbol": {
+        "before_name": "assert_lsp_strategy",
+        "after_name": "assert_lsp_strategy"
+      },
+      "before": {
+        "commit": "648f0d399cfffd4dbea5996edc2493405fd6053d",
+        "file_path": "tests/repro/repro_lsp_c_cpp.c",
+        "start_line": 90,
+        "end_line": 138,
+        "qualified_name": "hyponoia.tests.repro.repro_lsp_c_cpp.assert_lsp_strategy",
+        "address": "hyp1:hyponoia/hyponoia#hyponoia.tests.repro.repro_lsp_c_cpp.assert_lsp_strategy",
+        "span_hash": "f6ebd4d1ca52b6a056d1bcded4b1bccc",
+        "verify": "python3 spanhash.py 2128f2b1^ tests/repro/repro_lsp_c_cpp.c 90 138"
+      },
+      "copies_after": [
+        {
+          "commit": "2128f2b118e0343c7630e50c7db1c9466caaf6cb",
+          "file_path": "tests/repro/repro_lsp_c_cpp.c",
+          "start_line": 90,
+          "end_line": 138,
+          "qualified_name": "hyponoia.tests.repro.repro_lsp_c_cpp.assert_lsp_strategy",
+          "address": "hyp1:hyponoia/hyponoia#hyponoia.tests.repro.repro_lsp_c_cpp.assert_lsp_strategy",
+          "span_hash": "f6ebd4d1ca52b6a056d1bcded4b1bccc",
+          "verify": "python3 spanhash.py 2128f2b1 tests/repro/repro_lsp_c_cpp.c 90 138"
+        },
+        {
+          "commit": "2128f2b118e0343c7630e50c7db1c9466caaf6cb",
+          "file_path": "tests/repro/repro_lsp_java_cs.c",
+          "start_line": 106,
+          "end_line": 154,
+          "qualified_name": "hyponoia.tests.repro.repro_lsp_java_cs.assert_lsp_strategy",
+          "address": "hyp1:hyponoia/hyponoia#hyponoia.tests.repro.repro_lsp_java_cs.assert_lsp_strategy",
+          "span_hash": "f6ebd4d1ca52b6a056d1bcded4b1bccc",
+          "verify": "python3 spanhash.py 2128f2b1 tests/repro/repro_lsp_java_cs.c 106 154"
+        },
+        {
+          "commit": "2128f2b118e0343c7630e50c7db1c9466caaf6cb",
+          "file_path": "tests/repro/repro_lsp_kt_php_rust.c",
+          "start_line": 141,
+          "end_line": 189,
+          "qualified_name": "hyponoia.tests.repro.repro_lsp_kt_php_rust.assert_lsp_strategy",
+          "address": "hyp1:hyponoia/hyponoia#hyponoia.tests.repro.repro_lsp_kt_php_rust.assert_lsp_strategy",
+          "span_hash": "f6ebd4d1ca52b6a056d1bcded4b1bccc",
+          "verify": "python3 spanhash.py 2128f2b1 tests/repro/repro_lsp_kt_php_rust.c 141 189"
+        }
+      ],
+      "content_hash_multiplicity_after": 3,
+      "anchor_written_at_commit_before": "f6ebd4d1ca52b6a056d1bcded4b1bccc@hyp1:hyponoia/hyponoia#hyponoia.tests.repro.repro_lsp_c_cpp.assert_lsp_strategy",
+      "note": "49 lines pasted into two new files in one commit; the original untouched",
+      "expected": {
+        "hyp_anchor_status": "HYP_ANCHOR_RESOLVED",
+        "hyp_addr_relate": "HYP_ADDR_REL_SAME",
+        "candidate_count": 0,
+        "resolved_to": {
+          "file_path": "tests/repro/repro_lsp_c_cpp.c",
+          "start_line": 90,
+          "end_line": 138
+        },
+        "must_not": [
+          "HYP_ANCHOR_ORPHANED",
+          "HYP_ANCHOR_RESOLVED_EDITED",
+          "HYP_ANCHOR_ERROR"
+        ],
+        "must_not_resolve_to": [
+          "hyp1:hyponoia/hyponoia#hyponoia.tests.repro.repro_lsp_java_cs.assert_lsp_strategy",
+          "hyp1:hyponoia/hyponoia#hyponoia.tests.repro.repro_lsp_kt_php_rust.assert_lsp_strategy"
+        ],
+        "why": "The QN is still in the index and its content still matches, so the anchor RESOLVES \u2014 the copies must not make a live anchor ambiguous. Symbol identity FIRST is what buys that.",
+        "content_only_probe": {
+          "question": "resolve any anchor carrying span hash f6ebd4d1ca52b6a056d1bcded4b1bccc whose QN is absent from the index",
+          "expected_candidate_count": 3,
+          "expected_candidates": [
+            "hyp1:hyponoia/hyponoia#hyponoia.tests.repro.repro_lsp_c_cpp.assert_lsp_strategy",
+            "hyp1:hyponoia/hyponoia#hyponoia.tests.repro.repro_lsp_java_cs.assert_lsp_strategy",
+            "hyp1:hyponoia/hyponoia#hyponoia.tests.repro.repro_lsp_kt_php_rust.assert_lsp_strategy"
+          ],
+          "expected_status": "HYP_ANCHOR_ORPHANED",
+          "must_attach_to": null,
+          "why": "A content-hash scan over this tree returns 3 spans. This is the lane \u00a74 says must yield candidates and attach to NONE. Any resolver that consulted content before symbol identity would be 3-way ambiguous here."
+        }
+      }
+    },
+    {
+      "id": "G1-COPY-002",
+      "category": "copy_paste",
+      "provenance": {
+        "commit_before": "648f0d399cfffd4dbea5996edc2493405fd6053d",
+        "commit_after": "2128f2b118e0343c7630e50c7db1c9466caaf6cb",
+        "commit_after_date": "2026-06-26",
+        "commit_after_subject": "test(repro): LSP-pass invariants \u2014 TS, Java/C#, Kotlin/PHP/Rust",
+        "derived_by": "mine_copies.py (cross-file byte-identical spans in a tree) + attribute_copies.py (`git log -S<decl line>` per path for the commit that put each copy there)",
+        "re_derive": "git show 2128f2b1 --stat | grep repro"
+      },
+      "symbol": {
+        "before_name": "assert_lsp_strategy_files",
+        "after_name": "assert_lsp_strategy_files"
+      },
+      "before": {
+        "commit": "648f0d399cfffd4dbea5996edc2493405fd6053d",
+        "file_path": "tests/repro/repro_lsp_go_py.c",
+        "start_line": 128,
+        "end_line": 176,
+        "qualified_name": "hyponoia.tests.repro.repro_lsp_go_py.assert_lsp_strategy_files",
+        "address": "hyp1:hyponoia/hyponoia#hyponoia.tests.repro.repro_lsp_go_py.assert_lsp_strategy_files",
+        "span_hash": "227d4d8841d3cc7c711e766b59c1162c",
+        "verify": "python3 spanhash.py 2128f2b1^ tests/repro/repro_lsp_go_py.c 128 176"
+      },
+      "copies_after": [
+        {
+          "commit": "2128f2b118e0343c7630e50c7db1c9466caaf6cb",
+          "file_path": "tests/repro/repro_lsp_go_py.c",
+          "start_line": 128,
+          "end_line": 176,
+          "qualified_name": "hyponoia.tests.repro.repro_lsp_go_py.assert_lsp_strategy_files",
+          "address": "hyp1:hyponoia/hyponoia#hyponoia.tests.repro.repro_lsp_go_py.assert_lsp_strategy_files",
+          "span_hash": "227d4d8841d3cc7c711e766b59c1162c",
+          "verify": "python3 spanhash.py 2128f2b1 tests/repro/repro_lsp_go_py.c 128 176"
+        },
+        {
+          "commit": "2128f2b118e0343c7630e50c7db1c9466caaf6cb",
+          "file_path": "tests/repro/repro_lsp_ts.c",
+          "start_line": 121,
+          "end_line": 169,
+          "qualified_name": "hyponoia.tests.repro.repro_lsp_ts.assert_lsp_strategy_files",
+          "address": "hyp1:hyponoia/hyponoia#hyponoia.tests.repro.repro_lsp_ts.assert_lsp_strategy_files",
+          "span_hash": "227d4d8841d3cc7c711e766b59c1162c",
+          "verify": "python3 spanhash.py 2128f2b1 tests/repro/repro_lsp_ts.c 121 169"
+        }
+      ],
+      "content_hash_multiplicity_after": 2,
+      "anchor_written_at_commit_before": "227d4d8841d3cc7c711e766b59c1162c@hyp1:hyponoia/hyponoia#hyponoia.tests.repro.repro_lsp_go_py.assert_lsp_strategy_files",
+      "note": "EXACTLY TWO addresses, one hash \u2014 \u00a74's copy-paste case verbatim",
+      "expected": {
+        "hyp_anchor_status": "HYP_ANCHOR_RESOLVED",
+        "hyp_addr_relate": "HYP_ADDR_REL_SAME",
+        "candidate_count": 0,
+        "resolved_to": {
+          "file_path": "tests/repro/repro_lsp_go_py.c",
+          "start_line": 128,
+          "end_line": 176
+        },
+        "must_not": [
+          "HYP_ANCHOR_ORPHANED",
+          "HYP_ANCHOR_RESOLVED_EDITED",
+          "HYP_ANCHOR_ERROR"
+        ],
+        "must_not_resolve_to": [
+          "hyp1:hyponoia/hyponoia#hyponoia.tests.repro.repro_lsp_ts.assert_lsp_strategy_files"
+        ],
+        "why": "The QN is still in the index and its content still matches, so the anchor RESOLVES \u2014 the copies must not make a live anchor ambiguous. Symbol identity FIRST is what buys that.",
+        "content_only_probe": {
+          "question": "resolve any anchor carrying span hash 227d4d8841d3cc7c711e766b59c1162c whose QN is absent from the index",
+          "expected_candidate_count": 2,
+          "expected_candidates": [
+            "hyp1:hyponoia/hyponoia#hyponoia.tests.repro.repro_lsp_go_py.assert_lsp_strategy_files",
+            "hyp1:hyponoia/hyponoia#hyponoia.tests.repro.repro_lsp_ts.assert_lsp_strategy_files"
+          ],
+          "expected_status": "HYP_ANCHOR_ORPHANED",
+          "must_attach_to": null,
+          "why": "A content-hash scan over this tree returns 2 spans. This is the lane \u00a74 says must yield candidates and attach to NONE. Any resolver that consulted content before symbol identity would be 2-way ambiguous here."
+        }
+      }
+    },
+    {
+      "id": "G1-COPY-003",
+      "category": "copy_paste",
+      "provenance": {
+        "commit_before": "03c02ba8a7aacfb39fc2c45e0e2729339e6fea7c",
+        "commit_after": "88aafd8f03062310acf66ae22d840d784faffa2b",
+        "commit_after_date": "2026-08-09",
+        "commit_after_subject": "fix(build): make test-foundation link \u2014 it never has",
+        "derived_by": "mine_copies.py (cross-file byte-identical spans in a tree) + attribute_copies.py (`git log -S<decl line>` per path for the commit that put each copy there)",
+        "re_derive": "git show 88aafd8f --stat | grep repro"
+      },
+      "symbol": {
+        "before_name": "suite_requested",
+        "after_name": "suite_requested"
+      },
+      "before": {
+        "commit": "03c02ba8a7aacfb39fc2c45e0e2729339e6fea7c",
+        "file_path": "tests/test_main.c",
+        "start_line": 548,
+        "end_line": 560,
+        "qualified_name": "hyponoia.tests.test_main.suite_requested",
+        "address": "hyp1:hyponoia/hyponoia#hyponoia.tests.test_main.suite_requested",
+        "span_hash": "69e97d18253ac1290236d8fb1d53174b",
+        "verify": "python3 spanhash.py 88aafd8f^ tests/test_main.c 548 560"
+      },
+      "copies_after": [
+        {
+          "commit": "88aafd8f03062310acf66ae22d840d784faffa2b",
+          "file_path": "tests/test_main.c",
+          "start_line": 548,
+          "end_line": 560,
+          "qualified_name": "hyponoia.tests.test_main.suite_requested",
+          "address": "hyp1:hyponoia/hyponoia#hyponoia.tests.test_main.suite_requested",
+          "span_hash": "69e97d18253ac1290236d8fb1d53174b",
+          "verify": "python3 spanhash.py 88aafd8f tests/test_main.c 548 560"
+        },
+        {
+          "commit": "88aafd8f03062310acf66ae22d840d784faffa2b",
+          "file_path": "tests/test_foundation_main.c",
+          "start_line": 74,
+          "end_line": 86,
+          "qualified_name": "hyponoia.tests.test_foundation_main.suite_requested",
+          "address": "hyp1:hyponoia/hyponoia#hyponoia.tests.test_foundation_main.suite_requested",
+          "span_hash": "69e97d18253ac1290236d8fb1d53174b",
+          "verify": "python3 spanhash.py 88aafd8f tests/test_foundation_main.c 74 86"
+        }
+      ],
+      "content_hash_multiplicity_after": 2,
+      "anchor_written_at_commit_before": "69e97d18253ac1290236d8fb1d53174b@hyp1:hyponoia/hyponoia#hyponoia.tests.test_main.suite_requested",
+      "note": "copied six weeks after the original, into a new test main",
+      "expected": {
+        "hyp_anchor_status": "HYP_ANCHOR_RESOLVED",
+        "hyp_addr_relate": "HYP_ADDR_REL_SAME",
+        "candidate_count": 0,
+        "resolved_to": {
+          "file_path": "tests/test_main.c",
+          "start_line": 548,
+          "end_line": 560
+        },
+        "must_not": [
+          "HYP_ANCHOR_ORPHANED",
+          "HYP_ANCHOR_RESOLVED_EDITED",
+          "HYP_ANCHOR_ERROR"
+        ],
+        "must_not_resolve_to": [
+          "hyp1:hyponoia/hyponoia#hyponoia.tests.test_foundation_main.suite_requested"
+        ],
+        "why": "The QN is still in the index and its content still matches, so the anchor RESOLVES \u2014 the copies must not make a live anchor ambiguous. Symbol identity FIRST is what buys that.",
+        "content_only_probe": {
+          "question": "resolve any anchor carrying span hash 69e97d18253ac1290236d8fb1d53174b whose QN is absent from the index",
+          "expected_candidate_count": 2,
+          "expected_candidates": [
+            "hyp1:hyponoia/hyponoia#hyponoia.tests.test_main.suite_requested",
+            "hyp1:hyponoia/hyponoia#hyponoia.tests.test_foundation_main.suite_requested"
+          ],
+          "expected_status": "HYP_ANCHOR_ORPHANED",
+          "must_attach_to": null,
+          "why": "A content-hash scan over this tree returns 2 spans. This is the lane \u00a74 says must yield candidates and attach to NONE. Any resolver that consulted content before symbol identity would be 2-way ambiguous here."
+        }
+      }
+    },
+    {
+      "id": "G1-COPY-004",
+      "category": "copy_paste",
+      "provenance": {
+        "commit_before": "cee59ee2fd80ae1875155f2ad34e03e57161251c",
+        "commit_after": "0b232ba14afc0d6e662d72542b99e2c4eec35dc3",
+        "commit_after_date": "2026-06-26",
+        "commit_after_subject": "test(repro): grammar batteries (scripting, functional) + Go/Python LSP passes",
+        "derived_by": "mine_copies.py (cross-file byte-identical spans in a tree) + attribute_copies.py (`git log -S<decl line>` per path for the commit that put each copy there)",
+        "re_derive": "git show 0b232ba1 --stat | grep repro"
+      },
+      "symbol": {
+        "before_name": "single_file_battery",
+        "after_name": "single_file_battery"
+      },
+      "before": {
+        "commit": "cee59ee2fd80ae1875155f2ad34e03e57161251c",
+        "file_path": "tests/repro/repro_grammar_core.c",
+        "start_line": 81,
+        "end_line": 148,
+        "qualified_name": "hyponoia.tests.repro.repro_grammar_core.single_file_battery",
+        "address": "hyp1:hyponoia/hyponoia#hyponoia.tests.repro.repro_grammar_core.single_file_battery",
+        "span_hash": "1b0818dfb3f4be498ca3cfedd114e8ab",
+        "verify": "python3 spanhash.py 0b232ba1^ tests/repro/repro_grammar_core.c 81 148"
+      },
+      "copies_after": [
+        {
+          "commit": "0b232ba14afc0d6e662d72542b99e2c4eec35dc3",
+          "file_path": "tests/repro/repro_grammar_core.c",
+          "start_line": 81,
+          "end_line": 148,
+          "qualified_name": "hyponoia.tests.repro.repro_grammar_core.single_file_battery",
+          "address": "hyp1:hyponoia/hyponoia#hyponoia.tests.repro.repro_grammar_core.single_file_battery",
+          "span_hash": "1b0818dfb3f4be498ca3cfedd114e8ab",
+          "verify": "python3 spanhash.py 0b232ba1 tests/repro/repro_grammar_core.c 81 148"
+        },
+        {
+          "commit": "0b232ba14afc0d6e662d72542b99e2c4eec35dc3",
+          "file_path": "tests/repro/repro_grammar_scripting.c",
+          "start_line": 106,
+          "end_line": 173,
+          "qualified_name": "hyponoia.tests.repro.repro_grammar_scripting.single_file_battery",
+          "address": "hyp1:hyponoia/hyponoia#hyponoia.tests.repro.repro_grammar_scripting.single_file_battery",
+          "span_hash": "1b0818dfb3f4be498ca3cfedd114e8ab",
+          "verify": "python3 spanhash.py 0b232ba1 tests/repro/repro_grammar_scripting.c 106 173"
+        }
+      ],
+      "content_hash_multiplicity_after": 2,
+      "anchor_written_at_commit_before": "1b0818dfb3f4be498ca3cfedd114e8ab@hyp1:hyponoia/hyponoia#hyponoia.tests.repro.repro_grammar_core.single_file_battery",
+      "note": "68 lines, the largest verbatim duplicate in the tree",
+      "expected": {
+        "hyp_anchor_status": "HYP_ANCHOR_RESOLVED",
+        "hyp_addr_relate": "HYP_ADDR_REL_SAME",
+        "candidate_count": 0,
+        "resolved_to": {
+          "file_path": "tests/repro/repro_grammar_core.c",
+          "start_line": 81,
+          "end_line": 148
+        },
+        "must_not": [
+          "HYP_ANCHOR_ORPHANED",
+          "HYP_ANCHOR_RESOLVED_EDITED",
+          "HYP_ANCHOR_ERROR"
+        ],
+        "must_not_resolve_to": [
+          "hyp1:hyponoia/hyponoia#hyponoia.tests.repro.repro_grammar_scripting.single_file_battery"
+        ],
+        "why": "The QN is still in the index and its content still matches, so the anchor RESOLVES \u2014 the copies must not make a live anchor ambiguous. Symbol identity FIRST is what buys that.",
+        "content_only_probe": {
+          "question": "resolve any anchor carrying span hash 1b0818dfb3f4be498ca3cfedd114e8ab whose QN is absent from the index",
+          "expected_candidate_count": 2,
+          "expected_candidates": [
+            "hyp1:hyponoia/hyponoia#hyponoia.tests.repro.repro_grammar_core.single_file_battery",
+            "hyp1:hyponoia/hyponoia#hyponoia.tests.repro.repro_grammar_scripting.single_file_battery"
+          ],
+          "expected_status": "HYP_ANCHOR_ORPHANED",
+          "must_attach_to": null,
+          "why": "A content-hash scan over this tree returns 2 spans. This is the lane \u00a74 says must yield candidates and attach to NONE. Any resolver that consulted content before symbol identity would be 2-way ambiguous here."
+        }
+      }
+    },
+    {
+      "id": "G1-COPY-005",
+      "category": "copy_paste",
+      "provenance": {
+        "commit_before": "cee59ee2fd80ae1875155f2ad34e03e57161251c",
+        "commit_after": "0b232ba14afc0d6e662d72542b99e2c4eec35dc3",
+        "commit_after_date": "2026-06-26",
+        "commit_after_subject": "test(repro): grammar batteries (scripting, functional) + Go/Python LSP passes",
+        "derived_by": "mine_copies.py (cross-file byte-identical spans in a tree) + attribute_copies.py (`git log -S<decl line>` per path for the commit that put each copy there)",
+        "re_derive": "git show 0b232ba1 --stat | grep repro"
+      },
+      "symbol": {
+        "before_name": "pipeline_battery",
+        "after_name": "pipeline_battery"
+      },
+      "before": {
+        "commit": "cee59ee2fd80ae1875155f2ad34e03e57161251c",
+        "file_path": "tests/repro/repro_grammar_core.c",
+        "start_line": 157,
+        "end_line": 204,
+        "qualified_name": "hyponoia.tests.repro.repro_grammar_core.pipeline_battery",
+        "address": "hyp1:hyponoia/hyponoia#hyponoia.tests.repro.repro_grammar_core.pipeline_battery",
+        "span_hash": "ea039e8f7545c327d4bf0b49521b6af3",
+        "verify": "python3 spanhash.py 0b232ba1^ tests/repro/repro_grammar_core.c 157 204"
+      },
+      "copies_after": [
+        {
+          "commit": "0b232ba14afc0d6e662d72542b99e2c4eec35dc3",
+          "file_path": "tests/repro/repro_grammar_core.c",
+          "start_line": 157,
+          "end_line": 204,
+          "qualified_name": "hyponoia.tests.repro.repro_grammar_core.pipeline_battery",
+          "address": "hyp1:hyponoia/hyponoia#hyponoia.tests.repro.repro_grammar_core.pipeline_battery",
+          "span_hash": "ea039e8f7545c327d4bf0b49521b6af3",
+          "verify": "python3 spanhash.py 0b232ba1 tests/repro/repro_grammar_core.c 157 204"
+        },
+        {
+          "commit": "0b232ba14afc0d6e662d72542b99e2c4eec35dc3",
+          "file_path": "tests/repro/repro_grammar_scripting.c",
+          "start_line": 183,
+          "end_line": 230,
+          "qualified_name": "hyponoia.tests.repro.repro_grammar_scripting.pipeline_battery",
+          "address": "hyp1:hyponoia/hyponoia#hyponoia.tests.repro.repro_grammar_scripting.pipeline_battery",
+          "span_hash": "ea039e8f7545c327d4bf0b49521b6af3",
+          "verify": "python3 spanhash.py 0b232ba1 tests/repro/repro_grammar_scripting.c 183 230"
+        },
+        {
+          "commit": "0b232ba14afc0d6e662d72542b99e2c4eec35dc3",
+          "file_path": "tests/repro/repro_grammar_functional.c",
+          "start_line": 147,
+          "end_line": 194,
+          "qualified_name": "hyponoia.tests.repro.repro_grammar_functional.pipeline_battery",
+          "address": "hyp1:hyponoia/hyponoia#hyponoia.tests.repro.repro_grammar_functional.pipeline_battery",
+          "span_hash": "ea039e8f7545c327d4bf0b49521b6af3",
+          "verify": "python3 spanhash.py 0b232ba1 tests/repro/repro_grammar_functional.c 147 194"
+        }
+      ],
+      "content_hash_multiplicity_after": 3,
+      "anchor_written_at_commit_before": "ea039e8f7545c327d4bf0b49521b6af3@hyp1:hyponoia/hyponoia#hyponoia.tests.repro.repro_grammar_core.pipeline_battery",
+      "note": "three addresses after one commit",
+      "expected": {
+        "hyp_anchor_status": "HYP_ANCHOR_RESOLVED",
+        "hyp_addr_relate": "HYP_ADDR_REL_SAME",
+        "candidate_count": 0,
+        "resolved_to": {
+          "file_path": "tests/repro/repro_grammar_core.c",
+          "start_line": 157,
+          "end_line": 204
+        },
+        "must_not": [
+          "HYP_ANCHOR_ORPHANED",
+          "HYP_ANCHOR_RESOLVED_EDITED",
+          "HYP_ANCHOR_ERROR"
+        ],
+        "must_not_resolve_to": [
+          "hyp1:hyponoia/hyponoia#hyponoia.tests.repro.repro_grammar_scripting.pipeline_battery",
+          "hyp1:hyponoia/hyponoia#hyponoia.tests.repro.repro_grammar_functional.pipeline_battery"
+        ],
+        "why": "The QN is still in the index and its content still matches, so the anchor RESOLVES \u2014 the copies must not make a live anchor ambiguous. Symbol identity FIRST is what buys that.",
+        "content_only_probe": {
+          "question": "resolve any anchor carrying span hash ea039e8f7545c327d4bf0b49521b6af3 whose QN is absent from the index",
+          "expected_candidate_count": 3,
+          "expected_candidates": [
+            "hyp1:hyponoia/hyponoia#hyponoia.tests.repro.repro_grammar_core.pipeline_battery",
+            "hyp1:hyponoia/hyponoia#hyponoia.tests.repro.repro_grammar_scripting.pipeline_battery",
+            "hyp1:hyponoia/hyponoia#hyponoia.tests.repro.repro_grammar_functional.pipeline_battery"
+          ],
+          "expected_status": "HYP_ANCHOR_ORPHANED",
+          "must_attach_to": null,
+          "why": "A content-hash scan over this tree returns 3 spans. This is the lane \u00a74 says must yield candidates and attach to NONE. Any resolver that consulted content before symbol identity would be 3-way ambiguous here."
+        }
+      }
+    }
+  ]
+}

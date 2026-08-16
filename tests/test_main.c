@@ -657,6 +657,7 @@ extern void suite_identity(void);
 extern void suite_anchor(void);
 extern void suite_anchor_reindex(void);
 extern void suite_orphan(void);
+extern void suite_g1_replay(void);
 extern void suite_comment_migrate(void);
 extern void suite_sync(void);
 extern void suite_adr_records(void);
@@ -968,6 +969,7 @@ int main(int argc, char **argv) {
     RUN_SELECTED_SUITE(anchor);
     RUN_SELECTED_SUITE(anchor_reindex);
     RUN_SELECTED_SUITE(orphan);
+    RUN_SELECTED_SUITE(g1_replay);
     RUN_SELECTED_SUITE(comment_migrate);
     RUN_SELECTED_SUITE(sync);
     RUN_SELECTED_SUITE(adr_records);

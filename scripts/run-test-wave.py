@@ -35,7 +35,12 @@ SKIPPED = re.compile(r"(?:^|, )(?P<skipped>[0-9]+) skipped")
 # the 900 s ceiling and was killed as hung when it was not hung at all. That
 # pool is CPU-equal to ubuntu-22.04-arm and 10-80x slower on filesystem-heavy
 # work, which is exactly what staging half a gigabyte twice is.
-SLOW_SUITES = frozenset(("incremental", "store_arch", "daemon_runtime", "cli"))
+# `g1_replay` joins them for the same reason: it rebuilds 28 pairs of
+# historical working trees and runs the real indexing pipeline over each side,
+# 56 full index runs of real source files under the sanitizers. The work is the
+# test — replaying history is what makes the anchor result mean anything — and
+# on the filesystem-slow pool it will not fit a 900 s ceiling.
+SLOW_SUITES = frozenset(("incremental", "store_arch", "daemon_runtime", "cli", "g1_replay"))
 POLL_SECONDS = 0.05
 
 
