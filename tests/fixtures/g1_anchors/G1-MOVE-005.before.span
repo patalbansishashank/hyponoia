@@ -1,0 +1,12 @@
+static bool mcp_cross_repo_create_project_store(const char *cache, const char *project,
+                                                const char *root_path) {
+    char db_path[HYP_SZ_1K];
+    snprintf(db_path, sizeof(db_path), "%s/%s.db", cache, project);
+    hyp_store_t *store = hyp_store_open_path(db_path);
+    if (!store) {
+        return false;
+    }
+    bool created = hyp_store_upsert_project(store, project, root_path) == HYP_STORE_OK;
+    hyp_store_close(store);
+    return created;
+}

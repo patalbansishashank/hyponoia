@@ -1,0 +1,4 @@
+static const char *json_str_at(yyjson_val *obj, const char *key) {
+    yyjson_val *v = obj ? yyjson_obj_get(obj, key) : NULL;
+    return v && yyjson_is_str(v) ? yyjson_get_str(v) : NULL;
+}

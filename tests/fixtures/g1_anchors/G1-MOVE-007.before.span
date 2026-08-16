@@ -1,0 +1,157 @@
+void cbm_run_c_lsp_cross(
+    CBMArena* arena,
+    const char* source, int source_len,
+    const char* module_qn,
+    bool cpp_mode,
+    CBMLSPDef* defs, int def_count,
+    const char** include_paths, const char** include_ns_qns, int include_count,
+    CBMResolvedCallArray* out) {
+
+    if (!source || source_len == 0 || !out) return;
+
+    CBMTypeRegistry reg;
+    cbm_registry_init(&reg, arena);
+
+    // Register stdlib
+    cbm_c_stdlib_register(&reg, arena);
+    if (cpp_mode) cbm_cpp_stdlib_register(&reg, arena);
+
+    // Register all defs
+    for (int i = 0; i < def_count; i++) {
+        CBMLSPDef* d = &defs[i];
+        if (!d->qualified_name || !d->short_name) continue;
+
+        if (d->label && (strcmp(d->label, "Class") == 0 || strcmp(d->label, "Type") == 0 ||
+                         strcmp(d->label, "Interface") == 0)) {
+            CBMRegisteredType rt;
+            memset(&rt, 0, sizeof(rt));
+            rt.qualified_name = cbm_arena_strdup(arena, d->qualified_name);
+            rt.short_name = cbm_arena_strdup(arena, d->short_name);
+            rt.is_interface = d->is_interface;
+
+            // Embedded/base types
+            if (d->embedded_types) {
+                // Parse "|"-separated list
+                const char* src = d->embedded_types;
+                const char* embeds[32];
+                int embed_count = 0;
+                while (*src && embed_count < 31) {
+                    const char* sep = strchr(src, '|');
+                    if (sep) {
+                        embeds[embed_count++] = cbm_arena_strndup(arena, src, sep - src);
+                        src = sep + 1;
+                    } else {
+                        embeds[embed_count++] = cbm_arena_strdup(arena, src);
+                        break;
+                    }
+                }
+                if (embed_count > 0) {
+                    const char** arr = (const char**)cbm_arena_alloc(arena, (embed_count + 1) * sizeof(const char*));
+                    for (int j = 0; j < embed_count; j++) arr[j] = embeds[j];
+                    arr[embed_count] = NULL;
+                    rt.embedded_types = arr;
+                }
+            }
+
+            // Field defs
+            if (d->field_defs) {
+                const char* fsrc = d->field_defs;
+                const char* fnames[64];
+                const CBMType* ftypes[64];
+                int fcount = 0;
+                while (*fsrc && fcount < 63) {
+                    const char* sep = strchr(fsrc, '|');
+                    const char* end = sep ? sep : fsrc + strlen(fsrc);
+                    char* pair = cbm_arena_strndup(arena, fsrc, end - fsrc);
+                    char* colon = strchr(pair, ':');
+                    if (colon) {
+                        *colon = '\0';
+                        fnames[fcount] = pair;
+                        ftypes[fcount] = c_parse_return_type_text(arena, colon + 1,
+                            d->def_module_qn ? d->def_module_qn : module_qn);
+                        fcount++;
+                    }
+                    if (!sep) break;
+                    fsrc = sep + 1;
+                }
+                if (fcount > 0) {
+                    const char** fnarr = (const char**)cbm_arena_alloc(arena, (fcount + 1) * sizeof(const char*));
+                    const CBMType** ftarr = (const CBMType**)cbm_arena_alloc(arena, (fcount + 1) * sizeof(const CBMType*));
+                    for (int j = 0; j < fcount; j++) { fnarr[j] = fnames[j]; ftarr[j] = ftypes[j]; }
+                    fnarr[fcount] = NULL;
+                    ftarr[fcount] = NULL;
+                    rt.field_names = fnarr;
+                    rt.field_types = ftarr;
+                }
+            }
+
+            cbm_registry_add_type(&reg, rt);
+        }
+
+        if (d->label && (strcmp(d->label, "Function") == 0 || strcmp(d->label, "Method") == 0)) {
+            CBMRegisteredFunc rf;
+            memset(&rf, 0, sizeof(rf));
+            rf.min_params = -1;
+            rf.qualified_name = cbm_arena_strdup(arena, d->qualified_name);
+            rf.short_name = cbm_arena_strdup(arena, d->short_name);
+
+            const char* def_module = d->def_module_qn ? d->def_module_qn : module_qn;
+
+            // Return types
+            if (d->return_types) {
+                // Parse "|"-separated
+                const char* rsrc = d->return_types;
+                const CBMType* rets[16];
+                int rcount = 0;
+                while (*rsrc && rcount < 15) {
+                    const char* sep = strchr(rsrc, '|');
+                    const char* end = sep ? sep : rsrc + strlen(rsrc);
+                    char* rt_text = cbm_arena_strndup(arena, rsrc, end - rsrc);
+                    rets[rcount++] = c_parse_return_type_text(arena, rt_text, def_module);
+                    if (!sep) break;
+                    rsrc = sep + 1;
+                }
+                if (rcount > 0) {
+                    const CBMType** rarr = (const CBMType**)cbm_arena_alloc(arena, (rcount + 1) * sizeof(const CBMType*));
+                    for (int j = 0; j < rcount; j++) rarr[j] = rets[j];
+                    rarr[rcount] = NULL;
+                    rf.signature = cbm_type_func(arena, NULL, NULL, rarr);
+                }
+            }
+            if (!rf.signature) rf.signature = cbm_type_func(arena, NULL, NULL, NULL);
+
+            if (d->receiver_type) {
+                rf.receiver_type = cbm_arena_strdup(arena, d->receiver_type);
+            }
+
+            cbm_registry_add_func(&reg, rf);
+        }
+    }
+
+    // Parse the source with tree-sitter
+    TSParser* parser = ts_parser_new();
+    if (!parser) return;
+
+    const TSLanguage* ts_lang = cpp_mode ?
+        tree_sitter_cpp() : tree_sitter_c();
+    ts_parser_set_language(parser, ts_lang);
+
+    TSTree* tree = ts_parser_parse_string(parser, NULL, source, source_len);
+    ts_parser_delete(parser);
+    if (!tree) return;
+
+    TSNode root = ts_tree_root_node(tree);
+
+    // Initialize context and run
+    CLSPContext ctx;
+    c_lsp_init(&ctx, arena, source, source_len, &reg, module_qn, cpp_mode, out);
+
+    // Add include mappings
+    for (int i = 0; i < include_count; i++) {
+        c_lsp_add_include(&ctx, include_paths[i], include_ns_qns[i]);
+    }
+
+    c_lsp_process_file(&ctx, root);
+
+    ts_tree_delete(tree);
+}

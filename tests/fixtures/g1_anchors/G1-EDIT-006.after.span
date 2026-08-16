@@ -1,0 +1,144 @@
+void cbm_mem_init_with_cap(double ram_fraction, size_t hard_cap_bytes) {
+    int expected = 0;
+    if (!atomic_compare_exchange_strong(&g_initialized, &expected, 1)) {
+        return;
+    }
+
+    if (ram_fraction <= 0.0 || ram_fraction > MAX_RAM_FRACTION) {
+        ram_fraction = DEFAULT_RAM_FRACTION;
+    }
+
+    /* Reduce upfront memory: don't eagerly commit arenas.
+     * Force decommit on purge (MADV_FREE_REUSABLE on macOS) so RSS
+     * drops immediately instead of staying high until memory pressure. */
+#ifdef _WIN32
+    /* Decisive check: is the allocator still "preloading"? If so its arena
+     * machinery — including every purge path — is inert, and completing init
+     * here is what turns the options above from decoration into behaviour. */
+    if (_mi_preloading()) {
+        _mi_auto_process_init();
+        if (_mi_preloading()) {
+            /* Arena creation and every purge path stay disabled while this is
+             * set, so the process would grow until the OS killed it. Refuse. */
+            mem_setup_fatal("preloading",
+                            "allocator remained in preloading state after explicit process "
+                            "init: arena creation and purging are disabled, memory would "
+                            "never be returned to the OS");
+        }
+        cbm_log_warn("mem.allocator.preloading_completed", "still_preloading", "false", "detail",
+                     "allocator was still preloading, so arena creation and purging were "
+                     "disabled; process init completed explicitly");
+    } else {
+        cbm_log_info("mem.allocator.preloading", "state", "already_complete");
+    }
+#endif
+
+    mem_option_set_verified(mi_option_arena_eager_commit, 0, "arena_eager_commit");
+    mem_option_set_verified(mi_option_purge_decommits, SKIP_ONE, "purge_decommits");
+    mem_option_set_verified(mi_option_purge_delay, 0, "purge_delay"); /* immediate */
+    /* v3 (#832): reclaim abandoned pages on ANY thread's free (=1), restoring the
+     * v2 behaviour. mimalloc v3 defaults page_reclaim_on_free=0, so pages a worker
+     * thread abandons at exit are NOT reclaimed when the main thread later frees
+     * their blocks (and mi_collect cannot touch abandoned pages) — RSS then
+     * ratchets across repeated in-process index cycles. The supervised subprocess
+     * is the primary cure (the child returns 100% RSS on exit); this is the
+     * in-process fallback for any path that stays in-process (kill switch,
+     * spawn-fail degrade, embedders). */
+    mem_option_set_verified(mi_option_page_reclaim_on_free, 1, "page_reclaim_on_free");
+
+    /* Every option above is inert unless ordinary malloc actually reaches this
+     * allocator. That silently stopped being true on Windows — mimalloc's
+     * static override is gated on _MSC_VER, which clang/MinGW never defines —
+     * and nothing checked, so a long-lived daemon ratcheted committed memory
+     * for months (#581). Probe it once, out loud: a real malloc asked whether
+     * mimalloc owns it. Anything but true means the tuning here is decoration
+     * and freed pages will not come back.
+     *
+     * ...but "anything but true" only means that where the build actually ASKED
+     * for a global override: prod builds on Windows and Linux. Everywhere else —
+     * macOS, and every test binary on any platform — the override body is
+     * compiled out, so ordinary malloc is SUPPOSED to reach libc and the probe
+     * is answering a question this build never posed. Same measurement,
+     * different meaning per build config, hence the split below. */
+    cbm_mem_ownership_audit_t audit;
+    cbm_mem_audit_ownership(&audit);
+    char owned_str[CBM_SZ_32];
+    snprintf(owned_str, sizeof(owned_str), "%d/%d", audit.owned_count, audit.probed_count);
+    if (!audit.all_owned && !CBM_MEM_EXPECT_GLOBAL_OVERRIDE) {
+        /* Expected: this build never asked mimalloc to replace ordinary malloc,
+         * so ordinary malloc reaching libc is the design, not a fault. Say what
+         * IS allocator-served instead, because the interesting question here is
+         * "are the bound populations bound", not "did the override fire".
+         *
+         * Reported at INFO deliberately. A warning that fires on every run of a
+         * correctly configured build is not a tripwire, it is background noise —
+         * it trained readers to ignore the one line that catches #581, and cost
+         * a user the time to file and self-close #1360. */
+        cbm_log_info("mem.allocator.bound_populations_only", "owned_classes", owned_str,
+                     "populations", "sqlite,tree_sitter", "detail",
+                     "ordinary malloc is served by the system allocator in this build by "
+                     "design; allocator tuning applies to the bound populations");
+    } else if (!audit.all_owned) {
+        /* Name the classes that escaped, because "not owned" is actionable
+         * only if you know WHICH sizes. A class listed here either bypasses
+         * the override or is misclassified by the routing predicate, and both
+         * mean freed pages will not come back. */
+        char classes[CBM_SZ_256];
+        int length = 0;
+        for (int i = 0;
+             i < CBM_MEM_OWNERSHIP_CLASSES && length >= 0 && (size_t)length < sizeof(classes);
+             i++) {
+            if (audit.allocated[i] && !audit.owned[i]) {
+                int written = snprintf(classes + length, sizeof(classes) - (size_t)length, "%s%zu",
+                                       length ? "," : "", audit.probe_bytes[i]);
+                if (written < 0) {
+                    break;
+                }
+                length += written;
+            }
+        }
+        cbm_log_warn("mem.allocator.not_owned", "owned_classes", owned_str, "unowned_bytes",
+                     length > 0 ? classes : "?", "detail",
+                     "allocations in these size classes are not allocator-owned: purge and "
+                     "reclaim options do not apply to them and freed pages stay committed");
+    } else {
+        cbm_log_info("mem.allocator.owned", "classes", "all");
+    }
+
+    /* CBM_MEM_BUDGET_MB env override (memory analogue of CBM_WORKERS).
+     * Lets users cap the budget directly without an enclosing cgroup —
+     * useful on bare-metal hosts where cgroup memory limits are absent
+     * (#363). Explicit override > implicit RAM/cgroup detection. The budget
+     * math (fraction default, override, clamp-to-total) lives in the pure,
+     * testable cbm_mem_resolve_budget(); this path only reads the env and
+     * emits the log/warn lines. */
+    cbm_system_info_t info = cbm_system_info();
+
+    char env_buf[CBM_SZ_32];
+    const char *env = cbm_safe_getenv("CBM_MEM_BUDGET_MB", env_buf, sizeof(env_buf), NULL);
+    cbm_mem_budget_t resolved =
+        cbm_mem_resolve_budget_capped(info.total_ram, ram_fraction, env, hard_cap_bytes);
+    g_budget = resolved.budget;
+
+    /* The resolver is the single source of truth for the parse + clamp; this
+     * path only surfaces its outcome as log lines. */
+    if (resolved.invalid) {
+        cbm_log_warn("mem.budget.env.invalid", "value", env, "fallback", "ram_fraction");
+    } else if (resolved.clamped) {
+        char cap_mb[CBM_SZ_32];
+        snprintf(cap_mb, sizeof(cap_mb), "%zu", info.total_ram / MB_DIVISOR);
+        cbm_log_warn("mem.budget.clamped", "requested_mb", env, "cap_mb", cap_mb);
+    }
+    if (resolved.hard_capped) {
+        char cap_bytes[CBM_SZ_32];
+        snprintf(cap_bytes, sizeof(cap_bytes), "%zu", hard_cap_bytes);
+        cbm_log_info("mem.budget.worker_cap", "cap_bytes", cap_bytes);
+    }
+
+    char budget_mb[CBM_SZ_32];
+    char ram_mb[CBM_SZ_32];
+    snprintf(budget_mb, sizeof(budget_mb), "%zu", g_budget / MB_DIVISOR);
+    snprintf(ram_mb, sizeof(ram_mb), "%zu", info.total_ram / MB_DIVISOR);
+    cbm_log_info("mem.init", "budget_mb", budget_mb, "total_ram_mb", ram_mb, "source",
+                 resolved.source);
+}

@@ -1,0 +1,64 @@
+char *cbm_mcp_text_result(const char *text, bool is_error) {
+    yyjson_mut_doc *doc = yyjson_mut_doc_new(NULL);
+    yyjson_mut_val *root = yyjson_mut_obj(doc);
+    yyjson_mut_doc_set_root(doc, root);
+
+    yyjson_mut_val *content = yyjson_mut_arr(doc);
+    yyjson_mut_val *item = yyjson_mut_obj(doc);
+    yyjson_mut_obj_add_str(doc, item, "type", "text");
+    yyjson_mut_obj_add_str(doc, item, "text", text ? text : "");
+    yyjson_mut_arr_add_val(content, item);
+    yyjson_mut_obj_add_val(doc, root, "content", content);
+
+    bool has_structured_content = false;
+    if (text) {
+        yyjson_doc *structured_doc = yyjson_read(text, strlen(text), 0);
+        if (structured_doc) {
+            yyjson_val *structured_root = yyjson_doc_get_root(structured_doc);
+            if (yyjson_is_obj(structured_root)) {
+                yyjson_mut_val *structured = yyjson_val_mut_copy(doc, structured_root);
+                if (structured) {
+                    yyjson_mut_obj_add_val(doc, root, "structuredContent", structured);
+                    has_structured_content = true;
+                }
+            }
+            yyjson_doc_free(structured_doc);
+        }
+    }
+    if (!has_structured_content) {
+        /* Every advertised MCP tool declares an object outputSchema, so a
+         * conforming structuredContent object is mandatory even for compact
+         * TOON/plain-text and error results. What is NOT mandatory is putting
+         * the whole payload in it a second time.
+         *
+         * It used to. For any result that is not a JSON object — which is every
+         * TOON answer, i.e. the large ones — structuredContent was
+         * {"text": <the entire payload>} sitting beside an identical
+         * content[0].text. Measured at 2.05x the payload on a 20k-node
+         * query_graph, so half of every reply was redundant bytes: half the
+         * usable transport budget, and double the tokens billed to every LLM
+         * caller (#1375).
+         *
+         * Nothing is lost by dropping it. structuredContent exists to carry
+         * STRUCTURE, and a string re-wrapped in a one-key object has none —
+         * a client parsing structuredContent.text learns exactly what
+         * content[0].text already told it. The empty object still satisfies
+         * outputSchema ({"type":"object","additionalProperties":true}), and the
+         * JSON branch above is untouched: when a tool really does return an
+         * object, callers still get it parsed.
+         *
+         * Errors keep their payload. They are bounded and small, the duplication
+         * costs nothing measurable, and structuredContent.error is the only
+         * machine-readable form of a failure a client has. */
+        yyjson_mut_val *structured = yyjson_mut_obj(doc);
+        if (is_error) {
+            yyjson_mut_obj_add_str(doc, structured, "error", text ? text : "");
+        }
+        yyjson_mut_obj_add_val(doc, root, "structuredContent", structured);
+    }
+    yyjson_mut_obj_add_bool(doc, root, "isError", is_error);
+
+    char *out = yy_doc_to_str(doc);
+    yyjson_mut_doc_free(doc);
+    return out;
+}

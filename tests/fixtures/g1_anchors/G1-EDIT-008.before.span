@@ -1,0 +1,215 @@
+static char *handle_ask(hyp_mcp_server_t *srv, const char *args) {
+    char *project = get_project_arg(args);
+    hyp_store_t *store = resolve_store(srv, project);
+    REQUIRE_STORE(store, project);
+
+    char *not_indexed = verify_project_indexed(store, project);
+    if (not_indexed) {
+        free(project);
+        return not_indexed;
+    }
+
+    char *format_arg = hyp_mcp_get_string_arg(args, "format");
+    bool json = format_arg && strcmp(format_arg, "json") == 0;
+    free(format_arg);
+
+    /* Argument validation before availability: a malformed call is the
+     * caller's to fix whether or not the lane happens to be built today. */
+    char *question = hyp_mcp_get_string_arg(args, "question");
+    if (!question || !question[0]) {
+        /* Distinguish "absent" from "wrong type", because the wrong type an
+         * agent actually reaches for is the array — semantic_query's shape —
+         * and pointing at the right tool costs one sentence. */
+        bool was_array = false;
+        yyjson_doc *ad = yyjson_read(args, strlen(args), 0);
+        if (ad) {
+            yyjson_val *q = yyjson_obj_get(yyjson_doc_get_root(ad), "question");
+            was_array = q && yyjson_is_arr(q);
+            yyjson_doc_free(ad);
+        }
+        if (was_array) {
+            return ask_error("ask takes ONE natural-language string, not an array — e.g. "
+                             "question=\"how does the writer decide section ordering\". For an "
+                             "array of keywords use search_graph(semantic_query=[\"send\","
+                             "\"publish\"]), which is a different lane with different result "
+                             "semantics.",
+                             project, question);
+        }
+        return ask_error("question is required: one natural-language string, e.g. "
+                         "question=\"how does the writer decide section ordering\".",
+                         project, question);
+    }
+    if (strlen(question) > ASK_QUESTION_MAX) {
+        return ask_error("question is too long. This lane encodes one QUESTION, not a document; "
+                         "if you have a body of text to match against, that is the indexing "
+                         "side of the lane, not the query side.",
+                         project, question);
+    }
+
+    int limit = hyp_mcp_get_int_arg(args, "limit", ASK_DEFAULT_LIMIT);
+    if (limit <= 0) {
+        limit = ASK_DEFAULT_LIMIT;
+    }
+    if (limit > ASK_MAX_LIMIT) {
+        limit = ASK_MAX_LIMIT;
+    }
+
+    hyp_ask_status_t st;
+    hyp_ask_index_status(store, project, &st);
+    /* THE WEIGHTS, BEFORE THE INDEX. hyp_ask_index_status answers about the
+     * store and the linked encoder; whether that encoder's 639 MB of weights
+     * are on disk is the fetcher's question and is asked here, where the CLI
+     * layer is already reachable. Order matters: someone with neither weights
+     * nor index must be told to fetch the model, because the embed pass that
+     * builds the index is the thing that needs it. */
+    if (st.avail == HYP_ASK_NO_INDEX || st.avail == HYP_ASK_AVAILABLE) {
+        if (!hyp_model_ask_present()) {
+            st.avail = HYP_ASK_NO_WEIGHTS;
+        }
+    }
+    if (st.avail != HYP_ASK_AVAILABLE) {
+        char *result = ask_emit_unavailable(&st, project, json);
+        free(project);
+        free(question);
+        return result;
+    }
+
+    /* Language: explicit wins, derivation is the fallback, and NEITHER falls
+     * back to a default. A question about Rust encoded behind the C++ prefix
+     * still returns unit vectors and a plausible ranking — there is no
+     * downstream signal at all, so the signal has to be here. */
+    char *lang_arg = hyp_mcp_get_string_arg(args, "language");
+    bool lang_explicit = lang_arg && lang_arg[0];
+    HYPLanguage lang =
+        lang_explicit ? hyp_ask_resolve_language(lang_arg) : ask_derive_language(store, project);
+    if (lang_explicit && lang == HYP_LANG_COUNT) {
+        char msg[ASK_MSG];
+        snprintf(msg, sizeof(msg),
+                 "language \"%s\" is not recognised. Pass an extension (\"cpp\", \"rs\", \"py\") "
+                 "or a display name (\"C++\", \"Rust\", \"Python\"). It is not defaulted, "
+                 "because the wrong language renders a prefix that still ranks and still "
+                 "returns answers — just not the ones any measurement describes.",
+                 lang_arg);
+        free(lang_arg);
+        return ask_error(msg, project, question);
+    }
+    free(lang_arg);
+    const char *lang_name = hyp_ask_language_display(lang);
+    if (!lang_name) {
+        return ask_error("could not determine which language's instruct prefix to render: no "
+                         "file in this project's graph maps to a known language. Pass "
+                         "language=\"...\" explicitly (an extension like \"cpp\" or a display "
+                         "name like \"C++\").",
+                         project, question);
+    }
+
+    const hyp_ask_backend_t *backend = hyp_ask_backend();
+    float *qvec = (float *)calloc(HYP_ASK_DIM, sizeof(float));
+    if (!qvec) {
+        return ask_error("out of memory encoding the question", project, question);
+    }
+    char encerr[ASK_MSG] = "";
+    if (backend->encode_query(lang, question, qvec, encerr, sizeof(encerr)) != 0) {
+        char msg[ASK_MSG + HYP_SZ_128];
+        snprintf(msg, sizeof(msg), "could not encode the question: %s",
+                 encerr[0] ? encerr : "the encoder failed without a reason");
+        free(qvec);
+        return ask_error(msg, project, question);
+    }
+
+    hyp_ask_hit_t *hits = NULL;
+    int hit_count = 0;
+    int rc = hyp_ask_index_search(store, project, qvec, limit, &hits, &hit_count);
+    free(qvec);
+    if (rc != HYP_STORE_OK) {
+        return ask_error("the semantic index could not be read. Re-run index_status; if the "
+                         "project is healthy the vector store needs rebuilding.",
+                         project, question);
+    }
+
+    char trunc_text[ASK_MSG];
+    ask_truncation_text(&st, trunc_text, sizeof(trunc_text));
+    bool with_cut = st.trunc == HYP_ASK_TRUNC_SOME;
+    const char *cols[6];
+    int ncols = 0;
+    ask_cols(cols, &ncols, with_cut);
+
+    char *result = NULL;
+    if (json) {
+        yyjson_mut_doc *doc = yyjson_mut_doc_new(NULL);
+        yyjson_mut_val *root = yyjson_mut_obj(doc);
+        yyjson_mut_doc_set_root(doc, root);
+        yyjson_mut_obj_add_bool(doc, root, "available", true);
+        yyjson_mut_obj_add_strcpy(doc, root, "model", st.model_id);
+        yyjson_mut_obj_add_strcpy(doc, root, "language", lang_name);
+        yyjson_mut_obj_add_str(doc, root, "language_source",
+                               lang_explicit ? "explicit" : "derived");
+        yyjson_mut_obj_add_strcpy(doc, root, "truncation", trunc_text);
+        yyjson_mut_obj_add_int(doc, root, "population", st.n_vectors);
+        yyjson_mut_val *jcols = yyjson_mut_arr(doc);
+        for (int c = 0; c < ncols; c++) {
+            yyjson_mut_arr_add_str(doc, jcols, cols[c]);
+        }
+        yyjson_mut_obj_add_val(doc, root, "cols", jcols);
+        yyjson_mut_val *rows = yyjson_mut_arr(doc);
+        for (int i = 0; i < hit_count; i++) {
+            char lines[HYP_SZ_32];
+            sg_lines_str(lines, sizeof(lines), hits[i].start_line, hits[i].end_line);
+            yyjson_mut_val *row = yyjson_mut_arr(doc);
+            yyjson_mut_arr_add_strcpy(doc, row, hits[i].qualified_name);
+            yyjson_mut_arr_add_strcpy(doc, row, hits[i].label);
+            yyjson_mut_arr_add_strcpy(doc, row, hits[i].file_path);
+            yyjson_mut_arr_add_strcpy(doc, row, lines);
+            yyjson_mut_arr_add_real(doc, row, hits[i].score);
+            if (with_cut) {
+                yyjson_mut_arr_add_bool(doc, row, hits[i].truncated);
+            }
+            yyjson_mut_arr_add_val(rows, row);
+        }
+        yyjson_mut_obj_add_val(doc, root, "rows", rows);
+        char *json_text = yy_doc_to_str(doc);
+        yyjson_mut_doc_free(doc);
+        result = hyp_mcp_text_result(json_text ? json_text : "{}", false);
+        free(json_text);
+    } else {
+        hyp_sb_t sb;
+        hyp_sb_init(&sb);
+        hyp_tree_scalar_bool(&sb, "available", true);
+        hyp_tree_scalar_str(&sb, "model", st.model_id);
+        hyp_tree_scalar_str(&sb, "language", lang_name);
+        hyp_tree_scalar_str(&sb, "language_source", lang_explicit ? "explicit" : "derived");
+        hyp_tree_scalar_str(&sb, "truncation", trunc_text);
+        hyp_tree_scalar_int(&sb, "population", st.n_vectors);
+        hyp_tree_table_header(&sb, "results", hit_count, cols, ncols);
+        for (int i = 0; i < hit_count; i++) {
+            char lines[HYP_SZ_32];
+            sg_lines_str(lines, sizeof(lines), hits[i].start_line, hits[i].end_line);
+            hyp_tree_row_begin(&sb);
+            hyp_tree_cell_str(&sb, hits[i].qualified_name, true);
+            hyp_tree_cell_str(&sb, hits[i].label, false);
+            hyp_tree_cell_str(&sb, hits[i].file_path, false);
+            hyp_tree_cell_str(&sb, lines, false);
+            hyp_tree_cell_real(&sb, hits[i].score, false);
+            if (with_cut) {
+                hyp_tree_cell_bool(&sb, hits[i].truncated, false);
+            }
+            hyp_tree_row_end(&sb);
+        }
+        if (hit_count == 0) {
+            /* A REAL empty result: the index exists, the question encoded, and
+             * nothing scored. Said in words so it cannot be confused with the
+             * unavailable answer above, which never gets this far. */
+            hyp_tree_scalar_str(&sb, "hint",
+                                "the index was searched and returned nothing. Unlike "
+                                "available=false, this IS a statement about the code.");
+        }
+        char *text = hyp_sb_finish(&sb);
+        result = hyp_mcp_text_result(text ? text : "out of memory", text == NULL);
+        free(text);
+    }
+
+    hyp_ask_free_hits(hits, hit_count);
+    free(project);
+    free(question);
+    return result;
+}
