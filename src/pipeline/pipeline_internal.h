@@ -688,19 +688,18 @@ enum { HYP_SEMANTIC_INDEX_VERSION = 3 };
 typedef struct {
     hyp_gbuf_t *gbuf;
     const char *final_db_path;
+    /* Where the durable half of the store still lives while this generation is
+     * being built: the LIVE database, not the staging copy of it. The two
+     * differ exactly when they matter — a forced full rebuild unlinks the
+     * staging copy before indexing, and a failed backup never makes one — so
+     * reading the previous generation from final_db_path would find nothing
+     * and publish an empty registry. NULL falls back to final_db_path, which
+     * is right for a caller whose destination IS the live file. */
+    const char *previous_db_path;
     const char *project;
     atomic_int *cancelled;
     const hyp_file_hash_t *manifest;
     int manifest_count;
-    const char *adr_content;
-    /* The instant the carried ADR was last written, so the row crosses the
-     * generation boundary UNCHANGED. Restamping it makes a reindex look like
-     * an edit — to the UI, which shows the time, and to the decision store,
-     * where the same document under a new instant is a second record and two
-     * machines that reindexed at different moments would never deduplicate.
-     * NULL only when adr_content is NULL, or from a caller that has no
-     * instant to carry. */
-    const char *adr_updated_at;
     const hyp_coverage_row_t *coverage;
     int coverage_count;
     hyp_coverage_meta_t coverage_meta;
@@ -773,6 +772,9 @@ void hyp_pipeline_set_lsp_surfaces(hyp_pipeline_t *p, hyp_lsp_surface_row_t *row
 
 /* Pipeline accessors for incremental use */
 const char *hyp_pipeline_repo_path(const hyp_pipeline_t *p);
+/* The live database this run replaces, or NULL when the destination IS it.
+ * Publication reads the previous generation's durable rows from here. */
+const char *hyp_pipeline_live_db_path(const hyp_pipeline_t *p);
 atomic_int *hyp_pipeline_cancelled_ptr(hyp_pipeline_t *p);
 int hyp_pipeline_workspace_member_count(const hyp_pipeline_t *p);
 
@@ -847,7 +849,7 @@ void hyp_pipeline_incremental_test_force_legacy_partial_once(void);
 void hyp_pipeline_incremental_test_fail_after_stage_dump_once(void);
 void hyp_pipeline_incremental_test_cancel_after_predump_once(void);
 void hyp_pipeline_incremental_test_cancel_after_destination_prepare_once(void);
-void hyp_pipeline_incremental_test_fail_adr_capture_once(void);
+void hyp_pipeline_incremental_test_fail_carry_forward_once(void);
 typedef void (*hyp_pipeline_test_hook_fn)(void *userdata);
 void hyp_pipeline_incremental_test_before_final_manifest_once(hyp_pipeline_test_hook_fn hook,
                                                               void *userdata);
@@ -859,6 +861,7 @@ void hyp_pipeline_incremental_test_reset_faults(void);
 bool hyp_pipeline_persist_test_take_failure_after_stage_dump(void);
 bool hyp_pipeline_persist_test_take_cancel_after_predump(void);
 bool hyp_pipeline_persist_test_take_cancel_after_destination_prepare(void);
+bool hyp_pipeline_persist_test_take_failure_carry_forward(void);
 void hyp_pipeline_persist_test_run_before_final_manifest(void);
 void hyp_pipeline_persist_test_reset_faults(void);
 #endif

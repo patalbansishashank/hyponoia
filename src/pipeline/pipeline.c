@@ -23,6 +23,8 @@ enum { HYP_DIR_PERMS = 0755, PL_RING = 4, PL_RING_MASK = 3, PL_SEQ_PASSES = 6 };
 #include "graph_buffer/graph_buffer.h"
 #include "git/git_context.h"
 #include "store/store.h"
+#include "store/generation_carry.h"
+#include "store/workspace_resolve.h"
 #include "macro_table.h"
 #include "arena.h"
 #include "discover/discover.h"
@@ -68,7 +70,7 @@ static atomic_int g_pipeline_busy = 0;
 static atomic_bool g_persist_test_fail_after_stage_dump = false;
 static atomic_bool g_persist_test_cancel_after_predump = false;
 static atomic_bool g_persist_test_cancel_after_destination_prepare = false;
-static atomic_bool g_persist_test_fail_adr_capture = false;
+static atomic_bool g_persist_test_fail_carry_forward = false;
 static hyp_pipeline_test_hook_fn g_persist_test_before_final_manifest = NULL;
 static void *g_persist_test_before_final_manifest_userdata = NULL;
 
@@ -84,8 +86,8 @@ void hyp_pipeline_incremental_test_cancel_after_destination_prepare_once(void) {
     atomic_store(&g_persist_test_cancel_after_destination_prepare, true);
 }
 
-void hyp_pipeline_incremental_test_fail_adr_capture_once(void) {
-    atomic_store(&g_persist_test_fail_adr_capture, true);
+void hyp_pipeline_incremental_test_fail_carry_forward_once(void) {
+    atomic_store(&g_persist_test_fail_carry_forward, true);
 }
 
 void hyp_pipeline_incremental_test_before_final_manifest_once(hyp_pipeline_test_hook_fn hook,
@@ -116,11 +118,15 @@ bool hyp_pipeline_persist_test_take_cancel_after_destination_prepare(void) {
     return atomic_exchange(&g_persist_test_cancel_after_destination_prepare, false);
 }
 
+bool hyp_pipeline_persist_test_take_failure_carry_forward(void) {
+    return atomic_exchange(&g_persist_test_fail_carry_forward, false);
+}
+
 void hyp_pipeline_persist_test_reset_faults(void) {
     atomic_store(&g_persist_test_fail_after_stage_dump, false);
     atomic_store(&g_persist_test_cancel_after_predump, false);
     atomic_store(&g_persist_test_cancel_after_destination_prepare, false);
-    atomic_store(&g_persist_test_fail_adr_capture, false);
+    atomic_store(&g_persist_test_fail_carry_forward, false);
     g_persist_test_before_final_manifest = NULL;
     g_persist_test_before_final_manifest_userdata = NULL;
 }
@@ -193,12 +199,11 @@ struct hyp_pipeline {
     int committed_nodes;
     int committed_edges;
 
-    /* ADR (project_summaries) captured before a full-reindex DB delete, so it
-     * can be restored after the rebuild. NULL when no ADR existed. Issue #516. */
-    char *saved_adr;
-    /* Its stored instant, carried with it. A rebuild copies the row; it does
-     * not author one, so the time must survive the copy unchanged. */
-    char *saved_adr_updated_at;
+    /* The LIVE database, borrowed from hyp_pipeline_run for the length of the
+     * run. Publication reads the previous generation's durable rows from HERE
+     * rather than from its own destination, which by then may be a staging
+     * copy that a forced full rebuild already unlinked. Not owned. */
+    const char *live_db_path;
 
     /* Per-file LSP surfaces serialized at the collect_all_defs seam (the only
      * moment the result cache is alive), persisted by dump_and_persist_hashes
@@ -364,11 +369,6 @@ void hyp_pipeline_free(hyp_pipeline_t *p) {
     p->file_errors_count = 0;
     p->file_errors_cap = 0;
     free(p->branch_qn);
-    free(p->saved_adr); /* freed here too: error paths can exit before the
-                         * restore in dump_and_persist_hashes runs. Issue #516. */
-    p->saved_adr = NULL;
-    free(p->saved_adr_updated_at);
-    p->saved_adr_updated_at = NULL;
     hyp_store_free_lsp_surfaces(p->surface_rows, p->surface_row_count);
     p->surface_rows = NULL;
     p->surface_row_count = 0;
@@ -418,6 +418,70 @@ const char *hyp_pipeline_project_name(const hyp_pipeline_t *p) {
 
 const char *hyp_pipeline_repo_path(const hyp_pipeline_t *p) {
     return p ? p->repo_path : NULL;
+}
+
+const char *hyp_pipeline_live_db_path(const hyp_pipeline_t *p) {
+    return p ? p->live_db_path : NULL;
+}
+
+int hyp_pipeline_index_workspace(const hyp_wsr_resolved_t *ws, hyp_index_mode_t mode,
+                                 int *members_indexed, char *err, size_t err_sz) {
+    if (members_indexed) {
+        *members_indexed = 0;
+    }
+    if (err && err_sz > 0) {
+        err[0] = '\0';
+    }
+    if (!ws || ws->member_count < 1) {
+        if (err && err_sz > 0) {
+            snprintf(err, err_sz, "unresolved workspace");
+        }
+        return HYP_NOT_FOUND;
+    }
+
+    /* Open through the resolver's own open path, never by rebuilding the file
+     * name here: the naming rule has exactly one implementation, and this is
+     * also where the registry gets bound before any member is indexed. */
+    char db_path[HYP_SZ_1K];
+    {
+        hyp_store_t *store = hyp_wsr_store_open(ws, err, err_sz);
+        if (!store) {
+            return HYP_NOT_FOUND;
+        }
+        const char *path = hyp_store_db_path(store);
+        bool ok = path && (size_t)snprintf(db_path, sizeof(db_path), "%s", path) < sizeof(db_path);
+        hyp_store_close(store);
+        if (!ok) {
+            if (err && err_sz > 0) {
+                snprintf(err, err_sz, "workspace '%s' has no usable store path", ws->id);
+            }
+            return HYP_NOT_FOUND;
+        }
+    }
+
+    for (int i = 0; i < ws->member_count; i++) {
+        hyp_pipeline_t *p = hyp_pipeline_new(ws->members[i].root, db_path, mode);
+        if (!p) {
+            if (err && err_sz > 0) {
+                snprintf(err, err_sz, "cannot start indexing member '%s' at %s",
+                         ws->members[i].slug, ws->members[i].root);
+            }
+            return HYP_NOT_FOUND;
+        }
+        int rc = hyp_pipeline_run(p);
+        hyp_pipeline_free(p);
+        if (rc != 0) {
+            if (err && err_sz > 0) {
+                snprintf(err, err_sz, "member '%s' at %s did not publish (rc %d)",
+                         ws->members[i].slug, ws->members[i].root, rc);
+            }
+            return rc;
+        }
+        if (members_indexed) {
+            *members_indexed = i + 1;
+        }
+    }
+    return 0;
 }
 
 atomic_int *hyp_pipeline_cancelled_ptr(hyp_pipeline_t *p) {
@@ -1334,51 +1398,6 @@ static int run_parallel_pipeline(hyp_pipeline_t *p, hyp_pipeline_ctx_t *ctx,
     return check_cancel(p) ? HYP_NOT_FOUND : 0;
 }
 
-static int capture_existing_adr(hyp_pipeline_t *p, const char *db_path) {
-#if defined(HYP_INCREMENTAL_TEST_API) && HYP_INCREMENTAL_TEST_API
-    if (atomic_exchange(&g_persist_test_fail_adr_capture, false)) {
-        return HYP_PIPELINE_ABORT_PRESERVE_DB;
-    }
-#endif
-    hyp_store_t *adr_store = hyp_store_open_path_query(db_path);
-    if (!adr_store) {
-        return HYP_PIPELINE_ABORT_PRESERVE_DB;
-    }
-    hyp_adr_t existing = {0};
-    int adr_rc = hyp_store_adr_get(adr_store, p->project_name, &existing);
-    if (adr_rc == HYP_STORE_NOT_FOUND) {
-        hyp_store_close(adr_store);
-        free(p->saved_adr);
-        p->saved_adr = NULL;
-        free(p->saved_adr_updated_at);
-        p->saved_adr_updated_at = NULL;
-        return 0;
-    }
-    if (adr_rc != HYP_STORE_OK || !existing.content) {
-        hyp_store_adr_free(&existing);
-        hyp_store_close(adr_store);
-        return HYP_PIPELINE_ABORT_PRESERVE_DB;
-    }
-    char *saved = strdup(existing.content);
-    /* The instant travels with the text. A rebuild COPIES this row; restamping
-     * it would tell the UI that an index run edited the architecture, and would
-     * make the same document a second decision record every time. */
-    char *saved_at = existing.updated_at ? strdup(existing.updated_at) : NULL;
-    bool instant_lost = existing.updated_at != NULL && saved_at == NULL;
-    hyp_store_adr_free(&existing);
-    hyp_store_close(adr_store);
-    if (!saved || instant_lost) {
-        free(saved);
-        free(saved_at);
-        return HYP_PIPELINE_ABORT_PRESERVE_DB;
-    }
-    free(p->saved_adr);
-    p->saved_adr = saved;
-    free(p->saved_adr_updated_at);
-    p->saved_adr_updated_at = saved_at;
-    return 0;
-}
-
 /* Route an existing generation. Full rebuilds never delete the live DB here:
  * publication owns the eventual atomic replacement after every pass and
  * metadata write has succeeded. */
@@ -1414,10 +1433,9 @@ static int try_incremental_or_delete_db(hyp_pipeline_t *p, hyp_file_info_t *file
      * no-op and successful-incremental routes -- the pipeline reports success
      * while every later reader finds no store. */
     if (rc == HYP_PIPELINE_FORCE_FULL_REINDEX) {
-        int adr_rc = capture_existing_adr(p, db_path);
-        if (adr_rc != 0) {
-            rc = adr_rc;
-        }
+        /* Only the staging COPY is removed here. Everything durable in the
+         * generation being replaced is read at publication time from the live
+         * file, which nothing touches until the final rename. */
         (void)hyp_unlink(db_path);
         (void)hyp_remove_db_sidecars(db_path);
     }
@@ -1702,6 +1720,34 @@ int hyp_pipeline_publish_generation(const hyp_pipeline_generation_t *generation)
         free(stage_path);
         return HYP_PIPELINE_PERSIST_FAILED;
     }
+
+    /* The dump holds ONE member's graph and nothing else. Everything durable
+     * the previous generation carried -- the workspace registry, the other
+     * members' graphs, the authored decision record -- exists only there, and
+     * this staging file replaces it wholesale. Carry it across before any
+     * metadata write, so the integrity ceiling and the FTS rebuild both see
+     * the assembled store rather than one member of it. A refusal here means
+     * the previous generation could not be judged; the rename has not
+     * happened, so it survives untouched. */
+    {
+        const char *previous =
+            generation->previous_db_path ? generation->previous_db_path : generation->final_db_path;
+        char carry_err[HYP_SZ_1K] = "";
+        int carry_rc = hyp_generation_carry_forward(stage_path, previous, generation->project,
+                                                    carry_err, sizeof(carry_err));
+#if defined(HYP_INCREMENTAL_TEST_API) && HYP_INCREMENTAL_TEST_API
+        if (hyp_pipeline_persist_test_take_failure_carry_forward()) {
+            carry_rc = HYP_GEN_CARRY_ERR;
+            snprintf(carry_err, sizeof(carry_err), "carry forward faulted");
+        }
+#endif
+        if (carry_rc != HYP_GEN_CARRY_OK) {
+            hyp_log_error("pipeline.err", "phase", "carry_forward", "err", carry_err);
+            discard_generation_stage(stage_path);
+            free(stage_path);
+            return HYP_PIPELINE_ABORT_PRESERVE_DB;
+        }
+    }
 #if defined(HYP_INCREMENTAL_TEST_API) && HYP_INCREMENTAL_TEST_API
     if (hyp_pipeline_persist_test_take_failure_after_stage_dump()) {
         discard_generation_stage(stage_path);
@@ -1750,10 +1796,6 @@ int hyp_pipeline_publish_staged(char *stage_path, const hyp_pipeline_generation_
         ok = hyp_store_delete_lsp_surfaces(store, generation->project) == HYP_STORE_OK &&
              hyp_store_upsert_lsp_surface_batch(store, generation->surface_rows,
                                                 generation->surface_row_count) == HYP_STORE_OK;
-    }
-    if (ok && generation->adr_content) {
-        ok = hyp_store_adr_store_at(store, generation->project, generation->adr_content,
-                                    generation->adr_updated_at) == HYP_STORE_OK;
     }
     hyp_log_info("publish.timing", "block", "writes", "elapsed_ms",
                  itoa_buf((int)elapsed_ms(t_pub)));
@@ -1958,8 +2000,7 @@ static int dump_and_persist_hashes(hyp_pipeline_t *p, const hyp_file_hash_t *bas
         .cancelled = p->cancelled,
         .manifest = manifest,
         .manifest_count = manifest_count,
-        .adr_content = p->saved_adr,
-        .adr_updated_at = p->saved_adr_updated_at,
+        .previous_db_path = p->live_db_path,
         .coverage = cov,
         .coverage_count = cov_count,
         .coverage_meta =
@@ -2001,11 +2042,6 @@ static int dump_and_persist_hashes(hyp_pipeline_t *p, const hyp_file_hash_t *bas
         hyp_log_warn("index.ignored_capped", "stored", itoa_buf(p->ignored_count), "total",
                      itoa_buf(p->ignored_total));
     }
-    free(p->saved_adr);
-    p->saved_adr = NULL;
-    free(p->saved_adr_updated_at);
-    p->saved_adr_updated_at = NULL;
-
     /* The SQLite generation is the commit point. Automatic refresh of an
      * existing artifact is best-effort, but an explicitly requested artifact
      * is caller-visible and must report an export failure. */
@@ -2489,8 +2525,15 @@ int hyp_pipeline_run(hyp_pipeline_t *p) {
         free(final_path);
         return HYP_NOT_FOUND;
     }
+    /* Publication builds a fresh file from one member's graph buffer; the
+     * durable rows it must carry across live in the file this run replaces.
+     * That is final_path, not the staging copy of it -- the copy is missing
+     * whenever the backup failed, and deleted outright when the run was routed
+     * to a forced full rebuild. */
+    p->live_db_path = final_path;
     bool was_incremental = false;
     int rc = hyp_pipeline_run_staged(p, &was_incremental);
+    p->live_db_path = NULL;
     free(p->db_path);
     p->db_path = configured_db_path;
 
