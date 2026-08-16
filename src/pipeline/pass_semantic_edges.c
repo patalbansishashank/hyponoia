@@ -1071,9 +1071,15 @@ static int phase6b_merge_edges(hyp_gbuf_t *gbuf, deferred_edge_buf_t *worker_buf
     }
     int n = 0;
     for (int w = 0; w < worker_count; w++) {
-        memcpy(&pairs[n], worker_bufs[w].edges,
-               (size_t)worker_bufs[w].count * sizeof(deferred_edge_t));
-        n += worker_bufs[w].count;
+        /* A worker that deferred nothing owns a NULL buffer, and memcpy is
+         * undefined for a NULL source even when the length is zero — the
+         * parameter is declared never-null, so the sanitizer is right to
+         * object to what looks like a harmless no-op. */
+        if (worker_bufs[w].count > 0) {
+            memcpy(&pairs[n], worker_bufs[w].edges,
+                   (size_t)worker_bufs[w].count * sizeof(deferred_edge_t));
+            n += worker_bufs[w].count;
+        }
         deferred_buf_free(&worker_bufs[w]);
     }
     qsort(pairs, (size_t)n, sizeof(deferred_edge_t), cmp_deferred_edge_canonical);

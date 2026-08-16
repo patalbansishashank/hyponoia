@@ -249,6 +249,17 @@ static void an_scan_candidates(hyp_store_t *store, hyp_anchor_res_t *out) {
                     out->scan_skipped++;
                     continue;
                 }
+                /* A node with no span — a Folder, a File, the Project row, an
+                 * EnvVar — has no content to hash and therefore cannot be a
+                 * content match. It is NOT a skip: skipped means "something
+                 * that might have matched could not be read", and a disclosure
+                 * that fires on every index is indistinguishable from one that
+                 * fires on a real gap. Every real index carries these rows, so
+                 * counting them would make scan_skipped permanently nonzero
+                 * and the floor it discloses permanently uninformative. */
+                if (node->start_line <= 0 || node->end_line < node->start_line) {
+                    continue;
+                }
                 char *text =
                     hyp_ask_read_span_lines(abs_path, node->start_line, node->end_line, NULL);
                 if (!text) {
