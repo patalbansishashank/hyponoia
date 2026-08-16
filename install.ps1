@@ -146,6 +146,20 @@ foreach ($arg in $args) {
         Write-Host "  Re-run without --standard."
         exit 1
     }
+    # The GPU (Vulkan) build is published for linux-amd64 only. This loop
+    # ignores anything it does not recognise, so an unhandled --gpu would
+    # install the CPU build and say nothing -- a difference the user would meet
+    # later as slow embedding. Refuse by name instead, and keep this branch for
+    # exactly as long as no Windows GPU archive exists.
+    if ($arg -eq "--gpu") {
+        Write-Host "error: no GPU archive is published for Windows." -ForegroundColor Red
+        Write-Host "  The GPU (Vulkan) build is published for linux-amd64 only:"
+        Write-Host "  hyponoia-ui-linux-amd64-gpu.tar.gz. It links libvulkan.so.1"
+        Write-Host "  directly, and it accelerates the 'hyponoia embed' pass only --"
+        Write-Host "  'ask' encodes the question on the CPU in every build."
+        Write-Host "  Re-run without --gpu to install the Windows CPU build."
+        exit 1
+    }
     if ($arg -eq "--skip-config") { $SkipConfig = $true }
     if ($arg -like "--dir=*") { $InstallDir = $arg.Substring(6) }
 }
