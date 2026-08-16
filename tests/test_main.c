@@ -621,6 +621,7 @@ extern void suite_ac(void);
 extern void suite_store_nodes(void);
 extern void suite_store_edges(void);
 extern void suite_store_search(void);
+extern void suite_record_store(void);
 extern void suite_cypher(void);
 extern void suite_mcp(void);
 extern void suite_mcp_mutation_guard(void);
@@ -884,6 +885,7 @@ int main(int argc, char **argv) {
     RUN_SELECTED_SUITE(store_bulk);
     RUN_SELECTED_SUITE(store_pragmas);
     RUN_SELECTED_SUITE(store_checkpoint);
+    RUN_SELECTED_SUITE(record_store);
     RUN_SELECTED_SUITE(dump_verify_io);
 
     /* Cypher (M6) */

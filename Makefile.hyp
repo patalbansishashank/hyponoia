@@ -333,7 +333,9 @@ SQLITE_WRITER_SRC = $(HYP_DIR)/sqlite_writer.c
 # Store module (new)
 # ask_index.c is the READ half of the `ask` lane's opt-in vector store
 # (NEXT-STEPS.md §2.1). It shares no code with the static token vectors.
-STORE_SRCS = src/store/store.c src/store/ask_index.c
+# record_store.c is the durable id-keyed set under the C2 record contract
+# (§4 C1u/C2u) — not a log; see src/store/record_store.h.
+STORE_SRCS = src/store/store.c src/store/ask_index.c src/store/record_store.c
 
 # Cypher module (new)
 CYPHER_SRCS = src/cypher/cypher.c
@@ -765,6 +767,7 @@ TEST_STORE_SRCS = \
     tests/test_store_bulk.c \
     tests/test_store_pragmas.c \
     tests/test_store_checkpoint.c \
+    tests/test_record_store.c \
     tests/test_dump_verify_io.c
 
 TEST_CYPHER_SRCS = \
