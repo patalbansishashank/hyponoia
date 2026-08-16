@@ -32,6 +32,7 @@
 | [Maintainers](MAINTAINERS.md) | Who owns what, and how decisions are made. |
 | [Packaging and registry submission](PACKAGING.md) | Where each package-manager manifest would be submitted, how to validate it first, and which registries this project should not submit to. |
 | [`.hypignore`](hypignore.md) | Syntax, precedence across ignore layers, negation semantics. |
+| [Watched-directory ingest](WATCHED-INGEST.md) | The generic feed format: append-only JSONL any harness can write, and how origins make re-ingest idempotent. |
 
 ## Measurements and plans
 
