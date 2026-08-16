@@ -269,6 +269,9 @@ bash "$ROOT/tests/test_script_exec_bit_contract.sh"
 echo "=== Step 0u: append-only record contract (C2) ==="
 bash "$ROOT/tests/test_record_contract.sh"
 
+echo "=== Step 0v: comment lint contract (E1: comments only, forward only) ==="
+bash "$ROOT/tests/test_comment_lint_contract.sh"
+
 # Verify compiler supports target arch
 verify_compiler "$CC"
 

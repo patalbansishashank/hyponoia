@@ -979,7 +979,7 @@ PP_OBJ_TSAN = $(BUILD_DIR)/tsan_preprocessor.o
 
 # ── Targets ──────────────────────────────────────────────────────
 
-.PHONY: test test-par test-repro test-foundation test-tsan test-daemon-smoke test-ask-batching hyp hyp-with-ui frontend ui-pack clean-c lint lint-tidy lint-cppcheck lint-format format security
+.PHONY: test test-par test-repro test-foundation test-tsan test-daemon-smoke test-ask-batching hyp hyp-with-ui frontend ui-pack clean-c lint lint-tidy lint-cppcheck lint-format format security lint-comments lint-comments-report
 
 $(BUILD_DIR):
 	mkdir -p $(BUILD_DIR)
@@ -1502,6 +1502,29 @@ lint-no-suppress:
 	fi
 	@echo "  Checking NOLINT(misc-no-recursion) against whitelist..."
 	@scripts/check-nolint-whitelist.sh
+
+# Comment lint (plan Track E, unit E1): reject history-shaped prose — dates,
+# commit SHAs, plan-section references, changelog phrasing — in NEW C comments.
+# FORWARD-ONLY: it gates only lines added relative to BASE (default origin/dev,
+# then dev); the existing corpus never fails it and is inventoried by the
+# report target below for E2's relocation into the decision store. The matcher
+# tokenizes C, so string literals are structurally invisible to it.
+#
+# OPT-IN for now, deliberately not folded into `lint`/`lint-ci`: those are what
+# scripts/lint.sh drives and what CI's lint job runs, and flipping a new gate
+# into them re-baselines every in-flight branch at once. The intended CI attach
+# point, for whoever owns that flip: add `lint-comments` to the `lint-ci`
+# prerequisites here (scripts/lint.sh --ci and _lint.yml then pick it up with
+# no further change), with BASE=origin/$GITHUB_BASE_REF on pull requests.
+lint-comments:
+	@echo "=== comment lint (new comments vs base) ==="
+	@python3 scripts/lint-comments.py $(if $(BASE),--base $(BASE))
+
+# The whole-tree inventory. Informational, always exits 0 — a report that can
+# fail a gate is a gate, and bulk-cleaning the corpus is exactly what E1 must
+# never cause.
+lint-comments-report:
+	@python3 scripts/lint-comments.py --all
 
 # All linters (run with make -j3 lint for parallel execution)
 lint: lint-tidy lint-cppcheck lint-format lint-no-suppress
