@@ -26,6 +26,7 @@
 #include <ask/ask_llama.h> /* hyp_ask_llama_compiled_in — what THIS build is */
 #include <cli/cli.h>       /* hyp_config_*, HYP_CONFIG_ASK_ESC_KEY_ENV */
 #include <cli/onboard.h>
+#include <foundation/identity.h> /* HYP_ADDR_SLUG_MAX — the cap the plan must hold */
 #include <mcp/mcp.h>
 #include <pipeline/pipeline.h>  /* hyp_project_name_from_path */
 #include <semantic/ask_embed.h> /* hyp_ask_backend_t — the query side */
@@ -579,6 +580,50 @@ TEST(onboard_toml_unknown_role_reads_as_reference) {
     PASS();
 }
 
+TEST(onboard_a_legal_workspace_name_survives_the_plan_intact) {
+    /* A derived slug runs to HYP_ADDR_SLUG_MAX bytes: fqn.c caps it there and
+     * appends an FNV-1a hash of the FULL path, precisely so two deeply nested
+     * repositories that share a long prefix keep distinct names. A plan field
+     * too small to hold one truncates the hash away and both become the same
+     * workspace — the A6 collision, reintroduced downstream of
+     * onboard_check_collisions, which compares the untruncated slugs and so
+     * cannot see it. The name is carried whole or this fails. */
+    char *dir = ob_fixture_repo();
+    ASSERT_NOT_NULL(dir);
+    char longname[HYP_ADDR_SLUG_MAX + 1];
+    memset(longname, 'w', sizeof(longname) - 1);
+    longname[sizeof(longname) - 1] = '\0';
+    ASSERT_EQ((int)strlen(longname), HYP_ADDR_SLUG_MAX);
+
+    hyp_onboard_answers_t a;
+    memset(&a, 0, sizeof(a));
+    a.name = longname;
+    hyp_onboard_plan_t plan;
+    char err[512];
+    err[0] = '\0';
+    ASSERT_EQ(hyp_onboard_flow(dir, NULL, &a, &plan, err, sizeof(err)), 0);
+    /* Byte for byte, not a prefix of it. */
+    ASSERT_STR_EQ(plan.name, longname);
+
+    /* And it survives the record, so the file agrees with the plan. */
+    ASSERT_EQ(hyp_onboard_toml_write(dir, &plan, err, sizeof(err)), 0);
+    hyp_onboard_plan_t got;
+    ASSERT_EQ(hyp_onboard_toml_read(dir, &got, err, sizeof(err)), 1);
+    ASSERT_STR_EQ(got.name, longname);
+
+    /* One byte over the cap is still refused — widening the field must not
+     * have widened what the address scheme accepts. */
+    char toolong[HYP_ADDR_SLUG_MAX + 2];
+    memset(toolong, 'w', sizeof(toolong) - 1);
+    toolong[sizeof(toolong) - 1] = '\0';
+    a.name = toolong;
+    ASSERT_NEQ(hyp_onboard_flow(dir, NULL, &a, &plan, err, sizeof(err)), 0);
+
+    th_cleanup(dir);
+    free(dir);
+    PASS();
+}
+
 /* ── B4 · Zero config ────────────────────────────────────────────── */
 
 TEST(onboard_resolve_zero_config_is_the_workspace_of_one) {
@@ -896,6 +941,7 @@ SUITE(onboard) {
     RUN_TEST(onboard_probe_cost_states_its_method);
     RUN_TEST(onboard_toml_round_trips_and_twice_is_byte_identical);
     RUN_TEST(onboard_toml_unknown_role_reads_as_reference);
+    RUN_TEST(onboard_a_legal_workspace_name_survives_the_plan_intact);
     RUN_TEST(onboard_resolve_zero_config_is_the_workspace_of_one);
     RUN_TEST(onboard_resolve_reads_the_toml_and_refuses_a_slug_collision);
     RUN_TEST(onboard_flow_defaults_are_the_proposal_and_answers_edit_it);

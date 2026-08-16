@@ -148,7 +148,14 @@ typedef struct {
 } hyp_onboard_repo_t;
 
 typedef struct {
-    char name[HYP_SZ_128]; /* workspace name — a C1 slug */
+    /* Sized by the DOMAIN, not by habit: a derived slug runs to
+     * HYP_ADDR_SLUG_MAX (200), because fqn.c caps it there and appends an
+     * FNV-1a hash of the full path so two deep paths sharing a prefix stay
+     * distinct. A 128-byte field truncates exactly that hash away and turns
+     * two different repositories into one workspace name — the A6 collision
+     * the resolver refuses, reintroduced downstream of the check that looks
+     * for it, where nothing is watching. HYP_SZ_256 holds 200 plus its NUL. */
+    char name[HYP_SZ_256]; /* workspace name — a C1 slug */
     hyp_onboard_repo_t repos[HYP_ONBOARD_MAX_REPOS];
     int repo_count;
     /* SHOWN, editable, never asked. */
