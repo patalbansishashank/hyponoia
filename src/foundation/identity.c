@@ -1,5 +1,5 @@
 /*
- * identity.c — NEXT-STEPS §4 Phase 0, contract C1.
+ * identity.c.
  *
  * Pure functions over strings. No store, no allocation, no I/O. The design and
  * every "why" lives in identity.h; this file only has to be right.

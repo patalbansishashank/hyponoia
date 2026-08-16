@@ -39,10 +39,10 @@ enum {
     MCP_TOOLS_PAGE_SIZE = 8,
     MCP_HELP_TOOLS_WRAP_COL = 74, /* --help tool list stays readable on 80-col terminals */
     MCP_MAX_CROSS_REPO_TARGETS = 4096,
-    /* §4 F3: index_status names the missing memory records. The names are the
+    /* index_status names the missing memory records. The names are the
      * point — "40 missing" with no ids is a number nobody can act on — but a
      * status answer must not become a context bomb, so the list is capped and
-     * the withheld remainder is DISCLOSED (§3.3: a truncated answer says what
+     * the withheld remainder is DISCLOSED (: a truncated answer says what
      * was withheld; it says nothing when nothing was). */
     MCP_MEMORY_MISSING_IDS_MAX = 64,
 };
@@ -832,7 +832,7 @@ static const tool_def_t TOOLS[] = {
      "\"count\":{\"type\":\"integer\"}},\"additionalProperties\":false}}," TOOL_PROJECT_ARG
      "},\"required\":[\"traces\"]}"},
 
-    /* ── RESERVED: §4 Phase 1 signatures ───────────────────────────────
+    /* ── RESERVED: 1 signatures ───────────────────────────────
      *
      * These four rows carry a published, frozen signature for a tool that does
      * not exist yet. mcp/tool_surface.h marks them HYP_TOOL_RESERVED, so they
@@ -1059,9 +1059,9 @@ static const tool_annotation_def_t *mcp_tool_annotations(const char *name) {
     return row ? &TOOL_ANNOTATION_PROFILES[row->annotations] : NULL;
 }
 
-/* The outputSchema a tool declares, or NULL. It used to be
- * {"type":"object","additionalProperties":true} on EVERY tool — a schema that
- * constrains nothing, so it told a client precisely one thing:
+/* The outputSchema a tool declares, or NULL. A blanket
+ * {"type":"object","additionalProperties":true} on every tool is a schema that
+ * constrains nothing, so it tells a client precisely one thing:
  * "structuredContent is the result of this call". Most tools answer in TOON,
  * which is not a JSON object, so structuredContent was empty and clients that
  * honoured the declaration read an empty result. A schema that conveys no
@@ -1108,7 +1108,7 @@ static void mcp_add_tool_def(yyjson_mut_doc *doc, yyjson_mut_val *tools, int i) 
     /* Never NULL: the annotation profile is a mandatory column of the one
      * table, and the _Static_assert pairing that table with TOOLS[] means a
      * registered tool always has a row. There is no default to fall back to,
-     * which is the point — the fallback that used to be here shipped
+     * which is the point — a fallback here would ship
      * destructiveHint=true on any tool somebody forgot to list. */
     const tool_annotation_def_t *def = mcp_tool_annotations(TOOLS[i].name);
     yyjson_mut_val *annotations = yyjson_mut_obj(doc);
@@ -2064,7 +2064,7 @@ struct hyp_mcp_server {
     char *active_request_id_str;     /* string JSON-RPC id of the in-progress tool call */
     hyp_mcp_tool_profile_t tool_profile;
 
-    /* §4 F3: the memory freshness seam (see mcp.h). All borrowed except the
+    /* the memory freshness seam (see mcp.h). All borrowed except the
      * feed name; NULL local set means no record store is configured and the
      * `memory` block is ABSENT from index_status entirely. */
     const hyp_record_set_t *memory_local;
@@ -2265,7 +2265,7 @@ void hyp_mcp_server_free(hyp_mcp_server_t *srv) {
     free(srv);
 }
 
-/* ── §4 F3: memory freshness seam (contract in mcp.h) ─────────── */
+/* ── memory freshness seam (contract in mcp.h) ─────────── */
 
 void hyp_mcp_server_set_memory_store(hyp_mcp_server_t *srv, const hyp_record_set_t *local) {
     if (srv) {
@@ -7064,7 +7064,7 @@ static char *handle_check_index_coverage(hyp_mcp_server_t *srv, const char *args
     return result;
 }
 
-/* ── §4 F3: two freshnesses, reported separately ──────────────────────
+/* ── two freshnesses, reported separately ──────────────────────
  *
  * index_status answers "your code is current" and "your memory is missing N
  * records" as SIBLING objects, never merged into one verdict: they are
@@ -7202,7 +7202,7 @@ static char *handle_index_status(hyp_mcp_server_t *srv, const char *args) {
     yyjson_mut_obj_add_int(doc, root, "nodes", nodes);
     yyjson_mut_obj_add_int(doc, root, "edges", edges);
     yyjson_mut_obj_add_str(doc, root, "status", nodes > 0 ? "ready" : "empty");
-    /* §4 F3: the same code-freshness answer, restated under its own `code` key
+    /* the same code-freshness answer, restated under its own `code` key
      * as the sibling of `memory`. The top-level keys above are the shipped
      * surface and stay byte-identical — this ADDS a key, renames nothing.
      * `files_behind` is deliberately not emitted: it is not computed here, and

@@ -179,7 +179,7 @@ static yyjson_doc *surface_client_object(hyp_mcp_tool_profile_t profile, const c
     return out;
 }
 
-/* The client's object for one call against a CONFIGURED server. The §4 F3
+/* The client's object for one call against a CONFIGURED server. The
  * memory tests attach record sets to the server first, which surface_call's
  * throwaway instance cannot carry. */
 static yyjson_doc *surface_client_object_on(hyp_mcp_server_t *srv, const char *tool,
@@ -200,7 +200,7 @@ static yyjson_doc *surface_client_object_on(hyp_mcp_server_t *srv, const char *t
     return out;
 }
 
-/* ── §4 F3 fixtures ────────────────────────────────────────────────────
+/* ── fixtures ────────────────────────────────────────────────────
  *
  * A fresh, empty cache pointed at by HYP_CACHE_DIR for one test: zero indexed
  * projects, deterministically, so "no project could be resolved" is a fact of
@@ -417,7 +417,7 @@ TEST(tool_surface_reserved_rows_are_invisible_and_fail_closed) {
         (void)is_error;
     }
     /* A contract with no reserved rows would pass every assertion above
-     * vacuously. §4 Phase 1 publishes four; if that number goes to zero the
+ * vacuously. 1 publishes four; if that number goes to zero the
      * rows went live and this test must be told so deliberately. */
     ASSERT_TRUE(reserved_seen > 0U);
     PASS();
@@ -536,7 +536,7 @@ TEST(tool_surface_declared_output_schemas_reach_the_client) {
 
 /* ── 4b · index_status's no_project answer REACHES the client ──────────
  *
- * THE PHASE 0 DEAD BRANCH, made live by §4 F3 — this test held the finding
+ * THE PHASE 0 DEAD BRANCH, made live by — this test held the finding
  * and has flipped to holding the fix. handle_index_status documented a
  * structured answer for "no project resolved" ({"status":"no_project"}) that
  * was UNREACHABLE from the day it shipped: the branch needed store != NULL
@@ -584,7 +584,7 @@ TEST(tool_surface_index_status_no_project_answer_reaches_the_client) {
     PASS();
 }
 
-/* ── 4c · §4 F3: memory absent means "no store", never "up to date" ────
+/* ── 4c · memory absent means "no store", never "up to date" ────
  *
  * The `memory` sibling must be ABSENT ENTIRELY when no record store is
  * configured. Absent means "look elsewhere"; an empty object, a status, or a
@@ -613,7 +613,7 @@ TEST(tool_surface_index_status_memory_absent_without_a_record_store) {
     PASS();
 }
 
-/* ── 4d · §4 F3: unknowable is `unknown` + ABSENT, never a number ──────
+/* ── 4d · unknowable is `unknown` + ABSENT, never a number ──────
  *
  * Two ways the upstream set can be unknowable — no provider configured (the
  * shipped state until C6u lands sync) and a configured provider that cannot
@@ -686,7 +686,7 @@ TEST(tool_surface_index_status_memory_unknown_when_upstream_unreadable) {
     PASS();
 }
 
-/* ── 4e · §4 F3: checked-and-complete is `0`, a different sentence ─────
+/* ── 4e · checked-and-complete is `0`, a different sentence ─────
  *
  * Equal sets → `missing: 0`, PRESENT. Zero and absent must never be the same
  * bytes: 0 is "checked, nothing is missing", absent is "could not check". */
@@ -751,7 +751,7 @@ TEST(tool_surface_index_status_memory_missing_zero_when_sets_equal) {
     PASS();
 }
 
-/* ── 4f · §4 F3: N differ → the count PLUS the names ──────────────────
+/* ── 4f · N differ → the count PLUS the names ──────────────────
  *
  * `missing` is a set difference — upstream records this machine does not
  * hold — never a lag: the store is an id-keyed set with no order to be
@@ -842,7 +842,7 @@ TEST(tool_surface_index_status_memory_missing_counts_and_names_the_ids) {
     PASS();
 }
 
-/* ── 4g · §4 F3: two freshnesses, SIBLINGS, on a real project ──────────
+/* ── 4g · two freshnesses, SIBLINGS, on a real project ──────────
  *
  * With a project resolved the answer carries BOTH `code` and `memory`, never
  * merged into one verdict and neither derived from the other — and the
@@ -1404,7 +1404,7 @@ TEST(tool_surface_memory_surface_is_live_and_fails_closed) {
 
 /* ── 7 · The record kinds a tool may author ────────────────────────────
  *
- * Transcripts enter only through a feed. §4 D4 audits ingest completeness
+ * Transcripts enter only through a feed. audits ingest completeness
  * against the feed's own count(*) — the only thing in the plan that can prove
  * it has everything — and a writer able to forge a transcript message would
  * make that count meaningless. Refusal is fail-closed and derived from the one
@@ -1429,9 +1429,9 @@ TEST(tool_surface_transcript_kinds_are_not_authorable) {
 /* ── 8 · Nothing new leans on the deprecated row ───────────────────────
  *
  * manage_adr's `mode:"update"` replaces the entire document — mutable,
- * last-writer-wins, which is precisely what §4's append-only record contract
+ * last-writer-wins, which is precisely what append-only record contract
  * forbids. It stays live and unchanged on the wire; what must not happen is a
- * §4 surface being built on top of it, which would make the migration a
+ * surface being built on top of it, which would make the migration a
  * two-store problem instead of a one-store one. */
 TEST(tool_surface_no_reserved_surface_depends_on_the_deprecated_tool) {
     ASSERT_EQ(hyp_mcp_tool_surface_status("manage_adr"), (int)HYP_TOOL_DEPRECATED);

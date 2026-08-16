@@ -503,7 +503,7 @@ int hyp_ask_stamp_check(const char *stored_model_id, const char *stored_contract
     }
     if (prefix_contract && prefix_contract[0] && stored_contract && stored_contract[0] &&
         strcmp(prefix_contract, stored_contract) != 0) {
-        /* Same weights, different text going into them. §2.9 measured one model
+ /* Same weights, different text going into them. measured one model
          * wanting opposite contracts on two corpora, so this is not a
          * theoretical case and the model id would not have caught it. */
         snprintf(err, errlen,

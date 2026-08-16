@@ -1,5 +1,5 @@
 /*
- * test_roles.c — NEXT-STEPS §4 Phase 1, Track A, units A2-A5 + A7.
+ * test_roles.c — role derivation and the role audit.
  *
  * One test per derivation rule, each against a real fixture tree; the
  * precedence ladder; the A5 fail-closed default; and the A7 audit, which

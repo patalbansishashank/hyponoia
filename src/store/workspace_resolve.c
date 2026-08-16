@@ -1,6 +1,6 @@
 /*
- * workspace_resolve.c — the one resolver (§4 A6) and the one workspace open
- * path it feeds (§4 A1). See workspace_resolve.h for the contract: precedence,
+ * workspace_resolve.c — the one resolver and the one workspace open
+ * path it feeds. See workspace_resolve.h for the contract: precedence,
  * the TOML read format, deterministic id derivation, and the collision gate.
  */
 #include "store/workspace_resolve.h"

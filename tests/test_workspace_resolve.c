@@ -1,5 +1,5 @@
 /*
- * test_workspace_resolve.c — NEXT-STEPS §4 Phase 1, units A1 + A6.
+ * test_workspace_resolve.c.
  *
  * The two assertion rows the plan pins on A6, plus A1's own:
  *

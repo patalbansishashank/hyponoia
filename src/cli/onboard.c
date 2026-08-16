@@ -1,5 +1,5 @@
 /*
- * onboard.c — NEXT-STEPS §4 Track B: probe (B1), flow (B2), TOML (B3), and
+ * onboard.c
  * the zero-config resolution (B4). See onboard.h for the contract; comments
  * here are about the choices, not the plumbing.
  */
@@ -47,7 +47,7 @@ static const float ONBOARD_VERIFY_THRESHOLD = 0.999F;
 
 /* Fixture for the batching check: few texts, deliberately DIFFERENT lengths,
  * so the groups are ragged the way a real length-sorted pass is — the exact
- * shape that produced §3's wrong batched vectors. */
+ * shape that produced wrong batched vectors. */
 static const char *const ONBOARD_VERIFY_TEXTS[] = {
     "int add(int a, int b) { return a + b; }",
     "x = 1",

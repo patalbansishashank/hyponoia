@@ -361,7 +361,7 @@ TEST(build_never_reads_a_clock) {
     ASSERT_TRUE(build_ok(&in, &before));
 
     int64_t started = hyp_record_wall_clock_ms();
-    ASSERT_GT(started, INT64_C(1577836800000)); /* after 2020-01-01 */
+    ASSERT_GT(started, INT64_C(1577836800000)); /* the start of 2020, in ms */
     ASSERT_LTE(started, HYP_RECORD_MAX_TIMESTAMP_MS);
     int64_t now = started;
     for (int spins = 0; spins < 200000000 && now == started; spins++) {

@@ -8,7 +8,7 @@
  * one, driven through fixture rowsets that deliver text cells exactly the way
  * the postgres wire would.
  *
- * The audit's assertion row, from the §4 map: N rows with two byte-identical
+ * The audit's assertion row, from the map: N rows with two byte-identical
  * → the audit reports COMPLETE; delete one → the audit NAMES the missing
  * origin, never "N−1 of N".
  */
@@ -393,7 +393,7 @@ TEST(feed_skip_notices_are_counted_and_break_no_chain) {
 
 TEST(feed_audit_complete_with_identical_rows_and_names_the_missing_one) {
     /*
-     * The assertion row, verbatim from the §4 map: N rows with two
+ * The assertion row, verbatim from the map: N rows with two
      * byte-identical → audit reports COMPLETE; delete one → audit NAMES the
      * missing origin, not "N−1 of N".
      *

@@ -2,7 +2,7 @@
  * test_orphan_corpus.h — the Track G G1 anchor corpus, as C data.
  *
  * GENERATED. Do not hand-edit: every span text, hash and qualified name
- * here was extracted from this repository's own history by the corpus
+ * here comes from this repository's own history via the corpus
  * build, and re-extracted and re-hashed on the way into this file. The
  * expectations are the corpus's, not this suite's.
  *

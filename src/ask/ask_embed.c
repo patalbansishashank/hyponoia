@@ -25,7 +25,7 @@
 #include <string.h>
 #include <time.h>
 
-/* The vector store's content hash and NEXT-STEPS §4 C1's span hash are ONE
+/* The vector store's content hash and C1's span hash are ONE
  * hash, not two that happen to agree — hyp_ask_content_hash forwards to
  * hyp_addr_span_hash below. This assert is the guard on the only thing a
  * forward cannot express: if either width moves, the build stops here instead
@@ -97,7 +97,7 @@ void hyp_ask_embed_report_free(hyp_ask_embed_report_t *r) {
 }
 
 void hyp_ask_content_hash(const char *text, char *out) {
-    /* Forwards on purpose. §4 C1 anchors decisions on the content hash of a
+ /* Forwards on purpose. anchors decisions on the content hash of a
      * span and this lane already had one; a second implementation that agreed
      * today is exactly the duplication C1's own report objects to elsewhere. */
     hyp_addr_span_hash(text, out);

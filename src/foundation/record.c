@@ -107,8 +107,8 @@ const char *hyp_record_status_reason(hyp_record_status_t status) {
  * the input struct and the finished record. Three things are driven from this
  * table — the id preimage, the projection of a record back to an input, and
  * field equality — so a field cannot be in the digest but missing from the
- * comparison, or vice versa. Those three used to be three hand-written lists in
- * every design that came before this one.
+ * comparison, or vice versa. Three hand-written lists in their place is the
+ * shape that lets one drift from the others.
  *
  * The preimage's field names come from the member names via the preprocessor,
  * so renaming a member renames it in the digest too. That is deliberate: it

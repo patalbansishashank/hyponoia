@@ -837,7 +837,7 @@ TEST(mcp_tools_list_latest_metadata) {
      * This assertion USED to be `no outputSchema anywhere`, which was stricter
      * than the rule its own comment stated — "declare one again only per-tool,
      * and only where the tool genuinely returns a JSON object". index_status
-     * now does declare one (mcp/tool_surface.h), because its handler builds a
+     * declares one (mcp/tool_surface.h), because its handler builds a
      * yyjson object, so the promise is keepable. What must stay true is the
      * rule, not the count: nothing constrains-nothing, and no tool that answers
      * in TOON declares a shape.

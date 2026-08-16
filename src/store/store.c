@@ -322,7 +322,7 @@ static int init_schema(hyp_store_t *s) {
         "  coverage_version INTEGER NOT NULL DEFAULT 1,"
         "  hash_records_complete INTEGER NOT NULL DEFAULT 0"
         ");"
-        /* Workspace registry (§4 A1): one workspace per DB file, described in
+        /* Workspace registry: one workspace per DB file, described in
          * the file. workspace_meta is the workspace's own id (single row,
          * CHECKed); workspace_repos binds member repos under it. ABSENT rows =
          * a pre-A1 per-repo store, a workspace of one derived from its single
@@ -991,7 +991,7 @@ bool hyp_store_check_integrity(hyp_store_t *s) {
      * cases). A REGISTERED workspace of N members legitimately holds up to 2N
      * rows — each member plus its "::missed" coverage shadow — so its ceiling
      * is 2N plus that same slack, derived from the registry rather than left
-     * hardcoded at one repo's worth (§4 A1). The per-repo ceiling itself does
+     * hardcoded at one repo's worth. The per-repo ceiling itself does
      * not move: absent registry, absent workspace, unchanged number.
      * Also check that root_path looks like a real path. */
     sqlite3_stmt *stmt = NULL;
@@ -1729,7 +1729,7 @@ int hyp_store_delete_project(hyp_store_t *s, const char *name) {
     return exec_sql(s, "COMMIT;");
 }
 
-/* ── Workspace registry (§4 A1) ─────────────────────────────────── */
+/* ── Workspace registry ─────────────────────────────────── */
 
 /* Refusal detail into the caller's buffer (optional) AND the store's errbuf,
  * so a caller that passed no buffer still sees why via hyp_store_error. */

@@ -1,6 +1,6 @@
 /*
  * test_record_vectors.c — vectors for record content, keyed on the content
- * hash alone (§4 F1).
+ * hash alone.
  *
  * The properties under test are the ones the unit exists for: two records
  * with byte-identical content and different ids produce exactly ONE vector

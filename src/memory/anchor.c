@@ -1,5 +1,5 @@
 /*
- * anchor.c — NEXT-STEPS §4 Phase 1, unit C3u.
+ * anchor.c.
  *
  * Symbol identity + content hash, never line numbers. The design and every
  * "why" lives in anchor.h; the comparison semantics live in identity.h
@@ -414,7 +414,7 @@ hyp_anchor_status_t hyp_anchor_resolve(hyp_store_t *store, const char *workspace
     /* The workspace gate, before any lookup. An anchor from a workspace this
      * index does not serve must fail VISIBLY, naming the workspace — an
      * empty result would read as "nothing attached here", which is a claim
-     * about the wrong universe (§4 assertion table, C3u row). */
+     * about the wrong universe. */
     if (workspace) {
         if (strcmp(workspace, addr->workspace) != 0) {
             out->status = HYP_ANCHOR_UNKNOWN_WORKSPACE;

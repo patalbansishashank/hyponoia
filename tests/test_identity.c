@@ -1,5 +1,5 @@
 /*
- * test_identity.c — NEXT-STEPS §4 Phase 0, contract C1.
+ * test_identity.c.
  *
  * The two acceptance tests the plan names, plus the properties everything in
  * Phase 1 will be written against.

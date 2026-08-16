@@ -1,5 +1,5 @@
 /*
- * test_anchor.c — NEXT-STEPS §4 Phase 1, unit C3u.
+ * test_anchor.c.
  *
  * Anchor resolution: symbol identity + content hash, never line numbers. The
  * suite pins the four states as implemented, the two assertion-table rows this
@@ -441,7 +441,7 @@ TEST(anchor_unknown_workspace_is_a_visible_error_naming_it) {
     ASSERT_NEQ((int)st, (int)HYP_ANCHOR_ORPHANED);
     ASSERT_NEQ((int)st, (int)HYP_ANCHOR_RESOLVED);
     ASSERT_EQ(res.candidate_count, 0);
-    /* The error NAMES the workspace — the §4 assertion row for this unit. */
+ /* The error NAMES the workspace — the assertion row for this unit. */
     ASSERT_NOT_NULL(strstr(res.reason, "acme"));
     hyp_anchor_res_free(&res);
 
