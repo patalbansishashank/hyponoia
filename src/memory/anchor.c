@@ -369,6 +369,14 @@ hyp_anchor_status_t hyp_anchor_resolve(hyp_store_t *store, const char *workspace
             hyp_node_free_fields(&node);
             return st;
         }
+        /* A QN that addresses two nodes resolves to neither. Re-attaching to
+         * whichever one the index stepped first would report RESOLVED, and
+         * RESOLVED to the wrong file is the one answer a reader cannot audit —
+         * the address is rebuilt from the same QN, so it compares equal. */
+        if (rc == HYP_STORE_AMBIGUOUS) {
+            return an_error(out, "\"%s\" addresses more than one node in \"%s\"", addr->qn,
+                            addr->repo);
+        }
         if (rc != HYP_STORE_NOT_FOUND) {
             return an_error(out, "store failed looking up \"%s\"%s", addr->qn, NULL);
         }
@@ -390,12 +398,21 @@ hyp_anchor_status_t hyp_anchor_resolve(hyp_store_t *store, const char *workspace
         for (int pi = 0; pi < project_count && !decided; pi++) {
             hyp_node_t node = {0};
             int rc = hyp_store_find_node_by_qn(store, projects[pi].name, addr->qn, &node);
-            if (rc == HYP_STORE_ERR) {
+            /* Several PROJECTS holding the rendezvous name is the namespace
+             * working. Several nodes inside ONE project holding it is a
+             * collision, and skipping that project would hide it behind
+             * whichever project answered next. */
+            if (rc == HYP_STORE_ERR || rc == HYP_STORE_AMBIGUOUS) {
+                hyp_anchor_status_t bad =
+                    rc == HYP_STORE_AMBIGUOUS
+                        ? an_error(out, "\"%s\" addresses more than one node in \"%s\"", addr->qn,
+                                   projects[pi].name)
+                        : an_error(out, "store failed looking up \"%s\"%s", addr->qn, NULL);
                 hyp_store_free_projects(projects, project_count);
                 if (have_first) {
                     hyp_node_free_fields(&first);
                 }
-                return an_error(out, "store failed looking up \"%s\"%s", addr->qn, NULL);
+                return bad;
             }
             if (rc != HYP_STORE_OK) {
                 continue;

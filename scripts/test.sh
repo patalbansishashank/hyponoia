@@ -278,6 +278,15 @@ bash "$ROOT/tests/test_makefile_single_definition_contract.sh"
 echo "=== Step 0w: transcript ingest contract (D1: the scrub gate is structural) ==="
 bash "$ROOT/tests/test_transcript_contract.sh"
 
+# The differential over the two FQN derivations only reported drift when
+# someone chose to look. It is a suite, so it runs with the others — but the
+# properties that make it MEAN anything are properties of the source: that both
+# entry points still delegate to one core, that its ledger and its pinned rows
+# agree, and that the suite is wired into the build and the runner at all. None
+# of those can be asserted from inside C, and every one of them fails silently.
+echo "=== Step 0w: one FQN derivation, and its differential is wired (A11) ==="
+bash "$ROOT/tests/test_fqn_contract.sh"
+
 # Verify compiler supports target arch
 verify_compiler "$CC"
 

@@ -1,12 +1,16 @@
 /*
  * fqn.c — Fully Qualified Name computation for graph nodes.
  *
- * Implements the FQN scheme: project.dir.parts.name
- * Handles Python __init__.py, JS/TS index.{js,ts}, path separators.
+ * The malloc-allocated half of the FQN scheme `project.dir.parts.name`. Every
+ * rule lives in foundation/fqn_core.h, which the arena-allocated extraction
+ * half (internal/hyp/helpers.c) uses as well: the pipeline derives QNs to look
+ * up, extraction derives the QNs it writes, and the registry joins the two, so
+ * the derivation has to be one derivation rather than two that agree.
  */
 #include "pipeline/pipeline.h"
 #include "foundation/compat_fs.h"
 #include "foundation/constants.h"
+#include "foundation/fqn_core.h"
 #include "foundation/platform.h"
 
 #include <stdbool.h>
@@ -20,10 +24,6 @@
 #include <io.h>
 #endif
 
-/* Maximum path segments in a FQN (HYP_SZ_256 slots total, -2 for project + name) */
-#define FQN_MAX_PATH_SEGS 254
-#define FQN_MAX_DIR_SEGS 255
-
 /* Max bytes for a derived project name. The name becomes a filename component
  * ("<cache>/<name>.db" and sidecars ".db-wal"/".db.corrupt"), so it must stay
  * under the filesystem's 255-byte component limit. 200 leaves headroom for the
@@ -31,120 +31,15 @@
  * deep CJK path can triple past 255 and make the DB file un-openable (#624). */
 #define FQN_MAX_NAME_LEN 200
 
-/* ── Internal helpers ─────────────────────────────────────────────── */
-
-/* Build a dot-joined string from segments. Returns heap-allocated string. */
-static char *join_segments(const char **segments, int count) {
-    if (count == 0) {
-        return strdup("");
-    }
-    size_t total = 0;
-    for (int i = 0; i < count; i++) {
-        total += strlen(segments[i]);
-        if (i > 0) {
-            total++; /* dot separator */
-        }
-    }
-    char *result = malloc(total + SKIP_ONE);
-    if (!result) {
-        return NULL;
-    }
-    char *p = result;
-    for (int i = 0; i < count; i++) {
-        if (i > 0) {
-            *p++ = '.';
-        }
-        size_t len = strlen(segments[i]);
-        memcpy(p, segments[i], len);
-        p += len;
-    }
-    *p = '\0';
-    return result;
-}
-
-/* Strip file extension from the last path component. */
-static void strip_file_extension(char *path) {
-    char *last_slash = strrchr(path, '/');
-    char *start = last_slash ? last_slash + SKIP_ONE : path;
-    char *ext = strrchr(start, '.');
-    if (ext) {
-        *ext = '\0';
-    }
-}
-
-/* Tokenize path by '/' into segments array. Returns number of segments added. */
-static int tokenize_path(char *path, const char **segments, int max_segs) {
-    int count = 0;
-    if (path[0] == '\0') {
-        return 0;
-    }
-    char *tok = path;
-    while (tok && *tok && count < max_segs) {
-        char *slash = strchr(tok, '/');
-        if (slash) {
-            *slash = '\0';
-        }
-        if (tok[0] != '\0') {
-            segments[count++] = tok;
-        }
-        tok = slash ? slash + SKIP_ONE : NULL;
-    }
-    return count;
-}
-
-/* Strip __init__ (Python) / index (JS/TS) from the last segment when a
- * symbol name is provided. Keeps it when no name is given to avoid QN
- * collision with Folder nodes for the same directory. */
-static void strip_init_or_index(const char **segments, int *seg_count, const char *name) {
-    if (*seg_count <= SKIP_ONE) {
-        return;
-    }
-    const char *last = segments[*seg_count - SKIP_ONE];
-    if (strcmp(last, "__init__") != 0 && strcmp(last, "index") != 0) {
-        return;
-    }
-    if (name && name[0] != '\0') {
-        (*seg_count)--;
-    }
-}
-
 /* ── Public API ──────────────────────────────────────────────────── */
 
 char *hyp_pipeline_fqn_compute(const char *project, const char *rel_path, const char *name) {
-    if (!project) {
-        return strdup("");
+    char *out = (char *)malloc(hyp_fqn_core_bound(project, rel_path, name));
+    if (!out) {
+        return NULL;
     }
-
-    char *path = strdup(rel_path ? rel_path : "");
-    hyp_normalize_path_sep(path);
-    /* #1077/#964: File-node QNs (name=="__file__") must preserve the full
-     * filename so sibling files sharing a stem get DISTINCT nodes — e.g.
-     * .env / .env.local / .env.production (which all strip to ".env" and
-     * collide, so only one survives per directory), and a C/C++ header vs
-     * its same-stem .cpp. Extension stripping stays for MODULE/symbol QNs
-     * (name==NULL or a symbol): that stem unification is load-bearing for
-     * C/C++ declaration↔definition cross-file resolution. All 26 __file__
-     * QN sites route through here, so creation and every lookup stay
-     * consistent. */
-    bool is_file_qn = name && strcmp(name, "__file__") == 0;
-    if (!is_file_qn) {
-        strip_file_extension(path);
-    }
-
-    const char *segments[HYP_SZ_256];
-    int seg_count = 0;
-    segments[seg_count++] = project;
-    seg_count += tokenize_path(path, segments + seg_count, FQN_MAX_PATH_SEGS);
-
-    strip_init_or_index(segments, &seg_count, name);
-
-    if (name && name[0] != '\0') {
-        segments[seg_count++] = name;
-    }
-
-    char *result = join_segments(segments, seg_count);
-    free(path);
-    return result;
+    hyp_fqn_core_write(out, project, rel_path, name);
+    return out;
 }
 
 char *hyp_pipeline_fqn_module(const char *project, const char *rel_path) {
@@ -158,20 +53,17 @@ char *hyp_pipeline_fqn_module_dir(const char *project, const char *rel_path, boo
     }
     /* Directory-module languages (Java package, Go package): the module is the
      * CONTAINING DIRECTORY — strip the basename so a sibling file in the same
-     * dir shares the module QN. This MUST agree with the extraction-side
-     * hyp_fqn_module_source_lang() (internal/hyp/helpers.c) so the cross-file
-     * LSP caller_qn matches the def-node QN. */
+     * dir shares the module QN. The extraction-side hyp_fqn_module_source_lang()
+     * (internal/hyp/helpers.c) cuts the basename at the same byte through the
+     * same hyp_fqn_core_dir_len(), so the cross-file LSP caller_qn matches the
+     * def-node QN. */
     const char *src = rel_path ? rel_path : "";
-    /* Strip the last path segment using either separator (the extraction side
-     * normalizes too); look for the rightmost '/' or '\\'. */
-    const char *last_fwd = strrchr(src, '/');
-    const char *last_bwd = strrchr(src, '\\');
-    const char *last_sep = last_fwd > last_bwd ? last_fwd : last_bwd;
-    if (!last_sep) {
+    size_t src_len = strlen(src);
+    size_t dir_len = hyp_fqn_core_dir_len(src, src_len);
+    if (dir_len == src_len) {
         /* Root file: empty directory → module is just the project. */
         return hyp_pipeline_fqn_folder(project, "");
     }
-    size_t dir_len = (size_t)(last_sep - src);
     char *dir = (char *)malloc(dir_len + 1); /* +1 for NUL */
     if (!dir) {
         return NULL;
@@ -345,35 +237,12 @@ char *hyp_pipeline_resolve_relative_import(const char *source_rel, const char *m
 }
 
 char *hyp_pipeline_fqn_folder(const char *project, const char *rel_dir) {
-    if (!project) {
-        return strdup("");
+    char *out = (char *)malloc(hyp_fqn_core_folder_bound(project, rel_dir));
+    if (!out) {
+        return NULL;
     }
-
-    /* Work on mutable copy */
-    char *dir = strdup(rel_dir ? rel_dir : "");
-    hyp_normalize_path_sep(dir);
-
-    const char *segments[HYP_SZ_256];
-    int seg_count = 0;
-    segments[seg_count++] = project;
-
-    if (dir[0] != '\0') {
-        char *tok = dir;
-        while (tok && *tok && seg_count < FQN_MAX_DIR_SEGS) {
-            char *slash = strchr(tok, '/');
-            if (slash) {
-                *slash = '\0';
-            }
-            if (tok[0] != '\0') {
-                segments[seg_count++] = tok;
-            }
-            tok = slash ? slash + SKIP_ONE : NULL;
-        }
-    }
-
-    char *result = join_segments(segments, seg_count);
-    free(dir);
-    return result;
+    hyp_fqn_core_folder_write(out, project, rel_dir);
+    return out;
 }
 
 /* Bound a derived project name to FQN_MAX_NAME_LEN bytes so "<cache>/<name>.db"

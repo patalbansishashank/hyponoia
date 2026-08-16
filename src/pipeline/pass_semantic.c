@@ -93,7 +93,13 @@ static int build_import_map(hyp_pipeline_ctx_t *ctx, const char *rel_path,
             if (!imp->local_name || !imp->local_name[0] || !imp->module_path) {
                 continue;
             }
-            char *target_qn = hyp_pipeline_fqn_module(ctx->project_name, imp->module_path);
+            /* The raw source specifier is not a path — see the same resolution
+             * in pass_calls.c's build_import_map. Non-relative specifiers
+             * resolve to NULL and pass through unchanged. */
+            char *resolved = hyp_pipeline_resolve_relative_import(rel_path, imp->module_path);
+            char *target_qn =
+                hyp_pipeline_fqn_module(ctx->project_name, resolved ? resolved : imp->module_path);
+            free(resolved);
             const hyp_gbuf_node_t *target = hyp_gbuf_find_by_qn(ctx->gbuf, target_qn);
             free(target_qn);
             if (!target) {
