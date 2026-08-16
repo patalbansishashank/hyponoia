@@ -456,6 +456,18 @@ int hyp_cmd_migrate_comments(int argc, char **argv) {
     char err[CM_ERR_SZ];
     hyp_comment_migrate_status_t st =
         hyp_comment_migrate_run(manifest, &opts, store, &stats, err, sizeof(err));
+
+    /* The digest and the count come from the store AFTER the run, and they are
+     * the only externally checkable evidence that two machines agree: equal
+     * digests mean the same records, and a second run that appends nothing is
+     * what "the union deduplicates" looks like from outside. */
+    size_t total = 0;
+    char digest[HYP_RECORD_ID_LEN + 1];
+    digest[0] = '\0';
+    if (st == HYP_COMMENT_MIGRATE_OK) {
+        (void)hyp_record_store_count(store, &total);
+        (void)hyp_record_store_digest(store, digest);
+    }
     hyp_record_store_close(store);
     free(derived);
 
@@ -466,5 +478,6 @@ int hyp_cmd_migrate_comments(int argc, char **argv) {
     }
     (void)printf("migrate-comments: %zu block%s — %zu appended, %zu already present\n", stats.items,
                  stats.items == 1 ? "" : "s", stats.appended, stats.absorbed);
+    (void)printf("migrate-comments: store holds %zu records, digest %s\n", total, digest);
     return 0;
 }

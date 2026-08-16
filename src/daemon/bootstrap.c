@@ -183,7 +183,20 @@ hyp_daemon_process_role_t hyp_daemon_process_role(int argc, char *const argv[]) 
          * It also has to work when the daemon cannot start, which is exactly
          * when someone is trying to get the `ask` lane running. */
         "fetch-model",
+        /* onboard probes this machine and writes at most a TOML. It reads no
+         * index, and it deliberately does not start the one it prices. */
+        "onboard",
+        /* migrate-comments reads a manifest and appends to a record store the
+         * caller names. No graph, no index, no daemon. */
+        "migrate-comments",
     };
+    /* EVERY top-level command handle_subcommand() dispatches must appear above
+     * or in the branch list below. This function and that if-chain are two
+     * enumerations of one set, and the failure when they disagree is silent in
+     * the worst way: an unlisted command falls through to MCP_CLIENT and the
+     * binary serves the protocol on stdin instead of running the command —
+     * exit 0, no output, nothing to bisect. tests/test_daemon_bootstrap.c
+     * classifies each one, which is what turns a disagreement into a failure. */
     /* Stop at the first top-level mode token. Tool names, flag values, and JSON
      * following `cli` are opaque user input: a search query named "install"
      * or containing "--version" must never bypass the mandatory daemon. */
