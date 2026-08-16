@@ -656,6 +656,7 @@ extern void suite_fqn_differential(void);
 extern void suite_identity(void);
 extern void suite_anchor(void);
 extern void suite_comment_migrate(void);
+extern void suite_g2_retrieval(void);
 extern void suite_sync(void);
 extern void suite_adr_records(void);
 extern void suite_workspace_resolve(void);
@@ -964,6 +965,7 @@ int main(int argc, char **argv) {
     RUN_SELECTED_SUITE(identity);
     RUN_SELECTED_SUITE(anchor);
     RUN_SELECTED_SUITE(comment_migrate);
+    RUN_SELECTED_SUITE(g2_retrieval);
     RUN_SELECTED_SUITE(sync);
     RUN_SELECTED_SUITE(adr_records);
     RUN_SELECTED_SUITE(workspace_resolve);
