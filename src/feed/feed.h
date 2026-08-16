@@ -2,6 +2,7 @@
 #define HYP_FEED_FEED_H
 
 #include "foundation/record.h"
+#include "foundation/scrub.h"
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -49,13 +50,47 @@
  *            The ORIGIN of this item's precursor, or NULL. Not a record id:
  *            an adapter knows its source's own identifiers, not our digests.
  *            Ingest resolves it to the precursor's record id — see below.
- *   author / timestamp_ms / content / kind / redactions
- *            Exactly what hyp_record_build() takes. The timestamp is the
- *            SOURCE's event time, never a clock read here — re-ingesting the
- *            same row must produce the same id on every machine.
+ *   author / timestamp_ms / content / kind
+ *            The record contract's own fields. `content` is the source's RAW
+ *            text; the scrub below is what turns it into what a record binds.
+ *            The timestamp is the SOURCE's event time, never a clock read here
+ *            — re-ingesting the same row must produce the same id on every
+ *            machine.
  *
  * Feed items carry no anchor: attaching transcript text to code is a read-side
  * analysis, not something an ingest should guess at.
+ *
+ * AND FEED ITEMS CARRY NO REDACTION COUNT. That is the load-bearing omission,
+ * so it is stated as a rule rather than left as an absence: a count an adapter
+ * DECLARES is a claim, not a measurement, and the core has no way to check it.
+ * An adapter — hostile, or merely careless, or simply forgetful about a field
+ * it does not think about — could hand over unscrubbed text alongside
+ * "redactions: 5" and the record would read as cleaned forever, because the id
+ * binds content and records are never rewritten. The count is therefore not
+ * validated here; it is IMPOSSIBLE TO SUPPLY. The struct has nowhere to put
+ * one, exactly as hyp_record_ingest_input_t has nowhere to put one, and the
+ * only thing that can produce a count is the scrubber that ran.
+ *
+ * ── The scrub gate ───────────────────────────────────────────────────────────
+ *
+ * hyp_feed_ingest() takes an hyp_scrub_fn and REFUSES without it. Every item's
+ * content passes through that scrubber before the record exists, by way of
+ * hyp_record_ingest_scrubbed(); this file never calls hyp_record_build().
+ *
+ * The order is not a policy, it is the only order that produces a valid id.
+ * The id commits to `content`, so a scrub afterwards changes the content,
+ * which changes the id, which is a DIFFERENT record standing beside the
+ * original — while the original, unscrubbed, keeps syncing by union to every
+ * peer that asks. There is no repair, so there is no second door: an
+ * unscrubbed pull cannot be expressed through this interface.
+ *
+ * A consequence worth naming, because it decides how a bridging adapter must
+ * be written: SCRUB ONCE, HERE. An adapter that scrubs its own rows before
+ * yielding them gets its already-clean text scrubbed again — harmless for the
+ * bytes, since the scrub is idempotent, but the second pass finds nothing and
+ * the record then reports 0 spans removed when the first pass removed several.
+ * An adapter yields the source's raw text and lets this boundary produce the
+ * count.
  *
  * ── Skip notices ─────────────────────────────────────────────────────────────
  *
@@ -92,16 +127,17 @@
  * two different refusals can never become one indistinguishable log line. */
 typedef enum {
     HYP_FEED_OK = 0,
-    HYP_FEED_END,           /* the pull is exhausted — not an error */
-    HYP_FEED_SKIP,          /* a skip notice: origin + reason, no record */
-    HYP_FEED_ERR_NULL,      /* a required pointer was NULL */
-    HYP_FEED_ERR_SOURCE,    /* the source failed or contradicted itself mid-pull */
-    HYP_FEED_ERR_SCHEMA,    /* the source's shape is not the pinned one */
-    HYP_FEED_ERR_ITEM,      /* an item the record contract refused */
-    HYP_FEED_ERR_ORIGIN,    /* an item or notice arrived without an origin */
-    HYP_FEED_ERR_PRECURSOR, /* a precursor this pull never yielded */
-    HYP_FEED_ERR_DUPLICATE, /* one origin, two different items, one pull */
-    HYP_FEED_ERR_ALLOC      /* out of memory */
+    HYP_FEED_END,             /* the pull is exhausted — not an error */
+    HYP_FEED_SKIP,            /* a skip notice: origin + reason, no record */
+    HYP_FEED_ERR_NO_SCRUBBER, /* no scrubber wired: nothing may be built */
+    HYP_FEED_ERR_NULL,        /* a required pointer was NULL */
+    HYP_FEED_ERR_SOURCE,      /* the source failed or contradicted itself mid-pull */
+    HYP_FEED_ERR_SCHEMA,      /* the source's shape is not the pinned one */
+    HYP_FEED_ERR_ITEM,        /* an item the record contract refused */
+    HYP_FEED_ERR_ORIGIN,      /* an item or notice arrived without an origin */
+    HYP_FEED_ERR_PRECURSOR,   /* a precursor this pull never yielded */
+    HYP_FEED_ERR_DUPLICATE,   /* one origin, two different items, one pull */
+    HYP_FEED_ERR_ALLOC        /* out of memory */
 } hyp_feed_status_t;
 
 /* Stable, human-facing reason for a status. Never NULL. */
@@ -117,12 +153,14 @@ typedef struct {
     hyp_record_kind_t kind;
     const char *author;
     int64_t timestamp_ms;
-    const char *content;
+    const char *content;       /* the source's RAW text; ingest scrubs it */
     const char *origin;        /* required on every yield, notices included */
     const char *thread;        /* or NULL */
     const char *parent_origin; /* origin of the precursor, or NULL */
-    uint32_t redactions;       /* spans a scrub replaced BEFORE this yield */
     const char *reason;        /* HYP_FEED_SKIP only: why there is no record */
+    /* There is deliberately NO redaction count here. See the header comment:
+     * a declared count is a claim the core cannot check, and this is the one
+     * field where an unchecked claim is permanent. */
 } hyp_feed_item_t;
 
 /*
@@ -158,6 +196,10 @@ typedef struct {
     size_t skipped;  /* skip notices yielded */
     size_t built;    /* records the store gained */
     size_t absorbed; /* items - built: already present, or repeated in-pull */
+    /* What the SCRUBBER did, so a caller can see that it ran without ever
+     * seeing what it removed. Produced, never accepted from an adapter. */
+    uint64_t redactions;   /* spans replaced across this pull */
+    size_t items_redacted; /* items in which it replaced at least one */
     /* On HYP_FEED_ERR_ITEM: which field the record contract refused. */
     hyp_record_status_t record_status;
 } hyp_feed_ingest_stats_t;
@@ -166,9 +208,14 @@ typedef struct {
  * Drain a source into a store, atomically. On any status but HYP_FEED_OK the
  * store is untouched. `stats` (optional) is written on success and on failure —
  * on failure it describes how far the pull got before the refusal.
+ *
+ * `scrub` is REQUIRED. NULL is refused with HYP_FEED_ERR_NO_SCRUBBER and the
+ * source is not drained: an ingest with no scrubber wired must not be able to
+ * construct a record at all, because a record that slips past the scrub cannot
+ * afterwards be repaired. hyp_scrub_text is the production scrubber.
  */
-hyp_feed_status_t hyp_feed_ingest(hyp_feed_source_t *src, hyp_record_set_t *store,
-                                  hyp_feed_ingest_stats_t *stats);
+hyp_feed_status_t hyp_feed_ingest(hyp_feed_source_t *src, hyp_scrub_fn scrub,
+                                  hyp_record_set_t *store, hyp_feed_ingest_stats_t *stats);
 
 /*
  * ── The completeness audit ───────────────────────────────────────────────────

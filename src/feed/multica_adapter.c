@@ -179,7 +179,7 @@ const char *const HYP_MULTICA_WORKSPACES_COLUMNS[] = {
 
 enum { WC_ID = 0, WC_NAME, WC_SLUG, WC_REPOS, WC_ISSUE_PREFIX, WC_ATTRIBUTION_FAIL_CLOSED };
 
-static const char *const SCHEMA_PIN_COLUMNS[] = {"pin_kind", "pin_name", "pin_detail", NULL};
+const char *const HYP_MULTICA_SCHEMA_PIN_COLUMNS[] = {"pin_kind", "pin_name", "pin_detail", NULL};
 
 /* The value-level end of the schema's CHECK constraints. A value outside these
  * sets means the live schema drifted from the verified one: schema refusal,
@@ -602,7 +602,6 @@ static hyp_feed_status_t mx_msgs_next(hyp_feed_source_t *src, hyp_feed_item_t *o
     out->content = st->content.buf;
     out->thread = st->thread.buf;
     out->parent_origin = st->parent.len > 0 ? st->parent.buf : NULL;
-    out->redactions = 0;
     out->reason = NULL;
     return HYP_FEED_OK;
 }
@@ -775,7 +774,6 @@ static hyp_feed_status_t mx_issues_next(hyp_feed_source_t *src, hyp_feed_item_t 
     out->content = st->content.buf;
     out->thread = st->origin.buf; /* an issue heads its own conversation */
     out->parent_origin = st->parent.len > 0 ? st->parent.buf : NULL;
-    out->redactions = 0;
     out->reason = NULL;
     return HYP_FEED_OK;
 }
@@ -1034,7 +1032,7 @@ static bool has_prefix(const char *s, const char *prefix) {
 }
 
 hyp_feed_status_t hyp_multica_schema_pin_check(hyp_multica_rows_t *rows) {
-    hyp_feed_status_t st = pin_columns(rows, SCHEMA_PIN_COLUMNS);
+    hyp_feed_status_t st = pin_columns(rows, HYP_MULTICA_SCHEMA_PIN_COLUMNS);
     if (st != HYP_FEED_OK) {
         return st;
     }

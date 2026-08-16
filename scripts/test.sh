@@ -273,6 +273,8 @@ echo "=== Step 0v: comment lint contract (E1: comments only, forward only) ==="
 bash "$ROOT/tests/test_comment_lint_contract.sh"
 echo "=== Step 0v: feed boundary contract (D3/D4) ==="
 bash "$ROOT/tests/test_feed_contract.sh"
+echo "=== Step 0w: transcript ingest contract (D1: the scrub gate is structural) ==="
+bash "$ROOT/tests/test_transcript_contract.sh"
 
 # Verify compiler supports target arch
 verify_compiler "$CC"

@@ -33,25 +33,32 @@
  *      flag to discover. NULL is refused with HYP_TRANSCRIPT_ERR_NO_SCRUBBER
  *      before the source is drained: nothing is built, nothing is stored, and
  *      the source is not even asked for its first item.
- *   2. THE TYPE. Content reaches record construction inside
- *      hyp_record_ingest_input_t, which has no `redactions` member. A feed item
- *      does carry a redaction count, and this module DROPS IT: an adapter's
- *      claim about how much it already scrubbed has nowhere to go. The count on
- *      a stored transcript record is what this ingest's own scrubber produced,
- *      or the record does not exist.
- *   3. THE ABSENT SYMBOL. This translation unit never calls hyp_record_build().
- *      Its only record constructor is hyp_record_ingest_scrubbed(), which
- *      cannot run without a scrubber. tests/test_transcript_contract.sh holds
- *      that as a source-level property with a positive control, so an edit that
- *      reaches for the builder directly fails a gate rather than a review.
- *   4. NO SECOND DOOR. The same gate DERIVES its check from this header rather
- *      than from a list: every declaration here that takes a hyp_feed_source_t
- *      must also take an hyp_scrub_fn. A convenience entry point added later
+ *   2. THE TYPE. There is no redaction count anywhere on the way in. Not on
+ *      hyp_feed_item_t, which is what an adapter fills; not on
+ *      hyp_record_ingest_input_t, which is what reaches construction. A count
+ *      an adapter DECLARES is a claim nothing can check, and this is the one
+ *      field where an unchecked claim is permanent — so it is not validated,
+ *      it is unrepresentable. The count on a stored transcript record is what
+ *      a scrubber produced on this machine, or the record does not exist.
+ *   3. THE ABSENT SYMBOL. Nothing on this path calls hyp_record_build(). The
+ *      only record constructor reachable from here or from the feed boundary
+ *      is hyp_record_ingest_scrubbed(), which cannot run without a scrubber.
+ *      tests/test_transcript_contract.sh holds that as a source-level property
+ *      over BOTH files with a positive control, so an edit that reaches for
+ *      the builder directly fails a gate rather than a review.
+ *   4. NO SECOND DOOR. The same gate DERIVES its check from the headers rather
+ *      than from a list: every declaration that takes a hyp_feed_source_t must
+ *      also take an hyp_scrub_fn. A convenience entry point added later
  *      without one is a failing test, not a discovery.
  *
- * The general feed ingest (feed.h) remains the surface for feeds that are not
- * transcripts. It builds from the item's own redaction count and so trusts its
- * adapter to have scrubbed. Transcript text is given no such trust here.
+ * ── What this adds to the feed boundary, and what it deliberately does not ───
+ *
+ * The pull, the precursor resolution, the repeated-origin refusal and the
+ * scrub gate are the feed boundary's (feed.h). They are not reimplemented
+ * here: a second derivation of those rules would be free to drift, and the one
+ * it could drift away from is the gate. What this file adds is what the
+ * boundary does not know — that a transcript is a conversation of MESSAGES,
+ * and that it belongs in a durable store rather than in memory.
  *
  * ── Transcripts are messages ─────────────────────────────────────────────────
  *
@@ -94,6 +101,7 @@ typedef enum {
     HYP_TRANSCRIPT_ERR_NO_SCRUBBER, /* no scrubber wired: nothing may be built */
     HYP_TRANSCRIPT_ERR_KIND,        /* an item that is not a transcript message */
     HYP_TRANSCRIPT_ERR_SOURCE,      /* the source failed or contradicted itself */
+    HYP_TRANSCRIPT_ERR_SCHEMA,      /* the source's shape is not the pinned one */
     HYP_TRANSCRIPT_ERR_ORIGIN,      /* an item or notice arrived without an origin */
     HYP_TRANSCRIPT_ERR_ITEM,        /* the record contract refused the row */
     HYP_TRANSCRIPT_ERR_PRECURSOR,   /* a precursor this pull never yielded */

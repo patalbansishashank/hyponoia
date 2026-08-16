@@ -228,10 +228,17 @@ TEST(transcript_redaction_count_comes_from_the_scrub_not_the_adapter) {
     hyp_record_store_t *store = NULL;
     ASSERT_EQ(hyp_record_store_open(dir, &store), HYP_RECORD_STORE_OK);
 
-    /* A LYING ADAPTER. It claims nine spans were already removed; its text
-     * says otherwise. The claim has no field to travel in and never arrives. */
+    /*
+     * A LYING ADAPTER CANNOT BE WRITTEN. `items[0].redactions = 9;` is a
+     * COMPILE ERROR — hyp_feed_item_t has no such member, and neither does
+     * hyp_record_ingest_input_t. That is the strong form of this property and
+     * it is held by the compiler; tests/test_transcript_contract.sh keeps it
+     * held, with hyp_record_input_t as the control proving the check can find
+     * the field where it does exist. What remains for a runtime test is the
+     * other half: that a count nevertheless ARRIVES, produced by the scrubber
+     * that ran on this machine.
+     */
     hyp_feed_item_t items[] = {toy_item("toy:1", raw, NULL)};
-    items[0].redactions = 9;
 
     toy_feed_t toy;
     hyp_feed_source_t src = toy_open(&toy, items, 1);
@@ -372,6 +379,119 @@ TEST(transcript_reingest_of_the_same_rows_is_exactly_idempotent) {
 
     hyp_record_store_close(store);
     (void)th_rmtree(dir);
+    PASS();
+}
+
+/* ── Two machines, one feed: the union's evidence on a real ingest ─────── */
+
+/*
+ * I8 (same source row re-ingested → same id, no dedup table) and I9 (merge is
+ * a commutative, idempotent, lossless union) are frozen invariants, and the
+ * evidence for them so far is fixtures written to demonstrate them. This is
+ * the first ingest path that exercises both on the way records are actually
+ * made: two independent stores, the same rows, DIFFERENT YIELD ORDER, and a
+ * scrub in the middle of the id's preimage.
+ *
+ * Yield order is the variable that matters. If anything on this path let
+ * insertion history reach an id or an enumeration — a sequence number, an
+ * offset, a clock — the two digests would differ, and they would differ
+ * exactly when two machines ingested one feed in different orders, which is
+ * the case nobody would reproduce locally.
+ *
+ * The digests are printed, not only compared: a value a human can read
+ * survives into a report, and an equality that only ever existed inside an
+ * assertion cannot be checked against anything later.
+ */
+TEST(transcript_two_stores_ingesting_one_feed_agree_by_digest) {
+    char key[128];
+    ASSERT_TRUE(make_fake_key(hyp_vendor_prefixes[0], key, sizeof(key)));
+    char raw[512];
+    (void)snprintf(raw, sizeof(raw), "and the key was %s, which must not survive", key);
+
+    /* One conversation, five turns, one of them carrying a pasted key. */
+    hyp_feed_item_t forward[] = {
+        toy_item("mc:1", "what does this function do", NULL),
+        toy_item("mc:2", "it resolves an anchor", "mc:1"),
+        toy_item("mc:3", raw, "mc:2"),
+        toy_item("mc:4", "do not paste keys into a transcript", "mc:3"),
+        toy_item("mc:5", "understood", "mc:4"),
+    };
+    for (size_t i = 0; i < 5; i++) {
+        forward[i].timestamp_ms = FIXED_MS + (int64_t)i * 1000;
+    }
+    /* The same rows, reversed. A source is free to yield in any order. */
+    hyp_feed_item_t reverse[5];
+    for (size_t i = 0; i < 5; i++) {
+        reverse[i] = forward[4 - i];
+    }
+
+    const char *tmp_a = th_mktempdir("hyp_transcript_peer_a");
+    ASSERT_NOT_NULL(tmp_a);
+    char dir_a[512];
+    (void)snprintf(dir_a, sizeof(dir_a), "%s", tmp_a);
+    const char *tmp_b = th_mktempdir("hyp_transcript_peer_b");
+    ASSERT_NOT_NULL(tmp_b);
+    char dir_b[512];
+    (void)snprintf(dir_b, sizeof(dir_b), "%s", tmp_b);
+
+    hyp_record_store_t *a = NULL;
+    hyp_record_store_t *b = NULL;
+    ASSERT_EQ(hyp_record_store_open(dir_a, &a), HYP_RECORD_STORE_OK);
+    ASSERT_EQ(hyp_record_store_open(dir_b, &b), HYP_RECORD_STORE_OK);
+
+    toy_feed_t toy_a;
+    toy_feed_t toy_b;
+    hyp_feed_source_t src_a = toy_open(&toy_a, forward, 5);
+    hyp_feed_source_t src_b = toy_open(&toy_b, reverse, 5);
+
+    hyp_transcript_ingest_stats_t sa;
+    hyp_transcript_ingest_stats_t sb;
+    memset(&sa, 0, sizeof(sa));
+    memset(&sb, 0, sizeof(sb));
+    ASSERT_EQ(hyp_transcript_ingest(&src_a, counting_scrub, a, &sa), HYP_TRANSCRIPT_OK);
+    ASSERT_EQ(hyp_transcript_ingest(&src_b, counting_scrub, b, &sb), HYP_TRANSCRIPT_OK);
+
+    char digest_a[HYP_RECORD_ID_LEN + 1];
+    char digest_b[HYP_RECORD_ID_LEN + 1];
+    ASSERT_TRUE(digest_of(a, digest_a));
+    ASSERT_TRUE(digest_of(b, digest_b));
+    printf("\n    peer A digest %s (%zu records, %llu spans redacted)\n", digest_a, count_of(a),
+           (unsigned long long)sa.redactions);
+    printf("    peer B digest %s (%zu records, %llu spans redacted)\n", digest_b, count_of(b),
+           (unsigned long long)sb.redactions);
+
+    ASSERT_EQ(sa.built, 5);
+    ASSERT_EQ(sb.built, 5);
+    ASSERT_EQ(sa.redactions, 1);
+    ASSERT_EQ(sb.redactions, 1);
+    ASSERT_STR_EQ(digest_a, digest_b);
+
+    /* Now the union itself: merge A's whole set into B. Every record is
+     * already there under the same id, so B gains nothing and its digest does
+     * not move. Merging a peer twice is free rather than dangerous. */
+    hyp_record_set_t *from_a = NULL;
+    ASSERT_EQ(hyp_record_store_load(a, &from_a), HYP_RECORD_STORE_OK);
+    size_t added = 99;
+    ASSERT_EQ(hyp_record_store_append_set(b, from_a, &added), HYP_RECORD_STORE_OK);
+    ASSERT_EQ(added, 0);
+    ASSERT_EQ(hyp_record_store_append_set(b, from_a, &added), HYP_RECORD_STORE_OK);
+    ASSERT_EQ(added, 0);
+    char digest_b2[HYP_RECORD_ID_LEN + 1];
+    ASSERT_TRUE(digest_of(b, digest_b2));
+    ASSERT_STR_EQ(digest_b, digest_b2);
+    hyp_record_set_free(from_a);
+
+    /* And the key is in neither store, under any id. */
+    const hyp_record_t *third = stored_by_origin(b, "mc:3");
+    ASSERT_NOT_NULL(third);
+    ASSERT_NULL(strstr(third->content, DUMMY_BODY));
+    ASSERT_EQ(third->redactions, 1);
+    hyp_record_free(third);
+
+    hyp_record_store_close(a);
+    hyp_record_store_close(b);
+    (void)th_rmtree(dir_a);
+    (void)th_rmtree(dir_b);
     PASS();
 }
 
@@ -727,10 +847,10 @@ TEST(transcript_refuses_nothing_quietly) {
     /* One reason per status, all present, all distinct. Two refusals that read
      * the same are one refusal as far as anyone reading a log is concerned. */
     static const hyp_transcript_status_t ALL[] = {
-        HYP_TRANSCRIPT_OK,          HYP_TRANSCRIPT_ERR_NULL,      HYP_TRANSCRIPT_ERR_NO_SCRUBBER,
-        HYP_TRANSCRIPT_ERR_KIND,    HYP_TRANSCRIPT_ERR_SOURCE,    HYP_TRANSCRIPT_ERR_ORIGIN,
-        HYP_TRANSCRIPT_ERR_ITEM,    HYP_TRANSCRIPT_ERR_PRECURSOR, HYP_TRANSCRIPT_ERR_DUPLICATE,
-        HYP_TRANSCRIPT_ERR_STORE,   HYP_TRANSCRIPT_ERR_ALLOC};
+        HYP_TRANSCRIPT_OK,         HYP_TRANSCRIPT_ERR_NULL,      HYP_TRANSCRIPT_ERR_NO_SCRUBBER,
+        HYP_TRANSCRIPT_ERR_KIND,   HYP_TRANSCRIPT_ERR_SOURCE,    HYP_TRANSCRIPT_ERR_SCHEMA,
+        HYP_TRANSCRIPT_ERR_ORIGIN, HYP_TRANSCRIPT_ERR_ITEM,      HYP_TRANSCRIPT_ERR_PRECURSOR,
+        HYP_TRANSCRIPT_ERR_DUPLICATE, HYP_TRANSCRIPT_ERR_STORE,  HYP_TRANSCRIPT_ERR_ALLOC};
     size_t n = sizeof(ALL) / sizeof(ALL[0]);
     for (size_t i = 0; i < n; i++) {
         const char *a = hyp_transcript_status_reason(ALL[i]);
@@ -770,26 +890,55 @@ TEST(transcript_requires_an_origin) {
     PASS();
 }
 
-/* ── TEMPORARY: reproduce the unscrubbed feed path before closing it ────── */
+/* ── The WIRED path: the same fixture that used to leak through it ─────── */
 
-TEST(REPRO_feed_ingest_mints_an_unscrubbed_record) {
+/*
+ * This test began life as a reproduction. Against the feed boundary as it
+ * stood, it PASSED while asserting the defect: hyp_feed_ingest() took no
+ * scrubber, called hyp_record_build() directly, and copied the item's own
+ * declared `redactions` onto the record. A fake key in an item's content
+ * therefore became a record whose id BOUND the unscrubbed bytes — permanent,
+ * because the id binds content and there is no update path, and syncing by
+ * union to every peer — while `redactions: 5`, a number the adapter simply
+ * asserted, made it read as cleaned.
+ *
+ * The same fixture is now the closure. It matters that this is the WIRED path
+ * and not a direct call to the scrub seam: the seam was always safe, and a
+ * test that only exercised the seam would have passed throughout the period
+ * the leak existed. The path a future caller reaches for is the one that has
+ * to refuse.
+ */
+TEST(transcript_the_feed_path_cannot_mint_an_unscrubbed_record) {
     char key[128];
     ASSERT_TRUE(make_fake_key(hyp_vendor_prefixes[0], key, sizeof(key)));
     char raw[512];
     (void)snprintf(raw, sizeof(raw), "here is the key %s", key);
 
     hyp_feed_item_t items[] = {toy_item("toy:1", raw, NULL)};
-    items[0].redactions = 5; /* a claim the core never checks */
     toy_feed_t toy;
     hyp_feed_source_t src = toy_open(&toy, items, 1);
 
+    /* There is no longer a field in which an adapter can declare a redaction
+     * count. `items[0].redactions = 5` does not compile, which is the fix:
+     * the claim is not refused, it is unrepresentable. */
+
     hyp_record_set_t *set = hyp_record_set_create();
     ASSERT_NOT_NULL(set);
-    ASSERT_EQ(hyp_feed_ingest(&src, set, NULL), HYP_FEED_OK);
+    ASSERT_EQ(hyp_feed_ingest(&src, NULL, set, NULL), HYP_FEED_ERR_NO_SCRUBBER);
+    ASSERT_EQ(hyp_record_set_count(set), 0);
+    ASSERT_EQ(toy.next_calls, 0); /* refused at the wiring, not at the row */
+
+    /* And with a scrubber wired, the key never reaches an id. */
+    hyp_feed_source_t again = toy_open(&toy, items, 1);
+    hyp_feed_ingest_stats_t stats;
+    memset(&stats, 0, sizeof(stats));
+    ASSERT_EQ(hyp_feed_ingest(&again, counting_scrub, set, &stats), HYP_FEED_OK);
+    ASSERT_EQ(stats.redactions, 1);
+    ASSERT_EQ(stats.items_redacted, 1);
     const hyp_record_t *rec = hyp_record_set_at(set, 0);
     ASSERT_NOT_NULL(rec);
-    ASSERT_NOT_NULL(strstr(rec->content, DUMMY_BODY)); /* the key is IN the id */
-    ASSERT_EQ(rec->redactions, 5);                     /* the lie rode through */
+    ASSERT_NULL(strstr(rec->content, DUMMY_BODY));
+    ASSERT_EQ(rec->redactions, 1);
     hyp_record_set_free(set);
     PASS();
 }
@@ -797,13 +946,14 @@ TEST(REPRO_feed_ingest_mints_an_unscrubbed_record) {
 /* ── Suite ──────────────────────────────────────────────────────────────── */
 
 SUITE(transcript) {
-    RUN_TEST(REPRO_feed_ingest_mints_an_unscrubbed_record);
+    RUN_TEST(transcript_the_feed_path_cannot_mint_an_unscrubbed_record);
     /* The assertion row, and the two properties that keep it honest */
     RUN_TEST(transcript_ingest_refuses_when_no_scrubber_is_wired);
     RUN_TEST(transcript_redaction_count_comes_from_the_scrub_not_the_adapter);
     RUN_TEST(transcript_id_binds_the_scrubbed_text_not_the_raw_text);
     /* The store half */
     RUN_TEST(transcript_reingest_of_the_same_rows_is_exactly_idempotent);
+    RUN_TEST(transcript_two_stores_ingesting_one_feed_agree_by_digest);
     RUN_TEST(transcript_preserves_origin_and_thread_byte_for_byte);
     RUN_TEST(transcript_thread_reads_back_in_a_total_time_order);
     /* Fail closed, every way in */
