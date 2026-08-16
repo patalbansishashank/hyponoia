@@ -16,3 +16,4 @@ CI and the local infrastructure — both of which the venue-parity contract
 | `require-all-green.sh` | The aggregate gate: fail unless every needed job succeeded or legitimately skipped (was inline YAML). | `pr.yml ci-ok` |
 | `verify-shard-union.sh` | Prove sharded test legs lost nothing: shard count agreement, indices 1..n, identical suite lists, union of slices == full list (was inline YAML). | `_test.yml` shard-completeness |
 | `check-virustotal.sh` | Exact extracted-file VirusTotal lookups. | `release.yml` |
+| `check-tracked-artifacts.sh` | Refuse a tree that TRACKS a compiled build artifact — ELF/Mach-O/PE/ar/wasm image, compressed archive, or a >256 KiB binary blob — with a justified-entry allowlist (`tracked-artifact-allowlist.txt`) and a `--selftest` that plants real binaries and requires the refusal. Exists because a 9,428,133-byte Go binary rode in at `dd41cf92` and shipped in v0.3.0 and v0.3.1. | `pr.yml tracked-artifacts`, `ci.yml tracked-artifacts` |

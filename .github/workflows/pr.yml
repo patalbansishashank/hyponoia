@@ -87,13 +87,33 @@ jobs:
   #    download/checksum/install/update phases run here as well.
   #
   #    NEXT-STEPS.md §2.12 cut this from [ubuntu-latest, macos-14,
-  #    windows-latest] to Linux alone. The macOS and Windows steps below are
-  #    KEPT, not deleted: they are what dry-run.yml and release.yml exercise,
-  #    and re-adding a label here is a one-line change if a Windows-shaped bug
-  #    ever needs to gate at PR time again. What is given up is real — the
-  #    argv-quoting class named above would now surface at dry-run rather than
-  #    at PR — and that is the trade this section accepts on a private plan
-  #    where macOS bills 10x. ──
+  #    windows-latest] to Linux alone, and KEPT the macOS and Windows steps on
+  #    the argument that "re-adding a label here is a one-line change".
+  #    NEXT-STEPS.md §3.2 step 6 (2026-08-16) deleted both, because that
+  #    argument stopped being true and nothing said so:
+  #
+  #    - RETIRED-PLATFORM(macos): macOS is retired as of 2026-08-15 — not
+  #      built, not tested, not published (docs/MAINTAINERS.md "Retired
+  #      platforms"; the release matrix has no darwin). There is no label to
+  #      re-add. Its `codesign --sign - --force` recipe is not lost: it is held
+  #      in _build.yml's own kept-macOS step, scripts/package-release.sh and
+  #      install.sh.
+  #    - Windows is NOT retired — windows-amd64 is a published asset — but its
+  #      step here had gone stale in three ways at once while unreachable:
+  #      it built without --with-ui, it invoked vm-smoke.sh with the default
+  #      SMOKE_VARIANT=standard against a release that publishes ONLY `-ui`
+  #      archives (the exact shape bug the Ubuntu leg was just fixed for, and
+  #      which kept pr.yml red from 2026-08-14), and `--with-ui` needs node,
+  #      which the msys2 install list did not carry and setup-node was guarded
+  #      away from. Restoring it was three changes, not one. The MAINTAINED
+  #      Windows recipe — variant `ui`, artifact mode, PATH-mutation guard — is
+  #      _smoke.yml's smoke-windows, which ran green on both windows images in
+  #      release run 31924848305. One recipe, one place: the two-ends rule that
+  #      produced the Ubuntu fix applies to this file too.
+  #
+  #    What is given up is real — the argv-quoting class named above surfaces
+  #    at dry-run rather than at PR — and that is the trade §2.12 accepted on a
+  #    private plan where macOS bills 10x. ──
   pr-smoke:
     needs: [changes]
     if: ${{ !cancelled() && needs.changes.outputs.product == 'true' }}
@@ -109,26 +129,6 @@ jobs:
       - name: Install deps (Ubuntu)
         if: matrix.os == 'ubuntu-latest'
         run: sudo apt-get update && sudo apt-get install -y zlib1g-dev ccache
-
-      - name: Install ccache (macOS)
-        if: matrix.os == 'macos-14'
-        run: command -v ccache >/dev/null 2>&1 || brew install ccache
-
-      - uses: msys2/setup-msys2@66cd2cce69caa17b53920067426061ca1de3a884 # v2
-        if: matrix.os == 'windows-latest'
-        with:
-          msystem: CLANG64
-          path-type: inherit
-          install: >-
-            mingw-w64-clang-x86_64-clang
-            mingw-w64-clang-x86_64-zlib
-            mingw-w64-clang-x86_64-python3
-            mingw-w64-clang-x86_64-ccache
-            make
-            coreutils
-            curl
-            zip
-            unzip
 
       # Verified compiler cache — content-keyed, stale hits impossible by
       # construction (see scripts/env.sh).
@@ -163,31 +163,46 @@ jobs:
           CCACHE_DIR: ${{ github.workspace }}/.ccache
           CCACHE_MAXSIZE: 1000M
 
-      - name: Build prod + smoke (macOS)
-        if: matrix.os == 'macos-14'
-        run: |
-          scripts/build.sh CC=cc CXX=c++
-          codesign --sign - --force build/c/hyponoia
-          scripts/smoke-local.sh "$(pwd)/build/c/hyponoia"
-        env:
-          CCACHE_DIR: ${{ github.workspace }}/.ccache
-          CCACHE_MAXSIZE: 1000M
+  # ── No compiled artifact may be tracked. NEXT-STEPS.md §3.2 step 6. ──
+  #    `pkg/go/hyponoia`, a 9,428,133-byte compiled Go binary, was tracked from
+  #    dd41cf92 and shipped inside the v0.3.0 AND v0.3.1 tags. Nothing looked
+  #    for it; it surfaced because a grep for an unrelated sha256 matched a
+  #    string in its .rodata. .gitignore now names that one path, which stops
+  #    that one file — this is the gate that stops the class.
+  #
+  #    Its own job, not a step inside lint, deliberately: lint is 12m17s and
+  #    release.yml can now skip it (skip_lint), and a gate that a release flag
+  #    can switch off is not a gate. This runs in ~15s, gated on nothing, and
+  #    its verdict is a required part of ci-ok.
+  #
+  #    ci.yml carries the same job, because this repository pushes to main
+  #    directly (see ci.yml's own header) — which is exactly how dd41cf92
+  #    arrived. A PR-only gate would not have caught the thing it exists for.
+  tracked-artifacts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Build prod + smoke (Windows)
-        if: matrix.os == 'windows-latest'
-        shell: msys2 {0}
-        run: |
-          scripts/build.sh CC=clang CXX=clang++
-          SMOKE_ARCH=amd64 bash test-infrastructure/vm/vm-smoke.sh
-        env:
-          CCACHE_DIR: ${{ github.workspace }}/.ccache
-          CCACHE_MAXSIZE: 1000M
+      # Detection before cleanliness, as with secret-history: plant a real ELF,
+      # PE, Mach-O and opaque blob and require the scanner to refuse them. A
+      # scanner nobody has watched fail is indistinguishable from `exit 0`.
+      - name: The gate must refuse planted binaries
+        run: scripts/ci/check-tracked-artifacts.sh --selftest
+
+      - name: No tracked file may be a build artifact
+        run: scripts/ci/check-tracked-artifacts.sh
 
   ci-ok:
     # The one required context — fails unless every PR stage
     # succeeded, so matrix renames can never silently deadlock merges. `skipped`
     # is OK: pr-smoke skips on docs/CI/test-only PRs (changes.product == false).
-    needs: [security, lint, test, changes, pr-smoke]
+    #
+    # Every job in this file must appear here, or its failure is invisible to
+    # the only context branch protection reads. `tracked-artifacts` was added
+    # with the job (NEXT-STEPS.md §3.2 step 6); nothing was removed — item 3 of
+    # that step deleted dead STEPS inside pr-smoke, not the job.
+    needs: [security, lint, test, changes, pr-smoke, tracked-artifacts]
     if: ${{ always() }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
