@@ -143,12 +143,12 @@ static bool bootstrap_worker_argv_exact(int argc, char *const argv[]) {
 
 /* One row of the shared command table, as the classifier reads it. `help`
  * folds at compile time, so a HYP_CLI_HELP_PLAIN row costs nothing. */
-#define BOOTSTRAP_CLASSIFY_ROW(id, token, role, help, dispatch, usage)                              \
-    if (bootstrap_arg_is(argv[arg], token)) {                                                      \
-        return ((help) == HYP_CLI_HELP_DOWNGRADES &&                                               \
-                bootstrap_has_help_after(argc, argv, arg + 1))                                     \
-                   ? HYP_DAEMON_PROCESS_STATELESS                                                  \
-                   : (role);                                                                       \
+#define BOOTSTRAP_CLASSIFY_ROW(id, token, role, help, dispatch, usage) \
+    if (bootstrap_arg_is(argv[arg], token)) {                          \
+        return ((help) == HYP_CLI_HELP_DOWNGRADES &&                   \
+                bootstrap_has_help_after(argc, argv, arg + 1))         \
+                   ? HYP_DAEMON_PROCESS_STATELESS                      \
+                   : (role);                                           \
     }
 
 static bool bootstrap_client_arg_matches(const char *value, const char *text,
@@ -165,12 +165,12 @@ static bool bootstrap_client_arg_matches(const char *value, const char *text,
 /* One row of the client-argument table. A VALUE row consumes the argument
  * that follows it, so a legitimate `--tool-profile analysis` cannot have its
  * value mistaken for an unknown command. */
-#define BOOTSTRAP_CLIENT_ARG_ROW(text, kind)                                                       \
-    if (!accepted && bootstrap_client_arg_matches(argv[arg], text, kind)) {                        \
-        accepted = true;                                                                           \
-        if ((kind) == HYP_CLI_ARG_VALUE) {                                                         \
-            arg++;                                                                                 \
-        }                                                                                          \
+#define BOOTSTRAP_CLIENT_ARG_ROW(text, kind)                                \
+    if (!accepted && bootstrap_client_arg_matches(argv[arg], text, kind)) { \
+        accepted = true;                                                    \
+        if ((kind) == HYP_CLI_ARG_VALUE) {                                  \
+            arg++;                                                          \
+        }                                                                   \
     }
 
 /* The first argument that is neither a command nor something an MCP client

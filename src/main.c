@@ -947,12 +947,12 @@ static int run_cli(int argc, char **argv, hyp_project_lock_manager_t *project_lo
 
 /* One row of the shared command table as the help listing reads it. A NULL
  * usage block folds away at compile time. */
-#define MAIN_HELP_ROW(id, token, role, help, dispatch, usage)                                      \
-    {                                                                                              \
-        const char *hyp_help_block = (usage);                                                      \
-        if (hyp_help_block) {                                                                      \
-            (void)fputs(hyp_help_block, stdout);                                                   \
-        }                                                                                          \
+#define MAIN_HELP_ROW(id, token, role, help, dispatch, usage) \
+    {                                                         \
+        const char *hyp_help_block = (usage);                 \
+        if (hyp_help_block) {                                 \
+            (void)fputs(hyp_help_block, stdout);              \
+        }                                                     \
     }
 
 static void print_help(void) {
@@ -1109,33 +1109,34 @@ static int main_run_allow_root(int argc, char **argv) {
  * (some initialise the allocator first, some need the project locks, and one
  * validates its own argc before running).
  */
-#define HYP_CLI_CMD_BODY_verify_runtime_assets                                                     \
-    if (i != SKIP_ONE || argc != MAIN_CLI_ARGC) {                                                  \
-        (void)fprintf(stderr, "hyponoia: --verify-runtime-assets accepts no arguments\n");         \
-        return 2;                                                                                  \
-    }                                                                                              \
+#define HYP_CLI_CMD_BODY_verify_runtime_assets                                             \
+    if (i != SKIP_ONE || argc != MAIN_CLI_ARGC) {                                          \
+        (void)fprintf(stderr, "hyponoia: --verify-runtime-assets accepts no arguments\n"); \
+        return 2;                                                                          \
+    }                                                                                      \
     return hyp_cmd_verify_runtime_assets();
 
-#define HYP_CLI_CMD_BODY_version                                                                   \
-    main_print_version();                                                                          \
+#define HYP_CLI_CMD_BODY_version \
+    main_print_version();        \
     return 0;
 
-#define HYP_CLI_CMD_BODY_help                                                                      \
-    print_help();                                                                                  \
+#define HYP_CLI_CMD_BODY_help \
+    print_help();             \
     return 0;
 
 #define HYP_CLI_CMD_BODY_help_short HYP_CLI_CMD_BODY_help
 
-#define HYP_CLI_CMD_BODY_allow_root return main_run_allow_root(argc - i - SKIP_ONE, argv + i + SKIP_ONE);
+#define HYP_CLI_CMD_BODY_allow_root \
+    return main_run_allow_root(argc - i - SKIP_ONE, argv + i + SKIP_ONE);
 
-#define HYP_CLI_CMD_BODY_cli                                                                       \
-    hyp_mem_init_with_cap(hyp_mem_ram_fraction_for_total(hyp_system_info().total_ram),             \
-                          hyp_index_worker_memory_budget_bytes());                                 \
+#define HYP_CLI_CMD_BODY_cli                                                           \
+    hyp_mem_init_with_cap(hyp_mem_ram_fraction_for_total(hyp_system_info().total_ram), \
+                          hyp_index_worker_memory_budget_bytes());                     \
     return run_cli(argc - i - SKIP_ONE, argv + i + SKIP_ONE, project_locks, maintenance_context);
 
 #define HYP_CLI_CMD_BODY_install return hyp_cmd_install(argc - i - SKIP_ONE, argv + i + SKIP_ONE);
 
-#define HYP_CLI_CMD_BODY_uninstall                                                                 \
+#define HYP_CLI_CMD_BODY_uninstall \
     return hyp_cmd_uninstall(argc - i - SKIP_ONE, argv + i + SKIP_ONE);
 
 #define HYP_CLI_CMD_BODY_update return hyp_cmd_update(argc - i - SKIP_ONE, argv + i + SKIP_ONE);
@@ -1150,26 +1151,26 @@ static int main_run_allow_root(int argc, char **argv) {
  * index_repository: keeping it a separate invocation is what makes "the
  * structural index is untouched" a property of the build rather than a claim
  * about a branch nobody took. */
-#define HYP_CLI_CMD_BODY_embed                                                                     \
-    hyp_mem_init(hyp_mem_ram_fraction_for_total(hyp_system_info().total_ram));                     \
+#define HYP_CLI_CMD_BODY_embed                                                 \
+    hyp_mem_init(hyp_mem_ram_fraction_for_total(hyp_system_info().total_ram)); \
     return hyp_cmd_embed(argc - i - SKIP_ONE, argv + i + SKIP_ONE);
 
 /* The ONLY caller of the model fetcher, and it is a command a person types.
  * Nothing on the MCP or daemon path can reach it, which is what keeps "no
  * network request by default" a property of this binary rather than a claim
  * about it. See src/cli/model_fetch.h. */
-#define HYP_CLI_CMD_BODY_fetch_model                                                               \
+#define HYP_CLI_CMD_BODY_fetch_model \
     return hyp_cmd_fetch_model(argc - i - SKIP_ONE, argv + i + SKIP_ONE);
 
 /* A MAIN_ROLE row is dispatched by main()'s role branch, so it gets no arm
  * here. An arm would be unreachable: the classifier routes those tokens to
  * roles that never call handle_subcommand(). */
 #define MAIN_SUBCOMMAND_ARM_HYP_CLI_DISPATCH_MAIN_ROLE(id, token)
-#define MAIN_SUBCOMMAND_ARM_HYP_CLI_DISPATCH_SUBCOMMAND(id, token)                                 \
-    if (strcmp(argv[i], token) == 0) {                                                             \
-        HYP_CLI_CMD_BODY_##id                                                                      \
+#define MAIN_SUBCOMMAND_ARM_HYP_CLI_DISPATCH_SUBCOMMAND(id, token) \
+    if (strcmp(argv[i], token) == 0) {                             \
+        HYP_CLI_CMD_BODY_##id                                      \
     }
-#define MAIN_SUBCOMMAND_ROW(id, token, role, help, dispatch, usage)                                \
+#define MAIN_SUBCOMMAND_ROW(id, token, role, help, dispatch, usage) \
     MAIN_SUBCOMMAND_ARM_##dispatch(id, token)
 
 static int handle_subcommand(int argc, char **argv, hyp_project_lock_manager_t *project_locks,

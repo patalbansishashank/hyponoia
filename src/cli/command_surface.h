@@ -2,28 +2,30 @@
  * command_surface.h — THE table of top-level CLI commands. Every end reads
  * this one.
  *
- * ─── What this replaces, and why one table ─────────────────────────────
+ * ─── Why one table, and what two would cost ────────────────────────────
  *
- * A top-level command used to be declared in two places that nothing held
- * together:
+ * A top-level command has two independent facts about it:
  *
- *   1. handle_subcommand()'s if-chain (main.c)  — what the binary DISPATCHES.
- *   2. stateless_commands[] + the token checks in hyp_daemon_process_role()
- *      (daemon/bootstrap.c)                     — what ROLE the process takes.
+ *   1. it is DISPATCHED — handle_subcommand()'s if-chain (main.c) runs it.
+ *   2. it takes a ROLE — hyp_daemon_process_role() (daemon/bootstrap.c) says
+ *      whether the process needs a daemon, a coordinated CLI lease, or
+ *      nothing at all.
  *
- * The two were hand-written, and the failure was silent in the worst possible
- * direction: a command present in (1) and absent from (2) fell through to
- * HYP_DAEMON_PROCESS_MCP_CLIENT, so the binary attached to a daemon and served
- * the MCP protocol on stdin. With stdin closed that is exit 0 and no output —
- * a command that appears to succeed while doing nothing; with a terminal
- * attached it is a hang. Neither is an error a user can bisect.
+ * Split those across two hand-written enumerations and the failure mode is
+ * silent in the worst possible direction: a command declared in (1) and
+ * missing from (2) falls through to the client role, so the binary attaches to
+ * a daemon and serves the MCP protocol on stdin. With stdin closed that is
+ * exit 0 and no output — a command that appears to succeed while doing
+ * nothing; with a terminal attached it is a hang. Neither is an error a user
+ * can bisect, and neither end's own tests can see it, because each end is
+ * correct in isolation.
  *
- * That is not a hypothetical. `fetch-model` shipped dispatched-and-
- * unclassified, hung on a real download, was patched by adding one row, and
- * the patch's own comment wrote the mechanism down. The next command added
- * fell into it anyway. A comment warning of a trap is not a gate.
+ * That failure is observed, not theorised: it reached users through a command
+ * that downloads a model, and patching that one command per-instance left the
+ * mechanism intact for the next one. A comment warning of a trap is not a
+ * gate, which is why this is a table and not a warning.
  *
- * So the command surface is now one table, and both ends EXPAND it:
+ * So the command surface is one table, and both ends EXPAND it:
  *
  *   - bootstrap.c generates the whole argv classifier from it. There is no
  *     second list of stateless commands, because there is no second list.
@@ -161,7 +163,7 @@ typedef enum {
 /* Row count, for a _Static_assert that pairs this table against any array
  * sized from it. */
 #define HYP_CLI_COMMAND_SURFACE_ROW_COUNT_ONE(id, token, role, help, dispatch, usage) +1
-#define HYP_CLI_COMMAND_SURFACE_ROW_COUNT                                                          \
+#define HYP_CLI_COMMAND_SURFACE_ROW_COUNT \
     (0 HYP_CLI_COMMAND_SURFACE(HYP_CLI_COMMAND_SURFACE_ROW_COUNT_ONE))
 
 typedef enum {
@@ -185,11 +187,11 @@ typedef enum {
  * Value validity is not this table's job: `--tool-profile=nonsense` is a
  * client argument shape, and the profile parser is what refuses the value.
  */
-#define HYP_CLI_CLIENT_ARGUMENTS(X)                                                                \
-    X("--profile", HYP_CLI_ARG_EXACT)                                                              \
-    X("--tool-profile", HYP_CLI_ARG_VALUE)                                                         \
-    X("--tool-profile=", HYP_CLI_ARG_PREFIX)                                                       \
-    X("--ui=", HYP_CLI_ARG_PREFIX)                                                                 \
+#define HYP_CLI_CLIENT_ARGUMENTS(X)          \
+    X("--profile", HYP_CLI_ARG_EXACT)        \
+    X("--tool-profile", HYP_CLI_ARG_VALUE)   \
+    X("--tool-profile=", HYP_CLI_ARG_PREFIX) \
+    X("--ui=", HYP_CLI_ARG_PREFIX)           \
     X("--port=", HYP_CLI_ARG_PREFIX)
 
 #endif /* HYP_CLI_COMMAND_SURFACE_H */
