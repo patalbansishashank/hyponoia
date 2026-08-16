@@ -71,11 +71,12 @@
 #include <cli/model_fetch.h> /* hyp_model_ask_present/path */
 #include <cli/onboard.h>
 #include <foundation/compat_fs.h>
+#include <foundation/identity.h> /* the address a zero-config repo derives */
 #include <foundation/platform.h>
 #include <foundation/workspace.h>
 #include <mcp/mcp.h>
-#include <pipeline/pipeline.h>  /* hyp_project_name_from_path */
-#include <semantic/ask_embed.h> /* hyp_ask_backend_t — the query side */
+#include <semantic/ask_embed.h>       /* hyp_ask_backend_t — the query side */
+#include <store/workspace_resolve.h>  /* THE resolver, and its TOML finder */
 #include <yyjson/yyjson.h>
 
 #include <stdbool.h>
@@ -355,8 +356,10 @@ static const char *g5_precondition_gap(const g5_room_t *r) {
     if (!resolved) {
         return "the product cannot resolve a cache directory";
     }
-    char want[HYP_PATH_MAX];
-    char got[HYP_PATH_MAX];
+    /* HYP_SZ_4K, not HYP_PATH_MAX: hyp_canonical_path is realpath() on POSIX,
+     * which writes up to PATH_MAX whatever the caller's buffer says. */
+    char want[HYP_SZ_4K];
+    char got[HYP_SZ_4K];
     if (!hyp_canonical_path(r->cache, want, sizeof(want)) ||
         !hyp_canonical_path(resolved, got, sizeof(got)) || strcmp(want, got) != 0) {
         return "the product's cache directory is not the fixture's";
@@ -380,7 +383,7 @@ static const char *g5_precondition_gap(const g5_room_t *r) {
     /* The weights of the default lane are absent, and the path they would be
      * absent FROM is inside the isolated cache — otherwise the answer would be
      * about the developer's own machine. */
-    char model[HYP_PATH_MAX];
+    char model[HYP_SZ_4K];
     if (!hyp_model_ask_path(model, sizeof(model))) {
         return "the model path cannot be resolved";
     }
@@ -390,17 +393,25 @@ static const char *g5_precondition_gap(const g5_room_t *r) {
     if (hyp_model_ask_present()) {
         return "model weights are already present in the isolated cache";
     }
-    /* The repository has no record of a previous conversation. */
-    char toml[HYP_PATH_MAX];
-    (void)snprintf(toml, sizeof(toml), "%s/%s", r->repo, HYP_ONBOARD_TOML_NAME);
-    if (hyp_file_exists(toml)) {
-        return "the fresh repository already carries a hyponoia.toml";
+    /* The repository has no record of a previous conversation — and neither
+     * does anything ABOVE it. The one resolver locates a workspace file by
+     * walking from the start directory toward the filesystem root, so a
+     * hyponoia.toml two levels up governs this repository as surely as one
+     * inside it. Checking only the repository would leave the widest
+     * inherited-state channel open, and the product's own finder is what
+     * answers here rather than a loop written for the occasion. */
+    char toml[HYP_WSR_PATH_MAX];
+    if (hyp_wsr_toml_find(r->repo, toml, sizeof(toml))) {
+        return "a hyponoia.toml governs the fresh repository from at or above it";
+    }
+    if (hyp_wsr_toml_find(r->cache, toml, sizeof(toml))) {
+        return "a hyponoia.toml sits at or above the isolated cache";
     }
     /* It is also not this repository, and not anywhere under it: a fixture
      * that accidentally pointed at the checkout would inherit its git history,
      * its own hyponoia.toml and its indexed state all at once. */
-    char here[HYP_PATH_MAX];
-    char repo[HYP_PATH_MAX];
+    char here[HYP_SZ_4K];
+    char repo[HYP_SZ_4K];
     if (!hyp_canonical_path(".", here, sizeof(here)) ||
         !hyp_canonical_path(r->repo, repo, sizeof(repo))) {
         return "the fixture paths cannot be canonicalised";
@@ -609,6 +620,205 @@ TEST(g5_zero_config_indexes_and_answers_with_nothing_typed) {
 
     (void)hyp_ask_backend_install(NULL);
     hyp_mcp_server_free(srv);
+    g5_room_end(&room);
+    PASS();
+}
+
+/* ── The same code at two paths ───────────────────────────────────── */
+
+/* Ask a project for the top-ranked qualified name. The question is alpha's
+ * span, so the top row is alpha's declaration and the QN is the indexer's own,
+ * read back through the tool a client would use rather than recomputed here. */
+static bool g5_top_qn(hyp_mcp_server_t *srv, const char *project, char *out, size_t out_sz) {
+    char args[HYP_SZ_1K];
+    (void)snprintf(args, sizeof(args),
+                   "{\"project\":\"%s\",\"format\":\"json\",\"include_source\":false,"
+                   "\"question\":\"int alpha(void) {\\n    return 1;\\n}\"}",
+                   project);
+    char *resp = hyp_mcp_handle_tool(srv, "ask", args);
+    char *jtext = resp ? g5_tool_text(resp) : NULL;
+    free(resp);
+    if (!jtext) {
+        return false;
+    }
+    yyjson_doc *doc = yyjson_read(jtext, strlen(jtext), 0);
+    yyjson_val *root = doc ? yyjson_doc_get_root(doc) : NULL;
+    yyjson_val *cols = root ? yyjson_obj_get(root, "cols") : NULL;
+    int qn_col = -1;
+    size_t ci = 0;
+    size_t cmax = 0;
+    yyjson_val *cv = NULL;
+    yyjson_arr_foreach(cols, ci, cmax, cv) {
+        const char *cname = yyjson_get_str(cv);
+        if (cname && strcmp(cname, "qn") == 0) {
+            qn_col = (int)ci;
+        }
+    }
+    yyjson_val *rows = root ? yyjson_obj_get(root, "rows") : NULL;
+    yyjson_val *row0 = rows ? yyjson_arr_get(rows, 0) : NULL;
+    const char *qn = (row0 && qn_col >= 0) ? yyjson_get_str(yyjson_arr_get(row0, (size_t)qn_col))
+                                           : NULL;
+    bool ok = qn != NULL && strstr(qn, "alpha") != NULL;
+    if (ok) {
+        (void)snprintf(out, out_sz, "%s", qn);
+    }
+    yyjson_doc_free(doc);
+    free(jtext);
+    return ok;
+}
+
+/* Index one directory and embed it, so a question can be asked of it. */
+static bool g5_index_and_embed(hyp_mcp_server_t *srv, const char *dir, const char *project) {
+    char args[HYP_SZ_4K];
+    (void)snprintf(args, sizeof(args), "{\"repo_path\":\"%s\"}", dir);
+    char *resp = hyp_mcp_handle_tool(srv, "index_repository", args);
+    if (!resp || strstr(resp, "\"isError\":true")) {
+        free(resp);
+        return false;
+    }
+    free(resp);
+    hyp_ask_encoder_t enc = {.vt = &G5_ENC_VT, .self = NULL};
+    hyp_ask_embed_opts_t eopts;
+    memset(&eopts, 0, sizeof(eopts));
+    eopts.project = project;
+    hyp_ask_embed_report_t rep;
+    if (hyp_ask_embed_run(&enc, &eopts, &rep) != 0) {
+        return false;
+    }
+    bool ok = rep.embedded > 0;
+    hyp_ask_embed_report_free(&rep);
+    return ok;
+}
+
+TEST(g5_the_same_repository_at_two_paths_is_two_addresses) {
+    /*
+     * A KNOWN LIMITATION, ASSERTED AS THE CURRENT BEHAVIOUR — not a property
+     * anyone wants.
+     *
+     * A member slug is the project slug of the repository's canonical root,
+     * so two checkouts of the same repository at different paths derive
+     * different slugs. The declared remedy is a workspace name in the TOML,
+     * and the zero-config path is by definition the one with no TOML to
+     * declare anything in — which makes this the venue where a user meets the
+     * split first and the venue least able to repair it.
+     *
+     * The clean room is what makes the comparison mean anything: identical
+     * bytes, one cache, one process, one encoder, and the checkout path as
+     * the only difference between the two legs.
+     */
+    g5_room_t room;
+    if (!g5_room_begin(&room)) {
+        g5_room_end(&room);
+        FAIL("the clean room could not be established");
+    }
+    const char *gap = g5_precondition_gap(&room);
+    if (gap) {
+        g5_room_end(&room);
+        FAIL(gap);
+    }
+
+    /* The twin: the same two files, byte for byte, at a different path. */
+    const char *made = th_mktempdir("hyp-g5-twin");
+    char *twin = made ? hyp_strdup(made) : NULL;
+    if (!twin || th_write_file(TH_PATH(twin, "src/x.c"), G5_ALPHA "\n"
+                                                                  "int beta(void) {\n"
+                                                                  "    return 2;\n"
+                                                                  "}\n") != 0 ||
+        th_write_file(TH_PATH(twin, "src/y.c"), "int gamma(void) {\n    return 3;\n}\n") != 0) {
+        free(twin);
+        g5_room_end(&room);
+        FAIL("the twin checkout could not be written");
+    }
+
+    /* Both resolved by THE resolver, on its zero-config precedence — no TOML
+     * passed, no provider, so what separates the two legs is the path alone. */
+    hyp_wsr_resolved_t a;
+    hyp_wsr_resolved_t b;
+    char werr[HYP_SZ_512];
+    werr[0] = '\0';
+    ASSERT_EQ(hyp_wsr_resolve(room.repo, NULL, NULL, &a, werr, sizeof(werr)), HYP_WSR_OK);
+    ASSERT_EQ(hyp_wsr_resolve(twin, NULL, NULL, &b, werr, sizeof(werr)), HYP_WSR_OK);
+    ASSERT_EQ((int)a.source, (int)HYP_WSR_SOURCE_ZERO_CONFIG);
+    ASSERT_EQ((int)b.source, (int)HYP_WSR_SOURCE_ZERO_CONFIG);
+    ASSERT_EQ(a.member_count, 1);
+    ASSERT_EQ(b.member_count, 1);
+    ASSERT_STR_EQ(a.members[0].role, HYP_WSR_ROLE_MEMBER);
+    ASSERT_STR_EQ(b.members[0].role, HYP_WSR_ROLE_MEMBER);
+
+    /* The content is identical, and that is asserted through the product's own
+     * span hash rather than assumed from the fixture writing the same literal
+     * twice. Identical content is the premise; if it did not hold, a differing
+     * address would say nothing about the path. */
+    char hash_a[HYP_ADDR_SPAN_HASH_LEN + 1];
+    char hash_b[HYP_ADDR_SPAN_HASH_LEN + 1];
+    hyp_addr_span_hash(G5_ALPHA, hash_a);
+    hyp_addr_span_hash(G5_ALPHA, hash_b);
+    ASSERT_STR_EQ(hash_a, hash_b);
+
+    hyp_mcp_server_t *srv = hyp_mcp_server_new(NULL);
+    ASSERT_NOT_NULL(srv);
+    ASSERT_EQ(hyp_ask_backend_install(&G5_BACKEND), 0);
+    if (!g5_index_and_embed(srv, room.repo, a.id) || !g5_index_and_embed(srv, twin, b.id)) {
+        (void)hyp_ask_backend_install(NULL);
+        hyp_mcp_server_free(srv);
+        th_cleanup(twin);
+        free(twin);
+        g5_room_end(&room);
+        FAIL("one of the two checkouts could not be indexed and embedded");
+    }
+
+    /* The qualified name the INDEXER built for the same declaration in each
+     * checkout, read back through the tool a client uses. */
+    char qn_a[HYP_ADDR_QN_MAX];
+    char qn_b[HYP_ADDR_QN_MAX];
+    bool got_a = g5_top_qn(srv, a.id, qn_a, sizeof(qn_a));
+    bool got_b = g5_top_qn(srv, b.id, qn_b, sizeof(qn_b));
+    (void)hyp_ask_backend_install(NULL);
+    hyp_mcp_server_free(srv);
+    if (!got_a || !got_b) {
+        th_cleanup(twin);
+        free(twin);
+        g5_room_end(&room);
+        FAIL("alpha did not come back top-ranked from one of the two checkouts");
+    }
+
+    /* Workspace NULL is the workspace of one on C1's own terms: the repo is
+     * its own workspace, which is exactly what the zero-config path resolves
+     * to. */
+    hyp_addr_t addr_a;
+    hyp_addr_t addr_b;
+    ASSERT_EQ((int)hyp_addr_init(&addr_a, NULL, a.members[0].slug, qn_a), (int)HYP_ADDR_OK);
+    ASSERT_EQ((int)hyp_addr_init(&addr_b, NULL, b.members[0].slug, qn_b), (int)HYP_ADDR_OK);
+    char text_a[HYP_ADDR_MAX];
+    char text_b[HYP_ADDR_MAX];
+    ASSERT_TRUE(hyp_addr_format(&addr_a, text_a, sizeof(text_a)));
+    ASSERT_TRUE(hyp_addr_format(&addr_b, text_b, sizeof(text_b)));
+
+    /* Both addresses, printed verbatim, so the comparison sits in the record
+     * rather than in a verdict about it. */
+    printf("  same content, two checkout paths:\n");
+    printf("    %s -> %s\n", room.repo, text_a);
+    printf("    %s -> %s\n", twin, text_b);
+
+    /* THE CURRENT BEHAVIOUR. Two addresses, differing in the repo field and
+     * in the qualified name, for one declaration whose bytes are identical.
+     * A decision anchored in one checkout is orphaned in the other, and the
+     * union merge cannot see that they were ever the same symbol. The fix is
+     * a slug that is not a function of the path — a unit, not a patch — so
+     * this asserts what is true today and will fail the day it changes, which
+     * is the only signal that would tell anyone it had. */
+    ASSERT_STR_NEQ(a.members[0].slug, b.members[0].slug);
+    ASSERT_STR_NEQ(qn_a, qn_b);
+    ASSERT_STR_NEQ(text_a, text_b);
+    ASSERT_FALSE(hyp_addr_equal(&addr_a, &addr_b));
+    ASSERT_FALSE(hyp_addr_same_repo(&addr_a, &addr_b));
+    /* And the workspace id splits with it, so a declared workspace name would
+     * repair only half of this: the repo field is downstream of the path and
+     * no TOML `name` reaches it. */
+    ASSERT_STR_NEQ(a.id, b.id);
+
+    th_cleanup(twin);
+    free(twin);
     g5_room_end(&room);
     PASS();
 }
@@ -919,7 +1129,13 @@ TEST(g5_the_printed_next_steps_are_commands_this_binary_accepts) {
                 }
                 free(err);
                 ASSERT_NOT_NULL(json);
-                ASSERT_NOT_NULL(strstr(json, room.repo));
+                /* The canonical spelling, because the resolver canonicalises
+                 * and the fixture's own path need not already be canonical.
+                 * The point of the assertion is that the arguments object
+                 * carries THIS repository, not that two strings match. */
+                char canon_repo[HYP_SZ_4K];
+                ASSERT_TRUE(hyp_canonical_path(room.repo, canon_repo, sizeof(canon_repo)) != 0);
+                ASSERT_NOT_NULL(strstr(json, canon_repo));
                 free(json);
                 saw_index++;
             } else if (strcmp(words[1], "embed") == 0) {
@@ -973,6 +1189,7 @@ TEST(g5_the_printed_next_steps_are_commands_this_binary_accepts) {
 SUITE(g5_zero_config) {
     RUN_TEST(g5_clean_room_guarantees_the_preconditions_are_absent);
     RUN_TEST(g5_zero_config_indexes_and_answers_with_nothing_typed);
+    RUN_TEST(g5_the_same_repository_at_two_paths_is_two_addresses);
     RUN_TEST(g5_ask_before_the_embed_pass_refuses_and_names_the_remedy);
     RUN_TEST(g5_the_lane_this_build_cannot_run_is_reported_as_absent);
     RUN_TEST(g5_the_printed_next_steps_are_commands_this_binary_accepts);
