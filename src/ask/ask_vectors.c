@@ -491,6 +491,46 @@ void hyp_ask_vec_meta_free(hyp_ask_vec_meta_t *m) {
     memset(m, 0, sizeof(*m));
 }
 
+int hyp_ask_stamp_check(const char *stored_model_id, const char *stored_contract, int stored_dim,
+                        int stored_window, const char *model_id, const char *prefix_contract,
+                        int dim, int window_tokens, char *err, size_t errlen) {
+    if (model_id && stored_model_id && strcmp(model_id, stored_model_id) != 0) {
+        snprintf(err, errlen,
+                 "stored vectors are from model '%s', this side uses '%s' — two models' vectors "
+                 "are not comparable and nothing downstream can tell them apart",
+                 stored_model_id, model_id);
+        return HYP_ASK_VEC_INCOMPATIBLE;
+    }
+    if (prefix_contract && prefix_contract[0] && stored_contract && stored_contract[0] &&
+        strcmp(prefix_contract, stored_contract) != 0) {
+        /* Same weights, different text going into them. §2.9 measured one model
+         * wanting opposite contracts on two corpora, so this is not a
+         * theoretical case and the model id would not have caught it. */
+        snprintf(err, errlen,
+                 "stored vectors were encoded under prefix contract '%s', this side uses '%s' — "
+                 "same model '%s', but the text fed to it differs, so the two sets of vectors "
+                 "are not in the same space",
+                 stored_contract, prefix_contract,
+                 stored_model_id && stored_model_id[0] ? stored_model_id : "?");
+        return HYP_ASK_VEC_INCOMPATIBLE;
+    }
+    if (dim > 0 && stored_dim != dim) {
+        snprintf(err, errlen, "stored dim %d against encoder dim %d", stored_dim, dim);
+        return HYP_ASK_VEC_INCOMPATIBLE;
+    }
+    if (window_tokens > 0 && stored_window != window_tokens) {
+        /* A different window means the truncation set describes a different
+         * question. It is not a vector mismatch, but it is a disclosure
+         * mismatch, and the disclosure is the reason the counter exists. */
+        snprintf(err, errlen,
+                 "stored window %d against encoder window %d — the truncation set was "
+                 "denominated in a different number",
+                 stored_window, window_tokens);
+        return HYP_ASK_VEC_INCOMPATIBLE;
+    }
+    return HYP_ASK_VEC_OK;
+}
+
 int hyp_ask_vectors_check_compatible(hyp_ask_vectors_t *v, const char *model_id,
                                      const char *prefix_contract, int dim, int window_tokens) {
     hyp_ask_vec_meta_t m;
@@ -504,35 +544,10 @@ int hyp_ask_vectors_check_compatible(hyp_ask_vectors_t *v, const char *model_id,
                  "stored format %d against this binary's %d — refused rather than read",
                  m.format, HYP_ASK_VEC_FORMAT);
         verdict = HYP_ASK_VEC_INCOMPATIBLE;
-    } else if (model_id && m.model_id && strcmp(model_id, m.model_id) != 0) {
-        snprintf(v->errbuf, sizeof(v->errbuf),
-                 "stored vectors are from model '%s', this run uses '%s' — two models' vectors "
-                 "are not comparable and nothing downstream can tell them apart",
-                 m.model_id, model_id);
-        verdict = HYP_ASK_VEC_INCOMPATIBLE;
-    } else if (prefix_contract && prefix_contract[0] && m.prefix_contract &&
-               m.prefix_contract[0] && strcmp(prefix_contract, m.prefix_contract) != 0) {
-        /* Same weights, different text going into them. §2.9 measured one model
-         * wanting opposite contracts on two corpora, so this is not a
-         * theoretical case and the model id would not have caught it. */
-        snprintf(v->errbuf, sizeof(v->errbuf),
-                 "stored vectors were encoded under prefix contract '%s', this run uses '%s' — "
-                 "same model '%s', but the text fed to it differs, so the two sets of vectors "
-                 "are not in the same space",
-                 m.prefix_contract, prefix_contract, m.model_id ? m.model_id : "?");
-        verdict = HYP_ASK_VEC_INCOMPATIBLE;
-    } else if (dim > 0 && m.dim != dim) {
-        snprintf(v->errbuf, sizeof(v->errbuf), "stored dim %d against encoder dim %d", m.dim, dim);
-        verdict = HYP_ASK_VEC_INCOMPATIBLE;
-    } else if (window_tokens > 0 && m.window_tokens != window_tokens) {
-        /* A different window means the truncation set describes a different
-         * question. It is not a vector mismatch, but it is a disclosure
-         * mismatch, and the disclosure is the reason the counter exists. */
-        snprintf(v->errbuf, sizeof(v->errbuf),
-                 "stored window %d against encoder window %d — the truncation set was "
-                 "denominated in a different number",
-                 m.window_tokens, window_tokens);
-        verdict = HYP_ASK_VEC_INCOMPATIBLE;
+    } else {
+        verdict =
+            hyp_ask_stamp_check(m.model_id, m.prefix_contract, m.dim, m.window_tokens, model_id,
+                                prefix_contract, dim, window_tokens, v->errbuf, sizeof(v->errbuf));
     }
     hyp_ask_vec_meta_free(&m);
     return verdict;
