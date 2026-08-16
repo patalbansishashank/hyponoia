@@ -35,7 +35,8 @@ enum {
     ONBOARD_SAMPLE_TRUNC = 2048, /* bytes per sample document — declaration-sized */
     ONBOARD_VERIFY_GROUP = 3,    /* forms ragged groups over the fixture below */
     ONBOARD_ANSWER_LINE = 4096,  /* one answers-file line */
-    ONBOARD_MS_PER_SEC = 1000,
+    ONBOARD_NS_PER_SEC = 1000000000,
+    ONBOARD_NS_PER_MS = 1000000,
 };
 
 /* The measured bar of `embed --verify-batching` (ask_cmd.c): an order of
@@ -296,7 +297,14 @@ static void onboard_cost_probe(const hyp_onboard_probe_opts_t *opts, hyp_onboard
         int dim = hyp_ask_encoder_dim(enc);
         float *vec = dim > 0 ? malloc((size_t)dim * sizeof(float)) : NULL;
         int done = 0;
-        uint64_t t0 = hyp_now_ms();
+        /* NANOSECONDS, not milliseconds. A handful of declaration-sized
+         * samples on a fast encoder finishes inside one millisecond tick, and
+         * a clock too coarse to resolve the run reports elapsed 0 — which this
+         * function would read as "nothing was measured" and silently answer
+         * with the compiled-in constant instead. A measurement downgraded to a
+         * constant by the stopwatch is the "a constant is not a measurement"
+         * rule failing in the direction nobody checks. */
+        uint64_t t0 = hyp_now_ns();
         for (int i = 0; i < want && vec; i++) {
             /* Strided, so the sample spans the corpus rather than one dir. */
             const hyp_file_info_t *fi = &files[(int64_t)i * count / want];
@@ -313,19 +321,19 @@ static void onboard_cost_probe(const hyp_onboard_probe_opts_t *opts, hyp_onboard
             }
             free(text);
         }
-        double ms = (double)(hyp_now_ms() - t0);
+        double ns = (double)(hyp_now_ns() - t0);
         free(vec);
-        if (done > 0 && ms > 0) {
+        if (done > 0 && ns > 0) {
             r->encode_measured = true;
-            r->encode_docs_per_sec = (double)done / (ms / ONBOARD_MS_PER_SEC);
+            r->encode_docs_per_sec = (double)done / (ns / (double)ONBOARD_NS_PER_SEC);
             (void)snprintf(
                 r->encode_method, sizeof(r->encode_method),
                 "measured now: %d sample documents from this corpus (each capped at "
-                "%d bytes), encoded one at a time by %s on %s in %.0f ms",
+                "%d bytes), encoded one at a time by %s on %s in %.3f ms",
                 done, ONBOARD_SAMPLE_TRUNC,
                 hyp_ask_encoder_model_id(enc) ? hyp_ask_encoder_model_id(enc) : "unreported",
                 hyp_ask_encoder_device_note(enc) ? hyp_ask_encoder_device_note(enc) : "unreported",
-                ms);
+                ns / (double)ONBOARD_NS_PER_MS);
         }
     }
     if (!r->encode_measured) {
