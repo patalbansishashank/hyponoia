@@ -214,6 +214,13 @@ if ! echo "$OUTPUT" | grep -qE 'v?[0-9]+\.[0-9]+|dev'; then
   echo "FAIL: unexpected version output"
   exit 1
 fi
+# A dev build used to print "hyponoia dev" and nothing else, so a bug report
+# from one could not be tied to any tree. It now carries the same build
+# identifier the daemon prints in `daemon status`, or an injected source SHA.
+if ! echo "$OUTPUT" | grep -qE '^hyponoia [^ ]+ \([0-9a-zA-Z._-]+\)$'; then
+  echo "FAIL: --version carries no build identifier: $OUTPUT"
+  exit 1
+fi
 echo "OK"
 
 echo ""

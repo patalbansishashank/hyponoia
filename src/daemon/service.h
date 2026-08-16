@@ -68,6 +68,15 @@ hyp_daemon_hello_status_t hyp_daemon_hello_compare(const hyp_daemon_build_identi
 
 bool hyp_daemon_conflict_format(const hyp_daemon_conflict_t *conflict, char *out, size_t out_size);
 
+/* The supported way out of a conflict, for a human at a terminal.
+ *
+ * Deliberately NOT folded into hyp_daemon_conflict_format: that text is a
+ * fixed-capacity field on the rendezvous wire, already near its cap once two
+ * 64-character fingerprints are in it, and the remedy is advice rather than
+ * protocol. Every place that shows a conflict prints this on the next line, so
+ * the guard that refuses a start also names the way to run anyway. */
+const char *hyp_daemon_conflict_escape_hint(void);
+
 /* Append one secret-free NDJSON conflict event. A persistent owner-only
  * <log_path>.lock serializes validation, rotation, and append across daemon
  * processes; cap_bytes rotates one complete prior generation to <log_path>.1

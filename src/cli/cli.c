@@ -200,6 +200,7 @@ typedef struct {
 static hyp_cli_activation_ops_t g_cli_activation_test_ops;
 static bool g_cli_activation_test_ops_set = false;
 static const char *g_cli_activation_runtime_parent_for_test = NULL;
+static const char *g_cli_install_candidate_for_test = NULL;
 
 static void cli_activation_diagnostic(const hyp_cli_activation_ops_t *ops, const char *message) {
     const char *diagnostic = message ? message : CLI_ACTIVATION_REFUSED_MESSAGE;
@@ -276,6 +277,10 @@ bool hyp_cli_activation_test_ops_installed(void) {
 
 void hyp_cli_set_activation_runtime_parent_for_test(const char *runtime_parent) {
     g_cli_activation_runtime_parent_for_test = runtime_parent;
+}
+
+void hyp_cli_set_install_candidate_for_test(const char *candidate_path) {
+    g_cli_install_candidate_for_test = candidate_path;
 }
 
 static const char *cli_activation_action_text(hyp_daemon_runtime_activation_action_t action) {
@@ -9966,6 +9971,9 @@ int hyp_cmd_install(int argc, char **argv) {
         /* Non-macOS activation reaches this block only for a real copy. */
         const char *candidate = self_path;
 #endif
+        if (g_cli_install_candidate_for_test) {
+            candidate = g_cli_install_candidate_for_test;
+        }
         /* Preparation is always out-of-line. The target transaction must not
          * snapshot or reserve anything in the install directory until the
          * activation guard is held; otherwise a waiter races the current
@@ -9995,9 +10003,44 @@ int hyp_cmd_install(int argc, char **argv) {
         if (stage_status != HYP_ACTIVATION_TRANSACTION_OK || !binary_transaction ||
             !cli_activation_transaction_expected_build(binary_transaction, &staged_validator)) {
             const char *stage_refusal = hyp_activation_transaction_refusal_note();
-            (void)fprintf(stderr, "error: failed to stage install candidate: %s%s%s\n",
-                          hyp_activation_transaction_status_message(stage_status),
-                          stage_refusal[0] ? ": " : "", stage_refusal);
+            /* Everything printed so far went to stdout, which is block-buffered
+             * whenever the caller pipes or captures it. Without this flush the
+             * unbuffered error lands FIRST and the run reads as a banner
+             * following a failure -- which is how "install printed a success
+             * banner and an error" was reported for a week. */
+            (void)fflush(stdout);
+            if (stage_refusal[0]) {
+                /* Not an I/O error: a permission rule refused before anything
+                 * was copied. Say which path, which rule, and what to do — and
+                 * name the sidecars in the remedy, because copying the binary
+                 * alone leaves the runtime assets behind and the retry then
+                 * fails with a second, unrelated-looking message. */
+                char candidate_dir[CLI_BUF_1K];
+                (void)snprintf(candidate_dir, sizeof(candidate_dir), "%s", candidate);
+                char *separator = strrchr(candidate_dir, '/');
+#ifdef _WIN32
+                char *backslash = strrchr(candidate_dir, '\\');
+                if (backslash && (!separator || backslash > separator)) {
+                    separator = backslash;
+                }
+#endif
+                if (separator && separator != candidate_dir) {
+                    *separator = '\0';
+                } else {
+                    (void)snprintf(candidate_dir, sizeof(candidate_dir), ".");
+                }
+                (void)fprintf(stderr,
+                              "error: install refused before any file was changed: %s\n"
+                              "error: nothing was installed and nothing was modified. Copy the "
+                              "binary and the hyp-* runtime files beside it into a directory "
+                              "this account owns privately, then install from there:\n"
+                              "         mkdir -p ~/hyp-install && cp %s/hyponoia %s/hyp-* "
+                              "~/hyp-install/ && ~/hyp-install/hyponoia install\n",
+                              stage_refusal, candidate_dir, candidate_dir);
+            } else {
+                (void)fprintf(stderr, "error: failed to stage install candidate: %s\n",
+                              hyp_activation_transaction_status_message(stage_status));
+            }
             (void)cli_activation_transaction_abort(&binary_transaction);
             if (prepared_dir[0]) {
                 (void)hyp_rmdir(prepared_dir);

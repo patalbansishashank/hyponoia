@@ -187,6 +187,54 @@ static int write_test_file(const char *path, const char *content) {
     return 0;
 }
 
+/* Helper: give an install test a staging source it owns.
+ *
+ * `install` stages the RUNNING executable. For the C suite that is the
+ * ~600 MB test-runner sitting in the checkout, and the activation transaction
+ * refuses any source whose directory chain is group- or world-writable — a
+ * normal workstation layout (this repository lives under /media/DEV, mode
+ * 0777). Seven install tests failed on nothing but that and were dismissed as
+ * "environmental" for a week; the assertion they tripped (`ASSERT_EQ(rc, 0)`)
+ * named nothing, which is how the dismissal survived.
+ *
+ * These tests are about activation ORDER and guard accounting, not about where
+ * the repository happens to live, so they own the source: a few hundred bytes
+ * inside the test's own mkdtemp directory, which is 0700 under a root-owned
+ * sticky /tmp and therefore stageable everywhere. It is also ~600 MB per test
+ * cheaper. The path lives in a static so it outlives the install call — the
+ * seam stores the pointer, and forked install children inherit the copy.
+ * Every caller must pair this with hyp_cli_set_install_candidate_for_test(NULL). */
+static bool cli_test_own_install_candidate(const char *directory) {
+#ifdef _WIN32
+    /* Windows refuses a source through DACL inspection rather than a mode
+     * bit, and a shell script is not an executable candidate there. Leave the
+     * seam unset so these tests keep the exact behaviour they have today. */
+    (void)directory;
+    return true;
+#else
+    static char candidate[1024];
+    int written = snprintf(candidate, sizeof(candidate), "%s/install-source-fixture", directory);
+    if (written <= 0 || (size_t)written >= sizeof(candidate)) {
+        return false;
+    }
+    /* Executable, because the installer verifies a prepared candidate by
+     * running `--version` on it whenever the test has not replaced the
+     * activation ops. Mirrors tests/test_main.c's own `--version` stub. */
+    if (write_test_file(candidate, "#!/bin/sh\n"
+                                   "case \"$1\" in\n"
+                                   "  --version) echo 'hyponoia install-fixture'; exit 0;;\n"
+                                   "esac\n"
+                                   "exit 0\n") != 0) {
+        return false;
+    }
+    if (chmod(candidate, 0700) != 0) {
+        return false;
+    }
+    hyp_cli_set_install_candidate_for_test(candidate);
+    return true;
+#endif
+}
+
 /* Helper: read a file into static buffer */
 static const char *read_test_file(const char *path) {
     static char buf[8192];
@@ -528,6 +576,11 @@ static void cli_activation_save_env(char **home_out, char **cache_out) {
 }
 
 static void cli_activation_restore_env(char *home, char *cache) {
+    /* The install-source seam points into a static buffer naming a file inside
+     * the test's temp directory, which is about to be removed. Clearing it
+     * here, in the paired teardown every activation test already calls, means
+     * a later install test can never stage from a deleted fixture. */
+    hyp_cli_set_install_candidate_for_test(NULL);
     if (home) {
         hyp_setenv("HOME", home, 1);
     } else {
@@ -875,6 +928,9 @@ TEST(cli_activation_quiesce_does_not_wait_on_bootstrap_startup) {
     if (!hyp_mkdtemp(tmpdir)) {
         FAIL("hyp_mkdtemp failed");
     }
+    if (!cli_test_own_install_candidate(tmpdir)) {
+        FAIL("could not create a private install source");
+    }
     char runtime_parent[512];
     snprintf(runtime_parent, sizeof(runtime_parent), "%s/runtime", tmpdir);
     if (test_mkdirp(runtime_parent) != 0) {
@@ -1024,6 +1080,9 @@ TEST(cli_install_force_quiesces_active_cohort_before_replacing_binary) {
     if (!hyp_mkdtemp(tmpdir)) {
         FAIL("hyp_mkdtemp failed");
     }
+    if (!cli_test_own_install_candidate(tmpdir)) {
+        FAIL("could not create a private install source");
+    }
     char *old_home = NULL;
     char *old_cache = NULL;
     cli_activation_save_env(&old_home, &old_cache);
@@ -1070,6 +1129,9 @@ TEST(cli_install_dir_and_skip_config_stage_first_install_safely) {
     snprintf(tmpdir, sizeof(tmpdir), "/tmp/cli-install-dir-XXXXXX");
     if (!hyp_mkdtemp(tmpdir)) {
         FAIL("hyp_mkdtemp failed");
+    }
+    if (!cli_test_own_install_candidate(tmpdir)) {
+        FAIL("could not create a private install source");
     }
     char *old_home = NULL;
     char *old_cache = NULL;
@@ -1169,6 +1231,9 @@ TEST(cli_install_reset_deletion_waits_for_final_activation_guard) {
     snprintf(tmpdir, sizeof(tmpdir), "/tmp/cli-daemon-install-reset-XXXXXX");
     if (!hyp_mkdtemp(tmpdir)) {
         FAIL("hyp_mkdtemp failed");
+    }
+    if (!cli_test_own_install_candidate(tmpdir)) {
+        FAIL("could not create a private install source");
     }
     char *old_home = NULL;
     char *old_cache = NULL;
@@ -1395,6 +1460,9 @@ TEST(cli_install_config_failure_restores_previous_runtime_set) {
     if (!hyp_mkdtemp(tmpdir)) {
         FAIL("hyp_mkdtemp failed");
     }
+    if (!cli_test_own_install_candidate(tmpdir)) {
+        FAIL("could not create a private install source");
+    }
     char *old_home = NULL;
     char *old_cache = NULL;
     cli_activation_save_env(&old_home, &old_cache);
@@ -1499,6 +1567,9 @@ TEST(cli_install_gc_is_guarded_content_bound_and_after_binary_publish) {
     snprintf(tmpdir, sizeof(tmpdir), "/tmp/cli-runtime-pack-gc-XXXXXX");
     if (!hyp_mkdtemp(tmpdir)) {
         FAIL("hyp_mkdtemp failed");
+    }
+    if (!cli_test_own_install_candidate(tmpdir)) {
+        FAIL("could not create a private install source");
     }
     char *old_home = NULL;
     char *old_cache = NULL;
@@ -1841,6 +1912,7 @@ TEST(cli_concurrent_ui_then_standard_install_leaves_coherent_standard_set) {
     char tmpdir[256];
     snprintf(tmpdir, sizeof(tmpdir), "/tmp/cli-runtime-set-race-XXXXXX");
     ASSERT_NOT_NULL(hyp_mkdtemp(tmpdir));
+    ASSERT_TRUE(cli_test_own_install_candidate(tmpdir));
     char home[512];
     char bin_dir[512];
     char source_dir[512];
@@ -1960,6 +2032,7 @@ TEST(cli_concurrent_ui_then_standard_install_leaves_coherent_standard_set) {
     hyp_path_info_t ignored;
     bool final_pack_absent = hyp_path_info_utf8(installed_pack, &ignored) != 0;
     bool ui_pack_was_visible_to_standard = hyp_path_info_utf8(ui_pack_observed, &ignored) == 0;
+    hyp_cli_set_install_candidate_for_test(NULL);
     test_rmdir_r(tmpdir);
     ASSERT_TRUE(ui_reaped_cleanly);
     ASSERT_TRUE(standard_reaped_cleanly);

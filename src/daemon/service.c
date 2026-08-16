@@ -241,6 +241,14 @@ bool hyp_daemon_conflict_format(const hyp_daemon_conflict_t *conflict, char *out
     return true;
 }
 
+const char *hyp_daemon_conflict_escape_hint(void) {
+    return "To run this build BESIDE the active one instead of closing it, give it its own "
+           "rendezvous and its own cache: "
+           "HYP_DAEMON_RUNTIME_PARENT=/tmp/hyp-isolated HYP_CACHE_DIR=/tmp/hyp-isolated/cache "
+           "hyponoia ... . Both are required — an isolated socket over the shared cache is "
+           "refused. See docs/OPERATIONS.md, \"Running a second build beside the active one\".";
+}
+
 static bool json_escape_version(const char *value, char out[DAEMON_SERVICE_ESCAPED_VERSION_CAP]) {
     static const char hex[] = "0123456789abcdef";
     size_t length = 0;

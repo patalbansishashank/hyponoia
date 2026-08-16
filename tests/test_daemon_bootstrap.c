@@ -1,5 +1,6 @@
 /* RED contract for early process-role classification. */
 #include "test_framework.h"
+#include "test_helpers.h"
 
 #include "daemon/bootstrap.h"
 #include "daemon/ipc.h"
@@ -12,7 +13,12 @@
 #include <stdatomic.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
+
+#ifndef _WIN32
+#include <sys/un.h>
+#endif
 
 enum {
     BOOTSTRAP_TEST_PATH_CAP = 1024,
@@ -47,7 +53,8 @@ typedef struct {
     atomic_bool connect_requires_unlocked;
     hyp_daemon_bootstrap_probe_status_t forced_probe;
     hyp_version_cohort_status_t forced_cohort;
-    char diagnostic[HYP_DAEMON_CONFLICT_MESSAGE_SIZE];
+    /* Holds the conflict text plus the escape line that follows it. */
+    char diagnostic[HYP_DAEMON_CONFLICT_MESSAGE_SIZE * 2U];
 } bootstrap_fake_ops_t;
 
 typedef struct {
@@ -233,10 +240,15 @@ static bool bootstrap_fake_spawn(void *opaque, const hyp_daemon_bootstrap_launch
     return true;
 }
 
+/* Accumulates rather than overwrites: a conflict is now reported as the
+ * refusal followed by the supported escape, and asserting on only the last
+ * line would hide whichever of the two regressed. */
 static void bootstrap_fake_diagnostic(void *opaque, const char *message) {
     bootstrap_fake_ops_t *fake = opaque;
     atomic_fetch_add(&fake->diagnostic_count, 1);
-    snprintf(fake->diagnostic, sizeof(fake->diagnostic), "%s", message ? message : "");
+    size_t used = strlen(fake->diagnostic);
+    (void)snprintf(fake->diagnostic + used, sizeof(fake->diagnostic) - used, "%s%s",
+                   used ? "\n" : "", message ? message : "");
 }
 
 static hyp_daemon_bootstrap_ops_t bootstrap_fake_callbacks(bootstrap_fake_ops_t *fake) {
@@ -475,9 +487,13 @@ TEST(daemon_bootstrap_cohort_conflict_is_visible_before_probe_or_spawn) {
     ASSERT_EQ(atomic_load(&fake.probe_count), 0);
     ASSERT_EQ(atomic_load(&fake.lock_attempt_count), 0);
     ASSERT_EQ(atomic_load(&fake.spawn_count), 0);
-    ASSERT_EQ(atomic_load(&fake.diagnostic_count), 1);
+    ASSERT_EQ(atomic_load(&fake.diagnostic_count), 2);
     ASSERT_NOT_NULL(strstr(fake.diagnostic, "conflicting HYP process is active"));
     ASSERT_NOT_NULL(strstr(fake.diagnostic, "Close all HYP sessions and commands"));
+    /* A refusal that does not name its own escape is what made six agents
+     * rebuild with test seams; the escape is part of the diagnostic now. */
+    ASSERT_NOT_NULL(strstr(fake.diagnostic, "HYP_DAEMON_RUNTIME_PARENT"));
+    ASSERT_NOT_NULL(strstr(fake.diagnostic, "HYP_CACHE_DIR"));
     bootstrap_endpoint_fixture_finish(&fixture);
     PASS();
 }
@@ -529,8 +545,9 @@ TEST(daemon_bootstrap_conflict_is_visible_and_never_spawns) {
     ASSERT_EQ(result.status, HYP_DAEMON_BOOTSTRAP_CONFLICT);
     ASSERT_NULL(result.client);
     ASSERT_EQ(atomic_load(&fake.spawn_count), 0);
-    ASSERT_EQ(atomic_load(&fake.diagnostic_count), 1);
+    ASSERT_EQ(atomic_load(&fake.diagnostic_count), 2);
     ASSERT_NOT_NULL(strstr(fake.diagnostic, "conflicting versions"));
+    ASSERT_NOT_NULL(strstr(fake.diagnostic, "HYP_DAEMON_RUNTIME_PARENT"));
     bootstrap_endpoint_fixture_finish(&fixture);
     PASS();
 }
@@ -772,6 +789,142 @@ TEST(daemon_bootstrap_darwin_launch_failure_is_synchronous) {
 }
 #endif
 
+#ifndef _WIN32
+static char *bootstrap_env_save(const char *name) {
+    const char *value = getenv(name);
+    return value ? strdup(value) : NULL;
+}
+
+static void bootstrap_env_restore(const char *name, char *saved) {
+    if (saved) {
+        hyp_setenv(name, saved, 1);
+        free(saved);
+    } else {
+        hyp_unsetenv(name);
+    }
+}
+#endif
+
+/* §3.2 defect 1. The account-wide rendezvous had no exit that a normal build
+ * could take: HYP_TEST_DAEMON_RUNTIME_PARENT is compiled in only under
+ * HYP_ENABLE_TEST_SEAMS, so during §3.1 six parallel agents each had to build a
+ * different binary to work at all -- and an MCP server that cannot start does
+ * not fail loudly, it leaves its client answering with no tools.
+ *
+ * The escape must satisfy three things at once, and this asserts all three:
+ * it must EXIST for a normal build; it must be a function of the CACHE, so the
+ * guard it escapes still protects the store it exists to protect; and it must
+ * REFUSE the one combination that corrupts -- a private socket over the shared
+ * account cache. */
+TEST(daemon_bootstrap_isolated_rendezvous_is_scoped_by_cache_and_refuses_the_default) {
+#ifdef _WIN32
+    SKIP_PLATFORM("windows: the rendezvous is a named pipe with no cache-scoped directory");
+#else
+    char tmpdir[BOOTSTRAP_TEST_PATH_CAP];
+    (void)snprintf(tmpdir, sizeof(tmpdir), "/tmp/hyp-isolation-XXXXXX");
+    ASSERT_NOT_NULL(hyp_mkdtemp(tmpdir));
+
+    char *saved_home = bootstrap_env_save("HOME");
+    char *saved_cache = bootstrap_env_save("HYP_CACHE_DIR");
+    char *saved_parent = bootstrap_env_save("HYP_DAEMON_RUNTIME_PARENT");
+    char *saved_seam = bootstrap_env_save("HYP_TEST_DAEMON_RUNTIME_PARENT");
+
+    char parent[BOOTSTRAP_TEST_PATH_CAP];
+    char default_cache[BOOTSTRAP_TEST_PATH_CAP];
+    char cache_a[BOOTSTRAP_TEST_PATH_CAP];
+    char cache_b[BOOTSTRAP_TEST_PATH_CAP];
+    (void)snprintf(parent, sizeof(parent), "%s/rt", tmpdir);
+    (void)snprintf(default_cache, sizeof(default_cache), "%s/.cache/hyponoia", tmpdir);
+    (void)snprintf(cache_a, sizeof(cache_a), "%s/cache-a", tmpdir);
+    (void)snprintf(cache_b, sizeof(cache_b), "%s/cache-b", tmpdir);
+
+    /* HOME decides what "the account default cache" means; the seam must be
+     * out of the way so the production variable is the one under test. */
+    hyp_setenv("HOME", tmpdir, 1);
+    hyp_unsetenv("HYP_TEST_DAEMON_RUNTIME_PARENT");
+    hyp_setenv("HYP_DAEMON_RUNTIME_PARENT", parent, 1);
+
+    bool made = hyp_mkdir_p(default_cache, 0700) && hyp_mkdir_p(cache_a, 0700) &&
+                hyp_mkdir_p(cache_b, 0700);
+
+    /* 1. Refused: isolating the socket while sharing the account's store is
+     *    the corruption the cohort guard exists to prevent. */
+    hyp_setenv("HYP_CACHE_DIR", default_cache, 1);
+    hyp_daemon_ipc_endpoint_t *shared_cache = hyp_daemon_bootstrap_endpoint_new(NULL);
+
+    /* 2. Accepted with its own cache, under the caller's own parent. */
+    hyp_setenv("HYP_CACHE_DIR", cache_a, 1);
+    hyp_daemon_ipc_endpoint_t *first = hyp_daemon_bootstrap_endpoint_new(NULL);
+    char first_dir[BOOTSTRAP_TEST_PATH_CAP] = {0};
+    char first_address[BOOTSTRAP_TEST_PATH_CAP] = {0};
+    if (first) {
+        (void)snprintf(first_dir, sizeof(first_dir), "%s",
+                       hyp_daemon_ipc_endpoint_runtime_dir(first));
+        (void)snprintf(first_address, sizeof(first_address), "%s",
+                       hyp_daemon_ipc_endpoint_address(first));
+    }
+
+    /* 3. A different cache is a different rendezvous: nothing is shared. */
+    hyp_setenv("HYP_CACHE_DIR", cache_b, 1);
+    hyp_daemon_ipc_endpoint_t *other = hyp_daemon_bootstrap_endpoint_new(NULL);
+    char other_dir[BOOTSTRAP_TEST_PATH_CAP] = {0};
+    if (other) {
+        (void)snprintf(other_dir, sizeof(other_dir), "%s",
+                       hyp_daemon_ipc_endpoint_runtime_dir(other));
+    }
+
+    /* 4. The SAME cache is the same rendezvous, so two processes pointed at
+     *    one store still meet -- and still meet the guard. */
+    hyp_setenv("HYP_CACHE_DIR", cache_a, 1);
+    hyp_daemon_ipc_endpoint_t *again = hyp_daemon_bootstrap_endpoint_new(NULL);
+    char again_dir[BOOTSTRAP_TEST_PATH_CAP] = {0};
+    if (again) {
+        (void)snprintf(again_dir, sizeof(again_dir), "%s",
+                       hyp_daemon_ipc_endpoint_runtime_dir(again));
+    }
+
+    /* 5. Unset, and the account-wide rendezvous is exactly what it always
+     *    was -- the escape is opt-in and changes nothing by default. */
+    hyp_unsetenv("HYP_DAEMON_RUNTIME_PARENT");
+    hyp_daemon_ipc_endpoint_t *account = hyp_daemon_bootstrap_endpoint_new(NULL);
+    char account_dir[BOOTSTRAP_TEST_PATH_CAP] = {0};
+    if (account) {
+        (void)snprintf(account_dir, sizeof(account_dir), "%s",
+                       hyp_daemon_ipc_endpoint_runtime_dir(account));
+    }
+
+    hyp_daemon_ipc_endpoint_free(shared_cache);
+    hyp_daemon_ipc_endpoint_free(first);
+    hyp_daemon_ipc_endpoint_free(other);
+    hyp_daemon_ipc_endpoint_free(again);
+    hyp_daemon_ipc_endpoint_free(account);
+    bootstrap_env_restore("HYP_TEST_DAEMON_RUNTIME_PARENT", saved_seam);
+    bootstrap_env_restore("HYP_DAEMON_RUNTIME_PARENT", saved_parent);
+    bootstrap_env_restore("HYP_CACHE_DIR", saved_cache);
+    bootstrap_env_restore("HOME", saved_home);
+    th_rmtree(tmpdir);
+
+    ASSERT_TRUE(made);
+    ASSERT_NULL(shared_cache);
+    ASSERT_NOT_NULL(first);
+    ASSERT_NOT_NULL(other);
+    ASSERT_NOT_NULL(again);
+    ASSERT_NOT_NULL(account);
+    /* Under the caller's parent, in a directory named from the cache. */
+    ASSERT_EQ(strncmp(first_dir, parent, strlen(parent)), 0);
+    ASSERT_NOT_NULL(strstr(first_dir, "/hyp-scope-"));
+    ASSERT_STR_NEQ(first_dir, other_dir);
+    ASSERT_STR_EQ(first_dir, again_dir);
+    /* And the account-wide default is untouched by any of it. */
+    ASSERT_NULL(strstr(account_dir, "hyp-scope-"));
+    ASSERT_NULL(strstr(account_dir, tmpdir));
+    /* The socket that will be bound inside it must fit sun_path. */
+    ASSERT_TRUE(first_address[0] != '\0');
+    ASSERT_TRUE(strlen(first_address) < sizeof(((struct sockaddr_un *)0)->sun_path));
+    PASS();
+#endif
+}
+
 SUITE(daemon_bootstrap) {
     RUN_TEST(daemon_bootstrap_classifies_default_and_ui_as_mcp_clients);
     RUN_TEST(daemon_bootstrap_classifies_stateless_commands_without_client);
@@ -781,6 +934,7 @@ SUITE(daemon_bootstrap) {
     RUN_TEST(daemon_bootstrap_internal_roles_never_take_client_leases);
     RUN_TEST(daemon_bootstrap_rejects_ambiguous_internal_daemon_argv);
     RUN_TEST(daemon_bootstrap_uses_one_stable_per_account_endpoint);
+    RUN_TEST(daemon_bootstrap_isolated_rendezvous_is_scoped_by_cache_and_refuses_the_default);
     RUN_TEST(daemon_bootstrap_launches_only_exact_detached_hidden_role);
     RUN_TEST(daemon_bootstrap_permanent_daemon_argv_is_byte_exact);
     RUN_TEST(daemon_bootstrap_daemon_ctl_token_routes_after_cli);
