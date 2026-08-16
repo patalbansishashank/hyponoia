@@ -13,14 +13,13 @@ conflicts=("$pkgname")
 source_x86_64=("${pkgname}-${pkgver}-linux-amd64.tar.gz::https://github.com/patalbansishashank/hyponoia/releases/download/v${pkgver}/hyponoia-ui-linux-amd64.tar.gz")
 source_aarch64=("${pkgname}-${pkgver}-linux-arm64.tar.gz::https://github.com/patalbansishashank/hyponoia/releases/download/v${pkgver}/hyponoia-ui-linux-arm64.tar.gz")
 
-# Checksums are placeholders until v0.3.1 publishes. The values here were the
-# real v0.3.0 hashes; against a v0.3.1 URL they are worse than blank, because a
-# plausible-but-wrong hash fails at install time with a mismatch nobody can
-# attribute to a cause. They are zeroed until the real values are copied from
-# the release's checksums.txt — the same rule that retired upstream's v0.8.1
-# hashes when this fork cut its own line.
-sha256sums_x86_64=('0000000000000000000000000000000000000000000000000000000000000000')
-sha256sums_aarch64=('0000000000000000000000000000000000000000000000000000000000000000')
+# v0.3.1's own checksums, copied from the release's checksums.txt and verified
+# independently by re-hashing the downloaded archives. They are only ever
+# carried forward WITH a matching pkgver: a real hash for the wrong tag fails at
+# install time with a mismatch nobody can attribute to a cause, so a version
+# bump zeroes these until the new release exists.
+sha256sums_x86_64=('c4fa4ef5f62736092695f1c9fcaae23d38d78746e5aa79070e0a07e21c52fa6f')
+sha256sums_aarch64=('946d60367968507503cb74531cdc0079b935f81beff5e9a36ce8171e5bfed1ae')
 
 package() {
     install -Dm755 "${srcdir}/hyponoia" \

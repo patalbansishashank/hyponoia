@@ -7,7 +7,7 @@
   "architecture": {
     "64bit": {
       "url": "https://github.com/patalbansishashank/hyponoia/releases/download/v0.3.1/hyponoia-ui-windows-amd64.zip",
-      "hash": "0000000000000000000000000000000000000000000000000000000000000000",
+      "hash": "fee50ab1a80ca00b133311d96d90447b0b991ec66892aaa0a0e0ef2d2753c4fe",
       "bin": "hyponoia.exe"
     }
   },

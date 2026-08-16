@@ -9,12 +9,14 @@ NestedInstallerFiles:
 Platform:
   - Windows.Desktop
   - Windows.Universal
-# InstallerSha256 is a placeholder until v0.3.1 publishes; copy the real value
-# from the release's checksums.txt before submitting this manifest.
+# InstallerSha256 is v0.3.1's own, copied from the release's checksums.txt and
+# verified independently by re-hashing the downloaded zip. On a version bump it
+# is zeroed again until the new release exists: a real hash for the wrong tag
+# fails at install time with a mismatch nobody can attribute to a cause.
 # The build publishes only the UI variant, so this is the only archive that exists.
 Installers:
   - Architecture: x64
     InstallerUrl: https://github.com/patalbansishashank/hyponoia/releases/download/v0.3.1/hyponoia-ui-windows-amd64.zip
-    InstallerSha256: "0000000000000000000000000000000000000000000000000000000000000000"
+    InstallerSha256: "fee50ab1a80ca00b133311d96d90447b0b991ec66892aaa0a0e0ef2d2753c4fe"
 ManifestType: installer
 ManifestVersion: 1.6.0

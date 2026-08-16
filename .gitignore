@@ -77,3 +77,9 @@ soak-results-query-leak/
 # scripts/soak-test.sh stay tracked.
 /soak*/
 /memlab-*
+
+# Compiled output of pkg/go (the wrapper is built by go install, never committed).
+# A 9.4 MB binary rode into v0.3.0 in dd41cf92 because the fix was made in the
+# same directory the test build wrote to.
+pkg/go/hyponoia
+pkg/go/hyponoia.exe

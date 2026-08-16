@@ -11,19 +11,17 @@ class Hyponoia < Formula
   # See docs/MAINTAINERS.md "Retired platforms".
   depends_on :linux
 
-  # Checksums are placeholders until v0.3.1 publishes — see pkg/aur/PKGBUILD
-  # for why they are zeroed rather than left at the PREVIOUS release's values:
-  # a real hash for the wrong tag fails at install time with a mismatch nobody
-  # can attribute, while an obviously-absent one names its own problem.
+  # Checksums are v0.3.1's own, copied from the release's checksums.txt and
+  # verified independently by re-hashing the downloaded archives.
   # The build publishes only the UI variant, so these are the only archives that exist.
   on_linux do
     on_arm do
       url "https://github.com/patalbansishashank/hyponoia/releases/download/v#{version}/hyponoia-ui-linux-arm64.tar.gz"
-      sha256 "0000000000000000000000000000000000000000000000000000000000000000"
+      sha256 "946d60367968507503cb74531cdc0079b935f81beff5e9a36ce8171e5bfed1ae"
     end
     on_intel do
       url "https://github.com/patalbansishashank/hyponoia/releases/download/v#{version}/hyponoia-ui-linux-amd64.tar.gz"
-      sha256 "0000000000000000000000000000000000000000000000000000000000000000"
+      sha256 "c4fa4ef5f62736092695f1c9fcaae23d38d78746e5aa79070e0a07e21c52fa6f"
     end
   end
 
