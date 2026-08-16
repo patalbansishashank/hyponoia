@@ -440,10 +440,18 @@ TEST(agent_profiles_tiers_agree_with_the_server_profile_they_run_against) {
  * the eleven-tool set; 1 added `ask` to analysis (tools list only); 2 makes
  * the analysis prompt teach ask and the project-name rule; 3 DELETES the
  * project-name rule, because the server derives the project itself and the
- * prose now contradicts it. Scout is byte-identical across all of them. */
-static const char ASK_GUIDANCE_MARK[] =
-    "call ask first with the question as one string; read its top 2\xe2\x80\x93"
-    "3 rows";
+ * prose now contradicts it, and stops sending the agent to get_code_snippet
+ * for code that `ask` now returns with the answer — a tool that can answer in
+ * one call is still worth nothing while the prompt orders a second.
+ * Scout is byte-identical across all of them. */
+/* The half of the ask guidance that is stable across 2 and 3 — the marks below
+ * are what each generation ADDS, so a rewording of the shared sentence cannot
+ * silently satisfy a generation's own assertion. */
+static const char ASK_GUIDANCE_MARK[] = "call ask first with the question as one string";
+/* Generation 2 sent the agent to get_code_snippet for the code; generation 3
+ * says the code arrived with the answer, which is what makes one call enough. */
+static const char SNIPPET_FOLLOWUP_MARK[] = "verify with get_code_snippet";
+static const char SOURCE_INLINE_MARK[] = "verbatim source of the top 2";
 static const char PROJECT_RULE_MARK[] = "/home/u/repo \xe2\x86\x92 home-u-repo";
 static const char PROJECT_DEFAULT_MARK[] = "Omit the project argument";
 
@@ -489,7 +497,10 @@ TEST(agent_profiles_earlier_generations_still_render_for_migration) {
                      (strstr(gen3, ASK_GUIDANCE_MARK) != NULL) == prompt_moved &&
                      (strstr(gen2, PROJECT_RULE_MARK) != NULL) == prompt_moved &&
                      (strstr(gen3, PROJECT_DEFAULT_MARK) != NULL) == prompt_moved &&
+                     (strstr(gen2, SNIPPET_FOLLOWUP_MARK) != NULL) == prompt_moved &&
+                     (strstr(gen3, SOURCE_INLINE_MARK) != NULL) == prompt_moved &&
                      !strstr(gen3, PROJECT_RULE_MARK) && !strstr(gen2, PROJECT_DEFAULT_MARK) &&
+                     !strstr(gen3, SNIPPET_FOLLOWUP_MARK) && !strstr(gen2, SOURCE_INLINE_MARK) &&
                      !strstr(gen1, ASK_GUIDANCE_MARK) && !strstr(gen0, ASK_GUIDANCE_MARK);
             }
             free(current);

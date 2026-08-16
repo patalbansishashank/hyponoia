@@ -217,7 +217,9 @@ static const char PROMPT_ASK_GUIDANCE_GEN2[] =
  * installer's migration check. */
 static const char PROMPT_ASK_GUIDANCE_GEN3[] =
     "For a natural-language question about what code does, call ask first with the question as "
-    "one string; read its top 2–3 rows and verify with get_code_snippet, and treat "
+    "one string. It returns the ranked declarations AND the verbatim source of the top 2, so a "
+    "common-case question is one call: read the source it already gave you, and call "
+    "get_code_snippet only for a row it did not carry or for a span marked CUT. Treat "
     "available:false as a statement about the index, not the code. Omit the project argument: "
     "the server derives it from the working directory it was started in, and every answer "
     "reports project and project_source so you can see which project answered and why. Pass a "
