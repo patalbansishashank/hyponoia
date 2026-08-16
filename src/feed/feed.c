@@ -96,7 +96,7 @@ typedef struct {
     owned_item_t *items;
     size_t count;
     size_t cap;
-    size_t yields; /* item yields including in-pull repeats of one origin */
+    size_t yields;           /* item yields including in-pull repeats of one origin */
     HYPHashTable *by_origin; /* origin -> owned_item_t*, first occurrence */
     char **skip_origins;     /* owned, parallel with skip_reasons */
     char **skip_reasons;

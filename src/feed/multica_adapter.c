@@ -118,13 +118,22 @@ const char *const HYP_MULTICA_SCHEMA_PIN_SQL =
 
 /* ── The pinned result-set columns ──────────────────────────────────────── */
 
-const char *const HYP_MULTICA_MESSAGES_COLUMNS[] = {
-    "id",         "task_id",   "seq",
-    "type",       "tool",      "content",
-    "input",      "output",    "created_at_ms",
-    "agent_name", "parent_task_id", "issue_id",
-    "session_id", "parent_task_first_message_id", "attribution_fail_closed",
-    NULL};
+const char *const HYP_MULTICA_MESSAGES_COLUMNS[] = {"id",
+                                                    "task_id",
+                                                    "seq",
+                                                    "type",
+                                                    "tool",
+                                                    "content",
+                                                    "input",
+                                                    "output",
+                                                    "created_at_ms",
+                                                    "agent_name",
+                                                    "parent_task_id",
+                                                    "issue_id",
+                                                    "session_id",
+                                                    "parent_task_first_message_id",
+                                                    "attribution_fail_closed",
+                                                    NULL};
 
 enum {
     MC_ID = 0,
@@ -145,9 +154,9 @@ enum {
 };
 
 const char *const HYP_MULTICA_ISSUES_COLUMNS[] = {
-    "id",           "workspace_id", "title",           "description",
-    "status",       "priority",     "number",          "creator_type",
-    "creator_id",   "parent_issue_id", "created_at_ms", "attribution_fail_closed",
+    "id",         "workspace_id",    "title",         "description",
+    "status",     "priority",        "number",        "creator_type",
+    "creator_id", "parent_issue_id", "created_at_ms", "attribution_fail_closed",
     NULL};
 
 enum {
@@ -175,10 +184,10 @@ static const char *const SCHEMA_PIN_COLUMNS[] = {"pin_kind", "pin_name", "pin_de
 /* The value-level end of the schema's CHECK constraints. A value outside these
  * sets means the live schema drifted from the verified one: schema refusal,
  * not a row problem. */
-static const char *const ISSUE_STATUS_VALUES[] = {
-    "backlog", "todo", "in_progress", "in_review", "done", "blocked", "cancelled", NULL};
-static const char *const ISSUE_PRIORITY_VALUES[] = {"urgent", "high", "medium", "low", "none",
-                                                    NULL};
+static const char *const ISSUE_STATUS_VALUES[] = {"backlog", "todo",    "in_progress", "in_review",
+                                                  "done",    "blocked", "cancelled",   NULL};
+static const char *const ISSUE_PRIORITY_VALUES[] = {"urgent", "high", "medium",
+                                                    "low",    "none", NULL};
 static const char *const ISSUE_CREATOR_TYPE_VALUES[] = {"member", "agent", NULL};
 
 /* ── Small helpers ──────────────────────────────────────────────────────── */
@@ -532,9 +541,8 @@ static hyp_feed_status_t mx_msgs_next(hyp_feed_source_t *src, hyp_feed_item_t *o
         return HYP_FEED_ERR_SOURCE;
     }
     char author_buf[HYP_RECORD_MAX_AUTHOR + 1];
-    hyp_feed_status_t st_author =
-        hyp_multica_author_of(rows->value(rows, MC_AGENT_NAME), fail_closed, author_buf,
-                              sizeof(author_buf));
+    hyp_feed_status_t st_author = hyp_multica_author_of(
+        rows->value(rows, MC_AGENT_NAME), fail_closed, author_buf, sizeof(author_buf));
     if (st_author != HYP_FEED_OK) {
         return st_author;
     }
@@ -726,9 +734,9 @@ static hyp_feed_status_t mx_issues_next(hyp_feed_source_t *src, hyp_feed_item_t 
         return HYP_FEED_ERR_SOURCE;
     }
     char author_buf[HYP_RECORD_MAX_AUTHOR + 1];
-    hyp_feed_status_t st_author = hyp_multica_issue_author_of(
-        creator_type, rows->value(rows, IC_CREATOR_ID), fail_closed, author_buf,
-        sizeof(author_buf));
+    hyp_feed_status_t st_author =
+        hyp_multica_issue_author_of(creator_type, rows->value(rows, IC_CREATOR_ID), fail_closed,
+                                    author_buf, sizeof(author_buf));
     if (st_author != HYP_FEED_OK) {
         return st_author;
     }
@@ -904,44 +912,73 @@ fail:
 /* The verified column SETS, pinned exactly: a missing column and an extra
  * column on these tables both refuse. */
 static const char *const TASK_MESSAGE_TABLE_COLUMNS[] = {
-    "task_message.id",      "task_message.task_id", "task_message.seq",
-    "task_message.type",    "task_message.tool",    "task_message.content",
-    "task_message.input",   "task_message.output",  "task_message.created_at",
-    NULL};
+    "task_message.id",         "task_message.task_id",
+    "task_message.seq",        "task_message.type",
+    "task_message.tool",       "task_message.content",
+    "task_message.input",      "task_message.output",
+    "task_message.created_at", NULL};
 
-static const char *const ISSUE_TABLE_COLUMNS[] = {
-    "issue.id",           "issue.workspace_id",       "issue.title",
-    "issue.description",  "issue.status",             "issue.priority",
-    "issue.assignee_type", "issue.assignee_id",       "issue.creator_type",
-    "issue.creator_id",   "issue.parent_issue_id",    "issue.acceptance_criteria",
-    "issue.context_refs", "issue.position",           "issue.due_date",
-    "issue.created_at",   "issue.updated_at",         "issue.number",
-    "issue.project_id",   "issue.origin_type",        "issue.origin_id",
-    "issue.first_executed_at", "issue.start_date",    "issue.metadata",
-    "issue.stage",        "issue.properties",         NULL};
+static const char *const ISSUE_TABLE_COLUMNS[] = {"issue.id",
+                                                  "issue.workspace_id",
+                                                  "issue.title",
+                                                  "issue.description",
+                                                  "issue.status",
+                                                  "issue.priority",
+                                                  "issue.assignee_type",
+                                                  "issue.assignee_id",
+                                                  "issue.creator_type",
+                                                  "issue.creator_id",
+                                                  "issue.parent_issue_id",
+                                                  "issue.acceptance_criteria",
+                                                  "issue.context_refs",
+                                                  "issue.position",
+                                                  "issue.due_date",
+                                                  "issue.created_at",
+                                                  "issue.updated_at",
+                                                  "issue.number",
+                                                  "issue.project_id",
+                                                  "issue.origin_type",
+                                                  "issue.origin_id",
+                                                  "issue.first_executed_at",
+                                                  "issue.start_date",
+                                                  "issue.metadata",
+                                                  "issue.stage",
+                                                  "issue.properties",
+                                                  NULL};
 
-static const char *const WORKSPACE_TABLE_COLUMNS[] = {
-    "workspace.id",          "workspace.name",          "workspace.slug",
-    "workspace.description", "workspace.settings",      "workspace.created_at",
-    "workspace.updated_at",  "workspace.context",       "workspace.repos",
-    "workspace.issue_prefix", "workspace.issue_counter", "workspace.avatar_url",
-    "workspace.attribution_fail_closed", NULL};
+static const char *const WORKSPACE_TABLE_COLUMNS[] = {"workspace.id",
+                                                      "workspace.name",
+                                                      "workspace.slug",
+                                                      "workspace.description",
+                                                      "workspace.settings",
+                                                      "workspace.created_at",
+                                                      "workspace.updated_at",
+                                                      "workspace.context",
+                                                      "workspace.repos",
+                                                      "workspace.issue_prefix",
+                                                      "workspace.issue_counter",
+                                                      "workspace.avatar_url",
+                                                      "workspace.attribution_fail_closed",
+                                                      NULL};
 
 /* Consumed subsets: these must exist; the tables' other columns are pinned as
  * IGNORED and may come and go. For agent_task_queue that explicitly includes
  * delegated_from_task_id, retry_of_task_id and rerun_of_task_id — lineage is
  * read from parent_task_id ONLY. */
-static const char *const QUEUE_REQUIRED_COLUMNS[] = {
-    "agent_task_queue.id",          "agent_task_queue.agent_id",
-    "agent_task_queue.parent_task_id", "agent_task_queue.issue_id",
-    "agent_task_queue.session_id",  "agent_task_queue.work_dir",
-    "agent_task_queue.started_at",  "agent_task_queue.completed_at",
-    "agent_task_queue.result",      "agent_task_queue.status",
-    NULL};
+static const char *const QUEUE_REQUIRED_COLUMNS[] = {"agent_task_queue.id",
+                                                     "agent_task_queue.agent_id",
+                                                     "agent_task_queue.parent_task_id",
+                                                     "agent_task_queue.issue_id",
+                                                     "agent_task_queue.session_id",
+                                                     "agent_task_queue.work_dir",
+                                                     "agent_task_queue.started_at",
+                                                     "agent_task_queue.completed_at",
+                                                     "agent_task_queue.result",
+                                                     "agent_task_queue.status",
+                                                     NULL};
 
-static const char *const AGENT_REQUIRED_COLUMNS[] = {"agent.id", "agent.name",
-                                                     "agent.workspace_id", "agent.kind",
-                                                     "agent.model", NULL};
+static const char *const AGENT_REQUIRED_COLUMNS[] = {
+    "agent.id", "agent.name", "agent.workspace_id", "agent.kind", "agent.model", NULL};
 
 /* The four foreign keys the mapping rides on. The first is the loud-death pin:
  * without it a renamed or unkeyed table would join to NULLs forever. */

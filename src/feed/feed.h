@@ -188,9 +188,9 @@ hyp_feed_status_t hyp_feed_ingest(hyp_feed_source_t *src, hyp_record_set_t *stor
  * keeps its origin, so revision drift is a re-ingest concern, not a shortfall.
  */
 typedef struct {
-    const char *feed;    /* the audited source's name, borrowed from it */
-    size_t expected;     /* distinct item origins the feed yielded */
-    size_t present;      /* of those, origins some record in the store carries */
+    const char *feed; /* the audited source's name, borrowed from it */
+    size_t expected;  /* distinct item origins the feed yielded */
+    size_t present;   /* of those, origins some record in the store carries */
     size_t missing_count;
     /* The missing origins BY NAME, ascending, owned by the report. */
     const char *const *missing;

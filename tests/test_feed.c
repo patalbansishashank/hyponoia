@@ -20,10 +20,22 @@
 #include <stdint.h>
 #include <string.h>
 
-/* A fixed, caller-supplied instant: 2026-02-14T12:26:40.000Z. */
-#define FIXED_MS INT64_C(1770985600000)
-
 /* ── The toy adapter: the second-adapter proof, in ~40 lines ────────────── */
+
+/*
+ * TOY-ADAPTER-BEGIN
+ *
+ * Everything between these two markers is written against feed.h ALONE.
+ * tests/test_feed_contract.sh lifts this region out and compiles it with
+ * nothing else included, which is what turns "the boundary is in the right
+ * place" from a review opinion into something a machine rejects. Do not reach
+ * for a Multica symbol, or a record-set helper, in here: the whole claim is
+ * that a second adapter needs neither.
+ */
+
+/* A fixed, caller-supplied instant: 2026-02-14T12:26:40.000Z. The source states
+ * the event time; nothing downstream of here reads a clock. */
+#define FIXED_MS INT64_C(1770985600000)
 
 typedef struct {
     const hyp_feed_item_t *items;
@@ -93,6 +105,7 @@ static hyp_feed_status_t reasonless_notice_next(hyp_feed_source_t *src, hyp_feed
     out->reason = NULL; /* declined, with no policy named for declining it */
     return HYP_FEED_SKIP;
 }
+/* TOY-ADAPTER-END */
 
 /* The record holding this origin, or NULL. A linear scan on purpose: the test
  * asserts through the same read surface a client has, and the client has the

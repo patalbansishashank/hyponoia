@@ -269,6 +269,9 @@ bash "$ROOT/tests/test_script_exec_bit_contract.sh"
 echo "=== Step 0u: append-only record contract (C2) ==="
 bash "$ROOT/tests/test_record_contract.sh"
 
+echo "=== Step 0v: feed boundary contract (D3/D4) ==="
+bash "$ROOT/tests/test_feed_contract.sh"
+
 # Verify compiler supports target arch
 verify_compiler "$CC"
 
