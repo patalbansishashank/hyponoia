@@ -1160,7 +1160,7 @@ TEST(tool_surface_no_reserved_surface_depends_on_the_deprecated_tool) {
  *   - a memory tool grows ADR vocabulary, which would make the record surface
  *     need to know what an ADR is in order to read one.
  *
- * Either one is a §4 surface depending on the deprecated row. */
+ * Either one is a new surface depending on the deprecated row. */
 TEST(tool_surface_the_deprecated_adr_tool_shares_no_vocabulary_with_the_memory_surface) {
     const char *adr_schema = hyp_mcp_tool_input_schema("manage_adr");
     ASSERT_NOT_NULL(adr_schema); /* advertised and callable, unchanged on the wire */
