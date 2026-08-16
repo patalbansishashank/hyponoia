@@ -125,6 +125,10 @@ jobs:
         env:
           HYP_SMOKE_ARTIFACT_DIR: ${{ runner.temp }}/hyp-artifact
 
+      - name: Install strace (the egress gate refuses without it)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq strace
+
       - name: Security audits
         run: |
           BIN="$RUNNER_TEMP/hyp-artifact/hyponoia"
@@ -320,6 +324,10 @@ jobs:
       # here with `GLIBC_2.38 not found`.
       - name: Old-glibc compatibility
         run: scripts/ci/check-glibc-compat.sh "$RUNNER_TEMP/hyp-artifact/hyponoia"
+
+      - name: Install strace (the egress gate refuses without it)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq strace
 
       - name: Security audits
         run: |
