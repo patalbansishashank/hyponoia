@@ -7450,4 +7450,26 @@ void hyp_extract_definitions(HYPExtractCtx *ctx) {
 
     // Extract module-level variables
     extract_variables(ctx, ctx->root, spec);
+
+    /* A definition in a test FILE is test code, whatever language it is in.
+     *
+     * Until this loop existed the file-level flag reached the Module row above
+     * and nothing else: only Rust carried it down to items, via
+     * rust_def_is_test(), and the comment on that function describes this exact
+     * leak ("hyp's test detection is otherwise file-path-based ... leak past the
+     * store.c `is_test != 1` filter"). It was closed for Rust and left open for
+     * every other language — 9,676 of this repository's own functions live
+     * under tests/ and every one of them reported is_test=false, so test code
+     * ranked beside production code in search_graph.
+     *
+     * Applied HERE, once, after every push site in this file rather than as a
+     * per-language case, so a language added tomorrow inherits it by
+     * construction. It only ever raises the flag: the stronger per-item signals
+     * (Rust #[test]/#[tokio::test], C++ GoogleTest macros) already set is_test
+     * on individual defs in a NON-test file and are untouched. */
+    if (ctx->result->is_test_file) {
+        for (int i = 0; i < ctx->result->defs.count; i++) {
+            ctx->result->defs.items[i].is_test = true;
+        }
+    }
 }
