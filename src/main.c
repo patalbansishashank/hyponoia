@@ -39,6 +39,7 @@
 #include "cli/onboard.h"
 #include "cli/progress_sink.h"
 #include "foundation/constants.h"
+#include "memory/comment_migrate.h"
 
 enum {
     MAIN_MIN_ARGC = 1,
@@ -1157,6 +1158,14 @@ static int handle_subcommand(int argc, char **argv, hyp_project_lock_manager_t *
         if (strcmp(argv[i], "embed") == 0) {
             hyp_mem_init(hyp_mem_ram_fraction_for_total(hyp_system_info().total_ram));
             return hyp_cmd_embed(argc - i - SKIP_ONE, argv + i + SKIP_ONE);
+        }
+
+        /* Relocating comment prose into the decision store. A command a person
+         * runs over a checkout, never anything the daemon or the MCP surface
+         * can reach: it writes records, and a writer reachable from a read
+         * path is a writer nobody audited. See src/memory/comment_migrate.h. */
+        if (strcmp(argv[i], "migrate-comments") == 0) {
+            return hyp_cmd_migrate_comments(argc - i - SKIP_ONE, argv + i + SKIP_ONE);
         }
 
         /* The ONLY caller of the model fetcher, and it is a command a person
