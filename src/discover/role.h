@@ -6,7 +6,6 @@
 
 /*
  * role.h — what a repository in a workspace IS, derived, never enumerated.
- * NEXT-STEPS §4 Phase 1, Track A, units A2-A5 + A7.
  *
  * A workspace holds many trees and only some of them are yours. An agent that
  * cannot tell which is which will rewrite a dependency with the same

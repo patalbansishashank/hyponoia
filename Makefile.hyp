@@ -409,8 +409,10 @@ PIPELINE_SRCS = \
     src/pipeline/artifact.c \
     src/pipeline/pass_pkgmap.c
 
-# Memory module (§4 Track C): anchor resolution against the live index.
-MEMORY_SRCS = src/memory/anchor.c
+# Memory module (§4 Track C/E): anchor resolution against the live index, and
+# the comment-prose migration that relocates history-shaped comments into the
+# decision store instead of deleting them.
+MEMORY_SRCS = src/memory/anchor.c src/memory/comment_migrate.c
 
 # SimHash / MinHash module
 SIMHASH_SRCS = src/simhash/minhash.c
@@ -824,7 +826,7 @@ TEST_GRAPH_BUFFER_SRCS = tests/test_graph_buffer.c
 
 TEST_PIPELINE_SRCS = tests/test_registry.c tests/test_pipeline.c tests/test_cross_repo.c tests/test_fqn.c tests/test_identity.c tests/test_route_canon.c tests/test_path_alias.c tests/test_configlink.c tests/test_infrascan.c tests/test_worker_pool.c tests/test_parallel.c tests/test_index_resilience.c tests/test_call_reference_contract.c tests/repro/repro_call_scope_usages.c tests/repro/repro_call_argument_usages.c tests/repro/repro_reference_precision.c tests/repro/repro_lexical_binding_precision.c tests/repro/repro_call_argument_matrix_a.c tests/repro/repro_call_argument_matrix_b.c tests/repro/repro_call_node_behaviors.c tests/repro/repro_language_registry.c tests/repro/repro_call_node_manifest.c tests/repro/repro_lsp_ordered_signatures.c tests/repro/repro_lsp_ordered_local.c tests/repro/repro_ts_overload_return_chains.c tests/repro/repro_harness_cleanup.c tests/repro/repro_runner_filter.c
 
-TEST_MEMORY_SRCS = tests/test_anchor.c
+TEST_MEMORY_SRCS = tests/test_anchor.c tests/test_comment_migrate.c
 TEST_PIPELINE_SRCS += tests/test_fqn_differential.c
 
 TEST_WATCHER_SRCS = tests/test_watcher.c
@@ -1544,12 +1546,15 @@ lint-no-suppress:
 # report target below for E2's relocation into the decision store. The matcher
 # tokenizes C, so string literals are structurally invisible to it.
 #
-# OPT-IN for now, deliberately not folded into `lint`/`lint-ci`: those are what
-# scripts/lint.sh drives and what CI's lint job runs, and flipping a new gate
-# into them re-baselines every in-flight branch at once. The intended CI attach
-# point, for whoever owns that flip: add `lint-comments` to the `lint-ci`
-# prerequisites here (scripts/lint.sh --ci and _lint.yml then pick it up with
-# no further change), with BASE=origin/$GITHUB_BASE_REF on pull requests.
+# WIRED INTO `lint-ci` below, which is what scripts/lint.sh --ci drives and what
+# CI's lint job runs. It could not be wired before the contract headers were
+# migrated: a gate the tree's own frozen contract fails is a gate that gets
+# turned off rather than obeyed. Pass BASE=origin/$GITHUB_BASE_REF on a pull
+# request so the diff is against the target branch rather than the default base.
+#
+# Being forward-only is what makes this safe to switch on with the corpus only
+# partly drained: it fails a branch for the comments that branch ADDS, never for
+# the ones it inherited.
 lint-comments:
 	@echo "=== comment lint (new comments vs base) ==="
 	@python3 scripts/lint-comments.py $(if $(BASE),--base $(BASE))
@@ -1565,7 +1570,7 @@ lint: lint-tidy lint-cppcheck lint-format lint-no-suppress
 	@echo "=== All linters passed ==="
 
 # CI linters (no clang-tidy — platform-dependent, enforced locally via pre-commit)
-lint-ci: lint-cppcheck lint-format lint-no-suppress
+lint-ci: lint-cppcheck lint-format lint-no-suppress lint-comments
 	@echo "=== CI linters passed ==="
 
 # ── Local memory-diagnostic lanes (not PR-CI gates by decision: the diag

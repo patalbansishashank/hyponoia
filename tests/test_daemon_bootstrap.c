@@ -301,6 +301,12 @@ TEST(daemon_bootstrap_classifies_stateless_commands_without_client) {
      * fall through to MCP_CLIENT and BLOCK serving the protocol on stdin
      * instead of downloading anything. */
     char *fetch_model[] = {"hyponoia", "fetch-model", "--path", NULL};
+    /* Same class, and the reason it is worth a row each: an unlisted top-level
+     * command exits 0 having printed nothing, because it fell through to
+     * MCP_CLIENT and served the protocol on a closed stdin. A dispatch entry in
+     * main.c is only half a command. */
+    char *onboard[] = {"hyponoia", "onboard", NULL};
+    char *migrate_comments[] = {"hyponoia", "migrate-comments", "--manifest", "m", NULL};
     ASSERT_EQ(classify(2, version), HYP_DAEMON_PROCESS_STATELESS);
     ASSERT_EQ(classify(3, help), HYP_DAEMON_PROCESS_STATELESS);
     ASSERT_EQ(classify(3, install), HYP_DAEMON_PROCESS_STATELESS);
@@ -308,6 +314,8 @@ TEST(daemon_bootstrap_classifies_stateless_commands_without_client) {
     ASSERT_EQ(classify(3, update), HYP_DAEMON_PROCESS_STATELESS);
     ASSERT_EQ(classify(2, verify_runtime_assets), HYP_DAEMON_PROCESS_STATELESS);
     ASSERT_EQ(classify(3, fetch_model), HYP_DAEMON_PROCESS_STATELESS);
+    ASSERT_EQ(classify(2, onboard), HYP_DAEMON_PROCESS_STATELESS);
+    ASSERT_EQ(classify(4, migrate_comments), HYP_DAEMON_PROCESS_STATELESS);
     ASSERT_FALSE(hyp_daemon_process_role_requires_client(HYP_DAEMON_PROCESS_STATELESS));
     PASS();
 }

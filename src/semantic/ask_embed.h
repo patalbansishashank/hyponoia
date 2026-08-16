@@ -1,5 +1,5 @@
 /*
- * ask_embed.h — the inference boundary for the `ask` lane (NEXT-STEPS.md §2.1).
+ * ask_embed.h — the inference boundary for the `ask` lane.
  *
  * This header is the ONLY thing the `ask` tool knows about embedding. Whether
  * a transformer runs in-process (llama.cpp/GGUF statically linked), out of
@@ -40,7 +40,8 @@
  * ── Geometry is fixed by the measurement, not by us ──
  *
  * float32, 1024 dimensions, NO Matryoshka truncation, L2-normalised. This
- * differs from §2's static token table (int8/768) on purpose: that table is a
+ * differs from the graph store's static token table (int8/768) on purpose:
+ * that table is a
  * different lane with a different constraint (`CBM_SEM_DIM`), and truncating
  * to 768 to share a struct with it would be an unmeasured change to the thing
  * being ported. Cosine == dot product only because both sides are unit
@@ -60,7 +61,7 @@
 #include "hyp.h" /* HYPLanguage */
 
 /* Vector geometry. Both are copied from the measured configuration
- * (runs/ASK/T1-ctxengine-recipe.json §3) and neither is a tuning knob. */
+ * (runs/ASK/T1-ctxengine-recipe.json) and neither is a tuning knob. */
 enum {
     /* Under voyage-4-nano this IS a truncation: nano projects to
      * HYP_MODEL_ASK_PROJ_OUT (2048) and the vector is normalised, Matryoshka-

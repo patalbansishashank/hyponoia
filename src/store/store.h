@@ -363,7 +363,7 @@ int hyp_store_get_project(hyp_store_t *s, const char *name, hyp_project_t *out);
 int hyp_store_list_projects(hyp_store_t *s, hyp_project_t **out, int *count);
 int hyp_store_delete_project(hyp_store_t *s, const char *name);
 
-/* ── Workspace registry (§4 Phase 1, unit A1) ───────────────────
+/* ── Workspace registry ─────────────────────────────────────────
  *
  * One workspace per database file, described IN the file: workspace_meta holds
  * the workspace's own id (one row), workspace_repos binds the member repos —

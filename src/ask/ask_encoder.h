@@ -1,6 +1,6 @@
 /*
  * ask_encoder.h — the narrow seam between the `ask` lane and whatever runs the
- * transformer (NEXT-STEPS §2.1).
+ * transformer.
  *
  * TWO ENTRY POINTS, NO FLAG. The encoder is ASYMMETRIC: a query and a document
  * are marked DIFFERENTLY. (Qwen3 prefixed the query and left the document bare;
@@ -14,15 +14,16 @@
  * keeps that property. Do not add a third entry point that takes a flag.
  *
  * Everything below is an INTERFACE. The inference runtime behind it (llama.cpp
- * / GGUF, track 2) and the `ask` tool in front of it (track 3) are other
+ * / GGUF) and the `ask` tool in front of it are other
  * people's work. This header exists so the storage and the embed pass can be
  * built and tested end to end today against `hyp_ask_encoder_stub_create`,
  * and so the day the real backend lands nothing above this line changes.
  *
  * The contract the storage relies on:
  *   - vectors are float32, `dim` wide, L2-NORMALISED, and dim is 1024 for the
- *     model §2.1 names. NOT the int8/768 static-table format of §2 — that is a
- *     different store with a different model and the two must never mix.
+ *     model this lane runs. NOT the int8/768 static-table format the graph
+ *     store carries — a different store with a different model, and the two
+ *     must never mix.
  *   - a document is encoded from its VERBATIM SOURCE LINES, behind whatever
  *     document marking the active model's contract requires (bare for Qwen3,
  *     HYP_ASK_NANO_DOCUMENT_PROMPT for voyage-4-nano).
@@ -60,7 +61,8 @@
 #define HYP_ASK_NORM_TOLERANCE 1e-2F
 #endif
 
-/* The dimension §2.1's model emits. Recorded per index rather than compiled in
+/* The dimension this lane's model emits. Recorded per index rather than
+ * compiled in
  * as a hard assumption — a store whose dim does not match the live encoder is
  * REFUSED, not truncated. */
 #define HYP_ASK_DIM_DEFAULT 1024
@@ -76,9 +78,9 @@ typedef struct {
     /* Names the TEXT TRANSFORM this encoder applies before the weights see it —
      * the document-side prefix, the query-side instruct template, the provider's
      * `input_type`, or their absence. Stamped on the index and gated on, because
-     * the model id does not identify the space on its own: §2.9 measured the
-     * same weights wanting OPPOSITE contracts on two corpora, and five encoders
-     * across §2.5–§2.9 each wanted a different one.
+     * the model id does not identify the space on its own: the same weights
+     * have been measured wanting OPPOSITE contracts on two corpora, and every
+     * encoder measured so far wanted a different one.
      *
      * A short stable token, not the prefix text: it goes in an error message and
      * a prefix can be a paragraph. May return NULL for "cannot say", which is
@@ -91,9 +93,8 @@ typedef struct {
      * NOT optional, and not cosmetic. GPU is 24.09 docs/s and CPU is 1.581 —
      * 15.2x, or ~3 minutes against ~45 on the pinned corpus. A silent fallback
      * to CPU is not a slower success, it is the failure that wastes somebody's
-     * afternoon, and it is invisible unless the device is stated. §2's GPU work
-     * carried a `device_note` for the same reason and it is the precedent being
-     * followed. Every artifact this pass writes records it. */
+     * afternoon, and it is invisible unless the device is stated. Every artifact
+     * this pass writes records it. */
     const char *(*device_note)(void *self);
 
     /* True when device_note describes a GPU. Kept separate from the string so a

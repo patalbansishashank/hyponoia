@@ -184,8 +184,8 @@ hyp_feed_status_t hyp_feed_ingest(hyp_feed_source_t *src, hyp_record_set_t *stor
  * to it, in both directions.
  *
  * The audit answers "does the store hold every ROW the feed holds", keyed on
- * the source's own identity. A source row whose content was rewritten upstream
- * keeps its origin, so revision drift is a re-ingest concern, not a shortfall.
+ * the source's own identity. A source row whose content changes upstream keeps
+ * its origin, so revision drift is a re-ingest concern, not a shortfall.
  */
 typedef struct {
     const char *feed; /* the audited source's name, borrowed from it */

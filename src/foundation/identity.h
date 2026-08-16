@@ -6,12 +6,12 @@
 
 /*
  * identity.h — the one canonical address for a node, and the content hash of
- * its span. NEXT-STEPS §4 Phase 0, contract C1.
+ * its span.
  *
- * Everything in §4 anchors to this: the workspace store (A1), every role
- * derivation (A2-A6), decision anchoring (C3u), orphan detection (C4u) and
- * re-index survival (C5u). It is a CONTRACT — pure functions over strings, no
- * store, no indexing, no I/O, no allocation.
+ * Everything that names code anchors to this: the workspace store, every role
+ * derivation, decision anchoring, orphan detection and re-index survival. It
+ * is a CONTRACT — pure functions over strings, no store, no indexing, no I/O,
+ * no allocation.
  *
  * ═════════════════════════════════════════════════════════════════════════
  * THE STRING
@@ -56,8 +56,8 @@
  *     (ask_vectors.h) and they sit right beside the span hash reused below, so
  *     the temptation to fold them in is real. They are properties of a vector,
  *     not of a node. An address carrying them would change when the encoder
- *     changed, orphaning every anchor in the workspace on a model swap — and §2
- *     swaps models routinely.
+ *     changed, orphaning every anchor in the workspace on a model swap — and
+ *     models get swapped routinely.
  *
  *   - NO span hash. The hash is a separate field, never a component of the
  *     string. An address identifies WHERE a node is named; the hash identifies

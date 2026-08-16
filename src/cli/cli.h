@@ -396,7 +396,7 @@ int hyp_config_delete(hyp_config_t *cfg, const char *key);
 #define HYP_CONFIG_AUTO_WATCH "auto_watch"
 #define HYP_CONFIG_UI_LANG "ui-lang"
 
-/* The `ask` model and its optional escalation lane (NEXT-STEPS.md §2.10). */
+/* The `ask` model and its optional escalation lane. */
 #define HYP_CONFIG_ASK_MODEL "ask.model"
 #define HYP_CONFIG_ASK_ESC_PROVIDER "ask.escalation.provider"
 #define HYP_CONFIG_ASK_ESC_MODEL "ask.escalation.model"
@@ -405,7 +405,7 @@ int hyp_config_delete(hyp_config_t *cfg, const char *key);
  * written here is a key handed out. hyp_config_validate refuses values that
  * look like secrets rather than trusting the documentation to be read. */
 #define HYP_CONFIG_ASK_ESC_KEY_ENV "ask.escalation.key_env"
-/* WHAT `ask(escalate=true)` SENDS TO THE PROVIDER (NEXT-STEPS.md §3.1 step 3):
+/* WHAT `ask(escalate=true)` SENDS TO THE PROVIDER:
  *
  *   query  — the QUESTION only. It is encoded by the hosted model and scored
  *            against the local index that already exists. No second index, no
@@ -429,16 +429,15 @@ int hyp_config_delete(hyp_config_t *cfg, const char *key);
 #define HYP_CONFIG_ASK_ESC_MODE_INDEX "index"
 #define HYP_CONFIG_ASK_ESC_MODE_DEFAULT HYP_CONFIG_ASK_ESC_MODE_QUERY
 
-/* MAY A LONG-LIVED SHARED SERVER READ THE KEY ON A CLIENT'S BEHALF
- * (NEXT-STEPS.md §3.2 step 5)?
+/* MAY A LONG-LIVED SHARED SERVER READ THE KEY ON A CLIENT'S BEHALF?
  *
  * Everything above is about WHAT is sent. This one is about WHOSE KEY PAYS.
  * The daemon serves every MCP session, every CLI tool invocation and the graph
  * UI's HTTP routes, and it reads $KEY out of the environment it was started
  * with — so with no gate, any local process of this account that reaches its
- * socket can escalate on the owner's account without holding the key. Measured
- * during §3.1: an escalated `ask` returned `lane: escalation-query` from a
- * client whose own environment had no key at all.
+ * socket can escalate on the owner's account without holding the key. It is
+ * observable: an escalated `ask` answers `lane: escalation-query` for a client
+ * whose own environment has no key at all.
  *
  *   refuse — THE DEFAULT. A shared server does not read the key; an escalated
  *            ask through one is refused, naming the holder and this setting.

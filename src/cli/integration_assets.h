@@ -7,7 +7,7 @@
  * config dirs at 0755. That block of script-shaped bytes inside an unsigned
  * executable overlaps script-bearing installer/launcher feature families used
  * by static malware classifiers. That does not identify the cause of any
- * opaque vendor verdict. The unnecessary bodies now live in ONE independently
+ * opaque vendor verdict. The unnecessary bodies live in ONE independently
  * inspectable data file, assets/hyp-integrations.json,
  * and the binary embeds exactly ONE constant about them: the file's SHA-256
  * (generated at build time into hyp_integrations_hash.h).

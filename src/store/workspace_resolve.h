@@ -9,8 +9,8 @@
 
 /*
  * workspace_resolve.h — THE ONE resolver from "where am I / what was declared"
- * to "which workspace, which member repos". NEXT-STEPS §4 Phase 1, unit A6;
- * the open path it feeds is unit A1. Built on contract C1 (identity.h).
+ * to "which workspace, which member repos". It feeds the store's open path and
+ * is built on the identity contract (identity.h).
  *
  * One resolver, never two code paths that can disagree. Every venue that needs
  * to know what workspace a directory belongs to — the CLI, the MCP server, the
