@@ -280,11 +280,17 @@ int hyp_adr_write(hyp_store_t *store, hyp_record_store_t *records, const char *p
         return HYP_STORE_ERR;
     }
 
-    /* Fold what the row already holds BEFORE superseding it. Without this
-     * step the text about to be replaced would be the last version the mutable
-     * store ever destroyed, on the very write that retires the mutable store. */
+    /* Fold what this database already holds BEFORE superseding any of it.
+     * Without this step the text about to be replaced would be the last version
+     * the mutable store ever destroyed, on the very write that retires it.
+     *
+     * The WHOLE store, not just this project: a project database holds one ADR
+     * row per project name, and deleting a project leaves its row standing, so
+     * folding only the named project would step over documents sitting in the
+     * same file with no owner left to update them. The cost is one row read per
+     * document in one database. */
     hyp_adr_fold_result_t folded = {0};
-    if (hyp_adr_fold_project(store, records, project, &folded) != HYP_RECORD_STORE_OK) {
+    if (hyp_adr_fold_store(store, records, &folded) != HYP_RECORD_STORE_OK) {
         return HYP_STORE_ERR;
     }
 

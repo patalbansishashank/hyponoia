@@ -100,8 +100,9 @@
  * hyp_adr_write() is the ONE writer, and both ends call it. It does three
  * things in a fixed order:
  *
- *   1. folds whatever the row already holds into the record store, so the text
- *      about to be superseded survives the write that supersedes it;
+ *   1. folds every ADR the database already holds into the record store, so
+ *      the text about to be superseded survives the write that supersedes it,
+ *      and so does any row whose project was deleted out from under it;
  *   2. appends the incoming text as its own record;
  *   3. refreshes the `project_summaries` row FROM the record it just appended.
  *
@@ -167,9 +168,11 @@ typedef struct {
 hyp_record_store_status_t hyp_adr_fold_project(hyp_store_t *store, hyp_record_store_t *records,
                                                const char *project, hyp_adr_fold_result_t *out);
 
-/* Fold every ADR the store holds. Same guarantees, over every project the
- * store knows. This is the whole-corpus entry point; hyp_adr_write() folds a
- * single project as part of its own write. */
+/* Fold every ADR the store holds. Same guarantees, over every project that
+ * database has a document for. hyp_adr_write() runs it before every write, so
+ * no ADR in a database anything writes to is left behind; a sweep across every
+ * database on the machine needs a caller holding a lease on each, and this is
+ * the function that caller runs. */
 hyp_record_store_status_t hyp_adr_fold_store(hyp_store_t *store, hyp_record_store_t *records,
                                              hyp_adr_fold_result_t *out);
 
