@@ -604,6 +604,7 @@ extern void suite_str_intern(void);
 extern void suite_record(void);
 extern void suite_scrub(void);
 extern void suite_watched_ingest(void);
+extern void suite_transcript(void);
 extern void suite_feed(void);
 extern void suite_log(void);
 extern void suite_str_util(void);
@@ -882,6 +883,7 @@ int main(int argc, char **argv) {
 
     /* Feed adapters (§4 track D) */
     RUN_SELECTED_SUITE(watched_ingest);
+    RUN_SELECTED_SUITE(transcript);
 
     /* Existing C code regression tests */
     RUN_SELECTED_SUITE(ac);

@@ -275,6 +275,8 @@ echo "=== Step 0w: feed boundary contract (D3/D4) ==="
 bash "$ROOT/tests/test_feed_contract.sh"
 echo "=== Step 0x: one definition per Makefile variable ==="
 bash "$ROOT/tests/test_makefile_single_definition_contract.sh"
+echo "=== Step 0w: transcript ingest contract (D1: the scrub gate is structural) ==="
+bash "$ROOT/tests/test_transcript_contract.sh"
 
 # Verify compiler supports target arch
 verify_compiler "$CC"

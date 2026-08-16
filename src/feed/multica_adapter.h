@@ -86,10 +86,11 @@
  *           postgres (::text), which normalises it deterministically.
  *   timestamp_ms  created_at, converted to epoch milliseconds IN THE SQL, so
  *           the adapter parses one integer and no datetime format.
- *   redactions 0 — fixture rows only. D2's scrub is a hard precondition of
- *           the first REAL ingest and slots in as a source wrapper (scrub
- *           before yield, so the id commits to scrubbed bytes); this adapter
- *           does not connect to anything until that exists.
+ *   content is yielded RAW. This adapter does not scrub and has no way to
+ *           say that it did: hyp_feed_item_t carries no redaction count, and
+ *           hyp_feed_ingest() refuses without a scrubber. The scrub runs at
+ *           the boundary, once, on the way to the record — which is the only
+ *           order that produces a valid id, since the id binds content.
  *
  * issue rows become kind=signal records (a work item is an observation about
  * work, not a transcript turn): origin/thread "multica:issue:<id>", parent
@@ -178,11 +179,27 @@ extern const char *const HYP_MULTICA_ISSUES_SQL;
 extern const char *const HYP_MULTICA_WORKSPACES_SQL;
 extern const char *const HYP_MULTICA_SCHEMA_PIN_SQL;
 
-/* The pinned result-set columns, exact names in exact order, NULL-terminated.
- * Exposed so tests assert the pin against the declaration, not a copy of it. */
+/*
+ * The pinned result-set columns, exact names in exact order, NULL-terminated.
+ *
+ * EACH ARRAY AND ITS SQL ARE TWO HAND-WRITTEN DESCRIPTIONS OF ONE THING, and
+ * the `AS` aliases in the SQL are what a live wire actually returns. Feeding
+ * an array into a fixture and then checking the pin against that same array
+ * proves the pin against itself: rename one alias in the SQL and every such
+ * test still passes while the adapter refuses every real pull forever, with
+ * HYP_FEED_ERR_SCHEMA blaming upstream drift for a typo of ours. Fails closed,
+ * produces zero records, and supplies a plausible explanation — the worst
+ * shape a silent failure can take.
+ *
+ * So both artifacts are exported and a test compares them TO EACH OTHER,
+ * parsing the aliases out of the SQL text. There is deliberately no third
+ * list: a third would be one more thing to keep in step, which is the defect
+ * rather than the fix.
+ */
 extern const char *const HYP_MULTICA_MESSAGES_COLUMNS[];
 extern const char *const HYP_MULTICA_ISSUES_COLUMNS[];
 extern const char *const HYP_MULTICA_WORKSPACES_COLUMNS[];
+extern const char *const HYP_MULTICA_SCHEMA_PIN_COLUMNS[];
 
 /* Skip reasons, verbatim, so the audit's account is assertable. */
 #define HYP_MULTICA_SKIP_UNOWNED "unowned-row"

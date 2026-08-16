@@ -441,9 +441,11 @@ TRACES_SRCS = src/traces/traces.c
 # Watcher module (new)
 WATCHER_SRCS = src/watcher/watcher.c
 
-# Feed adapters (§4 track D). Adapters translate INTO the record contract;
-# nothing in src/foundation may depend on anything here.
-INGEST_SRCS = src/ingest/watched_ingest.c
+# Ingest layer (§4 track D): feed adapters, which translate INTO the record
+# contract, and the transcript path, which drives a pull source through the
+# secret scrub into the durable record store. Nothing in src/foundation may
+# depend on anything here.
+INGEST_SRCS = src/ingest/watched_ingest.c src/ingest/transcript_ingest.c
 
 # Git context module (new)
 GIT_SRCS = src/git/git_context.c
@@ -831,7 +833,7 @@ TEST_PIPELINE_SRCS += tests/test_fqn_differential.c
 
 TEST_WATCHER_SRCS = tests/test_watcher.c
 
-TEST_INGEST_SRCS = tests/test_watched_ingest.c
+TEST_INGEST_SRCS = tests/test_watched_ingest.c tests/test_transcript.c
 
 TEST_LZ4_SRCS = tests/test_lz4.c
 TEST_ZSTD_SRCS = tests/test_zstd.c
