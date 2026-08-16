@@ -74,6 +74,26 @@ static hyp_feed_item_t toy_skip(const char *origin, const char *reason) {
     return item;
 }
 
+/*
+ * A deliberately DEFECTIVE source, for the one refusal the toy cannot express.
+ * The toy decides notice-from-item by whether a reason is present, so a notice
+ * with no stated reason is not a shape it can produce — which is the toy being
+ * a well-behaved adapter, not the toy being inadequate. The core's refusal of
+ * that shape still has to be proven, and proving it needs a source that
+ * misbehaves on purpose.
+ */
+static hyp_feed_status_t reasonless_notice_next(hyp_feed_source_t *src, hyp_feed_item_t *out) {
+    bool *spent = (bool *)src->ctx;
+    if (*spent) {
+        return HYP_FEED_END;
+    }
+    *spent = true;
+    memset(out, 0, sizeof(*out));
+    out->origin = "toy:9";
+    out->reason = NULL; /* declined, with no policy named for declining it */
+    return HYP_FEED_SKIP;
+}
+
 /* The record holding this origin, or NULL. A linear scan on purpose: the test
  * asserts through the same read surface a client has, and the client has the
  * enumeration. */
@@ -214,9 +234,17 @@ TEST(feed_ingest_requires_an_origin) {
     hyp_feed_item_t nameless_skip = toy_skip(NULL, "because");
     src = toy_open(&toy, &nameless_skip, 1);
     ASSERT_EQ(hyp_feed_ingest(&src, store, NULL), HYP_FEED_ERR_ORIGIN);
-    hyp_feed_item_t reasonless_skip = toy_skip("toy:9", NULL);
-    src = toy_open(&toy, &reasonless_skip, 1);
-    ASSERT_EQ(hyp_feed_ingest(&src, store, NULL), HYP_FEED_ERR_SOURCE);
+
+    /* And a notice with no stated policy is a source defect, not a policy —
+     * the audit would otherwise carry a decline it cannot account for. */
+    bool spent = false;
+    hyp_feed_source_t defective;
+    memset(&defective, 0, sizeof(defective));
+    defective.name = "toy-defective";
+    defective.ctx = &spent;
+    defective.next = reasonless_notice_next;
+    ASSERT_EQ(hyp_feed_ingest(&defective, store, NULL), HYP_FEED_ERR_SOURCE);
+    ASSERT_EQ(hyp_record_set_count(store), 0);
 
     hyp_record_set_free(store);
     PASS();
@@ -705,8 +733,12 @@ TEST(multica_null_policy_is_the_stated_one) {
     ASSERT_NOT_NULL(store);
     hyp_feed_audit_t report;
     hyp_feed_source_t audit_src;
+    /* Its OWN cursor. Sharing `ctx` with the ingest above would leave the audit
+     * reading a rowset the ingest had already drained — an EMPTY pull, which
+     * reports "complete" for the most vacuous of reasons. */
+    fix_rows_ctx_t audit_ctx;
     hyp_multica_rows_t audit_rows =
-        fix_rows(&ctx, HYP_MULTICA_MESSAGES_COLUMNS, messages_ncols(), POLICY_FIXTURE, 4);
+        fix_rows(&audit_ctx, HYP_MULTICA_MESSAGES_COLUMNS, messages_ncols(), POLICY_FIXTURE, 4);
 
     hyp_feed_ingest_stats_t stats;
     ASSERT_EQ(hyp_feed_ingest(&src, store, &stats), HYP_FEED_OK);
@@ -723,6 +755,10 @@ TEST(multica_null_policy_is_the_stated_one) {
     ASSERT_EQ(hyp_feed_audit_run(&audit_src, store, &report), HYP_FEED_OK);
     hyp_feed_source_close(&audit_src);
     ASSERT_TRUE(hyp_feed_audit_complete(&report));
+    /* "Complete" over an empty pull is not the same answer: name what the audit
+     * actually weighed before believing it. */
+    ASSERT_EQ(report.expected, 1);
+    ASSERT_EQ(report.present, 1);
     ASSERT_EQ(report.skipped_count, 3);
     ASSERT_STR_EQ(report.skipped[0], "multica:task_message:p1");
     ASSERT_STR_EQ(report.skip_reasons[0], HYP_MULTICA_SKIP_UNOWNED);
