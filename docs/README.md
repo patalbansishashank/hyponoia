@@ -30,6 +30,7 @@
 | [Configuration files](CONFIGURATION.md) | The full config-file reference. |
 | [Third-party licences](THIRD_PARTY.md) | Every vendored dependency and its licence. |
 | [Maintainers](MAINTAINERS.md) | Who owns what, and how decisions are made. |
+| [Packaging and registry submission](PACKAGING.md) | Where each package-manager manifest would be submitted, how to validate it first, and which registries this project should not submit to. |
 | [`.hypignore`](hypignore.md) | Syntax, precedence across ignore layers, negation semantics. |
 
 ## Measurements and plans

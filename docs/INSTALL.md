@@ -7,12 +7,14 @@ Getting the binary onto your machine and your agent talking to it.
 > **Where the project actually is.** `v0.3.1` is the current release — the
 > one-liners and release archives below work, and it is the first release whose
 > Linux x86-64 build is also published with GPU (Vulkan) embedding as a separate
-> archive. The **package managers do not yet**: Homebrew, Scoop, Chocolatey, AUR
-> and winget manifests are in-tree but their checksums are zeroed until the real
-> values are copied from this release's `checksums.txt`, and none has been
-> submitted to its registry — so install from the script or the archive for now.
-> **[Building from source](#build-from-source)** remains supported everywhere,
-> and is the only path on macOS.
+> archive. The **package managers mostly do not yet**: the Scoop, Chocolatey,
+> AUR and winget manifests are in-tree, carry this release's real checksums, and
+> have been submitted to **no** registry — so install from the script or the
+> archive. The one exception is **Homebrew**, which needs no registry: this
+> repository is itself the tap, and `brew tap` + `brew install` below work
+> today. **[Building from source](#build-from-source)** remains supported
+> everywhere, and is the only path on macOS. What submitting the other four
+> would involve is written up in [Packaging](PACKAGING.md).
 
 ## Build from source
 
@@ -43,9 +45,10 @@ build/c/test-runner --list-suites   # what is available
 
 ---
 
-*The direct downloads and the install scripts below are live as of `v0.3.1`. The
-package-manager entries are not yet submitted to their registries — see the note
-at the top.*
+*The direct downloads and the install scripts below are live as of `v0.3.1`.
+Homebrew works today; the Scoop, Chocolatey, AUR and winget entries are not yet
+submitted to their registries — see the note at the top and
+[Packaging](PACKAGING.md).*
 
 ## Pre-built Binaries
 
@@ -149,7 +152,28 @@ curl -fsSL https://raw.githubusercontent.com/patalbansishashank/hyponoia/main/sc
 
 </details>
 
+## Homebrew (Linux)
+
+The formula is served from this repository — there is no separate tap
+repository and nothing to submit:
+
+```bash
+brew tap patalbansishashank/hyponoia https://github.com/patalbansishashank/hyponoia
+brew install hyponoia
+```
+
+It installs the fully static `-portable` build, so it does not care how old the
+distribution's glibc is. There is no macOS formula: macOS is a
+[retired platform](MAINTAINERS.md#retired-platforms) and `brew` refuses there
+with "Linux is required for this software" before downloading anything.
+
 ## AUR (Arch Linux)
+
+**Not published yet.** `https://aur.archlinux.org/packages/hyponoia-bin` is a
+404 today — this page previously claimed otherwise. The `PKGBUILD` and
+`.SRCINFO` are in-tree at [`pkg/aur/`](../pkg/aur/) and validate against
+`v0.3.1`; what remains is an AUR account and one `git push`, written up in
+[Packaging](PACKAGING.md#aur). Once it is pushed:
 
 ```bash
 yay -S hyponoia-bin
@@ -159,7 +183,11 @@ yay -S hyponoia-bin
 paru -S hyponoia-bin
 ```
 
-The `hyponoia-bin` package is available at: https://aur.archlinux.org/packages/hyponoia-bin
+Until then, build it locally from the in-tree PKGBUILD:
+
+```bash
+cp pkg/aur/PKGBUILD /tmp/hyponoia-bin/ && cd /tmp/hyponoia-bin && makepkg -si
+```
 
 ## Install via Claude Code
 

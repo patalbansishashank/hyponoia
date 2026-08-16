@@ -33,6 +33,11 @@ Release process is a checklist rather than an approval chain:
   and edge counts, blocks the release until it is understood.
 - Benchmark logs, repository revisions, binary version, and machine details are
   kept with the release notes.
+- Package-manager manifests are bumped with the version and their checksums
+  **zeroed**, then filled from the release's own `checksums.txt` and re-verified
+  by re-hashing the downloaded archives. [Packaging](PACKAGING.md) lists every
+  file and field a release touches, the offline validator for each registry, and
+  what submitting to each one would actually require.
 
 ## Retired platforms
 

@@ -1,0 +1,42 @@
+VERIFICATION
+------------
+
+Verification is intended to assist the Chocolatey moderators and any user who
+wants to confirm that the binary this package installs is the binary the
+Hyponoia project published.
+
+This package embeds no binaries. chocolateyInstall.ps1 downloads one archive
+from the project's own GitHub release and Chocolatey refuses to unpack it
+unless its SHA-256 matches the value pinned in that script.
+
+Package version:  0.3.1
+Upstream release: https://github.com/patalbansishashank/hyponoia/releases/tag/v0.3.1
+
+Archive:
+  https://github.com/patalbansishashank/hyponoia/releases/download/v0.3.1/hyponoia-ui-windows-amd64.zip
+
+  sha256: fee50ab1a80ca00b133311d96d90447b0b991ec66892aaa0a0e0ef2d2753c4fe
+
+To verify by hand:
+
+  1. Download the archive from the URL above.
+  2. Compare its checksum against the value pinned in tools/chocolateyInstall.ps1:
+
+       Get-FileHash hyponoia-ui-windows-amd64.zip -Algorithm SHA256
+
+  3. Compare that against the project's own signed manifest, published as an
+     asset of the same release:
+
+       https://github.com/patalbansishashank/hyponoia/releases/download/v0.3.1/checksums.txt
+
+     The release also publishes a Sigstore bundle per asset
+     (<asset>.bundle) and an SBOM (sbom.json), so the archive can be traced to
+     the workflow run that built it without trusting this package at all.
+
+LICENSE
+-------
+
+Hyponoia is MIT-licensed. The licence text is in this directory as
+LICENSE.txt and is also shipped inside the archive as `LICENSE`:
+
+  https://github.com/patalbansishashank/hyponoia/blob/main/LICENSE
