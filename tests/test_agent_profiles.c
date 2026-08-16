@@ -47,6 +47,9 @@ static int profile_has_mutator(const char *profile) {
         "delete_project",
         "manage_adr",
         "ingest_traces",
+        /* The memory WRITER. Every tier says read-only in its own description,
+         * so it may never be requested by one; the reader beside it may. */
+        "record_memory",
     };
     for (size_t i = 0U; i < sizeof(mutators) / sizeof(mutators[0]); i++) {
         if (strstr(profile, mutators[i])) {
@@ -442,7 +445,10 @@ TEST(agent_profiles_tiers_agree_with_the_server_profile_they_run_against) {
  * project-name rule, because the server derives the project itself and the
  * prose now contradicts it, and stops sending the agent to get_code_snippet
  * for code that `ask` now returns with the answer — a tool that can answer in
- * one call is still worth nothing while the prompt orders a second.
+ * one call is still worth nothing while the prompt orders a second. 4 makes
+ * the memory surface reachable: `search_memory` in the requested list AND the
+ * sentence saying when to reach for it, because either alone is a shape this
+ * repository has already shipped and measured.
  * Scout is byte-identical across all of them. */
 /* The half of the ask guidance that is stable across 2 and 3 — the marks below
  * are what each generation ADDS, so a rewording of the shared sentence cannot
@@ -454,9 +460,16 @@ static const char SNIPPET_FOLLOWUP_MARK[] = "verify with get_code_snippet";
 static const char SOURCE_INLINE_MARK[] = "verbatim source of the top 2";
 static const char PROJECT_RULE_MARK[] = "/home/u/repo \xe2\x86\x92 home-u-repo";
 static const char PROJECT_DEFAULT_MARK[] = "Omit the project argument";
+/* Generation 4 adds the memory surface, and adds it at BOTH ends: the sentence
+ * that says when to reach for it, and the tool in the requested list. Either
+ * one alone is the shape this table exists to prevent — a tool merely listed
+ * was called in 4 runs of 60, and a sentence naming a tool the profile never
+ * requests is the `ask` defect. So both marks are asserted, separately. */
+static const char MEMORY_GUIDANCE_MARK[] = "call search_memory";
+static const char MEMORY_TOOL_MARK[] = "search_memory";
 
 TEST(agent_profiles_earlier_generations_still_render_for_migration) {
-    ASSERT_EQ(hyp_graph_profile_generation(), 3U);
+    ASSERT_EQ(hyp_graph_profile_generation(), 4U);
     for (size_t d = 0U; d < sizeof(direct_dialects) / sizeof(direct_dialects[0]); d++) {
         hyp_graph_profile_dialect_t dialect = direct_dialects[d].dialect;
         const char *binary = dialect == HYP_GRAPH_DIALECT_KIRO || dialect == HYP_GRAPH_DIALECT_CODEX
@@ -467,6 +480,8 @@ TEST(agent_profiles_earlier_generations_still_render_for_migration) {
             bool scout = tier == HYP_GRAPH_TIER_SCOUT;
             char *current =
                 hyp_render_graph_profile(dialect, tier, HYP_GRAPH_ACCESS_DIRECT, binary);
+            char *gen4 = hyp_render_graph_profile_generation(dialect, tier, HYP_GRAPH_ACCESS_DIRECT,
+                                                             binary, 4U);
             char *gen3 = hyp_render_graph_profile_generation(dialect, tier, HYP_GRAPH_ACCESS_DIRECT,
                                                              binary, 3U);
             char *gen2 = hyp_render_graph_profile_generation(dialect, tier, HYP_GRAPH_ACCESS_DIRECT,
@@ -476,9 +491,9 @@ TEST(agent_profiles_earlier_generations_still_render_for_migration) {
             char *gen0 = hyp_render_graph_profile_generation(dialect, tier, HYP_GRAPH_ACCESS_DIRECT,
                                                              binary, 0U);
             char *future = hyp_render_graph_profile_generation(dialect, tier,
-                                                               HYP_GRAPH_ACCESS_DIRECT, binary, 4U);
-            bool ok =
-                current && gen3 && gen2 && gen1 && gen0 && !future && strcmp(current, gen3) == 0;
+                                                               HYP_GRAPH_ACCESS_DIRECT, binary, 5U);
+            bool ok = current && gen4 && gen3 && gen2 && gen1 && gen0 && !future &&
+                      strcmp(current, gen4) == 0;
             if (ok) {
                 /* 0 -> 1: the tools list, so Junie (names a server) never
                  * moved and scout never moves. 1 -> 2: the prompt, so every
@@ -502,8 +517,21 @@ TEST(agent_profiles_earlier_generations_still_render_for_migration) {
                      !strstr(gen3, PROJECT_RULE_MARK) && !strstr(gen2, PROJECT_DEFAULT_MARK) &&
                      !strstr(gen3, SNIPPET_FOLLOWUP_MARK) && !strstr(gen2, SOURCE_INLINE_MARK) &&
                      !strstr(gen1, ASK_GUIDANCE_MARK) && !strstr(gen0, ASK_GUIDANCE_MARK);
+                /* 3 -> 4: the memory surface, at BOTH ends. Every non-scout
+                 * direct profile moves — Junie's prompt carries the sentence
+                 * and Vibe's tool list carries the tool, so unlike 1->2 there
+                 * is no dialect that stands still. The tool never reaches
+                 * scout, and the WRITER never reaches any of them: a tier that
+                 * states read-only in its own description does not request a
+                 * tool that appends. */
+                ok = ok && (strcmp(gen4, gen3) != 0) == !scout &&
+                     (strstr(gen4, MEMORY_GUIDANCE_MARK) != NULL) == prompt_moved &&
+                     (strstr(gen4, MEMORY_TOOL_MARK) != NULL) == !scout &&
+                     !strstr(gen3, MEMORY_TOOL_MARK) && !strstr(gen3, MEMORY_GUIDANCE_MARK) &&
+                     !strstr(gen4, "record_memory");
             }
             free(current);
+            free(gen4);
             free(gen3);
             free(gen2);
             free(gen1);
@@ -511,8 +539,9 @@ TEST(agent_profiles_earlier_generations_still_render_for_migration) {
             free(future);
             if (!ok) {
                 FAIL("every shipped generation must render; 0->1 is ask in the tools list, "
-                     "1->2 is the analysis prompt, 2->3 drops the project-name rule, scout "
-                     "never moves");
+                     "1->2 is the analysis prompt, 2->3 drops the project-name rule, 3->4 adds "
+                     "search_memory to both the list and the prompt and record_memory to "
+                     "neither, scout never moves");
             }
         }
     }
@@ -521,23 +550,29 @@ TEST(agent_profiles_earlier_generations_still_render_for_migration) {
         hyp_graph_tier_t tier = (hyp_graph_tier_t)value;
         bool scout = tier == HYP_GRAPH_TIER_SCOUT;
         char *current = hyp_render_graph_prompt(tier, HYP_GRAPH_ACCESS_DIRECT);
+        char *gen4 = hyp_render_graph_prompt_generation(tier, HYP_GRAPH_ACCESS_DIRECT, 4U);
         char *gen3 = hyp_render_graph_prompt_generation(tier, HYP_GRAPH_ACCESS_DIRECT, 3U);
         char *gen2 = hyp_render_graph_prompt_generation(tier, HYP_GRAPH_ACCESS_DIRECT, 2U);
         char *gen1 = hyp_render_graph_prompt_generation(tier, HYP_GRAPH_ACCESS_DIRECT, 1U);
         char *gen0 = hyp_render_graph_prompt_generation(tier, HYP_GRAPH_ACCESS_DIRECT, 0U);
         char *handoff = hyp_render_graph_prompt(tier, HYP_GRAPH_ACCESS_HANDOFF);
         char *handoff0 = hyp_render_graph_prompt_generation(tier, HYP_GRAPH_ACCESS_HANDOFF, 0U);
-        bool ok = current && gen3 && gen2 && gen1 && gen0 && handoff && handoff0 &&
-                  strcmp(current, gen3) == 0 && strcmp(gen1, gen0) == 0 &&
+        bool ok = current && gen4 && gen3 && gen2 && gen1 && gen0 && handoff && handoff0 &&
+                  strcmp(current, gen4) == 0 && strcmp(gen1, gen0) == 0 &&
                   (strcmp(gen2, gen1) != 0) == !scout && (strcmp(gen3, gen2) != 0) == !scout &&
+                  (strcmp(gen4, gen3) != 0) == !scout &&
                   (strstr(gen2, ASK_GUIDANCE_MARK) != NULL) == !scout &&
                   (strstr(gen3, ASK_GUIDANCE_MARK) != NULL) == !scout &&
                   (strstr(gen2, PROJECT_RULE_MARK) != NULL) == !scout &&
                   (strstr(gen3, PROJECT_DEFAULT_MARK) != NULL) == !scout &&
+                  (strstr(gen4, MEMORY_GUIDANCE_MARK) != NULL) == !scout &&
+                  !strstr(gen3, MEMORY_GUIDANCE_MARK) && !strstr(gen4, "record_memory") &&
                   !strstr(gen3, PROJECT_RULE_MARK) && !strstr(gen2, PROJECT_DEFAULT_MARK) &&
                   strcmp(handoff, handoff0) == 0 && !strstr(handoff, ASK_GUIDANCE_MARK) &&
-                  !hyp_render_graph_prompt_generation(tier, HYP_GRAPH_ACCESS_DIRECT, 4U);
+                  !strstr(handoff, MEMORY_GUIDANCE_MARK) &&
+                  !hyp_render_graph_prompt_generation(tier, HYP_GRAPH_ACCESS_DIRECT, 5U);
         free(current);
+        free(gen4);
         free(gen3);
         free(gen2);
         free(gen1);
@@ -546,14 +581,69 @@ TEST(agent_profiles_earlier_generations_still_render_for_migration) {
         free(handoff0);
         if (!ok) {
             FAIL("prompt generations: 0 == 1, 2 adds ask guidance to analysis only, 3 swaps the "
-                 "project-name rule for the omit-it rule, handoff never");
+                 "project-name rule for the omit-it rule, 4 adds the memory sentence to analysis "
+                 "only and never names the writer, handoff never");
         }
     }
     char *rc1 = hyp_render_graph_profile_codex_rc1(HYP_GRAPH_TIER_VERIFY);
     ASSERT_NOT_NULL(rc1);
     ASSERT_NULL(strstr(rc1, "\"ask\""));
     ASSERT_NULL(strstr(rc1, ASK_GUIDANCE_MARK));
+    ASSERT_NULL(strstr(rc1, MEMORY_TOOL_MARK));
     free(rc1);
+    PASS();
+}
+
+/* ── The writer sits on no tier, and that is the point ─────────────────
+ *
+ * §4 C8u's constraint, asserted rather than commented: every generated tier
+ * states read-only in its own description, so a tool that APPENDS may not be
+ * on one. Reachability for the writer therefore comes from the full server,
+ * not from a profile — which is why this test checks the negative on the
+ * profile end and the positive on the server end, and would fail the moment
+ * someone "fixed" the missing row by adding it to analysis. */
+TEST(agent_profiles_the_memory_writer_is_on_no_tier) {
+    ASSERT_TRUE(hyp_mcp_tool_profile_allows(HYP_MCP_TOOL_PROFILE_ALL, "record_memory"));
+    ASSERT_FALSE(hyp_mcp_tool_profile_allows(HYP_MCP_TOOL_PROFILE_ANALYSIS, "record_memory"));
+    ASSERT_FALSE(hyp_mcp_tool_profile_allows(HYP_MCP_TOOL_PROFILE_SCOUT, "record_memory"));
+
+    /* The reader is a different question and gets a different answer: it is
+     * read-only, so analysis admits it and scout — the small surface where
+     * every tool answers fast — does not. */
+    ASSERT_TRUE(hyp_mcp_tool_profile_allows(HYP_MCP_TOOL_PROFILE_ALL, "search_memory"));
+    ASSERT_TRUE(hyp_mcp_tool_profile_allows(HYP_MCP_TOOL_PROFILE_ANALYSIS, "search_memory"));
+    ASSERT_FALSE(hyp_mcp_tool_profile_allows(HYP_MCP_TOOL_PROFILE_SCOUT, "search_memory"));
+
+    for (int value = 0; value < (int)HYP_GRAPH_TIER_COUNT; value++) {
+        hyp_graph_tier_t tier = (hyp_graph_tier_t)value;
+        bool scout = tier == HYP_GRAPH_TIER_SCOUT;
+        bool requests_writer = false;
+        bool requests_reader = false;
+        for (size_t i = 0U; hyp_graph_tier_tool_name(tier, i) != NULL; i++) {
+            const char *name = hyp_graph_tier_tool_name(tier, i);
+            requests_writer = requests_writer || strcmp(name, "record_memory") == 0;
+            requests_reader = requests_reader || strcmp(name, "search_memory") == 0;
+        }
+        if (requests_writer) {
+            FAIL("a read-only tier requests the memory WRITER");
+        }
+        if (requests_reader == scout) {
+            FAIL("search_memory belongs to analysis and audit, never to scout");
+        }
+        /* And at the client end: the rendered Claude agent file. */
+        char *rendered =
+            hyp_render_graph_profile(HYP_GRAPH_DIALECT_CLAUDE, tier, HYP_GRAPH_ACCESS_DIRECT, NULL);
+        ASSERT_NOT_NULL(rendered);
+        bool file_has_writer = strstr(rendered, "mcp__hyponoia__record_memory") != NULL;
+        bool file_has_reader = strstr(rendered, "mcp__hyponoia__search_memory") != NULL;
+        free(rendered);
+        if (file_has_writer) {
+            FAIL("a generated agent file requests the memory writer");
+        }
+        if (file_has_reader == scout) {
+            FAIL("the generated agent file disagrees with the tier about search_memory");
+        }
+    }
     PASS();
 }
 
@@ -561,6 +651,7 @@ SUITE(agent_profiles) {
     RUN_TEST(agent_profiles_stable_tier_identity);
     RUN_TEST(agent_profiles_tiers_agree_with_the_server_profile_they_run_against);
     RUN_TEST(agent_profiles_earlier_generations_still_render_for_migration);
+    RUN_TEST(agent_profiles_the_memory_writer_is_on_no_tier);
     RUN_TEST(agent_profiles_direct_dialects_are_coverage_aware_and_read_only);
     RUN_TEST(agent_profiles_tiers_encode_distinct_evidence_budgets);
     RUN_TEST(agent_profiles_handoff_requires_parent_evidence_without_child_mcp);

@@ -882,23 +882,28 @@ TEST(mcp_tools_have_behavior_annotations) {
     } expected[] = {
         {"index_repository", false, false, true, false},
         /* These query tools can reach resolve_store(), whose corrupt-store
-         * recovery quarantines/removes database files. Keep the annotations
-         * conservative until query resolution is strictly non-mutating. */
-        {"search_graph", false, true, true, false},
-        {"ask", false, true, true, false},
-        {"query_graph", false, true, true, false},
-        {"trace_path", false, true, true, false},
-        {"get_code_snippet", false, true, true, false},
-        {"get_graph_schema", false, true, true, false},
-        {"get_architecture", false, true, true, false},
-        {"search_code", false, true, true, false},
+         * recovery quarantines/removes database files, so read_only stays
+         * false. destructive does NOT: a graph read destroys nothing, and
+         * while it said otherwise `delete_project` and `search_graph`
+         * advertised byte-identical hints — a client had no way to tell the
+         * tool that erases a database from the tool that reads it. */
+        {"search_graph", false, false, true, false},
+        {"ask", false, false, true, false},
+        {"query_graph", false, false, true, false},
+        {"trace_path", false, false, true, false},
+        {"get_code_snippet", false, false, true, false},
+        {"get_graph_schema", false, false, true, false},
+        {"get_architecture", false, false, true, false},
+        {"search_code", false, false, true, false},
         {"list_projects", true, false, true, false},
         {"delete_project", false, true, true, false},
-        {"index_status", false, true, true, false},
-        {"check_index_coverage", false, true, true, false},
-        {"detect_changes", false, true, true, false},
+        {"index_status", false, false, true, false},
+        {"check_index_coverage", false, false, true, false},
+        {"detect_changes", false, false, true, false},
         {"manage_adr", false, true, false, false},
         {"ingest_traces", false, false, false, false},
+        {"record_memory", false, false, false, false},
+        {"search_memory", false, false, true, false},
     };
 
     char *json = hyp_mcp_tools_list();
@@ -1306,13 +1311,28 @@ TEST(server_handle_tools_list_defaults_to_all_tools_and_accepts_cursor) {
     ASSERT_NOT_NULL(strstr(resp, "ingest_traces"));
     free(resp);
 
-    resp = hyp_mcp_server_handle(
-        srv,
-        "{\"jsonrpc\":\"2.0\",\"id\":201,\"method\":\"tools/list\",\"params\":{\"cursor\":\"8\"}}");
+    /* Paging is a PROPERTY, not a number: a page that does not reach the end
+     * carries a cursor and the last page does not. Written against the count of
+     * the day, this leg asserted "cursor 8 is the last page" and started
+     * failing the moment two tools went live — a test pinned to an arithmetic
+     * coincidence rather than to the rule. */
+    char request[160];
+    snprintf(request, sizeof(request),
+             "{\"jsonrpc\":\"2.0\",\"id\":201,\"method\":\"tools/list\",\"params\":"
+             "{\"cursor\":\"%d\"}}",
+             hyp_mcp_tool_count() - 1);
+    resp = hyp_mcp_server_handle(srv, request);
     ASSERT_NOT_NULL(resp);
     ASSERT_NOT_NULL(strstr(resp, "\"id\":201"));
     ASSERT_NULL(strstr(resp, "\"nextCursor\""));
-    ASSERT_NOT_NULL(strstr(resp, "manage_adr"));
+    free(resp);
+
+    resp = hyp_mcp_server_handle(
+        srv,
+        "{\"jsonrpc\":\"2.0\",\"id\":203,\"method\":\"tools/list\",\"params\":{\"cursor\":\"0\"}}");
+    ASSERT_NOT_NULL(resp);
+    ASSERT_NOT_NULL(strstr(resp, "\"id\":203"));
+    ASSERT_NOT_NULL(strstr(resp, "\"nextCursor\""));
     free(resp);
 
     hyp_mcp_server_free(srv);
@@ -1335,10 +1355,13 @@ TEST(server_handle_analysis_profile_filters_and_rejects_mutators) {
 
     resp = hyp_mcp_server_handle(srv, "{\"jsonrpc\":\"2.0\",\"id\":220,\"method\":\"tools/list\"}");
     ASSERT_NOT_NULL(resp);
+    /* search_memory joins at generation 4; record_memory never does — a tier
+     * whose own description says read-only does not request a writer. */
     static const char *const analysis_tools[] = {
-        "search_graph",     "ask",                  "query_graph",          "trace_path",
-        "get_code_snippet", "get_graph_schema",     "get_architecture",     "search_code",
-        "list_projects",    "index_status",         "check_index_coverage", "detect_changes",
+        "search_graph",     "ask",              "query_graph",          "trace_path",
+        "get_code_snippet", "get_graph_schema", "get_architecture",     "search_code",
+        "list_projects",    "index_status",     "check_index_coverage", "detect_changes",
+        "search_memory",
     };
     ASSERT_EQ(mcp_response_tool_count(resp), sizeof(analysis_tools) / sizeof(analysis_tools[0]));
     for (size_t i = 0U; i < sizeof(analysis_tools) / sizeof(analysis_tools[0]); i++) {
@@ -4154,6 +4177,12 @@ static const project_disclosure_case_t PROJECT_DISCLOSURE_CASES[] = {
     {"detect_changes", "{\"scope\":\"files\",\"format\":\"json\"}"},
     {"manage_adr", "{\"mode\":\"get\"}"},
     {"ingest_traces", "{\"traces\":[]}"},
+    /* The memory surface answers the same way. record_memory writes into the
+     * temporary cache this test already isolates, and search_memory discloses
+     * on both paths — with a store and, before anything is written, without. */
+    {"record_memory", "{\"kind\":\"decision\",\"title\":\"t\",\"body\":\"b\"}"},
+    {"search_memory", "{}"},
+    {"search_memory", "{\"format\":\"json\"}"},
 };
 
 TEST(tool_every_derivable_project_answer_discloses_its_source_step2) {
@@ -4333,8 +4362,8 @@ TEST(mcp_project_argument_is_optional_on_every_tool_but_delete_step2) {
     free(resp);
     hyp_mcp_server_free(srv);
 
-    /* 14 tools take `project`; exactly one still demands it. */
-    ASSERT_EQ(with_project, 14);
+    /* 16 tools take `project`; exactly one still demands it. */
+    ASSERT_EQ(with_project, 16);
     ASSERT_EQ(optional, 13);
     ASSERT_EQ(required, 1);
     ASSERT_TRUE(strcmp(required_names, "delete_project") == 0);
