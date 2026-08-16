@@ -121,7 +121,6 @@ enum {
  * allocations did not. 0.70 rather than the reference's 0.80 for that reason. */
 #define HYP_ASK_VRAM_HEADROOM 0.70
 
-
 /* Groups of ORIGINAL document indices, length-ascending.
  *
  * `order` is a permutation of 0..doc_count-1. Group g occupies

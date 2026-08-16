@@ -140,11 +140,25 @@ jobs:
           restore-keys: |
             ccache-smoke-${{ matrix.os }}-${{ github.ref }}-
 
+      # The release publishes ONLY `-ui` archives, and install.sh REFUSES
+      # `--standard` by name because a standard archive has never existed under
+      # this fork (see c2f1a92e). A smoke that stages a standard-named fixture
+      # therefore tests a shape that does not ship, and phase 13 dies on the
+      # refusal it should be asserting: `install.sh --standard` exits, no binary
+      # lands, `FAIL 13b`. This is the two-ends rule applied to packaging — the
+      # smoke venue has to serve what the release serves — so the PR smoke now
+      # builds and smokes the UI variant, which also puts the asset pack (the
+      # thing that shipped broken in v0.2.4) back under a per-PR gate.
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        if: matrix.os == 'ubuntu-latest'
+        with:
+          node-version: "22"
+
       - name: Build prod + smoke (Ubuntu)
         if: matrix.os == 'ubuntu-latest'
         run: |
-          scripts/build.sh CC=gcc CXX=g++
-          scripts/smoke-local.sh "$(pwd)/build/c/hyponoia"
+          scripts/build.sh --with-ui CC=gcc CXX=g++
+          scripts/smoke-local.sh "$(pwd)/build/c/hyponoia" ui
         env:
           CCACHE_DIR: ${{ github.workspace }}/.ccache
           CCACHE_MAXSIZE: 1000M
