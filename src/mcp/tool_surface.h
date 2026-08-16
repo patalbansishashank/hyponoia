@@ -425,14 +425,6 @@ typedef enum {
     X("manage_adr", NULL, 0, 0, 0U, HYP_TOOL_DEPRECATED, NULL, HYP_TOOL_ANN_DOC_REPLACE)           \
     X("ingest_traces", NULL, 0, 0, 0U, HYP_TOOL_LIVE, NULL, HYP_TOOL_ANN_APPEND)                   \
                                                                                                    \
-    /* ── Rows 16-19: RESERVED. Signatures published and frozen, advertised                    \
-     * nowhere and callable nowhere until their status flips. Each row is                          \
-     * already complete, so the flip is one token. See the prose block below                       \
-     * each name in this header for the argument and output contract. */                           \
-    X("record_memory", NULL, 0, 0, HYP_PROFILE_GENERATION_WORKSPACE_MEMORY, HYP_TOOL_RESERVED,     \
-      NULL, HYP_TOOL_ANN_APPEND)                                                                   \
-    X("search_memory", NULL, 1, 0, HYP_PROFILE_GENERATION_WORKSPACE_MEMORY, HYP_TOOL_RESERVED,     \
-      NULL, HYP_TOOL_ANN_STORE_READ)                                                               \
     /* ── Rows 16-19: the workspace and memory signatures, frozen. The                         \
      * first two are LIVE; the last two are still RESERVED — advertised                          \
      * nowhere and callable nowhere until their status flips, each row already                     \
