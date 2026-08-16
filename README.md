@@ -172,6 +172,15 @@ it can make, and you ask for both by name:
   `index_encoder`), and your API key is never stored in the binary or the
   config database: `key_env` holds the NAME of an environment variable.
 
+  **Whose key pays** is its own setting. Tool calls are served by a long-lived
+  per-account daemon, which reads that variable out of the environment *it* was
+  started with — so a daemon started from a shell holding your key could
+  otherwise spend for any local process that reaches it. It will not:
+  `ask.escalation.daemon_key` is **`refuse` by default**, escalation through a
+  warm daemon is refused until you set it to `allow`, and once you do, every
+  escalated answer says whose environment the key came from (`key_custody`).
+  The local lane reads no key at all and is untouched by any of this.
+
 Found a security issue? See [SECURITY.md](.github/SECURITY.md).
 
 ## License

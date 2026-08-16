@@ -14,6 +14,10 @@
 
 #include "ask/ask_encoder.h"
 #include "semantic/ask_embed.h"
+/* For HYP_CONFIG_ASK_ESC_DAEMON_KEY only — the custody refusal has to name the
+ * setting that lifts it, and one spelling of a config key beats two. This file
+ * still reads no config: the decision arrives as a parameter. */
+#include "cli/cli.h"
 #include "foundation/compat.h"
 #include "foundation/compat_fs.h"
 #include "foundation/log.h"
@@ -161,14 +165,87 @@ const char *hyp_ask_provider_key(const char *key_env, char *err, size_t errlen) 
     }
     const char *v = getenv(key_env);
     if (!v || !v[0]) {
-        /* Names the VARIABLE, never a value, and never hints at a length. */
+        /* Names the VARIABLE, never a value, and never hints at a length.
+         *
+         * Under SHARED custody this sentence is about the SERVER's environment
+         * while the reader is very likely looking at their own shell, where
+         * the variable plainly is set. That was the first symptom of the
+         * custody problem and it is why the custody gate below runs before
+         * this read rather than after it: refused-for-custody and unset are
+         * different facts and must not arrive wearing the same sentence. */
         snprintf(err, errlen,
-                 "environment variable %s is not set (or is empty) — the escalation lane reads "
-                 "the key from it at the moment of use and never stores it",
-                 key_env);
+                 "environment variable %s is not set (or is empty) in %s — the escalation lane "
+                 "reads the key from it at the moment of use and never stores it",
+                 key_env,
+                 hyp_ask_provider_key_custody() == HYP_ASK_KEY_CUSTODY_SHARED
+                     ? hyp_ask_provider_key_holder()
+                     : "this process");
         return NULL;
     }
     return v;
+}
+
+/* ── Key custody (see the header for why this exists) ──────────────
+ *
+ * Process-wide, not per-encoder or per-server: "whose environment is this"
+ * is a property of the PROCESS. Making it process-wide is also what makes it
+ * cover the graph UI's HTTP server for free — that server has its own MCP
+ * instance and its own spending route (/api/embed-view/ask with escalate), but
+ * hyp_http_server_new is only ever reached from src/daemon/host.c, so one
+ * declaration in the daemon covers both surfaces. A per-server flag would have
+ * been an enumeration of two, which is exactly the shape that later turns out
+ * to have been an enumeration of three.
+ *
+ * Written once at startup, before any request thread exists, and read-only
+ * afterwards; that is the whole synchronisation argument. */
+static hyp_ask_key_custody_t g_key_custody = HYP_ASK_KEY_CUSTODY_CALLER;
+static char g_key_holder[160];
+
+void hyp_ask_provider_declare_shared_key_custody(const char *holder) {
+    g_key_custody = HYP_ASK_KEY_CUSTODY_SHARED;
+    (void)snprintf(g_key_holder, sizeof(g_key_holder), "%s",
+                   holder && holder[0] ? holder : "a shared hyponoia server process");
+}
+
+hyp_ask_key_custody_t hyp_ask_provider_key_custody(void) {
+    return g_key_custody;
+}
+
+const char *hyp_ask_provider_key_holder(void) {
+    return g_key_custody == HYP_ASK_KEY_CUSTODY_SHARED ? g_key_holder : "";
+}
+
+void hyp_ask_provider_clear_key_custody_for_test(void) {
+    g_key_custody = HYP_ASK_KEY_CUSTODY_CALLER;
+    g_key_holder[0] = '\0';
+}
+
+bool hyp_ask_provider_key_custody_refused(bool shared_allowed, const char *key_env, char *err,
+                                          size_t errlen) {
+    if (g_key_custody != HYP_ASK_KEY_CUSTODY_SHARED || shared_allowed) {
+        return false;
+    }
+    /* THE REFUSAL SAYS WHAT WOULD HAVE HAPPENED, NOT JUST THAT IT DID NOT.
+     * Who would have paid, who else could, and the one line that changes it —
+     * a bare "refused by policy" would send the reader to the source.
+     *
+     * "is not 'allow'" rather than "is 'refuse'": the stored value could also
+     * be a hand-written third word, which the READ side resolves to refuse
+     * (the safe side) even though `config set` would have rejected it. Say
+     * what was actually decided, not what was probably written. */
+    snprintf(err, errlen,
+             "this process is %s, not the process that asked, so reading $%s here would spend "
+             "the key of whoever started it. %s is not 'allow' (refuse is the default), so it "
+             "was not read. Any local process of this user account that can reach this server "
+             "could otherwise escalate without holding the key, which is why it is off until "
+             "you say otherwise. To turn it on deliberately: `hyponoia config set %s allow` — "
+             "it takes effect on the next question, no restart. Note that every tool call is "
+             "served by this shared process, so that setting is what `ask(escalate=true)` "
+             "needs; `hyponoia embed --escalation` runs in your own process and never needed "
+             "it. The local lane reads no key at all and is unaffected either way",
+             g_key_holder, key_env && key_env[0] ? key_env : "the configured key variable",
+             HYP_CONFIG_ASK_ESC_DAEMON_KEY, HYP_CONFIG_ASK_ESC_DAEMON_KEY);
+    return true;
 }
 
 /* ── Request plumbing ──────────────────────────────────────────────
@@ -642,9 +719,21 @@ static const hyp_ask_encoder_vt_t AP_ENCODER_VT = {
 
 struct hyp_ask_encoder *hyp_ask_provider_encoder_create(const char *provider_name,
                                                         const char *model, const char *key_env,
-                                                        char *err, size_t errlen) {
+                                                        bool shared_key_allowed, char *err,
+                                                        size_t errlen) {
     if (err && errlen) {
         err[0] = '\0';
+    }
+    /* CUSTODY BEFORE EVERYTHING, INCLUDING THE PROVIDER LOOKUP. This is the
+     * one refusal that must not depend on how well the rest of the lane is
+     * configured: a shared server that may not spend must not read the key,
+     * and must not report a misconfiguration it would only have discovered by
+     * getting further. Both callers ask the same question first so they can
+     * give their own remedy sentence; the check is repeated here because the
+     * gate has to survive a third caller written by someone who did not read
+     * this comment. */
+    if (hyp_ask_provider_key_custody_refused(shared_key_allowed, key_env, err, errlen)) {
+        return NULL;
     }
     const hyp_ask_provider_t *p = hyp_ask_provider_by_name(provider_name);
     if (!p) {

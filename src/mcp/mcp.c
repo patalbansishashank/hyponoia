@@ -574,8 +574,10 @@ static const tool_def_t TOOLS[] = {
      "or the two spaces are not provably the same, this RETURNS AN ERROR SAYING SO and does "
      "not quietly answer from the local encoder — you would otherwise get the cheap answer "
      "while believing you had the expensive one. Every answer names the lane that answered "
-     "(`lane`: local | escalation-query | escalation-index) and both encoders "
-     "(`query_encoder`, `index_encoder`).\"}},"
+     "(`lane`: local | escalation-query | escalation-index), both encoders "
+     "(`query_encoder`, `index_encoder`) and whose environment the key came from "
+     "(`key_custody`) — a warm daemon may only spend for you if its owner set "
+     "ask.escalation.daemon_key=allow.\"}},"
      "\"required\":[\"question\",\"project\"]}"},
 
     {"query_graph", "Query graph",
@@ -4098,6 +4100,45 @@ static void ask_truncation_text(const hyp_ask_status_t *st, char *out, size_t ou
     }
 }
 
+/* WHO PAID FOR THIS ANSWER (NEXT-STEPS §3.2 step 5).
+ *
+ * The answer already names the lane and both encoders, so an agent knows WHAT
+ * it is holding. This names whose key bought it. Under shared custody that is
+ * the surprising case and it gets the long sentence — the holder, the fact
+ * that any local process of this account can do the same, and the one command
+ * that stops it. Under caller custody it is one clause, because "my own key"
+ * is what a reader already assumed; it is emitted in both cases anyway, so its
+ * absence never has to be interpreted.
+ *
+ * `key_env` is a variable NAME and is echoed. NEVER pass a value: this string
+ * goes to a client, into transcripts, and very likely into a bug report.
+ *
+ * A function rather than two snprintfs at the call site so the text — and in
+ * particular the promise that no key can reach it — is reachable from a test
+ * without a live provider call. */
+static void ask_key_custody_text(const char *key_env, char *out, size_t outlen) {
+    if (!out || outlen == 0) {
+        return;
+    }
+    if (hyp_ask_provider_key_custody() == HYP_ASK_KEY_CUSTODY_SHARED) {
+        snprintf(out, outlen,
+                 "shared — $%s was read from the environment of %s, NOT from the environment of "
+                 "the process that asked. %s is '%s', so any local process of this user account "
+                 "that can reach this server can escalate on that account without holding the "
+                 "key; `hyponoia config set %s %s` stops that",
+                 key_env ? key_env : "", hyp_ask_provider_key_holder(),
+                 HYP_CONFIG_ASK_ESC_DAEMON_KEY, HYP_CONFIG_ASK_ESC_DAEMON_KEY_ALLOW,
+                 HYP_CONFIG_ASK_ESC_DAEMON_KEY, HYP_CONFIG_ASK_ESC_DAEMON_KEY_REFUSE);
+        return;
+    }
+    snprintf(out, outlen, "caller — $%s was read from this process's own environment",
+             key_env ? key_env : "");
+}
+
+void hyp_mcp_ask_key_custody_text_for_test(const char *key_env, char *out, size_t outlen) {
+    ask_key_custody_text(key_env, out, outlen);
+}
+
 /* What this index did with spans covering a whole file, said beside the
  * population it ranked.
  *
@@ -4620,6 +4661,11 @@ static char *ask_run(hyp_mcp_server_t *srv, const char *args, bool force_json, b
     hyp_ask_lane_t lane = HYP_ASK_LANE_LOCAL;
     hyp_ask_encoder_t *esc_enc = NULL;
     const hyp_ask_provider_t *esc_provider = NULL;
+    /* WHOSE KEY PAID, said on the answer itself. Filled in below while
+     * `key_env` is still in scope; empty on the local lane, which reads no key
+     * at all and would only be making a claim about nothing. */
+    char key_custody_text[HYP_SZ_512];
+    key_custody_text[0] = '\0';
     if (escalate) {
         /* Not `cache_dir`: this file already has a static cache_dir(char *,
          * size_t) at line 1948, and shadowing it reads as a call site. */
@@ -4638,6 +4684,15 @@ static char *ask_run(hyp_mcp_server_t *srv, const char *args, bool force_json, b
         snprintf(mode, sizeof(mode), "%s",
                  cfg ? hyp_config_get(cfg, HYP_CONFIG_ASK_ESC_MODE, HYP_CONFIG_ASK_ESC_MODE_DEFAULT)
                      : HYP_CONFIG_ASK_ESC_MODE_DEFAULT);
+        /* Read per request, not cached at startup: the owner must be able to
+         * revoke a daemon's spending permission without restarting the daemon
+         * that holds the key. */
+        char daemon_key[HYP_SZ_32];
+        snprintf(daemon_key, sizeof(daemon_key), "%s",
+                 cfg ? hyp_config_get(cfg, HYP_CONFIG_ASK_ESC_DAEMON_KEY,
+                                      HYP_CONFIG_ASK_ESC_DAEMON_KEY_DEFAULT)
+                     : HYP_CONFIG_ASK_ESC_DAEMON_KEY_DEFAULT);
+        bool daemon_key_allowed = strcmp(daemon_key, HYP_CONFIG_ASK_ESC_DAEMON_KEY_ALLOW) == 0;
         if (cfg) {
             hyp_config_close(cfg);
         }
@@ -4660,7 +4715,28 @@ static char *ask_run(hyp_mcp_server_t *srv, const char *args, bool force_json, b
         }
         lane = esc_query_mode ? HYP_ASK_LANE_LOCAL : HYP_ASK_LANE_ESCALATION;
         char eerr[ASK_MSG] = "";
-        esc_enc = hyp_ask_provider_encoder_create(provider, model, key_env, eerr, sizeof(eerr));
+        /* WHOSE KEY WOULD PAY (NEXT-STEPS §3.2 step 5). Every tool call
+         * reaching this line is served by the daemon — MCP sessions through
+         * the stdio frontend, `hyponoia cli <tool>`, and the graph UI's
+         * /api/embed-view/ask all execute in that one long-lived process — so
+         * the environment `hyp_ask_provider_key` is about to read belongs to
+         * whoever started the daemon, not to whoever asked. Asked FIRST and
+         * separately from the encoder's other failures because the remedy is
+         * completely different: the lane below tells a caller to configure a
+         * provider, which here is already configured and would be the wrong
+         * advice entirely. */
+        if (hyp_ask_provider_key_custody_refused(daemon_key_allowed, key_env, eerr, sizeof(eerr))) {
+            char msg[ASK_MSG + HYP_SZ_256];
+            snprintf(msg, sizeof(msg),
+                     "escalate=true was asked for and this server may not spend on your behalf: "
+                     "%s. NOTHING was sent and NOTHING was charged, and this did NOT fall back "
+                     "to the local encoder — you asked for the escalated answer and would have "
+                     "received a different one without being told.",
+                     eerr);
+            return ask_error(msg, project, question);
+        }
+        esc_enc = hyp_ask_provider_encoder_create(provider, model, key_env, daemon_key_allowed,
+                                                  eerr, sizeof(eerr));
         if (!esc_enc) {
             /* NEVER A SILENT FALLBACK. Answering from the local index here
              * would hand back the cheap answer to someone who asked for the
@@ -4696,6 +4772,8 @@ static char *ask_run(hyp_mcp_server_t *srv, const char *args, bool force_json, b
         }
         /* Non-NULL whenever the encoder was created; kept for the dim_mode gate. */
         esc_provider = hyp_ask_provider_by_name(provider);
+
+        ask_key_custody_text(key_env, key_custody_text, sizeof(key_custody_text));
     }
 
     hyp_ask_status_t st;
@@ -5035,6 +5113,9 @@ static char *ask_run(hyp_mcp_server_t *srv, const char *args, bool force_json, b
         if (space_text[0]) {
             yyjson_mut_obj_add_strcpy(doc, root, "space", space_text);
         }
+        if (key_custody_text[0]) {
+            yyjson_mut_obj_add_strcpy(doc, root, "key_custody", key_custody_text);
+        }
         /* `model` predates the two-encoder disclosure and is the INDEX's model;
          * kept so nothing that read it breaks, duplicated by index_encoder. */
         yyjson_mut_obj_add_strcpy(doc, root, "model", st.model_id);
@@ -5111,6 +5192,13 @@ static char *ask_run(hyp_mcp_server_t *srv, const char *args, bool force_json, b
         hyp_tree_scalar_str(&sb, "index_encoder", st.model_id);
         if (space_text[0]) {
             hyp_tree_scalar_str(&sb, "space", space_text);
+        }
+        /* BOTH PATHS, ALWAYS. The text path is the one an MCP client actually
+         * reads (no outputSchema is advertised, so `structuredContent` is not
+         * where the answer lives), and a disclosure that only the JSON path
+         * carried would be a disclosure nobody sees. */
+        if (key_custody_text[0]) {
+            hyp_tree_scalar_str(&sb, "key_custody", key_custody_text);
         }
         hyp_tree_scalar_str(&sb, "model", st.model_id);
         hyp_tree_scalar_str(&sb, "language", lang_name);

@@ -666,6 +666,12 @@ int hyp_cmd_embed(int argc, char **argv) {
             mode, sizeof(mode), "%s",
             cfg ? hyp_config_get(cfg, HYP_CONFIG_ASK_ESC_MODE, HYP_CONFIG_ASK_ESC_MODE_DEFAULT)
                 : HYP_CONFIG_ASK_ESC_MODE_DEFAULT);
+        char daemon_key[HYP_SZ_32];
+        (void)snprintf(daemon_key, sizeof(daemon_key), "%s",
+                       cfg ? hyp_config_get(cfg, HYP_CONFIG_ASK_ESC_DAEMON_KEY,
+                                            HYP_CONFIG_ASK_ESC_DAEMON_KEY_DEFAULT)
+                           : HYP_CONFIG_ASK_ESC_DAEMON_KEY_DEFAULT);
+        bool daemon_key_allowed = strcmp(daemon_key, HYP_CONFIG_ASK_ESC_DAEMON_KEY_ALLOW) == 0;
         if (cfg) {
             hyp_config_close(cfg);
         }
@@ -682,7 +688,14 @@ int hyp_cmd_embed(int argc, char **argv) {
                    HYP_CONFIG_ASK_ESC_MODE_INDEX);
         }
         char err[512];
-        esc_enc = hyp_ask_provider_encoder_create(provider, model, key_env, err, sizeof(err));
+        /* `embed` runs IN THIS PROCESS (main.c dispatches hyp_cmd_embed
+         * directly, unlike the tools, which execute daemon-side), so custody
+         * here is the caller's own and the gate never fires. It is passed
+         * anyway, and read from the same config as everything else, because
+         * "this call site happens to be safe today" is not a property the
+         * signature should let a future refactor lose silently. */
+        esc_enc = hyp_ask_provider_encoder_create(provider, model, key_env, daemon_key_allowed, err,
+                                                  sizeof(err));
         if (!esc_enc) {
             /* Never fall back to the local model. A caller who asked for the
              * expensive index and quietly got the cheap one has been told

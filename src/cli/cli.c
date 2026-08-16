@@ -6553,6 +6553,24 @@ int hyp_config_validate(const char *key, const char *value, char *err, size_t er
                  key, HYP_CONFIG_ASK_ESC_MODE_QUERY, HYP_CONFIG_ASK_ESC_MODE_INDEX, value);
         return CLI_ERR;
     }
+    if (strcmp(key, HYP_CONFIG_ASK_ESC_DAEMON_KEY) == 0) {
+        /* Two words, refused otherwise — the same rule as mode, for the same
+         * reason and a sharper one: this value decides WHOSE MONEY a warm
+         * daemon may spend, and a misspelling resolved to a default would be a
+         * spending decision made by a typo. */
+        if (strcmp(value, HYP_CONFIG_ASK_ESC_DAEMON_KEY_ALLOW) == 0 ||
+            strcmp(value, HYP_CONFIG_ASK_ESC_DAEMON_KEY_REFUSE) == 0) {
+            return 0;
+        }
+        snprintf(err, errlen,
+                 "%s must be '%s' (the default — a shared daemon does not read the escalation "
+                 "key on a client's behalf) or '%s' (it may, and then ANY local process of this "
+                 "user account that can reach the daemon can escalate on your account without "
+                 "holding the key); got '%s'",
+                 key, HYP_CONFIG_ASK_ESC_DAEMON_KEY_REFUSE, HYP_CONFIG_ASK_ESC_DAEMON_KEY_ALLOW,
+                 value);
+        return CLI_ERR;
+    }
     return 0;
 }
 
@@ -6623,6 +6641,9 @@ int hyp_cmd_config(int argc, char **argv) {
                "NAME of the env var holding the API key — never the key");
         printf("  %-25s  default=%-10s  %s\n", HYP_CONFIG_ASK_ESC_MODE,
                HYP_CONFIG_ASK_ESC_MODE_DEFAULT, "What ask(escalate=true) sends: query | index");
+        printf("  %-25s  default=%-10s  %s\n", HYP_CONFIG_ASK_ESC_DAEMON_KEY,
+               HYP_CONFIG_ASK_ESC_DAEMON_KEY_DEFAULT,
+               "May a warm daemon read the key for clients: allow | refuse");
         printf("\nEscalation is opt-in and never automatic: ask(escalate=true) per question.\n"
                "  mode=query  sends ONLY the question to the provider and scores it against the\n"
                "              local index. Needs the key and the local index, nothing else; the\n"
@@ -6630,7 +6651,12 @@ int hyp_cmd_config(int argc, char **argv) {
                "              the escalation model share a measured embedding space (voyage-4).\n"
                "  mode=index  queries a second, API-built index of the whole corpus; build it\n"
                "              with `hyponoia embed --escalation` (spends tokens per declaration).\n"
-               "Neither mode ever falls back to the local answer: a refusal says so.\n");
+               "Neither mode ever falls back to the local answer: a refusal says so.\n"
+               "\nWHOSE KEY PAYS. Tool calls are served by the per-account daemon, which reads\n"
+               "the key from the environment IT was started with — so with daemon_key=allow,\n"
+               "any local process of this user that can reach it can escalate on your account\n"
+               "without holding the key. It is `refuse` by default, and every escalated answer\n"
+               "discloses which environment the key came from (`key_custody`).\n");
         return 0;
     }
 

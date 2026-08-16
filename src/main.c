@@ -33,6 +33,7 @@
 #include "mcp/index_supervisor.h"
 #include "ask/ask_cmd.h"
 #include "ask/ask_llama.h"
+#include "ask/ask_provider.h" /* key custody: whose environment this process is */
 #include "cli/cli.h"
 #include "cli/model_fetch.h"
 #include "cli/progress_sink.h"
@@ -148,6 +149,17 @@ static atomic_int g_shutdown = 0;
 static hyp_daemon_runtime_client_t *g_daemon_client = NULL;
 
 static uint64_t main_deadline_after(uint32_t timeout_ms);
+
+/* This process's own id, for a human-readable disclosure. Same shape as
+ * host.c's host_current_process_id — that one is static to the daemon host and
+ * this is needed before the host is entered. */
+static uint64_t main_current_process_id(void) {
+#ifdef _WIN32
+    return (uint64_t)GetCurrentProcessId();
+#else
+    return (uint64_t)getpid();
+#endif
+}
 
 static bool main_session_context(const char *preferred_root, char root_out[MAIN_PATH_CAP],
                                  char allowed_out[MAIN_PATH_CAP], const char **allowed_out_ptr);
@@ -2115,6 +2127,50 @@ static void main_daemon_ctl_print_ui_configuration(void) {
     }
 }
 
+/* THE SPENDING SURFACE, WHERE SOMEONE WOULD GO LOOKING FOR IT
+ * (NEXT-STEPS §3.2 step 5). A daemon reads the escalation key out of the
+ * environment it was started with, so it can spend on behalf of clients that
+ * never held the key. Whether it MAY is `ask.escalation.daemon_key`, and that
+ * lives in the config database — machine-global, readable from here — so this
+ * line needs nothing from the daemon's own status wire, which stays the
+ * bounded 121-byte control probe it was designed to be.
+ *
+ * Printed only when a key variable is configured at all. Escalation is opt-in
+ * and most installs never touch it; a permanent line about a key that does not
+ * exist is noise, and noise in a status block is how the interesting line gets
+ * skipped. */
+static void main_daemon_ctl_print_escalation_key_custody(void) {
+    const char *cache_dir = hyp_resolve_cache_dir();
+    hyp_config_t *cfg = cache_dir ? hyp_config_open(cache_dir) : NULL;
+    if (!cfg) {
+        return;
+    }
+    char key_env[128];
+    char policy[HYP_SZ_32];
+    (void)snprintf(key_env, sizeof(key_env), "%s",
+                   hyp_config_get(cfg, HYP_CONFIG_ASK_ESC_KEY_ENV, ""));
+    (void)snprintf(policy, sizeof(policy), "%s",
+                   hyp_config_get(cfg, HYP_CONFIG_ASK_ESC_DAEMON_KEY,
+                                  HYP_CONFIG_ASK_ESC_DAEMON_KEY_DEFAULT));
+    hyp_config_close(cfg);
+    if (!key_env[0]) {
+        return;
+    }
+    if (strcmp(policy, HYP_CONFIG_ASK_ESC_DAEMON_KEY_ALLOW) == 0) {
+        printf("  escalation key: %s=%s — this daemon reads $%s from ITS OWN environment when a "
+               "client asks an escalated question, so any local process of this user account "
+               "that can reach it can spend against that account without holding the key. Stop "
+               "it with `hyponoia config set %s %s`.\n",
+               HYP_CONFIG_ASK_ESC_DAEMON_KEY, HYP_CONFIG_ASK_ESC_DAEMON_KEY_ALLOW, key_env,
+               HYP_CONFIG_ASK_ESC_DAEMON_KEY, HYP_CONFIG_ASK_ESC_DAEMON_KEY_REFUSE);
+    } else {
+        printf("  escalation key: %s=%s — this daemon will not read $%s on a client's behalf; "
+               "ask(escalate=true) through it is refused. `hyponoia embed --escalation` and any "
+               "process holding the key itself are unaffected.\n",
+               HYP_CONFIG_ASK_ESC_DAEMON_KEY, HYP_CONFIG_ASK_ESC_DAEMON_KEY_REFUSE, key_env);
+    }
+}
+
 static void main_daemon_ctl_open_browser(int port) {
     char url[64];
     (void)snprintf(url, sizeof(url), "http://127.0.0.1:%d", port);
@@ -2249,6 +2305,7 @@ static int main_run_daemon_ctl(int argc, char **argv, const hyp_daemon_ipc_endpo
         main_daemon_ctl_print_clients(status.client_pids, status.client_count,
                                       status.committed_clients);
         main_daemon_ctl_print_ui_configuration();
+        main_daemon_ctl_print_escalation_key_custody();
         return EXIT_SUCCESS;
     }
 
@@ -2638,6 +2695,20 @@ int main(int argc, char **argv) {
     hyp_http_server_set_binary_path(executable_path);
 
     if (role == HYP_DAEMON_PROCESS_WORKER) {
+        /* A supervised worker was forked by the daemon's supervisor, so its
+         * environment is the DAEMON's, not the asking client's — the same
+         * classification, reached a different way. No worker path reads an
+         * escalation key today (a worker only ever runs the index tool;
+         * `embed --escalation` is a direct CLI command), so this changes
+         * nothing now. It is here because the RULE is "did this process get
+         * its environment from the party that is asking", and a rule applied
+         * to one of its two cases is an enumeration waiting to be wrong. */
+        char worker_key_holder[128];
+        (void)snprintf(worker_key_holder, sizeof(worker_key_holder),
+                       "a hyponoia index worker (pid %llu) started by the daemon, with the "
+                       "daemon's environment",
+                       (unsigned long long)main_current_process_id());
+        hyp_ask_provider_declare_shared_key_custody(worker_key_holder);
         hyp_index_worker_invocation_t invocation;
         hyp_index_worker_argv_status_t worker_status =
             hyp_index_worker_parse_process_argv(argc, argv, &invocation);
@@ -2788,6 +2859,30 @@ int main(int argc, char **argv) {
 
     if (role == HYP_DAEMON_PROCESS_DAEMON) {
         setup_signal_handlers();
+        /* THIS PROCESS'S ENVIRONMENT IS NOT ITS CALLERS' (NEXT-STEPS §3.2
+         * step 5). Declared here, at the one place a daemon is born, rather
+         * than per MCP session: `environ` was fixed at exec and belongs to the
+         * shell that started this daemon, while the sessions, the CLI tool
+         * invocations and the graph UI's HTTP routes it is about to serve all
+         * belong to other processes. Everything downstream that would read an
+         * escalation key out of the environment now knows it would be
+         * spending someone else's, and refuses unless
+         * ask.escalation.daemon_key says otherwise.
+         *
+         * Before any thread starts, which is what makes the state safe to read
+         * from a request thread without a lock. */
+        char key_holder[128];
+        char started[32];
+        time_t started_at = time(NULL);
+        struct tm started_tm;
+        if (hyp_gmtime_r(&started_at, &started_tm) == NULL ||
+            strftime(started, sizeof(started), "%Y-%m-%dT%H:%M:%SZ", &started_tm) == 0) {
+            (void)snprintf(started, sizeof(started), "an unrecorded time");
+        }
+        (void)snprintf(key_holder, sizeof(key_holder),
+                       "the hyponoia daemon (pid %llu, holding it since %s)",
+                       (unsigned long long)main_current_process_id(), started);
+        hyp_ask_provider_declare_shared_key_custody(key_holder);
         hyp_daemon_host_config_t host_config = {
             .endpoint = endpoint,
             .identity = identity,

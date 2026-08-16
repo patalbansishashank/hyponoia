@@ -11,8 +11,10 @@
 
 #include <string.h>
 
+#include "ask/ask_encoder.h"
 #include "cli/cli.h"
 #include "foundation/compat.h"
+#include "foundation/constants.h"
 #include "test_framework.h"
 
 TEST(ask_provider_table_rows_are_complete_and_asymmetric) {
@@ -209,8 +211,160 @@ TEST(ask_provider_config_mode_is_query_or_index_and_names_both_on_refusal) {
     PASS();
 }
 
+/* ── Key custody (NEXT-STEPS §3.2 step 5) ──────────────────────────
+ *
+ * The measured fact this exists for: an escalated `ask` answered from a client
+ * whose environment had no key, because the daemon serving it had read one out
+ * of the shell that started it. Same uid and local-only, so not a privilege
+ * escalation — but a spending surface nobody declared, in a lane whose entire
+ * design is that money never moves by surprise.
+ *
+ * THE VALUE PLANTED IN THE ENVIRONMENT HERE IS THE POINT OF THE TEST: every
+ * assertion below is followed by one that the refusal did not echo it. A
+ * refusal is the other place a secret leaks, and this one is designed to be
+ * read out loud in a bug report.
+ */
+#define CUSTODY_TEST_KEY_VAR "HYP_TEST_CUSTODY_KEY_VAR"
+#define CUSTODY_TEST_KEY_VALUE "not-a-real-key-custody-placeholder"
+
+TEST(ask_provider_a_shared_server_refuses_to_read_the_key_until_the_owner_allows_it) {
+    char err[HYP_SZ_1K];
+    hyp_setenv(CUSTODY_TEST_KEY_VAR, CUSTODY_TEST_KEY_VALUE, 1);
+
+    /* CALLER custody is the default, and there is nothing to gate: this
+     * process IS the asking one. The setting is irrelevant in both positions. */
+    hyp_ask_provider_clear_key_custody_for_test();
+    ASSERT_EQ(hyp_ask_provider_key_custody(), HYP_ASK_KEY_CUSTODY_CALLER);
+    ASSERT_STR_EQ(hyp_ask_provider_key_holder(), "");
+    err[0] = '\0';
+    ASSERT_FALSE(hyp_ask_provider_key_custody_refused(false, CUSTODY_TEST_KEY_VAR, err,
+                                                      sizeof(err)));
+    ASSERT_FALSE(hyp_ask_provider_key_custody_refused(true, CUSTODY_TEST_KEY_VAR, err,
+                                                      sizeof(err)));
+
+    /* SHARED custody, not allowed: refused, and the refusal is the whole
+     * story — who is holding the key, which setting decides, and what that
+     * setting does and does not cover (`ask` needs it, `embed` never did). */
+    hyp_ask_provider_declare_shared_key_custody("the hyponoia daemon (pid 4242)");
+    ASSERT_EQ(hyp_ask_provider_key_custody(), HYP_ASK_KEY_CUSTODY_SHARED);
+    err[0] = '\0';
+    ASSERT_TRUE(
+        hyp_ask_provider_key_custody_refused(false, CUSTODY_TEST_KEY_VAR, err, sizeof(err)));
+    ASSERT_NOT_NULL(strstr(err, "the hyponoia daemon (pid 4242)"));
+    ASSERT_NOT_NULL(strstr(err, CUSTODY_TEST_KEY_VAR));
+    ASSERT_NOT_NULL(strstr(err, HYP_CONFIG_ASK_ESC_DAEMON_KEY));
+    ASSERT_NOT_NULL(strstr(err, "allow"));
+    ASSERT_NOT_NULL(strstr(err, "embed --escalation"));
+    ASSERT_NULL(strstr(err, CUSTODY_TEST_KEY_VALUE));
+
+    /* SHARED custody, allowed: the gate opens. */
+    err[0] = '\0';
+    ASSERT_FALSE(hyp_ask_provider_key_custody_refused(true, CUSTODY_TEST_KEY_VAR, err,
+                                                      sizeof(err)));
+    ASSERT_STR_EQ(err, "");
+
+    hyp_ask_provider_clear_key_custody_for_test();
+    hyp_unsetenv(CUSTODY_TEST_KEY_VAR);
+    PASS();
+}
+
+/* THE GATE IS INSIDE encoder_create, NOT ONLY IN FRONT OF IT. Both callers ask
+ * the custody question first so they can give their own remedy, but a third
+ * one written later will not — and this is the assertion that keeps that from
+ * costing money. It also pins the ORDER: custody is decided before the
+ * provider lookup, so a shared server that may not spend refuses for that
+ * reason rather than leaking which parts of the lane are misconfigured. */
+TEST(ask_provider_encoder_create_enforces_custody_before_anything_else) {
+    char err[HYP_SZ_1K];
+    hyp_setenv(CUSTODY_TEST_KEY_VAR, CUSTODY_TEST_KEY_VALUE, 1);
+    hyp_ask_provider_declare_shared_key_custody("the hyponoia daemon (pid 4242)");
+
+    err[0] = '\0';
+    ASSERT_NULL(hyp_ask_provider_encoder_create("voyage", "voyage-4-large", CUSTODY_TEST_KEY_VAR,
+                                                false, err, sizeof(err)));
+    ASSERT_NOT_NULL(strstr(err, HYP_CONFIG_ASK_ESC_DAEMON_KEY));
+    ASSERT_NULL(strstr(err, CUSTODY_TEST_KEY_VALUE));
+
+    /* Unknown provider AND refused custody: custody answers, because it is the
+     * one that decides whether the key may be touched at all. */
+    err[0] = '\0';
+    ASSERT_NULL(hyp_ask_provider_encoder_create("no-such-provider", "m", CUSTODY_TEST_KEY_VAR,
+                                                false, err, sizeof(err)));
+    ASSERT_NOT_NULL(strstr(err, HYP_CONFIG_ASK_ESC_DAEMON_KEY));
+    ASSERT_NULL(strstr(err, "not one this build knows"));
+
+    /* Allowed, and the ordinary refusals are back in charge. */
+    err[0] = '\0';
+    ASSERT_NULL(hyp_ask_provider_encoder_create("no-such-provider", "m", CUSTODY_TEST_KEY_VAR, true,
+                                                err, sizeof(err)));
+    ASSERT_NOT_NULL(strstr(err, "not one this build knows"));
+    ASSERT_NULL(strstr(err, CUSTODY_TEST_KEY_VALUE));
+
+    /* Allowed and correct: an encoder, built from a key this process holds. */
+    err[0] = '\0';
+    hyp_ask_encoder_t *enc = hyp_ask_provider_encoder_create(
+        "voyage", "voyage-4-large", CUSTODY_TEST_KEY_VAR, true, err, sizeof(err));
+    ASSERT_NOT_NULL(enc);
+    ASSERT_STR_EQ(err, "");
+    /* The encoder's own identity must not carry the key either — it is
+     * stamped onto indexes and printed in disclosures. */
+    ASSERT_STR_EQ(hyp_ask_encoder_model_id(enc), "voyage/voyage-4-large");
+    ASSERT_NULL(strstr(hyp_ask_encoder_model_id(enc), CUSTODY_TEST_KEY_VALUE));
+    hyp_ask_encoder_destroy(enc);
+
+    hyp_ask_provider_clear_key_custody_for_test();
+    hyp_unsetenv(CUSTODY_TEST_KEY_VAR);
+    PASS();
+}
+
+/* An unset variable under shared custody is a genuinely confusing message —
+ * the reader is looking at their own shell, where it IS set. Naming the holder
+ * is what makes it actionable instead of maddening. */
+TEST(ask_provider_unset_key_under_shared_custody_names_whose_environment_was_read) {
+    char err[HYP_SZ_1K];
+    hyp_unsetenv(CUSTODY_TEST_KEY_VAR);
+
+    hyp_ask_provider_clear_key_custody_for_test();
+    err[0] = '\0';
+    ASSERT_NULL(hyp_ask_provider_key(CUSTODY_TEST_KEY_VAR, err, sizeof(err)));
+    ASSERT_NOT_NULL(strstr(err, "this process"));
+
+    hyp_ask_provider_declare_shared_key_custody("the hyponoia daemon (pid 4242)");
+    err[0] = '\0';
+    ASSERT_NULL(hyp_ask_provider_key(CUSTODY_TEST_KEY_VAR, err, sizeof(err)));
+    ASSERT_NOT_NULL(strstr(err, CUSTODY_TEST_KEY_VAR));
+    ASSERT_NOT_NULL(strstr(err, "the hyponoia daemon (pid 4242)"));
+
+    hyp_ask_provider_clear_key_custody_for_test();
+    PASS();
+}
+
+/* `config set` is where the decision is made, so it is where a typo has to
+ * die. "allowed", "yes", "true" and "" all mean nothing here — resolving any
+ * of them to a default would be a spending decision made by a misspelling. */
+TEST(ask_provider_config_daemon_key_is_allow_or_refuse_and_defaults_to_refuse) {
+    char err[HYP_SZ_1K];
+    ASSERT_EQ(hyp_config_validate(HYP_CONFIG_ASK_ESC_DAEMON_KEY, "allow", err, sizeof(err)), 0);
+    ASSERT_EQ(hyp_config_validate(HYP_CONFIG_ASK_ESC_DAEMON_KEY, "refuse", err, sizeof(err)), 0);
+    ASSERT_STR_EQ(HYP_CONFIG_ASK_ESC_DAEMON_KEY_DEFAULT, "refuse");
+
+    const char *nearly[] = {"allowed", "yes", "true", "deny", "", "Allow"};
+    for (size_t i = 0; i < sizeof(nearly) / sizeof(nearly[0]); i++) {
+        err[0] = '\0';
+        ASSERT_TRUE(hyp_config_validate(HYP_CONFIG_ASK_ESC_DAEMON_KEY, nearly[i], err,
+                                        sizeof(err)) != 0);
+        ASSERT_NOT_NULL(strstr(err, "'refuse'"));
+        ASSERT_NOT_NULL(strstr(err, "'allow'"));
+    }
+    PASS();
+}
+
 SUITE(ask_provider) {
     RUN_TEST(ask_provider_config_mode_is_query_or_index_and_names_both_on_refusal);
+    RUN_TEST(ask_provider_a_shared_server_refuses_to_read_the_key_until_the_owner_allows_it);
+    RUN_TEST(ask_provider_encoder_create_enforces_custody_before_anything_else);
+    RUN_TEST(ask_provider_unset_key_under_shared_custody_names_whose_environment_was_read);
+    RUN_TEST(ask_provider_config_daemon_key_is_allow_or_refuse_and_defaults_to_refuse);
     RUN_TEST(ask_provider_table_rows_are_complete_and_asymmetric);
     RUN_TEST(ask_provider_voyage_dimension_parameter_truncates_it_does_not_reembed);
     RUN_TEST(ask_provider_lookup_refuses_unknown_names);

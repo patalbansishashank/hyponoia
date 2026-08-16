@@ -258,6 +258,72 @@ had the expensive one. Every answer carries `lane` (`local`,
 `escalation-query` or `escalation-index`), `query_encoder` and
 `index_encoder`, so the agent holding it knows what it is holding.
 
+### Whose key pays
+
+The key is read from an environment variable at the moment of use and is never
+stored, logged, or put on a command line. That is a rule about the *value*. It
+says nothing about *whose environment* it is read from — and on this product
+those are usually not the same process.
+
+**Every tool call is served by the per-account daemon.** MCP sessions reach it
+through a thin stdio frontend, `hyponoia cli <tool>` connects to it, and the
+graph UI's `/api/embed-view/ask` route runs inside it. The daemon's environment
+was fixed when it was started, so a daemon launched from a shell that exported
+`$VOYAGE_API_KEY` holds that key for its whole life. Measured during §3.1: an
+escalated `ask` returned `lane: escalation-query` for a client that had no key
+in its own environment at all.
+
+That is not a privilege escalation. It is same-uid and local-only, and any
+process that can reach the daemon's socket can also read `/proc/<pid>/environ`,
+so the key was never hidden from it. It is a **spending surface**, and this
+lane's whole design is that money never moves by surprise. So:
+
+| | who can spend | how |
+|---|---|---|
+| `ask.escalation.daemon_key = refuse` | **only a process that holds the key itself** | the daemon refuses to read the key for a client, naming itself and this setting. **The default.** |
+| `ask.escalation.daemon_key = allow` | **any local process of your user account that can reach the daemon** | it spends against the account named by `ask.escalation.key_env`, without holding the key |
+
+**So `ask(escalate=true)` needs `allow`, and that is deliberate.** There is no
+in-process MCP server in this build — the stdio entry point is a thin frontend
+to the daemon — so *every* escalated question is served by a shared process,
+and the default turns escalated `ask` off until you opt in. That is one
+`config set` beside the three the lane already requires, and the refusal you
+get in the meantime names it. `hyponoia embed --escalation` is the exception:
+it runs in your own process with your own environment and never needed the
+setting.
+
+**How to stop it**, in order of bluntness:
+
+```
+hyponoia config set ask.escalation.daemon_key refuse   # the default; revocable live
+hyponoia daemon stop                                   # the process holding the key goes away
+```
+
+The setting is read **per request**, so revoking it takes effect on the next
+question — you do not have to restart the daemon that holds the key. `hyponoia
+daemon status` prints the current policy and the variable name whenever
+`ask.escalation.key_env` is configured.
+
+**None of this touches the local lane.** `escalate=false` reads no key at all,
+so the offline default is unaffected either way and `refuse` costs an offline
+user nothing.
+
+When a shared server *is* allowed to spend, it says so on every answer, beside
+the other disclosures:
+
+```
+key_custody: shared — $VOYAGE_API_KEY was read from the environment of the
+hyponoia daemon (pid 3904334, holding it since 2026-08-16T10:57:04Z), NOT from
+the environment of the process that asked. ask.escalation.daemon_key is
+'allow', so any local process of this user account that can reach this server
+can escalate on that account without holding the key; `hyponoia config set
+ask.escalation.daemon_key refuse` stops that
+```
+
+A process that read the key from its own environment says
+`key_custody: caller — $VOYAGE_API_KEY was read from this process's own
+environment`. The field names the **variable**, never the value.
+
 The record is `engine/hyponoia/runs/XMODEL/` (the frozen 60 and the space
 probe) and `engine/hyponoia/runs/XMODEL-PUBLIC/` (the 8,122-query replication).
 

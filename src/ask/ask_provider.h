@@ -130,8 +130,96 @@ bool hyp_ask_provider_contract(const hyp_ask_provider_t *p, char *buf, size_t bu
 /* Read the key named by `key_env` out of the environment.
  *
  * Returns NULL when the variable is unset or empty, and writes a sentence to
- * `err` naming THE VARIABLE, never a value. Callers must not log the result. */
+ * `err` naming THE VARIABLE, never a value. Callers must not log the result.
+ *
+ * WHOSE environment that is, is a separate question — see the custody block
+ * below. This function reads THIS PROCESS'S, which is not always the asking
+ * one's. */
 const char *hyp_ask_provider_key(const char *key_env, char *err, size_t errlen);
+
+/* ── Key custody: WHOSE environment `getenv` above is reading ──────
+ *
+ * NEXT-STEPS §3.2 step 5. The rule at the top of this file — the key is never
+ * stored, never logged, never in argv, read at the moment of use — is a rule
+ * about the VALUE. It says nothing about whose environment the value is read
+ * out of, and that turned out to matter.
+ *
+ * Measured during §3.1's token harness: an escalated `ask` answered
+ * `lane: escalation-query` from a client whose environment had no key at all.
+ * The read is per request (hyp_ask_provider_encoder_create runs on every
+ * escalated call), but `environ` is a snapshot taken at exec, so a daemon
+ * started from a shell that exported the key holds that key for its whole
+ * life — and `hyponoia`'s daemon serves EVERY MCP session, every CLI tool
+ * invocation, and the graph UI's HTTP routes. Any local process of this uid
+ * that can reach the socket could therefore spend against the owner's account
+ * without ever holding the key.
+ *
+ * That is not a privilege escalation — it is same-uid and local-only, and a
+ * process that can reach the socket can also read /proc/<daemon>/environ, so
+ * the key was never hidden from it. It IS a spending surface nobody declared,
+ * which is the failure this project's escalation lane exists to avoid: the
+ * whole lane is off by default, per call, and refuses rather than falling
+ * back, precisely so money never moves by surprise. A warm daemon quietly
+ * lending its key to whoever connects is that surprise wearing a different
+ * hat.
+ *
+ * So the process declares which case it is in, ONCE, before it serves
+ * anything:
+ *
+ *   CALLER — this process is the asking one, or was spawned by it and
+ *            inherited its environment: `embed --escalation`, a hook client,
+ *            any direct CLI command. Reading the key here spends the caller's
+ *            own key. This is the DEFAULT, so a process that says nothing is
+ *            treated as the caller's own — which is the safe way round,
+ *            because it is the case where no gate is needed.
+ *   SHARED — this process outlives and serves OTHER processes: the daemon
+ *            (and therefore the graph UI's HTTP server, which only ever runs
+ *            inside it), and the index workers it forks. Its environment
+ *            belongs to whoever started it, not to whoever is asking now.
+ *
+ * Worth knowing before judging the default: THERE IS NO IN-PROCESS MCP SERVER
+ * in this build — the stdio entry point is a thin frontend to the daemon, and
+ * `hyponoia cli <tool>` connects to it too — so every `ask(escalate=true)` is
+ * served under SHARED custody, and default-refuse means escalated ask needs
+ * one `config set` before it works. That is the intended trade: one line of
+ * setup, beside the three the lane already requires, against a spending
+ * surface that is on by default and mentioned nowhere.
+ *
+ * Under SHARED custody the key is read only when the owner has said so, via
+ * `ask.escalation.daemon_key` (default `refuse`). The gate lives inside
+ * hyp_ask_provider_encoder_create, below the enumeration of call sites, so a
+ * future call site cannot forget it. */
+typedef enum {
+    HYP_ASK_KEY_CUSTODY_CALLER = 0,
+    HYP_ASK_KEY_CUSTODY_SHARED = 1,
+} hyp_ask_key_custody_t;
+
+/* Declare this process a shared, long-lived server. `holder` is a short human
+ * sentence naming it for a disclosure — e.g. "hyponoia daemon pid 3904334,
+ * holding it since 2026-08-16T10:57:04Z". It is copied; NEVER pass anything
+ * derived from a key value.
+ *
+ * Call it once, before the process serves its first request and before it
+ * starts threads: the state is written once and read-only thereafter, which is
+ * what makes it safe to read from a request thread without a lock. */
+void hyp_ask_provider_declare_shared_key_custody(const char *holder);
+hyp_ask_key_custody_t hyp_ask_provider_key_custody(void);
+/* "" under CALLER custody. Never contains a key. */
+const char *hyp_ask_provider_key_holder(void);
+/* Back to CALLER. Only for tests, which drive both custodies in one process. */
+void hyp_ask_provider_clear_key_custody_for_test(void);
+
+/* The gate, exported so a caller can refuse with its OWN remedy sentence
+ * rather than wrapping this one in advice about configuring a provider that is
+ * already configured. True means "this process must not read the key on the
+ * caller's behalf"; `err` then holds the complete refusal — who would have
+ * paid, who else could, and the one command that changes it. `key_env` is a
+ * variable NAME and is echoed; passing a value here would print it.
+ *
+ * hyp_ask_provider_encoder_create applies this itself as well, so the gate
+ * holds even where nobody remembered to ask. */
+bool hyp_ask_provider_key_custody_refused(bool shared_allowed, const char *key_env, char *err,
+                                          size_t errlen);
 
 /* Encode `count` documents / one query. Writes `count * dim` (or `dim`)
  * float32s, unit-normalised, row i for text i IN THE ORDER GIVEN.
@@ -156,11 +244,18 @@ int hyp_ask_provider_embed_query(const hyp_ask_provider_t *p, const char *model,
  * Returns NULL with a sentence in `err` if the provider is unknown or unwired,
  * or the variable is unset.
  *
+ * `shared_key_allowed` is the owner's `ask.escalation.daemon_key` decision,
+ * and it is a REQUIRED argument rather than something read from config here so
+ * that ask_provider stays free of any config concept — and so that adding a
+ * call site is a compile error until its author has thought about custody. It
+ * is ignored under CALLER custody, where there is nothing to gate.
+ *
  * Declared here rather than in ask_encoder.h to keep the encoder interface free
  * of any provider concept; this is an adapter, not a second kind of encoder. */
 struct hyp_ask_encoder;
 struct hyp_ask_encoder *hyp_ask_provider_encoder_create(const char *provider_name,
                                                         const char *model, const char *key_env,
-                                                        char *err, size_t errlen);
+                                                        bool shared_key_allowed, char *err,
+                                                        size_t errlen);
 
 #endif /* HYP_ASK_PROVIDER_H */
