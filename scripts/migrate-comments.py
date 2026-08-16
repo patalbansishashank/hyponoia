@@ -11,13 +11,22 @@ emits it as a manifest of records. The code keeps the invariant and its reason
 in the present tense; the provenance becomes retrievable by asking.
 
 WHAT IT READS, AND WHY THAT IS NOT THE WORKING TREE. Every byte comes from
-`git show HEAD:<path>` and every attribution from `git blame` at HEAD. Two
-consequences, both load-bearing:
+`git show <rev>:<path>` and every attribution from `git blame` at that same
+rev, HEAD by default. Two consequences, both load-bearing:
 
   - line numbers in the manifest mean something, because a dirty working tree
     cannot shift them out from under the blame that produced them;
   - a second machine at the same commit produces a byte-identical manifest, so
     the ingest deduplicates instead of duplicating.
+
+RUN IT AT THE COMMIT BEFORE THE CLEANUP, NOT AFTER. This is the one ordering
+that is easy to get backwards and silent when you do. Rewriting a comment in
+place and then migrating captures what SURVIVED the rewrite; what the rewrite
+REMOVED is then in no store and only in git. "Relocate, do not delete" is a
+claim about the removed prose, so either migrate first, or pass `--rev` naming
+the commit before the cleanup. Both manifests can be ingested: the origin binds
+the blob, so a changed file yields a second record and an unchanged one
+deduplicates, and the union is the whole history of the prose.
 
 ATTRIBUTION COMES FROM BLAME, NEVER FROM THE CLOCK. Author and timestamp are
 facts about the commit that last touched the block, not about the migration.
@@ -40,8 +49,9 @@ contracts. A format either end can guess at is a format the two ends can
 disagree about, so every field is explicit and every length is counted.
 
 Usage:
-  scripts/migrate-comments.py -o FILE          whole tracked tree
+  scripts/migrate-comments.py -o FILE          whole tracked tree at HEAD
   scripts/migrate-comments.py -o FILE PATH...  named paths only
+  scripts/migrate-comments.py --rev REV -o F   the tree as it was at REV
   scripts/migrate-comments.py --list           work list, one path per finding
                                                count, no manifest
 """
@@ -70,6 +80,9 @@ FIELDS = ("path", "blob", "lines", "author", "timestamp_ms", "content")
 ATTRIBUTION = "blame"
 
 MIGRATOR_AUTHOR = "agent:comment-migrator"
+
+# The commit the manifest describes. Set from --rev; HEAD unless asked.
+REV = "HEAD"
 
 
 def die(msg):
@@ -177,7 +190,7 @@ def blame_block(path, start, end):
     and blame's answer for a single line is the same rule. Ties break on the
     commit id so two machines cannot disagree.
     """
-    out = git("blame", "--porcelain", "-L", "%d,%d" % (start, end), "HEAD", "--", path)
+    out = git("blame", "--porcelain", "-L", "%d,%d" % (start, end), REV, "--", path)
     if out is None:
         die("git blame failed for %s:%d-%d" % (path, start, end))
     commits = {}
@@ -242,11 +255,11 @@ def collect(paths):
     """Every comment block carrying at least one E1 finding, attributed."""
     items = []
     for path in paths:
-        blob = git("rev-parse", "HEAD:" + path)
+        blob = git("rev-parse", REV + ":" + path)
         if blob is None:
             continue  # not in HEAD: an untracked or newly added file
         blob = blob.strip()
-        raw = git("show", "HEAD:" + path, binary=True)
+        raw = git("show", REV + ":" + path, binary=True)
         if raw is None:
             continue
         text = raw.decode("utf-8", errors="replace")
@@ -273,8 +286,10 @@ def collect(paths):
 
 
 def tracked_candidates():
-    files = (git_or_die("ls-files", "-z") or "").split("\0")
-    return [p for p in files if p and LINT.is_candidate(p)]
+    """Every lintable file present AT THE REV — not in the working tree, so a
+    manifest describes one commit and nothing else."""
+    out = git_or_die("ls-tree", "-r", "--name-only", "-z", REV)
+    return [p for p in out.split("\0") if p and LINT.is_candidate(p)]
 
 
 def main():
@@ -282,8 +297,14 @@ def main():
     ap.add_argument("-o", "--output", help="manifest path ('-' for stdout)")
     ap.add_argument("--list", action="store_true",
                     help="print the work list (path, finding count) and stop")
+    ap.add_argument("--rev", default="HEAD",
+                    help="the commit to read (default HEAD); name the commit "
+                         "BEFORE a cleanup to capture what it removed")
     ap.add_argument("paths", nargs="*", help="paths to migrate (default: all)")
     args = ap.parse_args()
+
+    global REV
+    REV = args.rev
 
     root = git("rev-parse", "--show-toplevel")
     if root is None:
@@ -296,7 +317,7 @@ def main():
     if args.list:
         rows = []
         for path in paths:
-            raw = git("show", "HEAD:" + path, binary=True)
+            raw = git("show", REV + ":" + path, binary=True)
             if raw is None:
                 continue
             n = len(findings_in(LINT.VIEW(raw.decode("utf-8", errors="replace"))))

@@ -56,9 +56,16 @@
  *            position-bearing, so re-running at the same commit yields the
  *            same origin, the same id, and a union of one — idempotent by
  *            construction rather than by an "already seen" table. Editing the
- *            file changes the blob, so the record of what the comment SAID
- *            survives the comment being rewritten. That is what makes this
- *            relocation rather than deletion.
+ *            file changes the blob, so a rewritten comment becomes a SECOND
+ *            record and the first is still there.
+ *
+ *            WHICH MAKES THE ORDER LOAD-BEARING, and getting it backwards is
+ *            silent: a manifest taken AFTER a rewrite holds what survived, and
+ *            what the rewrite removed is then in no store at all. Migrate
+ *            before rewriting, or take a second manifest at the commit before
+ *            the rewrite (`migrate-comments.py --rev`) and ingest both — the
+ *            unchanged blocks deduplicate and only the changed ones are added,
+ *            so the union is the whole history of the prose either way.
  *   kind     decision. A comment explaining why the code is shaped as it is,
  *            written to be found later, is what the kind means.
  *
