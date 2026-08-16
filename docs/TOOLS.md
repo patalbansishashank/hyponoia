@@ -18,7 +18,10 @@ Use `cli <tool> --help` to see the flags generated from that tool's input schema
 hyponoia cli index_repository --repo-path /path/to/repo
 hyponoia cli list_projects
 
-## Use the "name" returned by list_projects as the project value.
+## `--project` is optional: omitted, the tool uses the project for the
+## working directory it runs in. Pass it to override, or when you are not
+## standing in the repository you mean.
+hyponoia cli search_graph --name-pattern '.*Handler.*' --label Function
 hyponoia cli search_graph --project my-project --name-pattern '.*Handler.*' --label Function
 hyponoia cli trace_path --project my-project --function-name Search --direction both
 hyponoia cli query_graph --project my-project --query 'MATCH (f:Function) RETURN f.name LIMIT 5'
@@ -56,5 +59,17 @@ JSON arguments can also be piped on stdin. Inline JSON remains accepted for back
 | `search_code` | Grep-like text search within indexed project files. |
 | `manage_adr` | CRUD for Architecture Decision Records. Query modes do not wait behind a same-project reindex; writes remain serialized. |
 | `ingest_traces` | Ingest runtime traces to validate HTTP_CALLS edges. |
+
+## The `project` argument
+
+`project` is **optional on every tool that takes it except `delete_project`**. Omitted, the server resolves it in this order and says in the answer which rule applied:
+
+1. **`supplied`** — an explicit `project` argument. It always wins and is never second-guessed.
+2. **`derived from working directory <path>`** — the directory the MCP server was started in, which is the client's own working directory (the client spawns the server). The name is derived with the same rule the indexer used: the absolute path with its leading separator dropped and every other separator mapped to `-`, so `/home/u/repo` is `home-u-repo`. If that directory is not indexed, the nearest indexed ancestor of it is used and the disclosure names both paths.
+3. **`the only indexed project`** — and only when exactly one project is indexed on the machine.
+
+If none of these resolve — the working directory is not an indexed project and there is more than one candidate — the call returns a `which project?` error that **lists the candidates**, rather than picking one. A confidently wrong project is worse than a question.
+
+Every successful answer carries two fields, `project` and `project_source`, so a caller can always tell which project answered and why. `delete_project` is the single holdout and still requires an explicit `project`: a destructive tool does not infer its target.
 
 `manage_adr` query modes (`get` and `sections`) use the server's cached query store so they can proceed while a same-project reindex is running. If another process publishes a replacement store during reindexing, they can return the pre-publication ADR until idle eviction refreshes that cache. Updates remain serialized through the project mutation guard.

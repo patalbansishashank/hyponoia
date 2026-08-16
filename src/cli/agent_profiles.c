@@ -205,6 +205,25 @@ static const char PROMPT_ASK_GUIDANCE_GEN2[] =
     "its leading slash and with every other separator as `-`, e.g. /home/u/repo → home-u-repo; "
     "pass it directly and use list_projects only if that fails. ";
 
+/* Generation 3 replaces generation 2's SECOND sentence — the one that taught
+ * the agent to derive the project name itself. The server derives it now
+ * (mcp.c, resolve_project_arg), which makes those words both dead weight and
+ * wrong: they ask for an argument the caller should omit. Measured evidence
+ * for the deletion is the same run that motivated the server-side default —
+ * 120 of 120 runs opened with list_projects WITH the generation-2 sentence in
+ * the body, so the sentence bought nothing to begin with. The ask guidance
+ * (first sentence) is unchanged, verbatim, because it is the part that did
+ * work. Generation 2's bytes above are untouched and still render for the
+ * installer's migration check. */
+static const char PROMPT_ASK_GUIDANCE_GEN3[] =
+    "For a natural-language question about what code does, call ask first with the question as "
+    "one string; read its top 2–3 rows and verify with get_code_snippet, and treat "
+    "available:false as a statement about the index, not the code. Omit the project argument: "
+    "the server derives it from the working directory it was started in, and every answer "
+    "reports project and project_source so you can see which project answered and why. Pass a "
+    "project only to override that, and call list_projects only when an answer says it could "
+    "not choose. ";
+
 char *hyp_render_graph_prompt_generation(hyp_graph_tier_t tier, hyp_graph_access_t access,
                                          unsigned generation) {
     if (!tier_valid(tier) || !access_valid(access) || generation > HYP_PROFILE_GENERATION) {
@@ -245,7 +264,9 @@ char *hyp_render_graph_prompt_generation(hyp_graph_tier_t tier, hyp_graph_access
         profile_buffer_append(&buffer, "Use hyponoia in the exact graph project. Use only "
                                        "read-only graph and source tools. ");
         if (tier != HYP_GRAPH_TIER_SCOUT && generation >= HYP_PROFILE_GENERATION_ASK_GUIDANCE) {
-            profile_buffer_append(&buffer, PROMPT_ASK_GUIDANCE_GEN2);
+            profile_buffer_append(&buffer, generation >= HYP_PROFILE_GENERATION_PROJECT_DEFAULT
+                                               ? PROMPT_ASK_GUIDANCE_GEN3
+                                               : PROMPT_ASK_GUIDANCE_GEN2);
         }
         profile_buffer_append(
             &buffer,

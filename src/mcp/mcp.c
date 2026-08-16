@@ -392,6 +392,22 @@ typedef struct {
     const char *input_schema; /* JSON string */
 } tool_def_t;
 
+/* The `project` argument, defined ONCE for every tool that takes it.
+ *
+ * It is optional, and saying so is the whole point: 120 of 120 measured runs
+ * opened with list_projects because the schema said `required` and the agent
+ * had no way to know the name (§3.2 step 2). The wording is deliberately
+ * short — it is paid on every tools/list of every session — and it promises
+ * exactly what resolve_project_arg does, including the disclosure the answer
+ * carries back. delete_project is the one holdout and keeps `required`: a
+ * destructive tool does not infer its target. */
+#define TOOL_PROJECT_ARG                                                                       \
+    "\"project\":{\"type\":\"string\",\"description\":\"OPTIONAL. Omit it and the "            \
+    "server uses the project of its own working directory — the directory the client started " \
+    "it in — or, when that is not indexed and exactly one project is, that one. Every answer " \
+    "reports project and project_source (supplied | derived from working directory <path> | "  \
+    "the only indexed project). An explicit value always wins.\"}"
+
 static const tool_def_t TOOLS[] = {
     {"index_repository", "Index repository",
      "Index a repository into the knowledge graph. "
@@ -447,7 +463,7 @@ static const tool_def_t TOOLS[] = {
      "offset+returned). Detect truncation with has_more, then page by re-calling with "
      "offset=offset+limit until has_more is false. Narrow first via label/file_pattern/"
      "min_degree before paginating large result sets.",
-     "{\"type\":\"object\",\"properties\":{\"project\":{\"type\":\"string\"},"
+     "{\"type\":\"object\",\"properties\":{" TOOL_PROJECT_ARG ","
      "\"query\":{\"type\":\"string\",\"description\":\"Natural-language or keyword full-text "
      "search using BM25 ranking. Tokens are split on whitespace; camelCase identifiers are "
      "indexed as individual words (updateCloudClient → update, cloud, client). Results are "
@@ -480,7 +496,7 @@ static const tool_def_t TOOLS[] = {
      "\"detail\":{\"type\":\"string\",\"enum\":[\"ids\",\"default\"],\"default\":\"default\","
      "\"description\":\"ids: bare qualified-name enumeration (one column) — cheapest form "
      "for wide sweeps where per-row metadata is noise. default: full rows.\"}},"
-     "\"required\":[\"project\"]}"},
+     "\"required\":[]}"},
 
     /* `ask` is a SEPARATE TOOL from search_graph's semantic_query, not a mode
      * of it (NEXT-STEPS.md §2.1). They differ in input type (one string vs an
@@ -516,8 +532,7 @@ static const tool_def_t TOOLS[] = {
      "\"question\":{\"type\":\"string\",\"description\":\"ONE natural-language question as a "
      "plain string, e.g. \\\"how does the writer decide section ordering\\\". Not a keyword "
      "list — for keywords use search_graph(semantic_query=[\\\"a\\\",\\\"b\\\"]). Not a regex, "
-     "not Cypher.\"},"
-     "\"project\":{\"type\":\"string\"},"
+     "not Cypher.\"}," TOOL_PROJECT_ARG ","
      "\"language\":{\"type\":\"string\",\"description\":\"Which language's instruct prefix to "
      "render — the one word substituted into the query-side prompt, and the only part of this "
      "lane a caller can get wrong without any downstream signal. OPTIONAL: the project's "
@@ -549,7 +564,7 @@ static const tool_def_t TOOLS[] = {
      "while believing you had the expensive one. Every answer names the lane that answered "
      "(`lane`: local | escalation-query | escalation-index) and both encoders "
      "(`query_encoder`, `index_encoder`).\"}},"
-     "\"required\":[\"question\",\"project\"]}"},
+     "\"required\":[\"question\"]}"},
 
     {"query_graph", "Query graph",
      "Execute a Cypher query against the knowledge graph for complex multi-hop patterns, "
@@ -575,7 +590,7 @@ static const tool_def_t TOOLS[] = {
      "f.kind = \\\"parse_partial\\\" RETURN f.file_path, f.detail. Absence from this graph is "
      "NOT a completeness guarantee.",
      "{\"type\":\"object\",\"properties\":{\"query\":{\"type\":\"string\",\"description\":\"Cypher "
-     "query\"},\"project\":{\"type\":\"string\"},"
+     "query\"}," TOOL_PROJECT_ARG ","
      "\"graph\":{\"type\":\"string\",\"enum\":[\"code\",\"missed\"],\"default\":\"code\","
      "\"description\":\"Which graph to query: the code knowledge graph (default) or the "
      "missed graph (only files not fully indexed, laid out as their file structure).\"},"
@@ -583,7 +598,7 @@ static const tool_def_t TOOLS[] = {
      "\"description\":"
      "\"Optional row limit. Default: unlimited up to a 100k row "
      "ceiling. No offset support — use search_graph for paginated browsing.\"}},"
-     "\"required\":[\"query\",\"project\"]}"},
+     "\"required\":[\"query\"]}"},
 
     {"trace_path", "Trace path",
      "Trace paths through the code graph. Modes: calls (callers/callees), data_flow (value "
@@ -596,8 +611,8 @@ static const tool_def_t TOOLS[] = {
      "table. "
      "`truncated: true` + `next` = more rows — pass next back as cursor. "
      "format=\"json\" returns the SAME tree model as structured JSON.",
-     "{\"type\":\"object\",\"properties\":{\"function_name\":{\"type\":\"string\"},\"project\":{"
-     "\"type\":\"string\"},\"direction\":{\"type\":\"string\",\"enum\":[\"inbound\",\"outbound\","
+     "{\"type\":\"object\",\"properties\":{\"function_name\":{\"type\":\"string\"}"
+     "," TOOL_PROJECT_ARG ",\"direction\":{\"type\":\"string\",\"enum\":[\"inbound\",\"outbound\","
      "\"both\"],\"default\":\"both\"},\"depth\":{\"type\":\"integer\",\"default\":3},"
      "\"limit\":{\"type\":\"integer\",\"default\":100,\"minimum\":1,\"maximum\":5000,"
      "\"description\":\"Rows per page. callees_total/callers_total always carry the exact full "
@@ -625,7 +640,7 @@ static const tool_def_t TOOLS[] = {
      "\"description\":\"Add how each hop was resolved: a strategy class (lsp | language_rule | "
      "heuristic | unresolved) and the resolver's confidence. Off by default — it adds two "
      "columns per row. Use it to judge whether an edge is trustworthy, not to find edges.\"}},"
-     "\"required\":[\"function_name\",\"project\"]}"},
+     "\"required\":[\"function_name\"]}"},
 
     {"get_code_snippet", "Get code snippet",
      "Read source code for a function/class/symbol. IMPORTANT: First call search_graph to find the "
@@ -635,14 +650,13 @@ static const tool_def_t TOOLS[] = {
      "in the noted line ranges may be missing from the graph (best-effort signal); prefer grep "
      "there and treat the returned source as ground truth.",
      "{\"type\":\"object\",\"properties\":{\"qualified_name\":{\"type\":\"string\",\"description\":"
-     "\"Full qualified_name from search_graph, or short function name\"},\"project\":{"
-     "\"type\":\"string\"},\"include_neighbors\":{"
-     "\"type\":\"boolean\",\"default\":false}},\"required\":[\"qualified_name\",\"project\"]}"},
+     "\"Full qualified_name from search_graph, or short function name\"}," TOOL_PROJECT_ARG
+     ",\"include_neighbors\":{"
+     "\"type\":\"boolean\",\"default\":false}},\"required\":[\"qualified_name\"]}"},
 
     {"get_graph_schema", "Get graph schema",
      "Get the schema of the knowledge graph (node labels, edge types)",
-     "{\"type\":\"object\",\"properties\":{\"project\":{\"type\":\"string\"}},\"required\":["
-     "\"project\"]}"},
+     "{\"type\":\"object\",\"properties\":{" TOOL_PROJECT_ARG "},\"required\":[]}"},
 
     {"get_architecture", "Get architecture",
      "Get high-level architecture overview. DEFAULT (no aspects) is a compact summary — "
@@ -654,7 +668,7 @@ static const tool_def_t TOOLS[] = {
      "across the folder layout. Optional path scopes analysis to nodes under that directory "
      "prefix (file_path).",
      /* The aspects enum mirrors VALID_ASPECTS (see aspect_is_valid) — update both together. */
-     "{\"type\":\"object\",\"properties\":{\"project\":{\"type\":\"string\"},\"path\":{\"type\":"
+     "{\"type\":\"object\",\"properties\":{" TOOL_PROJECT_ARG ",\"path\":{\"type\":"
      "\"string\",\"description\":\"Optional directory prefix to scope architecture (e.g. "
      "apps/hoa)\"},"
      "\"aspects\":{\"type\":\"array\",\"items\":{\"type\":\"string\",\"enum\":[\"all\","
@@ -664,7 +678,7 @@ static const tool_def_t TOOLS[] = {
      "\"description\":\"Aspects to include. 'all' = everything; 'overview' = compact summary "
      "(all except file_tree); omit = all. 'cycles' is opt-in ONLY (never via all/overview): it "
      "scans the whole call graph for circular CALLS dependencies (SCCs of size > 1).\"}},"
-     "\"required\":[\"project\"]}"},
+     "\"required\":[]}"},
 
     {"search_code", "Search code",
      "Graph-augmented code search. Finds text patterns via grep, then enriches results with "
@@ -678,8 +692,8 @@ static const tool_def_t TOOLS[] = {
      "'total_grep_matches' (raw grep hit count) and 'total_results' (deduplicated function "
      "count) — compare to limit to detect truncation. There is no offset parameter; to see "
      "more, raise limit or narrow the query with file_pattern / path_filter.",
-     "{\"type\":\"object\",\"properties\":{\"pattern\":{\"type\":\"string\"},\"project\":{\"type\":"
-     "\"string\"},\"file_pattern\":{\"type\":\"string\",\"description\":\"Glob for grep "
+     "{\"type\":\"object\",\"properties\":{\"pattern\":{\"type\":\"string\"}," TOOL_PROJECT_ARG
+     ",\"file_pattern\":{\"type\":\"string\",\"description\":\"Glob for grep "
      "--include (e.g. *.go)\"},\"path_filter\":{\"type\":\"string\",\"description\":\"Regex "
      "filter on result file paths (e.g. ^src/ or \\\\.(go|ts)$)\"},\"mode\":{\"type\":\"string\","
      "\"enum\":[\"compact\",\"full\",\"files\"],\"default\":\"compact\",\"description\":\"compact: "
@@ -690,11 +704,18 @@ static const tool_def_t TOOLS[] = {
      "\"description\":\"Max enriched results per call. Default 10. Response includes "
      "'total_grep_matches' and 'total_results' so callers can detect truncation. No "
      "offset parameter — raise limit or narrow with file_pattern / path_filter to see more."
-     "\",\"default\":10}},\"required\":[\"pattern\",\"project\"]}"},
+     "\",\"default\":10}},\"required\":[\"pattern\"]}"},
 
     {"list_projects", "List projects", "List all indexed projects",
      "{\"type\":\"object\",\"properties\":{}}"},
-    {"delete_project", "Delete project", "Delete a project from the index",
+    /* The one tool whose `project` stays REQUIRED. Everything else can
+     * derive it from the working directory because the cost of a wrong guess
+     * is a wrong answer, which the disclosure makes visible; here it is a
+     * deleted index, which no disclosure undoes. */
+    {"delete_project", "Delete project",
+     "Delete a project from the index. `project` is REQUIRED here and is never derived from "
+     "the working directory — every other tool defaults it, but a destructive tool does not "
+     "infer its target.",
      "{\"type\":\"object\",\"properties\":{\"project\":{\"type\":\"string\"}},\"required\":["
      "\"project\"]}"},
 
@@ -710,11 +731,10 @@ static const tool_def_t TOOLS[] = {
      "query_graph(graph=\"missed\"). The report also carries 'not_indexed' — files/dirs excluded "
      "BY DESIGN (gitignore/.hypignore/skip-lists): deliberate and deterministic, not failures; "
      "change the ignore rules and re-index to include them.",
-     "{\"type\":\"object\",\"properties\":{\"project\":{\"type\":\"string\"},"
+     "{\"type\":\"object\",\"properties\":{" TOOL_PROJECT_ARG ","
      "\"verbose\":{\"type\":\"boolean\",\"default\":false,\"description\":\"Include the git "
      "context block (worktree/shadow path variants). Only needed when debugging where an index "
-     "lives — omitted by default to keep the status lean.\"}},\"required\":["
-     "\"project\"]}"},
+     "lives — omitted by default to keep the status lean.\"}},\"required\":[]}"},
 
     {"check_index_coverage", "Check index coverage",
      "Check authoritative indexing-coverage metadata for exact repository-relative paths and "
@@ -723,15 +743,14 @@ static const tool_def_t TOOLS[] = {
      "normal graph results. Returns coverage status separately from filesystem metadata freshness, "
      "plus structured parse-error ranges and direct-source fallback actions. The signal is "
      "best-effort: indexed_no_recorded_gap is not a completeness guarantee.",
-     "{\"type\":\"object\",\"properties\":{"
-     "\"project\":{\"type\":\"string\"},"
+     "{\"type\":\"object\",\"properties\":{" TOOL_PROJECT_ARG ","
      "\"paths\":{\"type\":\"array\",\"items\":{\"type\":\"string\"},\"maxItems\":128,"
      "\"description\":\"Repository-relative files to check exactly.\"},"
      "\"scopes\":{\"type\":\"array\",\"items\":{\"type\":\"string\"},\"maxItems\":32,"
      "\"description\":\"Repository-relative path prefixes; use . for the project root.\"},"
      "\"scope_limit\":{\"type\":\"integer\",\"default\":200,\"minimum\":1,\"maximum\":1000},"
      "\"scope_offset\":{\"type\":\"integer\",\"default\":0,\"minimum\":0}},"
-     "\"required\":[\"project\"],\"anyOf\":[{\"required\":[\"paths\"]},{\"required\":[\"scopes\"]}]"
+     "\"required\":[],\"anyOf\":[{\"required\":[\"paths\"]},{\"required\":[\"scopes\"]}]"
      "}"},
 
     {"detect_changes", "Detect changes",
@@ -744,7 +763,7 @@ static const tool_def_t TOOLS[] = {
      "reached from another changed file is not counted as extra impact. format=\"json\" returns "
      "the "
      "same model as structured JSON.",
-     "{\"type\":\"object\",\"properties\":{\"project\":{\"type\":\"string\"},\"scope\":{\"type\":"
+     "{\"type\":\"object\",\"properties\":{" TOOL_PROJECT_ARG ",\"scope\":{\"type\":"
      "\"string\",\"enum\":[\"files\",\"impact\"],\"description\":\"files: changed files only "
      "(no traversal). impact (default): files + the transitive impact set.\"},"
      "\"direction\":{\"type\":\"string\",\"enum\":[\"inbound\",\"outbound\",\"both\"],\"default\":"
@@ -759,22 +778,21 @@ static const tool_def_t TOOLS[] = {
      "\"string\",\"default\":\"main\"},\"since\":{\"type\":\"string\",\"description\":"
      "\"Git ref or tag to compare from (e.g. HEAD~5, v0.5.0). Diffs <ref>...HEAD.\"},"
      "\"format\":{\"type\":\"string\",\"enum\":[\"tree\",\"json\"],\"default\":\"tree\"}},"
-     "\"required\":"
-     "[\"project\"]}"},
+     "\"required\":[]}"},
 
     {"manage_adr", "Manage ADR", "Create or update Architecture Decision Records",
-     "{\"type\":\"object\",\"properties\":{\"project\":{\"type\":\"string\"},\"mode\":{\"type\":"
+     "{\"type\":\"object\",\"properties\":{" TOOL_PROJECT_ARG ",\"mode\":{\"type\":"
      "\"string\",\"enum\":[\"get\",\"update\",\"sections\"],\"description\":\"update replaces "
      "the entire ADR document; sections only lists existing "
      "headings\"},\"content\":{\"type\":\"string\",\"description\":\"Complete replacement document "
      "required by update\"}},\"additionalProperties\":false,"
-     "\"required\":[\"project\"]}"},
+     "\"required\":[]}"},
 
     {"ingest_traces", "Ingest traces", "Ingest runtime traces to enhance the knowledge graph",
      "{\"type\":\"object\",\"properties\":{\"traces\":{\"type\":\"array\",\"items\":{\"type\":"
      "\"object\",\"properties\":{\"caller\":{\"type\":\"string\"},\"callee\":{\"type\":\"string\"},"
-     "\"count\":{\"type\":\"integer\"}},\"additionalProperties\":false}},\"project\":{\"type\":"
-     "\"string\"}},\"required\":[\"traces\",\"project\"]}"},
+     "\"count\":{\"type\":\"integer\"}},\"additionalProperties\":false}}," TOOL_PROJECT_ARG
+     "},\"required\":[\"traces\"]}"},
 };
 
 static const int TOOL_COUNT = sizeof(TOOLS) / sizeof(TOOLS[0]);
@@ -1332,7 +1350,9 @@ static const char MCP_SERVER_INSTRUCTIONS[] =
     "trace_path for callers and callees, get_code_snippet for exact source, query_graph for "
     "complex multi-hop patterns, and get_architecture for orientation. Use search_code or "
     "filesystem grep for literal or non-code text, or when graph coverage is insufficient. "
-    "Call list_projects before initial use and index_repository only when a repository is not "
+    "Omit the project argument: it defaults to the project of this server's working directory, "
+    "and every answer reports project and project_source. Call list_projects only when an "
+    "answer says it could not choose, and index_repository only when a repository is not "
     "indexed or to force immediate freshness after a large external update. Once indexed, "
     "watched projects auto-refresh in the background; use index_status for project health and "
     "check_index_coverage for every cited path and for scopes behind negative or exhaustive "
@@ -1340,8 +1360,10 @@ static const char MCP_SERVER_INSTRUCTIONS[] =
     "and paginate when present.";
 
 static const char MCP_ANALYSIS_SERVER_INSTRUCTIONS[] =
-    "This is the analysis tool profile; graph and index mutation tools are unavailable. Use "
-    "list_projects and index_status to select a current graph project, then use search_graph, "
+    "This is the analysis tool profile; graph and index mutation tools are unavailable. Omit "
+    "the project argument: it defaults to the project of this server's working directory, and "
+    "every answer reports project and project_source; use list_projects only when an answer "
+    "says it could not choose, and index_status for project health. Use search_graph, "
     "trace_path, get_code_snippet, query_graph, get_architecture, and search_code for read-only "
     "analysis. Use ask for one natural-language question about where behaviour lives; it "
     "returns ranked declarations with line ranges, and available:false with a remedy when the "
@@ -1353,7 +1375,9 @@ static const char MCP_ANALYSIS_SERVER_INSTRUCTIONS[] =
 
 static const char MCP_SCOUT_SERVER_INSTRUCTIONS[] =
     "This is the scout tool profile; only the fast positive-discovery graph tools are available. "
-    "Use list_projects and index_status to select a current graph project, then use search_graph, "
+    "Omit the project argument: it defaults to the project of this server's working directory, "
+    "and every answer reports project and project_source; use list_projects only when an answer "
+    "says it could not choose, and index_status for project health. Use search_graph, "
     "trace_path, get_code_snippet, and get_architecture with narrow limits. Call "
     "check_index_coverage once for every cited path and read flagged ranges directly. Findings "
     "are provisional: do not make absence, exhaustive-impact, or dead-code claims. If the project "
@@ -2429,13 +2453,36 @@ static char *build_project_list_error(const char *reason) {
 }
 
 /* Distinct from "unknown project": the caller omitted the project argument
- * entirely (no recognized key). Name the literal "project" key so the fix is
- * obvious (#640). Caller must free() result. */
+ * AND nothing could be derived — the working directory is not an indexed
+ * project (nor inside one) and there is more than one project on the machine.
+ * That is the ONE case where the server has several candidates and no reason
+ * to prefer any; it names them here rather than picking, and rather than
+ * spending a list_projects round trip to say the same thing (§3.2 step 2).
+ * Name the literal "project" key so the fix is obvious (#640).
+ * Caller must free() result. */
 static char *build_missing_project_error(void) {
-    return heap_strdup("{\"error\":\"missing required argument: project\",\"hint\":\"Pass "
-                       "the project as the \\\"project\\\" argument, e.g. "
-                       "{\\\"project\\\":\\\"<name from list_projects>\\\"}. Run "
-                       "list_projects to see indexed projects.\"}");
+    char dir_path[HYP_SZ_1K];
+    cache_dir(dir_path, sizeof(dir_path));
+    char projects[HYP_SZ_4K] = "";
+    int count = collect_db_project_names(dir_path, projects, sizeof(projects));
+
+    enum { MISSING_ERR_BUF_SZ = 5120 };
+    char buf[MISSING_ERR_BUF_SZ];
+    if (count > 0) {
+        snprintf(buf, sizeof(buf),
+                 "{\"error\":\"which project?\",\"hint\":\"`project` is optional and normally "
+                 "derived from the working directory this server was started in, but that "
+                 "directory is not an indexed project and there is more than one to choose "
+                 "from. Pass one of the names below as the \\\"project\\\" argument, or index "
+                 "the working directory.\",\"available_projects\":[%s],\"count\":%d}",
+                 projects, count);
+    } else {
+        snprintf(buf, sizeof(buf),
+                 "{\"error\":\"which project?\",\"hint\":\"No projects indexed yet. "
+                 "Call index_repository first; after that `project` is optional and is derived "
+                 "from the working directory.\"}");
+    }
+    return heap_strdup(buf);
 }
 
 /* Pick the right no-store error: a NULL project means the argument was missing
@@ -2476,6 +2523,323 @@ static bool project_has_adr(hyp_store_t *store, const char *project, const char 
     snprintf(adr_path, sizeof(adr_path), "%s/.hyponoia/adr.md", root_path);
     struct stat adr_st;
     return stat(adr_path, &adr_st) == 0;
+}
+
+/* ── Which project answered, and why (NEXT-STEPS §3.2 step 2) ────
+ *
+ * MEASURED: 120 of 120 runs in the §3.1 token harness spent their FIRST tool
+ * call on list_projects — after the analysis-tier profile body had been given
+ * a sentence spelling out exactly how the name is derived from the repo path
+ * (tool_tiers.h generation 2). Prose lost. Every session paid a round trip to
+ * learn something this process already knows.
+ *
+ * IT ALREADY KNOWS IT. The MCP server is spawned BY the client, so its own
+ * working directory is the client's (detect_session reads getcwd()); the
+ * daemon is told the same path explicitly by the thin client, which
+ * canonicalizes "." and hands it over in the context frame
+ * (main_session_context → hyp_mcp_server_set_session_context). Both ends run
+ * the path through hyp_project_name_from_path — the SAME function the
+ * pipeline used to name the index — so the name derived here is the name on
+ * disk by construction, not by transcription.
+ *
+ * MEASURED AGAINST THE LIVE CLIENT, because "the spawned process inherits the
+ * cwd" is an assumption until someone checks. A recording MCP server
+ * registered with Claude Code 2.1.233 logged, from `claude -p` run in
+ * /media/DEV/Projects/context-engine/wt-project:
+ *   spawned  cwd = /media/DEV/Projects/context-engine/wt-project
+ *   initialize params → clientInfo + capabilities only; NO path of any kind
+ *   roots/list (server→client) → [{"uri":
+ *       "file:///media/DEV/Projects/context-engine/wt-project"}]
+ * So MCP's documented `roots` capability and the inherited cwd name the SAME
+ * directory. cwd is what this uses: it needs no reverse request over a
+ * line-oriented stdio loop, it is already plumbed through both the stdio and
+ * daemon paths, and it is the only one of the two that works for a client
+ * which declares no roots capability at all. `roots` remains the upgrade if a
+ * client is ever found whose roots and cwd disagree.
+ *
+ * The order is an ORDER, not a search:
+ *   (a) an explicit `project` argument — always wins, never second-guessed;
+ *   (b) the working directory, or the nearest ancestor of it that IS indexed
+ *       (an agent launched in a subdirectory means the repo it sits in);
+ *   (c) the single indexed project, and ONLY when there is exactly one.
+ * Several candidates and no signal is not resolved by picking one: that
+ * returns the existing error listing them, because a confidently wrong
+ * project is worse than a question.
+ *
+ * And every answer SAYS which rule fired. Silent inference is precisely the
+ * failure this project keeps paying for — an agent that cannot tell which
+ * project answered cannot tell a right answer from a plausible wrong one. */
+typedef enum {
+    PROJECT_SUPPLIED = 0,
+    PROJECT_FROM_CWD,
+    PROJECT_ONLY_INDEXED,
+    PROJECT_UNRESOLVED,
+} project_source_t;
+
+typedef struct {
+    project_source_t source;
+    char how[HYP_SZ_2K]; /* the disclosure, verbatim, as the answer carries it */
+} project_choice_t;
+
+/* Defined with the session-detection block far below; called here so a tool
+ * invoked before `initialize` (every direct hyp_mcp_handle_tool caller, tests
+ * included) still resolves. Idempotent — guarded by srv->session_detected. */
+static void detect_session(hyp_mcp_server_t *srv);
+
+/* Exactly one indexed project on this machine? Names it and returns true.
+ * Reads the INTERNAL project name out of each .db, the same way
+ * collect_db_project_names does, so a drifted filename cannot produce a name
+ * no store can be resolved from. Zero or several → false, and the caller
+ * refuses rather than guesses. */
+static bool sole_indexed_project(char *out, size_t outsz) {
+    char dir[HYP_SZ_1K];
+    cache_dir(dir, sizeof(dir));
+    hyp_dir_t *d = hyp_opendir(dir);
+    if (!d) {
+        return false;
+    }
+    int count = 0;
+    char found[HYP_SZ_1K] = "";
+    hyp_dirent_t *entry;
+    while ((entry = hyp_readdir(d)) != NULL) {
+        size_t len = strlen(entry->name);
+        if (!is_project_db_file(entry->name, len)) {
+            continue;
+        }
+        char full[HYP_SZ_2K];
+        snprintf(full, sizeof(full), "%s/%s", dir, entry->name);
+        char iname[HYP_SZ_1K];
+        if (!db_internal_project_name(full, iname, sizeof(iname), NULL)) {
+            continue; /* ghost / empty / corrupt db — not a candidate */
+        }
+        count++;
+        if (count > 1) {
+            break;
+        }
+        snprintf(found, sizeof(found), "%s", iname);
+    }
+    hyp_closedir(d);
+    if (count != 1 || !found[0] || strlen(found) >= outsz) {
+        return false;
+    }
+    snprintf(out, outsz, "%s", found);
+    return true;
+}
+
+/* Is <project>.db on disk? The cheap "is this indexed" test — the same
+ * filename resolve_store opens. */
+static bool project_is_indexed(const char *project) {
+    if (!project || !project[0]) {
+        return false;
+    }
+    char db[HYP_SZ_2K];
+    project_db_path(project, db, sizeof(db));
+    return db[0] && hyp_file_exists(db);
+}
+
+/* Walk the session root and its ancestors for an indexed project. On success
+ * returns the heap project name and writes the path it was derived from into
+ * `from`. Stops at $HOME and at the filesystem root: above a user's own home
+ * there is nothing a working directory can honestly be said to be inside. */
+static char *project_from_session_root(hyp_mcp_server_t *srv, char *from, size_t from_sz) {
+    if (!srv || srv->session_root[0] == '\0') {
+        return NULL;
+    }
+    const char *home = hyp_get_home_dir();
+    char path[HYP_SZ_1K];
+    snprintf(path, sizeof(path), "%s", srv->session_root);
+    hyp_normalize_path_sep(path);
+    while (path[0]) {
+        char *name = hyp_project_name_from_path(path);
+        if (name && project_is_indexed(name)) {
+            snprintf(from, from_sz, "%s", path);
+            return name;
+        }
+        free(name);
+        if (home && home[0] && strcmp(path, home) == 0) {
+            break; /* never climb out of the user's home */
+        }
+        char *slash = strrchr(path, '/');
+        if (!slash || slash == path) {
+            break; /* "/x" or a drive-relative remainder — nothing left above */
+        }
+        *slash = '\0';
+    }
+    return NULL;
+}
+
+/* Resolve the project for one tool call and RECORD how. Returns the heap
+ * project name (caller frees) or NULL when nothing resolved — callers then
+ * fall into the existing not-found / missing-project errors, which list the
+ * candidates. `out` is always written. */
+static char *resolve_project_arg(hyp_mcp_server_t *srv, const char *args, project_choice_t *out) {
+    project_choice_t discard;
+    if (!out) {
+        out = &discard;
+    }
+    out->source = PROJECT_UNRESOLVED;
+    out->how[0] = '\0';
+
+    /* (a) Explicit always wins. */
+    char *supplied = get_project_arg(args);
+    if (supplied) {
+        out->source = PROJECT_SUPPLIED;
+        snprintf(out->how, sizeof(out->how), "supplied");
+        return supplied;
+    }
+
+    /* (b) The client's working directory. */
+    if (srv) {
+        detect_session(srv);
+        char from[HYP_SZ_1K] = "";
+        char *derived = project_from_session_root(srv, from, sizeof(from));
+        if (derived) {
+            out->source = PROJECT_FROM_CWD;
+            if (strcmp(from, srv->session_root) == 0) {
+                snprintf(out->how, sizeof(out->how), "derived from working directory %s", from);
+            } else {
+                /* Climbed: say BOTH paths. "derived from working directory X"
+                 * would otherwise name a directory that is not the one whose
+                 * name was used, which is the kind of half-disclosure that
+                 * makes a disclosure worthless. */
+                snprintf(out->how, sizeof(out->how),
+                         "derived from working directory %s (indexed root %s)", srv->session_root,
+                         from);
+            }
+            hyp_log_info("mcp.project.derived", "project", derived, "from", from);
+            return derived;
+        }
+    }
+
+    /* (c) The single indexed project — and only when it is single. */
+    char sole[HYP_SZ_1K];
+    if (sole_indexed_project(sole, sizeof(sole))) {
+        out->source = PROJECT_ONLY_INDEXED;
+        snprintf(out->how, sizeof(out->how), "the only indexed project");
+        hyp_log_info("mcp.project.sole", "project", sole);
+        return heap_strdup(sole);
+    }
+
+    /* Nothing resolved. Almost every caller turns this into the "which
+     * project?" error and never discloses anything — but ingest_traces
+     * answers without a store, and it must not report an empty project as
+     * "supplied". A disclosure that can lie about the easy case would not be
+     * worth reading in the hard one. */
+    snprintf(out->how, sizeof(out->how), "none — no project argument, and none could be derived");
+    return NULL;
+}
+
+/* The disclosure string for an answer. Never empty, and never a guess: an
+ * answer that names a project must also name where the project came from,
+ * including when the answer is that it came from nowhere. */
+static const char *project_choice_text(const project_choice_t *c) {
+    return c && c->how[0] ? c->how : "unrecorded";
+}
+
+/* Emit `project` + `project_source` into a TOON answer. */
+static void emit_project_choice_toon(hyp_sb_t *sb, const char *project,
+                                     const project_choice_t *choice) {
+    hyp_tree_scalar_str(sb, "project", project ? project : "");
+    hyp_tree_scalar_str(sb, "project_source", project_choice_text(choice));
+}
+
+/* Emit `project` + `project_source` into a JSON answer. */
+static void add_project_choice_json(yyjson_mut_doc *doc, yyjson_mut_val *root, const char *project,
+                                    const project_choice_t *choice) {
+    yyjson_mut_obj_add_strcpy(doc, root, "project", project ? project : "");
+    yyjson_mut_obj_add_strcpy(doc, root, "project_source", project_choice_text(choice));
+}
+
+/* Emit only `project_source`, for answers that already carry `project`. */
+static void add_project_source_json(yyjson_mut_doc *doc, yyjson_mut_val *root,
+                                    const project_choice_t *choice) {
+    yyjson_mut_obj_add_strcpy(doc, root, "project_source", project_choice_text(choice));
+}
+
+/* Attach the disclosure to an already-enveloped SUCCESSFUL result.
+ *
+ * Two handlers — get_code_snippet and search_code — assemble their answers
+ * several call layers down in builders shared with other paths, where
+ * threading a choice through every signature would touch far more code than
+ * the disclosure is worth. Those two come back through here instead: the
+ * envelope is reopened, the two fields are put at the FRONT of the body
+ * (JSON object or TOON scalars, whichever the body is), and it is re-wrapped.
+ * Everywhere else the disclosure is written straight into the answer being
+ * built, which costs nothing.
+ *
+ * Errors are left alone: an error already says what went wrong, and the ones
+ * that concern the project name list the candidates themselves.
+ *
+ * Takes ownership of `result`; returns the replacement, or the ORIGINAL
+ * unchanged on any failure — an answer is never lost to a disclosure. */
+static char *result_with_project_choice(char *result, const char *project,
+                                        const project_choice_t *choice) {
+    if (!result) {
+        return result;
+    }
+    yyjson_doc *env = yyjson_read(result, strlen(result), 0);
+    yyjson_val *root = env ? yyjson_doc_get_root(env) : NULL;
+    yyjson_val *is_err = root ? yyjson_obj_get(root, "isError") : NULL;
+    if (!root || (is_err && yyjson_is_bool(is_err) && yyjson_get_bool(is_err))) {
+        yyjson_doc_free(env);
+        return result;
+    }
+    yyjson_val *content = yyjson_obj_get(root, "content");
+    yyjson_val *first = content ? yyjson_arr_get(content, 0) : NULL;
+    yyjson_val *text = first ? yyjson_obj_get(first, "text") : NULL;
+    const char *inner = text && yyjson_is_str(text) ? yyjson_get_str(text) : NULL;
+    if (!inner) {
+        yyjson_doc_free(env);
+        return result;
+    }
+
+    char *replacement = NULL;
+    if (inner[0] == '{') {
+        yyjson_doc *body = yyjson_read(inner, strlen(inner), 0);
+        yyjson_val *broot = body ? yyjson_doc_get_root(body) : NULL;
+        if (broot && yyjson_is_obj(broot)) {
+            yyjson_mut_doc *out = yyjson_mut_doc_new(NULL);
+            yyjson_mut_val *oroot = yyjson_mut_obj(out);
+            if (oroot) {
+                yyjson_mut_doc_set_root(out, oroot);
+                add_project_choice_json(out, oroot, project, choice);
+                size_t idx, max;
+                yyjson_val *key, *val;
+                yyjson_obj_foreach(broot, idx, max, key, val) {
+                    const char *kname = yyjson_get_str(key);
+                    if (!kname || strcmp(kname, "project") == 0 ||
+                        strcmp(kname, "project_source") == 0) {
+                        continue;
+                    }
+                    yyjson_mut_val *mk = yyjson_mut_strcpy(out, kname);
+                    yyjson_mut_val *mv = yyjson_val_mut_copy(out, val);
+                    if (mk && mv) {
+                        yyjson_mut_obj_add(oroot, mk, mv);
+                    }
+                }
+                replacement = yy_doc_to_str(out);
+            }
+            yyjson_mut_doc_free(out);
+        }
+        yyjson_doc_free(body);
+    } else {
+        hyp_sb_t sb;
+        hyp_sb_init(&sb);
+        emit_project_choice_toon(&sb, project, choice);
+        hyp_sb_append(&sb, inner);
+        replacement = hyp_sb_finish(&sb);
+    }
+    yyjson_doc_free(env);
+    if (!replacement) {
+        return result;
+    }
+    char *wrapped = hyp_mcp_text_result(replacement, false);
+    free(replacement);
+    if (!wrapped) {
+        return result;
+    }
+    free(result);
+    return wrapped;
 }
 
 /* ── Tool handler implementations ─────────────────────────────── */
@@ -2719,7 +3083,8 @@ static char *verify_project_indexed(hyp_store_t *store, const char *project) {
 static bool sg_field_blocked(const char *f); /* internal-only fields, defined with search_graph */
 
 static char *handle_get_graph_schema(hyp_mcp_server_t *srv, const char *args) {
-    char *project = get_project_arg(args);
+    project_choice_t choice;
+    char *project = resolve_project_arg(srv, args, &choice);
     hyp_store_t *store = resolve_store(srv, project);
     REQUIRE_STORE(store, project);
 
@@ -2735,6 +3100,7 @@ static char *handle_get_graph_schema(hyp_mcp_server_t *srv, const char *args) {
     yyjson_mut_doc *doc = yyjson_mut_doc_new(NULL);
     yyjson_mut_val *root = yyjson_mut_obj(doc);
     yyjson_mut_doc_set_root(doc, root);
+    add_project_choice_json(doc, root, project, &choice);
 
     yyjson_mut_val *labels = yyjson_mut_arr(doc);
     for (int i = 0; i < schema.node_label_count; i++) {
@@ -3617,7 +3983,8 @@ static char *handle_search_graph(hyp_mcp_server_t *srv, const char *args) {
      * retainer is in what the handlers share -- store resolution or the query
      * itself. These marks separate the two. */
     hyp_mem_phase_mark("handler.args");
-    char *project = get_project_arg(args);
+    project_choice_t choice;
+    char *project = resolve_project_arg(srv, args, &choice);
     hyp_mem_phase_mark("handler.resolve_store");
     hyp_store_t *store = resolve_store(srv, project);
     hyp_mem_phase_mark("handler.body");
@@ -3649,9 +4016,13 @@ static char *handle_search_graph(hyp_mcp_server_t *srv, const char *args) {
         free(q_file_pattern);
         if (bm25_json) {
             free(query);
-            free(project);
             char *result = hyp_mcp_text_result(bm25_json, false);
             free(bm25_json);
+            /* The ranked path returns from inside a helper, so the disclosure
+             * is attached to the finished answer rather than written into the
+             * builder — same two fields, same order, either way. */
+            result = result_with_project_choice(result, project, &choice);
+            free(project);
             return result;
         }
     }
@@ -3720,6 +4091,7 @@ static char *handle_search_graph(hyp_mcp_server_t *srv, const char *args) {
 
             hyp_sb_t sb;
             hyp_sb_init(&sb);
+            emit_project_choice_toon(&sb, project, &choice);
             hyp_search_output_t tout = {0};
             if (!semantic_only) {
                 hyp_store_search(store, &params, &tout);
@@ -3806,6 +4178,7 @@ static char *handle_search_graph(hyp_mcp_server_t *srv, const char *args) {
     yyjson_mut_doc *doc = yyjson_mut_doc_new(NULL);
     yyjson_mut_val *root = yyjson_mut_obj(doc);
     yyjson_mut_doc_set_root(doc, root);
+    add_project_choice_json(doc, root, project, &choice);
 
     /* format:"json" = json-stringified tree: same grouped model as the
      * default text output, structured for parsing. include_connected adds a
@@ -4078,7 +4451,8 @@ static void ask_cols(const char *cols[], int *ncols, bool with_cut) {
  * An empty `results[0]{...}:` is how "the index was never built" gets read as
  * "your codebase has nothing like that", which is a claim about the caller's
  * code that this tool has no basis to make. */
-static char *ask_emit_unavailable(const hyp_ask_status_t *st, const char *project, bool json) {
+static char *ask_emit_unavailable(const hyp_ask_status_t *st, const char *project, bool json,
+                                  const project_choice_t *choice) {
     char detail[ASK_MSG];
     char remedy[ASK_MSG];
     ask_unavailable_text(st, project, detail, sizeof(detail), remedy, sizeof(remedy));
@@ -4087,6 +4461,7 @@ static char *ask_emit_unavailable(const hyp_ask_status_t *st, const char *projec
         yyjson_mut_doc *doc = yyjson_mut_doc_new(NULL);
         yyjson_mut_val *root = yyjson_mut_obj(doc);
         yyjson_mut_doc_set_root(doc, root);
+        add_project_choice_json(doc, root, project, choice);
         yyjson_mut_obj_add_bool(doc, root, "available", false);
         /* Only the LOCAL lane answers unavailable in this shape; an escalated
          * ask that cannot proceed is an error that says which lane and why. */
@@ -4104,6 +4479,7 @@ static char *ask_emit_unavailable(const hyp_ask_status_t *st, const char *projec
 
     hyp_sb_t sb;
     hyp_sb_init(&sb);
+    emit_project_choice_toon(&sb, project, choice);
     hyp_tree_scalar_bool(&sb, "available", false);
     hyp_tree_scalar_str(&sb, "lane", "local");
     hyp_tree_scalar_str(&sb, "reason", ask_reason_token(st->avail));
@@ -4135,7 +4511,8 @@ static char *ask_run(hyp_mcp_server_t *srv, const char *args, bool force_json, f
     if (qvec_out) {
         memset(qvec_out, 0, (size_t)HYP_ASK_DIM * sizeof(float));
     }
-    char *project = get_project_arg(args);
+    project_choice_t choice;
+    char *project = resolve_project_arg(srv, args, &choice);
     hyp_store_t *store = resolve_store(srv, project);
     REQUIRE_STORE(store, project);
 
@@ -4371,7 +4748,7 @@ static char *ask_run(hyp_mcp_server_t *srv, const char *args, bool force_json, f
             hyp_ask_encoder_destroy(esc_enc);
             return ask_error(msg, project, question);
         }
-        char *result = ask_emit_unavailable(&st, project, json);
+        char *result = ask_emit_unavailable(&st, project, json, &choice);
         free(project);
         free(question);
         return result;
@@ -4587,6 +4964,7 @@ static char *ask_run(hyp_mcp_server_t *srv, const char *args, bool force_json, f
         yyjson_mut_doc *doc = yyjson_mut_doc_new(NULL);
         yyjson_mut_val *root = yyjson_mut_obj(doc);
         yyjson_mut_doc_set_root(doc, root);
+        add_project_choice_json(doc, root, project, &choice);
         yyjson_mut_obj_add_bool(doc, root, "available", true);
         yyjson_mut_obj_add_str(doc, root, "lane", lane_name);
         yyjson_mut_obj_add_strcpy(doc, root, "query_encoder", query_encoder);
@@ -4631,6 +5009,7 @@ static char *ask_run(hyp_mcp_server_t *srv, const char *args, bool force_json, f
     } else {
         hyp_sb_t sb;
         hyp_sb_init(&sb);
+        emit_project_choice_toon(&sb, project, &choice);
         hyp_tree_scalar_bool(&sb, "available", true);
         hyp_tree_scalar_str(&sb, "lane", lane_name);
         hyp_tree_scalar_str(&sb, "query_encoder", query_encoder);
@@ -4719,9 +5098,10 @@ char *hyp_mcp_ask_view_overlay(hyp_mcp_server_t *srv, const char *args_json) {
     yyjson_mut_val *root = yyjson_mut_obj(doc);
     yyjson_mut_doc_set_root(doc, root);
 
-    char *project = get_project_arg(args_json);
+    project_choice_t choice;
+    char *project = resolve_project_arg(srv, args_json, &choice);
     char *question = hyp_mcp_get_string_arg(args_json, "question");
-    yyjson_mut_obj_add_strcpy(doc, root, "project", project ? project : "");
+    add_project_choice_json(doc, root, project, &choice);
     yyjson_mut_obj_add_strcpy(doc, root, "question", question ? question : "");
     bool escalate = hyp_mcp_get_bool_arg(args_json, "escalate");
 
@@ -5035,7 +5415,8 @@ char *hyp_mcp_ask_view_points_json(const char *project, bool escalation) {
 
 static char *handle_query_graph(hyp_mcp_server_t *srv, const char *args) {
     char *query = hyp_mcp_get_string_arg(args, "query");
-    char *project = get_project_arg(args);
+    project_choice_t choice;
+    char *project = resolve_project_arg(srv, args, &choice);
     hyp_store_t *store = resolve_store(srv, project);
     int max_rows = hyp_mcp_get_int_arg(args, "max_rows", 0);
 
@@ -5099,6 +5480,7 @@ static char *handle_query_graph(hyp_mcp_server_t *srv, const char *args) {
     if (!qg_legacy_json) {
         hyp_sb_t sb;
         hyp_sb_init(&sb);
+        emit_project_choice_toon(&sb, project, &choice);
         hyp_tree_table_header(&sb, "rows", result.row_count, (const char *const *)result.columns,
                               result.col_count);
         for (int r = 0; r < result.row_count; r++) {
@@ -5122,6 +5504,7 @@ static char *handle_query_graph(hyp_mcp_server_t *srv, const char *args) {
         yyjson_mut_doc *doc = yyjson_mut_doc_new(NULL);
         yyjson_mut_val *root = yyjson_mut_obj(doc);
         yyjson_mut_doc_set_root(doc, root);
+        add_project_choice_json(doc, root, project, &choice);
 
         /* columns */
         yyjson_mut_val *cols = yyjson_mut_arr(doc);
@@ -5501,7 +5884,8 @@ static const char *coverage_recommended_action(const char *status, const char *f
 }
 
 static char *handle_check_index_coverage(hyp_mcp_server_t *srv, const char *args) {
-    char *project = get_project_arg(args);
+    project_choice_t choice;
+    char *project = resolve_project_arg(srv, args, &choice);
     hyp_store_t *store = resolve_store(srv, project);
     REQUIRE_STORE(store, project);
 
@@ -5535,6 +5919,7 @@ static char *handle_check_index_coverage(hyp_mcp_server_t *srv, const char *args
     yyjson_mut_val *root = yyjson_mut_obj(doc);
     yyjson_mut_doc_set_root(doc, root);
     yyjson_mut_obj_add_strcpy(doc, root, "project", project);
+    add_project_source_json(doc, root, &choice);
     yyjson_mut_obj_add_str(doc, root, "signal", "best_effort");
     yyjson_mut_obj_add_strcpy(doc, root, "indexed_at",
                               have_project && proj.indexed_at ? proj.indexed_at : "");
@@ -5691,7 +6076,8 @@ static char *handle_check_index_coverage(hyp_mcp_server_t *srv, const char *args
 }
 
 static char *handle_index_status(hyp_mcp_server_t *srv, const char *args) {
-    char *project = get_project_arg(args);
+    project_choice_t choice;
+    char *project = resolve_project_arg(srv, args, &choice);
     hyp_store_t *store = resolve_store(srv, project);
     REQUIRE_STORE(store, project);
     /* The git context block (worktree/shadow path variants) only matters when
@@ -5707,6 +6093,7 @@ static char *handle_index_status(hyp_mcp_server_t *srv, const char *args) {
         int nodes = hyp_store_count_nodes(store, project);
         int edges = hyp_store_count_edges(store, project);
         yyjson_mut_obj_add_str(doc, root, "project", project);
+        add_project_source_json(doc, root, &choice);
         yyjson_mut_obj_add_int(doc, root, "nodes", nodes);
         yyjson_mut_obj_add_int(doc, root, "edges", edges);
         yyjson_mut_obj_add_str(doc, root, "status", nodes > 0 ? "ready" : "empty");
@@ -6286,7 +6673,8 @@ static void arch_node_qn(hyp_store_t *store, int64_t id, char *out, size_t outsz
 }
 
 static char *handle_get_architecture(hyp_mcp_server_t *srv, const char *args) {
-    char *project = get_project_arg(args);
+    project_choice_t choice;
+    char *project = resolve_project_arg(srv, args, &choice);
     hyp_store_t *store = resolve_store(srv, project);
     /* REQUIRE_STORE returns without freeing anything but `project`, so every
      * other allocation must come after it (scope_path leaked here before —
@@ -6399,9 +6787,7 @@ static char *handle_get_architecture(hyp_mcp_server_t *srv, const char *args) {
     if (!arch_legacy_json) {
         hyp_sb_t sb;
         hyp_sb_init(&sb);
-        if (project) {
-            hyp_tree_scalar_str(&sb, "project", project);
-        }
+        emit_project_choice_toon(&sb, project, &choice);
         if (default_summary) {
             hyp_tree_scalar_str(&sb, "aspects_hint",
                                 "Summary view (default). More on request via aspects:[...] — "
@@ -6655,9 +7041,7 @@ static char *handle_get_architecture(hyp_mcp_server_t *srv, const char *args) {
     yyjson_mut_val *root = yyjson_mut_obj(doc);
     yyjson_mut_doc_set_root(doc, root);
 
-    if (project) {
-        yyjson_mut_obj_add_str(doc, root, "project", project);
-    }
+    add_project_choice_json(doc, root, project, &choice);
     if (default_summary) {
         yyjson_mut_obj_add_str(doc, root, "aspects_hint",
                                "Summary view (default). More on request via aspects:[...] — "
@@ -7594,7 +7978,8 @@ static int clamp_mcp_depth(int depth, const char *tool) {
 
 static char *handle_trace_call_path(hyp_mcp_server_t *srv, const char *args) {
     char *func_name = hyp_mcp_get_string_arg(args, "function_name");
-    char *project = get_project_arg(args);
+    project_choice_t choice;
+    char *project = resolve_project_arg(srv, args, &choice);
     hyp_store_t *store = resolve_store(srv, project);
     char *direction = hyp_mcp_get_string_arg(args, "direction");
     char *mode = hyp_mcp_get_string_arg(args, "mode");
@@ -7893,6 +8278,7 @@ static char *handle_trace_call_path(hyp_mcp_server_t *srv, const char *args) {
     if (!trace_legacy_json) {
         hyp_sb_t sb;
         hyp_sb_init(&sb);
+        emit_project_choice_toon(&sb, project, &choice);
         hyp_tree_scalar_str(&sb, "function", func_name);
         hyp_tree_scalar_str(&sb, "direction", direction);
         if (mode) {
@@ -7937,6 +8323,7 @@ static char *handle_trace_call_path(hyp_mcp_server_t *srv, const char *args) {
         yyjson_mut_val *root = yyjson_mut_obj(doc);
         yyjson_mut_doc_set_root(doc, root);
 
+        add_project_choice_json(doc, root, project, &choice);
         yyjson_mut_obj_add_str(doc, root, "function", func_name);
         yyjson_mut_obj_add_str(doc, root, "direction", direction);
         if (mode) {
@@ -9728,7 +10115,8 @@ static char *build_snippet_response(hyp_mcp_server_t *srv, hyp_node_t *node,
 
 static char *handle_get_code_snippet(hyp_mcp_server_t *srv, const char *args) {
     char *qn = hyp_mcp_get_string_arg(args, "qualified_name");
-    char *project = get_project_arg(args);
+    project_choice_t choice;
+    char *project = resolve_project_arg(srv, args, &choice);
     bool include_neighbors = hyp_mcp_get_bool_arg(args, "include_neighbors");
 
     if (!qn) {
@@ -9761,6 +10149,7 @@ static char *handle_get_code_snippet(hyp_mcp_server_t *srv, const char *args) {
     int rc = hyp_store_find_node_by_qn(store, effective_project, qn, &node);
     if (rc == HYP_STORE_OK) {
         char *result = build_snippet_response(srv, &node, NULL, include_neighbors, NULL, 0);
+        result = result_with_project_choice(result, project, &choice);
         free_node_contents(&node);
         free(qn);
         free(project);
@@ -9777,6 +10166,7 @@ static char *handle_get_code_snippet(hyp_mcp_server_t *srv, const char *args) {
         copy_node(&suffix_nodes[0], &node);
         hyp_store_free_nodes(suffix_nodes, suffix_count);
         char *result = build_snippet_response(srv, &node, "suffix", include_neighbors, NULL, 0);
+        result = result_with_project_choice(result, project, &choice);
         free_node_contents(&node);
         free(qn);
         free(project);
@@ -9794,12 +10184,14 @@ static char *handle_get_code_snippet(hyp_mcp_server_t *srv, const char *args) {
             copy_node(&suffix_nodes[ssel], &node);
             hyp_store_free_nodes(suffix_nodes, suffix_count);
             char *result = build_snippet_response(srv, &node, "suffix", include_neighbors, NULL, 0);
+            result = result_with_project_choice(result, project, &choice);
             free_node_contents(&node);
             free(qn);
             free(project);
             return result;
         }
         char *result = snippet_suggestions(qn, suffix_nodes, suffix_count);
+        result = result_with_project_choice(result, project, &choice);
         hyp_store_free_nodes(suffix_nodes, suffix_count);
         free(qn);
         free(project);
@@ -10766,7 +11158,8 @@ static bool compile_path_filter(const char *filter, hyp_regex_t *re) {
 
 static char *handle_search_code(hyp_mcp_server_t *srv, const char *args) {
     char *pattern = hyp_mcp_get_string_arg(args, "pattern");
-    char *project = get_project_arg(args);
+    project_choice_t choice;
+    char *project = resolve_project_arg(srv, args, &choice);
     char *file_pattern = hyp_mcp_get_string_arg(args, "file_pattern");
     char *path_filter = hyp_mcp_get_string_arg(args, "path_filter");
     char *mode_str = hyp_mcp_get_string_arg(args, "mode");
@@ -10792,11 +11185,12 @@ static char *handle_search_code(hyp_mcp_server_t *srv, const char *args) {
         return hyp_mcp_text_result("pattern is required", true);
     }
 
-    /* Project is required */
+    /* Unresolved: no argument, no indexed working directory, and more than
+     * one candidate — the error names them (§3.2 step 2). */
     if (!project) {
         free(pattern);
         free(file_pattern);
-        char *_err = build_project_list_error("project is required");
+        char *_err = build_missing_project_error();
         char *_res = hyp_mcp_text_result(_err, true);
         free(_err);
         return _res;
@@ -11019,6 +11413,7 @@ static char *handle_search_code(hyp_mcp_server_t *srv, const char *args) {
                                         context_lines, root_path, pat_has_pipe && !use_regex,
                                         hyp_now_ms() - search_t0);
     }
+    result = result_with_project_choice(result, project, &choice);
     free(gm);
     free(sr);
     free(raw);
@@ -11343,7 +11738,8 @@ static void detect_emit_impacted_tree(hyp_sb_t *sb, hyp_traverse_result_t *tr, i
 }
 
 static char *handle_detect_changes(hyp_mcp_server_t *srv, const char *args) {
-    char *project = get_project_arg(args);
+    project_choice_t choice;
+    char *project = resolve_project_arg(srv, args, &choice);
     char *base_branch = hyp_mcp_get_string_arg(args, "base_branch");
     char *since = hyp_mcp_get_string_arg(args, "since");
     char *scope = hyp_mcp_get_string_arg(args, "scope");
@@ -11699,6 +12095,7 @@ static char *handle_detect_changes(hyp_mcp_server_t *srv, const char *args) {
     if (!legacy_json) {
         hyp_sb_t sb;
         hyp_sb_init(&sb);
+        emit_project_choice_toon(&sb, project, &choice);
         hyp_tree_scalar_str(&sb, "base", base_branch);
         if (merge_base[0]) {
             hyp_tree_scalar_str(&sb, "merge_base", merge_base);
@@ -11758,6 +12155,7 @@ static char *handle_detect_changes(hyp_mcp_server_t *srv, const char *args) {
         yyjson_mut_doc *doc = yyjson_mut_doc_new(NULL);
         yyjson_mut_val *root_obj = yyjson_mut_obj(doc);
         yyjson_mut_doc_set_root(doc, root_obj);
+        add_project_choice_json(doc, root_obj, project, &choice);
         yyjson_mut_obj_add_strcpy(doc, root_obj, "base", base_branch);
         if (merge_base[0]) {
             yyjson_mut_obj_add_strcpy(doc, root_obj, "merge_base", merge_base);
@@ -11939,7 +12337,8 @@ static hyp_store_t *open_adr_store_for_write(hyp_mcp_server_t *srv, hyp_store_t 
 }
 
 static char *handle_manage_adr(hyp_mcp_server_t *srv, const char *args) {
-    char *project = get_project_arg(args);
+    project_choice_t choice;
+    char *project = resolve_project_arg(srv, args, &choice);
     char *mode_str = hyp_mcp_get_string_arg(args, "mode");
     char *content = hyp_mcp_get_string_arg(args, "content");
 
@@ -12074,6 +12473,7 @@ static char *handle_manage_adr(hyp_mcp_server_t *srv, const char *args) {
     yyjson_mut_doc *doc = yyjson_mut_doc_new(NULL);
     yyjson_mut_val *root_obj = yyjson_mut_obj(doc);
     yyjson_mut_doc_set_root(doc, root_obj);
+    add_project_choice_json(doc, root_obj, project, &choice);
 
     bool is_error = false;
     const char *adr_content = have_adr ? adr.content : legacy;
@@ -12121,7 +12521,8 @@ static char *handle_manage_adr(hyp_mcp_server_t *srv, const char *args) {
 /* ── ingest_traces ────────────────────────────────────────────── */
 
 static char *handle_ingest_traces(hyp_mcp_server_t *srv, const char *args) {
-    (void)srv;
+    project_choice_t choice;
+    char *project = resolve_project_arg(srv, args, &choice);
     /* Parse traces array from JSON args */
     yyjson_doc *adoc = yyjson_read(args, strlen(args), 0);
     int trace_count = 0;
@@ -12139,6 +12540,7 @@ static char *handle_ingest_traces(hyp_mcp_server_t *srv, const char *args) {
     yyjson_mut_val *root = yyjson_mut_obj(doc);
     yyjson_mut_doc_set_root(doc, root);
 
+    add_project_choice_json(doc, root, project, &choice);
     yyjson_mut_obj_add_str(doc, root, "status", "accepted");
     yyjson_mut_obj_add_int(doc, root, "traces_received", trace_count);
     yyjson_mut_obj_add_str(doc, root, "note",
@@ -12149,6 +12551,7 @@ static char *handle_ingest_traces(hyp_mcp_server_t *srv, const char *args) {
 
     char *result = hyp_mcp_text_result(json, false);
     free(json);
+    free(project);
     return result;
 }
 
