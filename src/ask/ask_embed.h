@@ -272,7 +272,12 @@ char *hyp_ask_read_span_lines(const char *abs_path, int start, int end, int *out
 bool hyp_ask_span_is_whole_file(int start, int end, int file_lines);
 
 /* sha256 of `text`, truncated to HYP_ASK_VEC_HASH_LEN hex chars. `out` must
- * hold HYP_ASK_VEC_HASH_LEN + 1 bytes. */
+ * hold HYP_ASK_VEC_HASH_LEN + 1 bytes.
+ *
+ * This lane's name for hyp_addr_span_hash (foundation/identity.h). One
+ * implementation, forwarded — the §4 C1 address anchors decisions on exactly
+ * this hash, and two implementations that agree today are two that can stop
+ * agreeing. The widths are asserted equal at compile time in ask_embed.c. */
 void hyp_ask_content_hash(const char *text, char *out);
 
 #endif /* HYP_ASK_EMBED_PASS_H */

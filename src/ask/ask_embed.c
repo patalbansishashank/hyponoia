@@ -12,6 +12,7 @@
 #include "discover/discover.h"
 #include "foundation/compat.h"
 #include "foundation/compat_fs.h"
+#include "foundation/identity.h"
 #include "foundation/log.h"
 #include "foundation/platform.h"
 #include "foundation/sha256.h"
@@ -23,6 +24,15 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+
+/* The vector store's content hash and NEXT-STEPS §4 C1's span hash are ONE
+ * hash, not two that happen to agree — hyp_ask_content_hash forwards to
+ * hyp_addr_span_hash below. This assert is the guard on the only thing a
+ * forward cannot express: if either width moves, the build stops here instead
+ * of the two halves quietly hashing to different widths and leaving every
+ * anchor unable to find its vector. */
+_Static_assert(HYP_ASK_VEC_HASH_LEN == HYP_ADDR_SPAN_HASH_LEN,
+               "the vector content hash and the C1 span hash must be one hash");
 
 enum {
     AE_PATHBUF = 1024,
@@ -87,10 +97,10 @@ void hyp_ask_embed_report_free(hyp_ask_embed_report_t *r) {
 }
 
 void hyp_ask_content_hash(const char *text, char *out) {
-    char hex[HYP_SHA256_HEX_LEN + 1];
-    hyp_sha256_hex(text ? text : "", text ? strlen(text) : 0, hex);
-    memcpy(out, hex, HYP_ASK_VEC_HASH_LEN);
-    out[HYP_ASK_VEC_HASH_LEN] = '\0';
+    /* Forwards on purpose. §4 C1 anchors decisions on the content hash of a
+     * span and this lane already had one; a second implementation that agreed
+     * today is exactly the duplication C1's own report objects to elsewhere. */
+    hyp_addr_span_hash(text, out);
 }
 
 const char *hyp_ask_whole_file_name(hyp_ask_whole_file_t p) {
@@ -461,8 +471,7 @@ static int ae_flush_window(ae_window_t *w, const hyp_ask_encoder_t *enc, hyp_ask
         }
         if (n_distinct < n) {
             char b[AE_NUMBUF];
-            hyp_log_debug("ask.embed.dedup", "collapsed",
-                          ae_itoa(n - n_distinct, b, sizeof(b)));
+            hyp_log_debug("ask.embed.dedup", "collapsed", ae_itoa(n - n_distinct, b, sizeof(b)));
         }
         if (hyp_ask_encode_documents(enc, texts, n_distinct, vecs) != 0) {
             hyp_log_error("ask.embed.encode_failed", "batch", "documents");
@@ -557,11 +566,11 @@ int hyp_ask_embed_run(const hyp_ask_encoder_t *enc, const hyp_ask_embed_opts_t *
     rep.device_was_gpu = device_is_gpu;
     rep.device_downgraded = (opts->device_pref == HYP_ASK_DEVICE_GPU && !device_is_gpu);
     if (rep.device_downgraded) {
-        hyp_log_warn("ask.embed.device_downgraded", "requested", "gpu", "got", device_note,
-                     "cost", "~15x slower than the device that was asked for");
+        hyp_log_warn("ask.embed.device_downgraded", "requested", "gpu", "got", device_note, "cost",
+                     "~15x slower than the device that was asked for");
     } else {
-        hyp_log_info("ask.embed.device", "requested",
-                     hyp_ask_device_pref_name(opts->device_pref), "using", device_note);
+        hyp_log_info("ask.embed.device", "requested", hyp_ask_device_pref_name(opts->device_pref),
+                     "using", device_note);
     }
     int dim = hyp_ask_encoder_dim(enc);
     int window = hyp_ask_encoder_window(enc);
@@ -608,8 +617,7 @@ int hyp_ask_embed_run(const hyp_ask_encoder_t *enc, const hyp_ask_embed_opts_t *
     }
 
     hyp_ask_vectors_t *store = opts->vectors_db_path
-                                   ? hyp_ask_vectors_open_path(opts->project,
-                                                               opts->vectors_db_path)
+                                   ? hyp_ask_vectors_open_path(opts->project, opts->vectors_db_path)
                                    : hyp_ask_vectors_open(opts->project);
     if (!store) {
         hyp_log_error("ask.embed.vectors_open", "project", opts->project);
@@ -630,8 +638,8 @@ int hyp_ask_embed_run(const hyp_ask_encoder_t *enc, const hyp_ask_embed_opts_t *
         }
     }
     int begin =
-        hyp_ask_vectors_begin_build(store, model_id, prefix_contract, dim, window,
-                                    graph.generation, device_note, opts->allow_model_change);
+        hyp_ask_vectors_begin_build(store, model_id, prefix_contract, dim, window, graph.generation,
+                                    device_note, opts->allow_model_change);
     if (begin == HYP_ASK_VEC_INCOMPATIBLE) {
         hyp_log_error("ask.embed.incompatible", "err", hyp_ask_vectors_error(store), "hint",
                       "re-run with --allow-model-change to discard and rebuild");
@@ -777,8 +785,7 @@ int hyp_ask_embed_run(const hyp_ask_encoder_t *enc, const hyp_ask_embed_opts_t *
         if (!opts->force) {
             char stored[HYP_ASK_VEC_HASH_LEN + 1];
             bool stored_trunc = false;
-            if (hyp_ask_vectors_stored_hash(store, qn, stored, &stored_trunc) ==
-                    HYP_ASK_VEC_OK &&
+            if (hyp_ask_vectors_stored_hash(store, qn, stored, &stored_trunc) == HYP_ASK_VEC_OK &&
                 strcmp(stored, doc.hash) == 0) {
                 rep.reused++;
                 /* The vector is licensed for reuse; the DISCLOSURE is not.
@@ -966,8 +973,7 @@ int hyp_ask_embed_run(const hyp_ask_encoder_t *enc, const hyp_ask_embed_opts_t *
      * how a silent no-op survives a green run. */
     if (rep.declarations_seen == 0) {
         hyp_log_warn("ask.embed.no_declarations", "project", opts->project, "graph", graph_path,
-                     "hint",
-                     "the project has no node with a source span — check the project name");
+                     "hint", "the project has no node with a source span — check the project name");
         return HYP_ASK_EMBED_NO_WORK;
     }
     return 0;
