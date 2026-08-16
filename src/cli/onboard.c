@@ -715,13 +715,17 @@ static int onboard_name_from_members(const hyp_onboard_repo_t *repos, int count,
     }
     for (int i = 1; i < count; i++) { /* insertion sort: the set is tiny */
         char tmp[HYP_SZ_256];
-        (void)snprintf(tmp, sizeof(tmp), "%s", slugs[i]);
+        size_t len = strlen(slugs[i]) + 1;
+        memcpy(tmp, slugs[i], len);
         int j = i - 1;
         while (j >= 0 && strcmp(slugs[j], tmp) > 0) {
-            (void)snprintf(slugs[j + 1], sizeof(slugs[j + 1]), "%s", slugs[j]);
+            /* memmove, not snprintf: both sides are rows of ONE array, and a
+             * `restrict`-qualified copy the compiler cannot prove disjoint is
+             * an error here (-Werror=restrict), not a warning. */
+            memmove(slugs[j + 1], slugs[j], strlen(slugs[j]) + 1);
             j--;
         }
-        (void)snprintf(slugs[j + 1], sizeof(slugs[j + 1]), "%s", tmp);
+        memcpy(slugs[j + 1], tmp, len);
     }
     size_t off = 0;
     out[0] = '\0';
