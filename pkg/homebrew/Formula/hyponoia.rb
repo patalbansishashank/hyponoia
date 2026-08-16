@@ -11,23 +11,36 @@ class Hyponoia < Formula
   # See docs/MAINTAINERS.md "Retired platforms".
   depends_on :linux
 
+  # The `-portable` (fully static) archives, not the ordinary ones. Homebrew on
+  # Linux exists largely to serve distributions older than the host toolchain,
+  # and the ordinary linux archive links glibc 2.38+ / GLIBCXX_3.4.32: installed
+  # into the homebrew/brew container (Ubuntu 22.04, glibc 2.35) it resolves,
+  # verifies and links, and then `hyponoia --version` dies with
+  # "version `GLIBC_2.38' not found". A formula that installs a binary the
+  # platform cannot execute has not installed anything. The static archive has
+  # the same six members and the same layout, so nothing below changes.
+  # Keep in sync with pkg/npm/install.js and pkg/pypi/src/hyponoia/_cli.py,
+  # which pick `-portable` on Linux for exactly this reason.
+  #
   # Checksums are v0.3.1's own, copied from the release's checksums.txt and
   # verified independently by re-hashing the downloaded archives.
   # The build publishes only the UI variant, so these are the only archives that exist.
   on_linux do
     on_arm do
-      url "https://github.com/patalbansishashank/hyponoia/releases/download/v#{version}/hyponoia-ui-linux-arm64.tar.gz"
-      sha256 "946d60367968507503cb74531cdc0079b935f81beff5e9a36ce8171e5bfed1ae"
+      url "https://github.com/patalbansishashank/hyponoia/releases/download/v#{version}/hyponoia-ui-linux-arm64-portable.tar.gz"
+      sha256 "43f4be9c9675a41f666902921ea1c7b4c4d3f9b9b1ff0352272595fbf90ceee4"
     end
     on_intel do
-      url "https://github.com/patalbansishashank/hyponoia/releases/download/v#{version}/hyponoia-ui-linux-amd64.tar.gz"
-      sha256 "c4fa4ef5f62736092695f1c9fcaae23d38d78746e5aa79070e0a07e21c52fa6f"
+      url "https://github.com/patalbansishashank/hyponoia/releases/download/v#{version}/hyponoia-ui-linux-amd64-portable.tar.gz"
+      sha256 "045e2e0810ad03fceca716eeee916b7257f325f83ddcda17ae5b53c50a9a76b8"
     end
   end
 
   def install
     bin.install "hyponoia"
-    (share/"hyponoia").install "hyp-integrations.json"
+    # `pkgshare` is share/"hyponoia" — spelled the way `brew audit --strict`
+    # demands, which is the spelling homebrew-core and every tap reviewer sees.
+    pkgshare.install "hyp-integrations.json"
     # Graph UI asset pack. Without it the UI has no assets to serve, so the
     # archive's sixth member cannot be dropped on the floor. The name is the
     # sha256 of the pack's own bytes, so it can only ever be matched by glob.
@@ -38,7 +51,7 @@ class Hyponoia < Formula
     # Guarded like THIRD_PARTY_NOTICES.md below: archives older than this
     # formula predate the pack and must still install.
     ui_packs = Dir["hyp-ui-*.pack"]
-    (share/"hyponoia").install ui_packs unless ui_packs.empty?
+    pkgshare.install ui_packs unless ui_packs.empty?
     # Third-party attribution bundle. Guarded: archives older than this
     # formula predate it, and the version it first appeared in was upstream's.
     doc.install "THIRD_PARTY_NOTICES.md" if File.exist?("THIRD_PARTY_NOTICES.md")
@@ -57,6 +70,6 @@ class Hyponoia < Formula
 
   test do
     assert_match "hyponoia", shell_output("#{bin}/hyponoia --version")
-    assert_path_exists share/"hyponoia/hyp-integrations.json"
+    assert_path_exists pkgshare/"hyp-integrations.json"
   end
 end

@@ -9,7 +9,16 @@ $url64       = "https://github.com/patalbansishashank/hyponoia/releases/download
 # across a version bump together with $version: a real hash for the wrong tag
 # fails at install time with a mismatch nobody could attribute to a cause.
 $checksum64  = 'fee50ab1a80ca00b133311d96d90447b0b991ec66892aaa0a0e0ef2d2753c4fe'
-$installDir  = Join-Path $env:ChocolateyBinRoot $packageName
+# Get-ToolsLocation, not $env:ChocolateyBinRoot. ChocolateyBinRoot is retired:
+# on a machine where no package has ever asked for a tools location it is
+# simply unset, and `Join-Path $null 'hyponoia'` throws under
+# $ErrorActionPreference = 'Stop' — the install fails before the download.
+# Worse, Get-ToolsLocation *clears* ChocolateyBinRoot after reading it
+# (chocolatey/choco, Get-ToolsLocation.ps1), so a machine where it once worked
+# can stop working after any other package runs. The helper is the supported
+# reader: it returns $env:ChocolateyToolsLocation, migrates the two legacy
+# variables, and falls back to <systemdrive>\tools.
+$installDir  = Join-Path (Get-ToolsLocation) $packageName
 
 Install-ChocolateyZipPackage `
   -PackageName   $packageName `

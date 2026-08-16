@@ -80,9 +80,14 @@ require(
 
 
 homebrew = read("pkg/homebrew/Formula/hyponoia.rb")
+# `pkgshare` IS share/"hyponoia" — Homebrew's own name for it, and the only
+# spelling `brew audit --formula --strict` accepts (it reports
+# "Use `pkgshare` instead of `share/\"hyponoia\"`" three times otherwise).
+# Both spellings satisfy the contract this test exists to hold: the sidecar
+# lands in ../share/hyponoia relative to the installed executable.
 require(
     re.search(
-        r'\(share\s*/\s*["\']hyponoia["\']\)\.install\s+'
+        r'(?:pkgshare|\(share\s*/\s*["\']hyponoia["\']\))\.install\s+'
         r'["\']hyp-integrations\.json["\']',
         homebrew,
     )
@@ -91,7 +96,7 @@ require(
 )
 require(
     re.search(
-        r'assert_path_exists\s+share\s*/\s*["\']hyponoia/'
+        r'assert_path_exists\s+(?:pkgshare\s*/\s*["\']|share\s*/\s*["\']hyponoia/)'
         r'hyp-integrations\.json["\']',
         homebrew,
     )

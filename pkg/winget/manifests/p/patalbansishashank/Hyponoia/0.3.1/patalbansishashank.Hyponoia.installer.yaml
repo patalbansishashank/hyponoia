@@ -1,3 +1,5 @@
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.installer.1.6.0.schema.json
+
 PackageIdentifier: patalbansishashank.Hyponoia
 PackageVersion: 0.3.1
 InstallerLocale: en-US
@@ -6,9 +8,12 @@ NestedInstallerType: portable
 NestedInstallerFiles:
   - RelativeFilePath: hyponoia.exe
     PortableCommandAlias: hyponoia
+# Windows.Desktop only. Windows.Universal claimed a UWP/MSIX app package, which
+# a zip of a native console executable is not — the schema accepts the value,
+# and the platform it names cannot run this.
 Platform:
   - Windows.Desktop
-  - Windows.Universal
+ReleaseDate: 2026-08-16
 # InstallerSha256 is v0.3.1's own, copied from the release's checksums.txt and
 # verified independently by re-hashing the downloaded zip. On a version bump it
 # is zeroed again until the new release exists: a real hash for the wrong tag
