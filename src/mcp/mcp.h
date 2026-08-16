@@ -242,6 +242,57 @@ int hyp_mcp_server_run(hyp_mcp_server_t *srv, FILE *in, FILE *out);
  * Returns heap-allocated JSON response string, or NULL for notifications. */
 char *hyp_mcp_server_handle(hyp_mcp_server_t *srv, const char *line);
 
+/* ── §4 F3 · memory freshness, the seam ───────────────────────────
+ *
+ * index_status reports TWO freshnesses, separately and never merged: `code`
+ * (this machine's index of the working tree) and `memory` (the append-only
+ * record set). They are independent axes — a record count moves for reasons
+ * the code index never sees — so neither is derived from the other.
+ *
+ * The comparison is a SET comparison, never a lag: the record store is an
+ * id-keyed set whose order is deliberately non-semantic (C2), so "N behind"
+ * is a number nothing can produce. What is computable is `missing` — records
+ * the upstream set holds that the local set does not: a set-digest compare
+ * for the free yes/no, then an id walk for the count plus the names.
+ *
+ * Wiring, and what absence means at every stage:
+ *
+ *   no local set configured          -> `memory` ABSENT from the answer
+ *                                       entirely. Look elsewhere — NOT "you
+ *                                       are up to date".
+ *   local set, no upstream provider  -> memory.status "unknown", `missing`
+ *                                       and `records_upstream` ABSENT. This
+ *                                       is the shipped state until C6u lands
+ *                                       a provider.
+ *   provider configured, read fails  -> same "unknown" answer. The provider
+ *                                       returns NULL for "could not read",
+ *                                       and the tool never converts that
+ *                                       into a number.
+ *   provider returns a set           -> `missing` is emitted, 0 included:
+ *                                       0 means CHECKED AND COMPLETE, which
+ *                                       is a different sentence from absent.
+ *
+ * The local set is BORROWED, not owned: C1u's store owns its records and its
+ * lifetime; this server only reads counts, digests and ids from it during an
+ * index_status call. The provider likewise returns a set borrowed until the
+ * next call or NULL when the upstream cannot be read — it must never fake an
+ * empty set for "unreachable", because empty means "upstream has nothing"
+ * and would report every local record as excess instead of unknown. */
+typedef struct hyp_record_set hyp_record_set_t; /* from foundation/record.h */
+
+typedef const hyp_record_set_t *(*hyp_mcp_memory_upstream_fn)(void *context);
+
+/* Attach the local record set (borrowed; NULL detaches). While detached,
+ * index_status omits the `memory` block entirely. */
+void hyp_mcp_server_set_memory_store(hyp_mcp_server_t *srv, const hyp_record_set_t *local);
+
+/* Configure the upstream comparison-set provider (C6u's sync will be the real
+ * one; tests pass a second in-memory set). `feed` names the adapter in the
+ * answer and is copied; read_upstream NULL detaches the provider, returning
+ * memory.status to "unknown". */
+void hyp_mcp_server_set_memory_upstream(hyp_mcp_server_t *srv, const char *feed,
+                                        hyp_mcp_memory_upstream_fn read_upstream, void *context);
+
 /* ── Tool handler dispatch (for testing) ──────────────────────── */
 
 /* Handle a tools/call request. Returns MCP tool result JSON. */
