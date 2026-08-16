@@ -659,6 +659,7 @@ extern void suite_anchor_reindex(void);
 extern void suite_orphan(void);
 extern void suite_g1_replay(void);
 extern void suite_g3_controls(void);
+extern void suite_g4_cross(void);
 extern void suite_comment_migrate(void);
 extern void suite_g2_retrieval(void);
 extern void suite_sync(void);
@@ -973,6 +974,7 @@ int main(int argc, char **argv) {
     RUN_SELECTED_SUITE(orphan);
     RUN_SELECTED_SUITE(g1_replay);
     RUN_SELECTED_SUITE(g3_controls);
+    RUN_SELECTED_SUITE(g4_cross);
     RUN_SELECTED_SUITE(comment_migrate);
     RUN_SELECTED_SUITE(g2_retrieval);
     RUN_SELECTED_SUITE(sync);
