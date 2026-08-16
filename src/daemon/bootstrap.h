@@ -29,12 +29,29 @@ typedef enum {
     HYP_DAEMON_PROCESS_LOCAL_CLI,
     HYP_DAEMON_PROCESS_HOOK_CLIENT,
     HYP_DAEMON_PROCESS_DAEMON_CTL,
+    /* argv names something this build does not have. Distinct from INVALID,
+     * which is a malformed INTERNAL grammar: this one is a user's typo or a
+     * command whose row was never added, and it must be reported with the
+     * offending token rather than absorbed. */
+    HYP_DAEMON_PROCESS_UNKNOWN_COMMAND,
 } hyp_daemon_process_role_t;
 
 /* Pure argv classifier. argv[0] is the executable. The hidden daemon role is
  * accepted only as the sole argument; index workers must use the exact
- * build-bound `cli --index-worker ...` grammar. */
+ * build-bound `cli --index-worker ...` grammar. Every user-facing token comes
+ * from HYP_CLI_COMMAND_SURFACE (src/cli/command_surface.h), which main()'s
+ * dispatcher expands as well, so the two ends cannot enumerate differently.
+ *
+ * The MCP client role is EARNED, never left over: argv reaching the end of the
+ * scan is the client only if every argument is one an MCP client carries.
+ * Anything else is HYP_DAEMON_PROCESS_UNKNOWN_COMMAND, because a command that
+ * silently becomes an MCP server on stdin exits 0 having done nothing. */
 hyp_daemon_process_role_t hyp_daemon_process_role(int argc, char *const argv[]);
+
+/* The argument that made hyp_daemon_process_role() return UNKNOWN_COMMAND, so
+ * the refusal can name it. Pure, and derived from the same scan; returns NULL
+ * for argv that classifies as anything else. Borrowed from argv. */
+const char *hyp_daemon_process_unknown_command(int argc, char *const argv[]);
 
 /* True only for externally launched long-lived frontends. Internal daemon and
  * worker processes plus one-shot local CLI calls never count as client leases. */
