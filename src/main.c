@@ -31,6 +31,7 @@
 #include "daemon/version_cohort.h"
 #include "mcp/mcp.h"
 #include "mcp/index_supervisor.h"
+#include "memory/sync.h"
 #include "ask/ask_cmd.h"
 #include "ask/ask_llama.h"
 #include "ask/ask_provider.h" /* key custody: whose environment this process is */
@@ -956,6 +957,9 @@ static void print_help(void) {
     printf("  hyponoia uninstall [-y|-n] [--dry-run]\n");
     printf("  hyponoia update [-y|-n]\n");
     printf("  hyponoia config <list|get|set|reset>\n");
+    printf("  hyponoia sync [--pull|--push] [--local <dir>] [--peer <dir>] [--json]\n"
+           "                                      Merge this machine's record store with a\n"
+           "                                      peer's; the result is the union either way\n");
     printf("  hyponoia onboard [dir] [--answers <file>] [--yes]\n"
            "                                      Probe this machine and corpus, propose a\n"
            "                                      workspace, ask only what only you know\n");
@@ -1148,6 +1152,14 @@ static int handle_subcommand(int argc, char **argv, hyp_project_lock_manager_t *
         }
         /* Probe, propose, confirm — never interrogate. Decides and records;
          * deliberately does NOT start the index it prices. */
+        /* The manual half of memory sync. The automatic half is the watcher,
+         * which pulls when a repository changes locally; there is no
+         * agent-callable surface for either, by design. */
+        if (strcmp(argv[i], "sync") == 0) {
+            return hyp_cmd_sync(argc - i - SKIP_ONE, argv + i + SKIP_ONE);
+        }
+        /* §4 Track B: probe, propose, confirm — never interrogate. Decides
+         * and records; deliberately does NOT start the index it prices. */
         if (strcmp(argv[i], "onboard") == 0) {
             return hyp_cmd_onboard(argc - i - SKIP_ONE, argv + i + SKIP_ONE);
         }

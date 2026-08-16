@@ -92,6 +92,10 @@ struct hyp_watcher {
     hyp_watcher_project_mutation_end_fn mutation_end;
     hyp_watcher_project_pruned_fn project_pruned;
     void *mutation_context;
+    /* Read under coordination_lock and invoked outside it: the pull opens its
+     * own stores and must not hold a watcher lock while it does. */
+    hyp_watcher_memory_sync_fn memory_sync;
+    void *memory_sync_context;
     atomic_int stopped;
     /* Deferred-free list: freed after the next poll_once. */
     project_state_t **pending_free;
@@ -926,6 +930,16 @@ void hyp_watcher_set_project_mutation_guard(hyp_watcher_t *w,
     hyp_mutex_unlock(&w->coordination_lock);
 }
 
+void hyp_watcher_set_memory_sync(hyp_watcher_t *w, hyp_watcher_memory_sync_fn fn, void *context) {
+    if (!w) {
+        return;
+    }
+    hyp_mutex_lock(&w->coordination_lock);
+    w->memory_sync = fn;
+    w->memory_sync_context = fn ? context : NULL;
+    hyp_mutex_unlock(&w->coordination_lock);
+}
+
 /* ── Watch list management ──────────────────────────────────────── */
 
 bool hyp_watcher_watch(hyp_watcher_t *w, const char *project_name, const char *root_path) {
@@ -1298,6 +1312,21 @@ static void poll_project(const char *key, void *val, void *ud) {
         return;
     }
     hyp_log_info("watcher.changed", "project", s->project_name, "strategy", "git");
+
+    /* Same pass, before the reindex: a changed tree is the moment shared
+     * memory about this repository is about to be asked for, and the reindex
+     * that follows can run for minutes. Copy the callback out from under the
+     * lock — it opens its own stores and must not run holding a watcher
+     * mutex — and ignore its outcome entirely: memory and index are
+     * independent, so a peer that is unreachable must not cost a reindex. */
+    hyp_mutex_lock(&ctx->w->coordination_lock);
+    hyp_watcher_memory_sync_fn memory_sync = ctx->w->memory_sync;
+    void *memory_sync_context = ctx->w->memory_sync_context;
+    hyp_mutex_unlock(&ctx->w->coordination_lock);
+    if (memory_sync) {
+        memory_sync(s->project_name, s->root_path, memory_sync_context);
+    }
+
     if (ctx->w->index_fn) {
         int rc = ctx->w->index_fn(s->project_name, s->root_path, ctx->w->user_data);
         if (rc == 0) {

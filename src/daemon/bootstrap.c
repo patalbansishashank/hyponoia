@@ -189,6 +189,12 @@ hyp_daemon_process_role_t hyp_daemon_process_role(int argc, char *const argv[]) 
         /* migrate-comments reads a manifest and appends to a record store the
          * caller names. No graph, no index, no daemon. */
         "migrate-comments",
+        /* sync merges two record stores and touches no project, no index and
+         * no daemon state. It carries the same hazard fetch-model documents
+         * above: unlisted, a top-level command falls through to MCP_CLIENT,
+         * so `hyponoia sync` would attach to a daemon and then serve MCP on
+         * stdin — a hang where a merge was asked for. */
+        "sync",
     };
     /* EVERY top-level command handle_subcommand() dispatches must appear above
      * or in the branch list below. This function and that if-chain are two
