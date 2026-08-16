@@ -19,6 +19,7 @@
 #include "test_framework.h"
 #include "test_helpers.h"
 
+#include <ask/ask_provider.h> /* key custody (§3.2 step 5) */
 #include <ask/ask_vectors.h>
 #include <ask/ask_view.h>
 #include <cli/cli.h>              /* hyp_config_*, HYP_CONFIG_ASK_ESC_* */
@@ -805,6 +806,18 @@ static void esc_cache_configure(const esc_cache_t *c, const char *provider, cons
     hyp_config_close(cfg);
 }
 
+/* May a shared, long-lived server read the key for a client (§3.2 step 5).
+ * Separate from the setter above because the tests that use it need to change
+ * this one value between two calls without rewriting the rest of the lane. */
+static void esc_cache_configure_daemon_key(const esc_cache_t *c, const char *value) {
+    hyp_config_t *cfg = hyp_config_open(c->dir);
+    if (!cfg) {
+        return;
+    }
+    hyp_config_set(cfg, HYP_CONFIG_ASK_ESC_DAEMON_KEY, value);
+    hyp_config_close(cfg);
+}
+
 #define ESC_TEST_KEY_VAR "HYP_TEST_ASK_ESCALATION_KEY_VAR"
 
 /* A project with one node and NO vector fixture at all — neither lane built. */
@@ -843,6 +856,7 @@ TEST(ask_local_answers_carry_lane_and_both_encoders) {
     ASSERT_NOT_NULL(strstr(inner, "index_encoder: test-double/axis-1024"));
     /* No space disclosure on the local lane: one model on both sides. */
     ASSERT_NULL(strstr(inner, "space:"));
+    ASSERT_NULL(strstr(inner, "key_custody:"));
     free(inner);
     free(resp);
 
@@ -856,6 +870,10 @@ TEST(ask_local_answers_carry_lane_and_both_encoders) {
     ASSERT_STR_EQ(yyjson_get_str(yyjson_obj_get(root, "query_encoder")), "test-double/axis-1024");
     ASSERT_STR_EQ(yyjson_get_str(yyjson_obj_get(root, "index_encoder")), "test-double/axis-1024");
     ASSERT_NULL(yyjson_obj_get(root, "space"));
+    /* No key_custody either: the local lane reads no key, so a claim about
+     * whose key paid would be a claim about nothing (§3.2 step 5). Asserted in
+     * BOTH encodings, because the text path is the one a client reads. */
+    ASSERT_NULL(yyjson_obj_get(root, "key_custody"));
     yyjson_doc_free(doc);
     free(inner);
     free(resp);
@@ -1083,6 +1101,197 @@ TEST(ask_escalate_index_mode_still_refuses_an_unbuilt_escalation_index) {
     hyp_ask_backend_install(NULL);
     hyp_unsetenv(ESC_TEST_KEY_VAR);
     esc_cache_end(&cache);
+    PASS();
+}
+
+/* ── Key custody through the tool (NEXT-STEPS §3.2 step 5) ─────────
+ *
+ * Every `ask` reaching the handler in production is served by the daemon —
+ * MCP sessions through the stdio frontend, `hyponoia cli ask`, and the graph
+ * UI's /api/embed-view/ask all execute in that one long-lived process. So the
+ * environment the key would come from belongs to whoever started the daemon.
+ * Under the default this is refused, and the refusal is what the caller sees.
+ *
+ * Note what CANNOT be asserted here: the successful escalated answer, whose
+ * `key_custody` disclosure needs a live paid provider call to reach. Its text
+ * is pinned separately, below, through the same function the handler uses. */
+TEST(ask_escalate_refuses_when_a_shared_server_would_spend_the_owners_key) {
+    fake_reset();
+    esc_cache_t cache;
+    ASSERT_TRUE(esc_cache_begin(&cache));
+    /* The key IS present in this process — that is the whole point. What is
+     * missing is the owner's permission for a shared server to lend it. */
+    hyp_setenv(ESC_TEST_KEY_VAR, "not-a-real-key-placeholder", 1);
+    esc_cache_configure(&cache, "voyage", "voyage-4-large", ESC_TEST_KEY_VAR, "query");
+    ASSERT_EQ(hyp_ask_backend_install(&g_fake_backend_voyage4), 0);
+    hyp_mcp_server_t *srv = ask_srv_with_nodes("askproj");
+    ASSERT_NOT_NULL(srv);
+    /* Stamp the fixture with the voyage-4 backend's own id so the index reads
+     * as AVAILABLE and the run reaches the lane's later gates. Without it the
+     * "built by a different model" gate answers first and the second leg below
+     * would be testing nothing. */
+    ask_fixture_put_meta(hyp_store_get_db(hyp_mcp_server_store(srv)), "askproj",
+                         "voyage-4-nano-Q8_0@test-double", HYP_ASK_DIM, "none", 0, 3);
+    hyp_ask_provider_declare_shared_key_custody("the hyponoia daemon (pid 4242)");
+
+    char *resp = ask_call(srv, "{\"project\":\"askproj\",\"question\":\"GOLD\",\"escalate\":true}");
+    ASSERT_NOT_NULL(resp);
+    ASSERT_TRUE(ask_is_error(resp));
+    char *inner = ask_inner_text(resp);
+    ASSERT_NOT_NULL(inner);
+    ASSERT_NOT_NULL(strstr(inner, "the hyponoia daemon (pid 4242)"));
+    ASSERT_NOT_NULL(strstr(inner, HYP_CONFIG_ASK_ESC_DAEMON_KEY));
+    ASSERT_NOT_NULL(strstr(inner, ESC_TEST_KEY_VAR));
+    ASSERT_NOT_NULL(strstr(inner, "NOTHING was sent"));
+    ASSERT_NOT_NULL(strstr(inner, "did NOT fall back"));
+    /* NOT the sentence for an unconfigured lane: the lane is configured, and
+     * sending someone to re-set a provider they already set is the wrong
+     * remedy for a permission refusal. */
+    ASSERT_NULL(strstr(inner, "escalation encoder is not usable"));
+    /* THE PLACEHOLDER MUST NEVER BE ECHOED — a refusal is the other place a
+     * secret leaks, and this one is written to be pasted into a bug report. */
+    ASSERT_NULL(strstr(inner, "not-a-real-key-placeholder"));
+    ASSERT_NULL(strstr(inner, "results:"));
+    ASSERT_EQ(g_fake_query_calls, 0);
+    free(inner);
+    free(resp);
+
+    /* Allowed: the custody gate stops refusing and the lane's OWN gates take
+     * over. The model is switched to voyage-code-3 first — measured NOT in the
+     * voyage-4 space — so the next gate is the space gate and NO REQUEST CAN
+     * LEAVE THE MACHINE. Leaving voyage-4-large configured here would let a
+     * passing space gate carry the placeholder key to the real endpoint, which
+     * is a network call in a unit test and a leak in a CI log. */
+    esc_cache_configure(&cache, NULL, "voyage-code-3", NULL, NULL);
+    esc_cache_configure_daemon_key(&cache, HYP_CONFIG_ASK_ESC_DAEMON_KEY_ALLOW);
+    resp = ask_call(srv, "{\"project\":\"askproj\",\"question\":\"GOLD\",\"escalate\":true}");
+    ASSERT_NOT_NULL(resp);
+    ASSERT_TRUE(ask_is_error(resp));
+    inner = ask_inner_text(resp);
+    ASSERT_NOT_NULL(inner);
+    ASSERT_NOT_NULL(strstr(inner, "embedding space"));
+    ASSERT_NULL(strstr(inner, "may not spend on your behalf"));
+    ASSERT_NULL(strstr(inner, HYP_CONFIG_ASK_ESC_DAEMON_KEY));
+    ASSERT_NULL(strstr(inner, "not-a-real-key-placeholder"));
+    ASSERT_EQ(g_fake_query_calls, 0);
+    free(inner);
+    free(resp);
+
+    hyp_ask_provider_clear_key_custody_for_test();
+    hyp_mcp_server_free(srv);
+    hyp_ask_backend_install(NULL);
+    hyp_unsetenv(ESC_TEST_KEY_VAR);
+    esc_cache_end(&cache);
+    PASS();
+}
+
+/* CALLER CUSTODY IS UNCHANGED, AND THAT IS THE POINT OF THE DEFAULT. A process
+ * that holds the key itself — `embed --escalation`, a directly-spawned stdio
+ * server, this test — is never gated, whatever the setting says. If this ever
+ * fails, default-refuse has started costing people the lane they configured. */
+TEST(ask_escalate_under_caller_custody_is_not_gated_by_the_daemon_key_setting) {
+    fake_reset();
+    esc_cache_t cache;
+    ASSERT_TRUE(esc_cache_begin(&cache));
+    hyp_setenv(ESC_TEST_KEY_VAR, "not-a-real-key-placeholder", 1);
+    esc_cache_configure(&cache, "voyage", "voyage-code-3", ESC_TEST_KEY_VAR, "query");
+    esc_cache_configure_daemon_key(&cache, HYP_CONFIG_ASK_ESC_DAEMON_KEY_REFUSE);
+    ASSERT_EQ(hyp_ask_backend_install(&g_fake_backend_voyage4), 0);
+    hyp_mcp_server_t *srv = ask_srv_with_nodes("askproj");
+    ASSERT_NOT_NULL(srv);
+    ask_fixture_put_meta(hyp_store_get_db(hyp_mcp_server_store(srv)), "askproj",
+                         "voyage-4-nano-Q8_0@test-double", HYP_ASK_DIM, "none", 0, 3);
+    hyp_ask_provider_clear_key_custody_for_test();
+
+    /* voyage-code-3 is measured NOT in the voyage-4 space, so the answer is a
+     * refusal — but it must be the SPACE refusal, reached only because custody
+     * let the encoder be built at all. */
+    char *resp = ask_call(srv, "{\"project\":\"askproj\",\"question\":\"GOLD\",\"escalate\":true}");
+    ASSERT_NOT_NULL(resp);
+    ASSERT_TRUE(ask_is_error(resp));
+    char *inner = ask_inner_text(resp);
+    ASSERT_NOT_NULL(inner);
+    ASSERT_NOT_NULL(strstr(inner, "embedding space"));
+    ASSERT_NULL(strstr(inner, "may not spend on your behalf"));
+    ASSERT_NULL(strstr(inner, HYP_CONFIG_ASK_ESC_DAEMON_KEY));
+    ASSERT_NULL(strstr(inner, "not-a-real-key-placeholder"));
+    free(inner);
+    free(resp);
+
+    hyp_mcp_server_free(srv);
+    hyp_ask_backend_install(NULL);
+    hyp_unsetenv(ESC_TEST_KEY_VAR);
+    esc_cache_end(&cache);
+    PASS();
+}
+
+/* THE GRAPH UI IS A SECOND SPENDING ROUTE, AND IT IS THE SAME GATE.
+ * `/api/embed-view/ask` (§3.1 step 5) POSTs to hyp_mcp_ask_view_overlay, which
+ * takes the same arguments as the tool — `escalate` included — and runs the
+ * tool itself. It is worth its own test rather than an argument from reading,
+ * because it reaches the lane through a DIFFERENT hyp_mcp_server_t on a
+ * different thread, and because the caller there is a browser: there is no
+ * client environment to read a key from even in principle. The route is
+ * localhost-only, which bounds who can reach it and does not bound what it
+ * would have spent. */
+TEST(ask_view_overlay_is_gated_by_key_custody_like_the_tool) {
+    fake_reset();
+    esc_cache_t cache;
+    ASSERT_TRUE(esc_cache_begin(&cache));
+    hyp_setenv(ESC_TEST_KEY_VAR, "not-a-real-key-placeholder", 1);
+    esc_cache_configure(&cache, "voyage", "voyage-4-large", ESC_TEST_KEY_VAR, "query");
+    ASSERT_EQ(hyp_ask_backend_install(&g_fake_backend_voyage4), 0);
+    hyp_mcp_server_t *srv = ask_srv_with_nodes("askproj");
+    ASSERT_NOT_NULL(srv);
+    ask_fixture_put_meta(hyp_store_get_db(hyp_mcp_server_store(srv)), "askproj",
+                         "voyage-4-nano-Q8_0@test-double", HYP_ASK_DIM, "none", 0, 3);
+    hyp_ask_provider_declare_shared_key_custody("the hyponoia daemon (pid 4242)");
+
+    char *json = hyp_mcp_ask_view_overlay(
+        srv, "{\"project\":\"askproj\",\"question\":\"GOLD\",\"escalate\":true}");
+    ASSERT_NOT_NULL(json);
+    ASSERT_NOT_NULL(strstr(json, "may not spend on your behalf"));
+    ASSERT_NOT_NULL(strstr(json, "the hyponoia daemon (pid 4242)"));
+    ASSERT_NULL(strstr(json, "not-a-real-key-placeholder"));
+    ASSERT_EQ(g_fake_query_calls, 0);
+    free(json);
+
+    hyp_ask_provider_clear_key_custody_for_test();
+    hyp_mcp_server_free(srv);
+    hyp_ask_backend_install(NULL);
+    hyp_unsetenv(ESC_TEST_KEY_VAR);
+    esc_cache_end(&cache);
+    PASS();
+}
+
+/* The disclosure the successful escalated answer carries. Pinned through the
+ * handler's own function because the success path needs a paid provider call.
+ * What matters most is the last assertion in each block: the sentence names
+ * the VARIABLE and can never name the VALUE. */
+TEST(ask_key_custody_disclosure_names_the_variable_and_never_the_key) {
+    char text[HYP_SZ_512];
+
+    hyp_ask_provider_clear_key_custody_for_test();
+    text[0] = '\0';
+    hyp_mcp_ask_key_custody_text_for_test(ESC_TEST_KEY_VAR, text, sizeof(text));
+    ASSERT_NOT_NULL(strstr(text, "caller"));
+    ASSERT_NOT_NULL(strstr(text, ESC_TEST_KEY_VAR));
+    ASSERT_NOT_NULL(strstr(text, "this process's own environment"));
+    ASSERT_NULL(strstr(text, "not-a-real-key-placeholder"));
+
+    hyp_ask_provider_declare_shared_key_custody("the hyponoia daemon (pid 4242)");
+    text[0] = '\0';
+    hyp_mcp_ask_key_custody_text_for_test(ESC_TEST_KEY_VAR, text, sizeof(text));
+    ASSERT_NOT_NULL(strstr(text, "shared"));
+    ASSERT_NOT_NULL(strstr(text, ESC_TEST_KEY_VAR));
+    ASSERT_NOT_NULL(strstr(text, "the hyponoia daemon (pid 4242)"));
+    ASSERT_NOT_NULL(strstr(text, "NOT from the environment"));
+    ASSERT_NOT_NULL(strstr(text, HYP_CONFIG_ASK_ESC_DAEMON_KEY));
+    /* It says how to stop it, not merely that it happened. */
+    ASSERT_NOT_NULL(strstr(text, HYP_CONFIG_ASK_ESC_DAEMON_KEY_REFUSE));
+    ASSERT_NULL(strstr(text, "not-a-real-key-placeholder"));
+
+    hyp_ask_provider_clear_key_custody_for_test();
     PASS();
 }
 
@@ -1492,6 +1701,10 @@ SUITE(ask) {
     RUN_TEST(ask_escalate_query_mode_refuses_without_key_naming_the_variable);
     RUN_TEST(ask_escalate_query_mode_refuses_when_the_index_space_is_unknown);
     RUN_TEST(ask_escalate_query_mode_refuses_a_space_mismatch_naming_both_spaces);
+    RUN_TEST(ask_escalate_refuses_when_a_shared_server_would_spend_the_owners_key);
+    RUN_TEST(ask_escalate_under_caller_custody_is_not_gated_by_the_daemon_key_setting);
+    RUN_TEST(ask_view_overlay_is_gated_by_key_custody_like_the_tool);
+    RUN_TEST(ask_key_custody_disclosure_names_the_variable_and_never_the_key);
     RUN_TEST(ask_escalate_query_mode_without_a_local_index_says_so);
     RUN_TEST(ask_escalate_index_mode_still_refuses_an_unbuilt_escalation_index);
     RUN_TEST(ask_escalate_refuses_an_unrecognised_mode);

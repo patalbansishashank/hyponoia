@@ -429,6 +429,37 @@ int hyp_config_delete(hyp_config_t *cfg, const char *key);
 #define HYP_CONFIG_ASK_ESC_MODE_INDEX "index"
 #define HYP_CONFIG_ASK_ESC_MODE_DEFAULT HYP_CONFIG_ASK_ESC_MODE_QUERY
 
+/* MAY A LONG-LIVED SHARED SERVER READ THE KEY ON A CLIENT'S BEHALF
+ * (NEXT-STEPS.md §3.2 step 5)?
+ *
+ * Everything above is about WHAT is sent. This one is about WHOSE KEY PAYS.
+ * The daemon serves every MCP session, every CLI tool invocation and the graph
+ * UI's HTTP routes, and it reads $KEY out of the environment it was started
+ * with — so with no gate, any local process of this account that reaches its
+ * socket can escalate on the owner's account without holding the key. Measured
+ * during §3.1: an escalated `ask` returned `lane: escalation-query` from a
+ * client whose own environment had no key at all.
+ *
+ *   refuse — THE DEFAULT. A shared server does not read the key; an escalated
+ *            ask through one is refused, naming the holder and this setting.
+ *            Costs nothing offline: escalation is opt-in and per call, and the
+ *            local lane never reads a key.
+ *   allow  — the owner has decided that lending the daemon's key to any local
+ *            client is what they want. Every escalated answer then discloses
+ *            the custody (`key_custody`), and `daemon status` says so too.
+ *
+ * Default-refuse is the same rule the rest of this lane already follows: money
+ * never moves because something was left unsaid. hyp_config_validate refuses
+ * any third word rather than storing it, so a typo cannot become a spending
+ * decision. Note the asymmetry with ask.escalation.mode, which refuses an
+ * unrecognised value at READ time too: this key does not need to, because only
+ * the exact word "allow" opens the gate and everything else — including a
+ * value written by hand or by an older binary — lands on the safe side. */
+#define HYP_CONFIG_ASK_ESC_DAEMON_KEY "ask.escalation.daemon_key"
+#define HYP_CONFIG_ASK_ESC_DAEMON_KEY_ALLOW "allow"
+#define HYP_CONFIG_ASK_ESC_DAEMON_KEY_REFUSE "refuse"
+#define HYP_CONFIG_ASK_ESC_DAEMON_KEY_DEFAULT HYP_CONFIG_ASK_ESC_DAEMON_KEY_REFUSE
+
 /* Check a key/value pair before it is stored. Returns 0 when the value is
  * acceptable, non-zero otherwise with a caller-facing sentence in `err`.
  * Unknown keys are allowed through unchanged — this validates the keys it
