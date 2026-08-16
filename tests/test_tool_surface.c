@@ -1263,7 +1263,7 @@ TEST(tool_surface_every_advertised_tool_carries_complete_annotations) {
 
 /* ── 6c · The memory surface is reachable, and fails closed ────────────
  *
- * The mechanical half of §4 C8u. `record_memory` and `search_memory` were
+ * The mechanical half of reachability. `record_memory` and `search_memory` were
  * RESERVED rows — published signatures, dispatched nowhere — and this asserts
  * what a client gets now that they are not: a write that comes back with an
  * id, the same record read back by the reader, and the two refusals that must

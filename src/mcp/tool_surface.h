@@ -425,7 +425,7 @@ typedef enum {
     X("manage_adr", NULL, 0, 0, 0U, HYP_TOOL_DEPRECATED, NULL, HYP_TOOL_ANN_DOC_REPLACE)           \
     X("ingest_traces", NULL, 0, 0, 0U, HYP_TOOL_LIVE, NULL, HYP_TOOL_ANN_APPEND)                   \
                                                                                                    \
-    /* ── Rows 16-19: the §4 Phase 1 signatures, published and frozen. The                    \
+    /* ── Rows 16-19: the workspace and memory signatures, frozen. The                    \
      * first two are LIVE; the last two are still RESERVED — advertised                          \
      * nowhere and callable nowhere until their status flips, each row already                     \
      * complete so the flip is one token. See the prose block below each name                      \

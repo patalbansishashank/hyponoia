@@ -596,7 +596,7 @@ TEST(agent_profiles_earlier_generations_still_render_for_migration) {
 
 /* ── The writer sits on no tier, and that is the point ─────────────────
  *
- * §4 C8u's constraint, asserted rather than commented: every generated tier
+ * The constraint, asserted rather than commented: every generated tier
  * states read-only in its own description, so a tool that APPENDS may not be
  * on one. Reachability for the writer therefore comes from the full server,
  * not from a profile — which is why this test checks the negative on the
