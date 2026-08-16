@@ -92,6 +92,97 @@ them.
 Every answer discloses the model, the language whose prefix was rendered,
 whether any declaration was truncated, and the population searched.
 
+## One call, and the lines named
+
+`ask` returns **3 candidates by default and the source of the top 2**, so a
+common-case question does not need a second `get_code_snippet` round trip.
+
+Real answer, abridged (`lld/ELF`, "Which pass folds together read-only sections
+that turn out to hold byte-identical contents?"):
+
+````
+results: 3  (cols: qn label file lines score)
+  <project>.Options.print_icf_sections Function Options.td 395-397 0.4562
+  <project>.ICF.run Function ICF.cpp 464-580 0.451
+  <project>.SyntheticSections.lld::elf.RelroPaddingSection Class SyntheticSections.h 812-817 0.4478
+
+source: 2  (verbatim lines for the top 2 row(s), capped at 40 lines / 1600 bytes each; a CUT span names its full range and get_code_snippet returns the rest. Pass include_source=false for coordinates only.)
+#1 <project>.Options.print_icf_sections Options.td:395-397 — whole, 3 lines
+```
+defm print_icf_sections: B<"print-icf-sections",
+    "List identical folded sections",
+    "Do not list identical folded sections (default)">;
+```
+#2 <project>.ICF.run ICF.cpp:464-498 of 464-580 — CUT at 35 of 117 lines
+```
+template <class ELFT> void ICF<ELFT>::run() {
+  ...
+```
+````
+
+The fence grows past any backtick run inside the span, so source that is itself
+markdown cannot close the block early.
+
+Every number there is measured on the pinned corpus (`lld/ELF`, the frozen 60):
+
+- **2 spans, not 3.** With `v0.3.1` at `limit=10`, gold landed at rank 1 on 13
+  questions and rank 2 on 10 — and at **rank 3 on none of the 60**. A third
+  span would cost bytes on every question to buy nothing measurable.
+- **40 lines / 1600 bytes per span.** The median gold declaration is 37 lines
+  and 1,382 bytes, so the median one arrives whole; the cap cuts the tail,
+  which is the half where a second call was going to happen anyway.
+- **3,200 bytes for the whole block**, a shared pool, so the answer's size is a
+  bound rather than a consequence.
+- **`limit` 10 → 3.** Rows 4-10 carried a fifth of the answers and most of the
+  bytes. `limit` is still honoured up to 500 for a survey; only the top 2 ever
+  carry text.
+
+A span over the cap is marked `CUT`, names its full line range, and points at
+the call that returns the rest. It is never silently shortened — the same rule
+as `available: false`: a caller must be able to tell from the outside that it is
+holding part of something.
+
+`include_source=false` returns coordinates only.
+
+### What it costs
+
+Tool-result **bytes** over all 60 frozen questions on `lld/ELF`, `v0.3.1`
+against this build (median / mean):
+
+| what the caller gets | calls | median | mean |
+|---|---|---|---|
+| `v0.3.1` `ask`, limit 10 — coordinates, **no code** | 1 | 1,765 | 1,750 |
+| `v0.3.1` `ask` + `get_code_snippet` on the top row — code | **2** | 3,249 | 3,878 |
+| this build, default — **code, one call** | **1** | **2,712** | **2,737** |
+| this build, `include_source=false` | 1 | 925 | 941 |
+| control: this build at limit 10, no source | 1 | 1,775 | 1,823 |
+
+The control reproduces `v0.3.1` to within 10 bytes at the median (the residue is
+the `exact` column, on the 11 of 60 questions where it fires at limit 10), so the
+two rows above it are measuring the same thing. The one-call answer is **16.5%
+below the two-call median and 29.4% below its mean**, and it carries the gold
+declaration's own source text on **23 of 60** questions — exactly the top-2 hit
+rate, since the top 2 are what carry text.
+
+## The `exact` column, which is not a confidence
+
+When at least one candidate's own name is spelled in the question, the rows
+carry an `exact` column and the answer carries one sentence saying what it
+means. `exact=true` is **a fact about two strings** — the question contains that
+declaration's name as a whole word (case-sensitive), or its `Parent::name` tail.
+It is not a score, not a threshold and not a confidence: §2.4 closed score-margin
+gates by measurement when two corpora disagreed 3× on band width, and nothing
+here reopens them. `exact=false` is not evidence against a row, and when nothing
+matched the column is absent entirely rather than a wall of `false`.
+
+Its measured fire rate is the honest half: **0 of 75 gold declarations** on the
+frozen 60. That query set was *built* so every question avoids the word the code
+uses, which makes it the one corpus where an exact-name marker is guaranteed
+silent. It fired at all on 3 of 60 answers at the default limit and 11 of 60 at
+`limit=10` — always on a non-gold row that happened to share a word with the
+question, which is exactly what the column claims and no more. It costs nothing
+when it does not fire.
+
 ## Which agents can call it
 
 The generated agent profiles (`hyponoia`, `hyponoia-auditor`) and the
