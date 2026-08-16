@@ -113,6 +113,8 @@ const char *hyp_anchor_status_str(hyp_anchor_status_t status) {
         return "orphaned";
     case HYP_ANCHOR_UNKNOWN_WORKSPACE:
         return "unknown-workspace";
+    case HYP_ANCHOR_AMBIGUOUS:
+        return "ambiguous";
     }
     return "unknown";
 }
@@ -208,9 +210,66 @@ static hyp_anchor_status_t an_classify_found(hyp_store_t *store, hyp_anchor_res_
 
 /* ── The candidate scan ──────────────────────────────────────────── */
 
+/* Address first, then file and line. The tiebreak is not cosmetic: a
+ * duplicated qualified name gives several candidates ONE address, and ordering
+ * on the address alone would leave their order up to qsort. */
 static int an_candidate_cmp(const void *a, const void *b) {
-    return strcmp(((const hyp_anchor_candidate_t *)a)->address,
-                  ((const hyp_anchor_candidate_t *)b)->address);
+    const hyp_anchor_candidate_t *x = a;
+    const hyp_anchor_candidate_t *y = b;
+    int c = strcmp(x->address, y->address);
+    if (c != 0) {
+        return c;
+    }
+    c = strcmp(x->file_path, y->file_path);
+    if (c != 0) {
+        return c;
+    }
+    return x->start_line - y->start_line;
+}
+
+/* Append one candidate, growing the array. Bumps scan_skipped and appends
+ * nothing when the node cannot form an address or the array cannot grow — a
+ * candidate that cannot be named cannot be presented, and the caller's list is
+ * then a floor rather than a list. */
+static void an_add_candidate(hyp_anchor_res_t *out, int *cap, const hyp_node_t *node,
+                             const char *project, hyp_addr_rel_t relation) {
+    hyp_addr_t cand_addr;
+    char cand_str[HYP_ADDR_MAX + 1];
+    if (!node->qualified_name ||
+        hyp_addr_init(&cand_addr, out->anchor.addr.workspace, project, node->qualified_name) !=
+            HYP_ADDR_OK ||
+        !hyp_addr_format(&cand_addr, cand_str, sizeof(cand_str))) {
+        out->scan_skipped++;
+        return;
+    }
+    if (out->candidate_count == *cap) {
+        int new_cap = *cap == 0 ? 4 : *cap * 2;
+        hyp_anchor_candidate_t *grown = realloc(out->candidates, (size_t)new_cap * sizeof(*grown));
+        if (!grown) {
+            out->scan_skipped++;
+            return;
+        }
+        out->candidates = grown;
+        *cap = new_cap;
+    }
+    hyp_anchor_candidate_t *c = &out->candidates[out->candidate_count];
+    memset(c, 0, sizeof(*c));
+    snprintf(c->address, sizeof(c->address), "%s", cand_str);
+    snprintf(c->qn, sizeof(c->qn), "%s", node->qualified_name);
+    snprintf(c->project, sizeof(c->project), "%s", project ? project : "");
+    snprintf(c->file_path, sizeof(c->file_path), "%s", node->file_path ? node->file_path : "");
+    c->start_line = node->start_line;
+    c->end_line = node->end_line;
+    snprintf(c->label, sizeof(c->label), "%s", node->label ? node->label : "");
+    c->relation = relation;
+    out->candidate_count++;
+}
+
+static void an_sort_candidates(hyp_anchor_res_t *out) {
+    if (out->candidate_count > 1) {
+        qsort(out->candidates, (size_t)out->candidate_count, sizeof(*out->candidates),
+              an_candidate_cmp);
+    }
 }
 
 /* Gather every node in the workspace whose CURRENT span content hashes to the
@@ -261,39 +320,9 @@ static void an_scan_candidates(hyp_store_t *store, hyp_anchor_res_t *out) {
                 if (strcmp(cur, out->anchor.span_hash) != 0) {
                     continue;
                 }
-                /* A content match. Its address is re-derived, not assumed —
-                 * a node that cannot form one cannot be presented. */
-                hyp_addr_t cand_addr;
-                char cand_str[HYP_ADDR_MAX + 1];
-                if (hyp_addr_init(&cand_addr, out->anchor.addr.workspace, project,
-                                  node->qualified_name) != HYP_ADDR_OK ||
-                    !hyp_addr_format(&cand_addr, cand_str, sizeof(cand_str))) {
-                    out->scan_skipped++;
-                    continue;
-                }
-                if (out->candidate_count == cap) {
-                    int new_cap = cap == 0 ? 4 : cap * 2;
-                    hyp_anchor_candidate_t *grown =
-                        realloc(out->candidates, (size_t)new_cap * sizeof(*grown));
-                    if (!grown) {
-                        out->scan_skipped++;
-                        continue;
-                    }
-                    out->candidates = grown;
-                    cap = new_cap;
-                }
-                hyp_anchor_candidate_t *c = &out->candidates[out->candidate_count];
-                memset(c, 0, sizeof(*c));
-                snprintf(c->address, sizeof(c->address), "%s", cand_str);
-                snprintf(c->qn, sizeof(c->qn), "%s", node->qualified_name);
-                snprintf(c->project, sizeof(c->project), "%s", project ? project : "");
-                snprintf(c->file_path, sizeof(c->file_path), "%s",
-                         node->file_path ? node->file_path : "");
-                c->start_line = node->start_line;
-                c->end_line = node->end_line;
-                snprintf(c->label, sizeof(c->label), "%s", node->label ? node->label : "");
-                c->relation = HYP_ADDR_REL_CONTENT_ONLY;
-                out->candidate_count++;
+                /* A content match at a different address. Its own address is
+                 * re-derived, not assumed. */
+                an_add_candidate(out, &cap, node, project, HYP_ADDR_REL_CONTENT_ONLY);
             }
             hyp_store_free_nodes(nodes, node_count);
         }
@@ -303,10 +332,53 @@ static void an_scan_candidates(hyp_store_t *store, hyp_anchor_res_t *out) {
         free(files);
     }
     hyp_store_free_projects(projects, project_count);
-    if (out->candidate_count > 1) {
-        qsort(out->candidates, (size_t)out->candidate_count, sizeof(*out->candidates),
-              an_candidate_cmp);
+    an_sort_candidates(out);
+}
+
+/* ── The collision ───────────────────────────────────────────────── */
+
+/* One qualified name, several nodes. Publish all of them with the content
+ * comparison as their evidence, and let the caller choose nothing: an address
+ * that names two entities names neither (store.h), and the re-derived address
+ * is identical for every one of them, so a reader handed a single answer has
+ * no way to tell it was picked. */
+static hyp_anchor_status_t an_ambiguous(hyp_store_t *store, hyp_anchor_res_t *out,
+                                        const char *project, const char *qn) {
+    out->status = HYP_ANCHOR_AMBIGUOUS;
+    hyp_node_t *nodes = NULL;
+    int node_count = 0;
+    int cap = 0;
+    /* The suffix lookup is a superset — a longer name ending in this one at a
+     * dot boundary also matches — so every hit is filtered back to byte
+     * equality before it can be published. */
+    if (hyp_store_find_nodes_by_qn_suffix(store, project, qn, &nodes, &node_count) !=
+        HYP_STORE_OK) {
+        out->scan_skipped++;
+    } else {
+        for (int i = 0; i < node_count; i++) {
+            const hyp_node_t *node = &nodes[i];
+            if (!node->qualified_name || strcmp(node->qualified_name, qn) != 0) {
+                continue;
+            }
+            hyp_addr_rel_t rel = HYP_ADDR_REL_INVALID;
+            if (out->anchor.has_hash) {
+                char cur[HYP_ADDR_SPAN_HASH_LEN + 1];
+                if (an_node_current_hash(store, node->project, node->file_path, node->start_line,
+                                         node->end_line, cur)) {
+                    rel = strcmp(cur, out->anchor.span_hash) == 0 ? HYP_ADDR_REL_SAME
+                                                                  : HYP_ADDR_REL_EDITED;
+                }
+            }
+            an_add_candidate(out, &cap, node, node->project ? node->project : project, rel);
+        }
+        hyp_store_free_nodes(nodes, node_count);
     }
+    an_sort_candidates(out);
+    snprintf(out->reason, sizeof(out->reason),
+             "\"%s\" addresses more than one node in \"%s\"; %d candidate(s) published, "
+             "attached to none",
+             qn, project ? project : "", out->candidate_count);
+    return out->status;
 }
 
 /* ── Resolution ──────────────────────────────────────────────────── */
@@ -372,10 +444,12 @@ hyp_anchor_status_t hyp_anchor_resolve(hyp_store_t *store, const char *workspace
         /* A QN that addresses two nodes resolves to neither. Re-attaching to
          * whichever one the index stepped first would report RESOLVED, and
          * RESOLVED to the wrong file is the one answer a reader cannot audit —
-         * the address is rebuilt from the same QN, so it compares equal. */
+         * the address is rebuilt from the same QN, so it compares equal. It is
+         * a state and not an ERROR: "the anchor names two things" and "the
+         * store broke" are different answers, and only one of them is about
+         * the anchor. */
         if (rc == HYP_STORE_AMBIGUOUS) {
-            return an_error(out, "\"%s\" addresses more than one node in \"%s\"", addr->qn,
-                            addr->repo);
+            return an_ambiguous(store, out, addr->repo, addr->qn);
         }
         if (rc != HYP_STORE_NOT_FOUND) {
             return an_error(out, "store failed looking up \"%s\"%s", addr->qn, NULL);
@@ -405,8 +479,7 @@ hyp_anchor_status_t hyp_anchor_resolve(hyp_store_t *store, const char *workspace
             if (rc == HYP_STORE_ERR || rc == HYP_STORE_AMBIGUOUS) {
                 hyp_anchor_status_t bad =
                     rc == HYP_STORE_AMBIGUOUS
-                        ? an_error(out, "\"%s\" addresses more than one node in \"%s\"", addr->qn,
-                                   projects[pi].name)
+                        ? an_ambiguous(store, out, projects[pi].name, addr->qn)
                         : an_error(out, "store failed looking up \"%s\"%s", addr->qn, NULL);
                 hyp_store_free_projects(projects, project_count);
                 if (have_first) {
