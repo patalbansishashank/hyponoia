@@ -604,6 +604,7 @@ extern void suite_str_intern(void);
 extern void suite_record(void);
 extern void suite_scrub(void);
 extern void suite_watched_ingest(void);
+extern void suite_transcript(void);
 extern void suite_feed(void);
 extern void suite_log(void);
 extern void suite_str_util(void);
@@ -654,7 +655,10 @@ extern void suite_fqn(void);
 extern void suite_fqn_differential(void);
 extern void suite_identity(void);
 extern void suite_anchor(void);
+extern void suite_comment_migrate(void);
+extern void suite_sync(void);
 extern void suite_workspace_resolve(void);
+extern void suite_workspace_calls(void);
 extern void suite_route_canon(void);
 extern void suite_path_alias(void);
 extern void suite_watcher(void);
@@ -881,6 +885,7 @@ int main(int argc, char **argv) {
 
     /* Feed adapters (§4 track D) */
     RUN_SELECTED_SUITE(watched_ingest);
+    RUN_SELECTED_SUITE(transcript);
 
     /* Existing C code regression tests */
     RUN_SELECTED_SUITE(ac);
@@ -957,7 +962,10 @@ int main(int argc, char **argv) {
     RUN_SELECTED_SUITE(fqn_differential);
     RUN_SELECTED_SUITE(identity);
     RUN_SELECTED_SUITE(anchor);
+    RUN_SELECTED_SUITE(comment_migrate);
+    RUN_SELECTED_SUITE(sync);
     RUN_SELECTED_SUITE(workspace_resolve);
+    RUN_SELECTED_SUITE(workspace_calls);
     RUN_SELECTED_SUITE(route_canon);
     RUN_SELECTED_SUITE(path_alias);
 

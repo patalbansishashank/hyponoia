@@ -125,11 +125,17 @@ static const hyp_record_t *find_by_origin(const hyp_record_set_t *store, const c
 /* ── Statuses ───────────────────────────────────────────────────────────── */
 
 TEST(feed_status_reasons_are_present_and_distinct) {
-    const hyp_feed_status_t all[] = {HYP_FEED_OK,          HYP_FEED_END,
-                                     HYP_FEED_SKIP,        HYP_FEED_ERR_NULL,
-                                     HYP_FEED_ERR_SOURCE,  HYP_FEED_ERR_SCHEMA,
-                                     HYP_FEED_ERR_ITEM,    HYP_FEED_ERR_ORIGIN,
-                                     HYP_FEED_ERR_PRECURSOR, HYP_FEED_ERR_DUPLICATE,
+    const hyp_feed_status_t all[] = {HYP_FEED_OK,
+                                     HYP_FEED_END,
+                                     HYP_FEED_SKIP,
+                                     HYP_FEED_ERR_NO_SCRUBBER,
+                                     HYP_FEED_ERR_NULL,
+                                     HYP_FEED_ERR_SOURCE,
+                                     HYP_FEED_ERR_SCHEMA,
+                                     HYP_FEED_ERR_ITEM,
+                                     HYP_FEED_ERR_ORIGIN,
+                                     HYP_FEED_ERR_PRECURSOR,
+                                     HYP_FEED_ERR_DUPLICATE,
                                      HYP_FEED_ERR_ALLOC};
     size_t n = sizeof(all) / sizeof(all[0]);
     for (size_t i = 0; i < n; i++) {
@@ -157,7 +163,7 @@ TEST(feed_ingest_builds_records_and_reingest_is_idempotent) {
 
     hyp_feed_source_t src = toy_open(&toy, items, 3);
     hyp_feed_ingest_stats_t stats;
-    ASSERT_EQ(hyp_feed_ingest(&src, store, &stats), HYP_FEED_OK);
+    ASSERT_EQ(hyp_feed_ingest(&src, hyp_scrub_text, store, &stats), HYP_FEED_OK);
     ASSERT_EQ(stats.items, 3);
     ASSERT_EQ(stats.built, 3);
     ASSERT_EQ(stats.absorbed, 0);
@@ -177,7 +183,7 @@ TEST(feed_ingest_builds_records_and_reingest_is_idempotent) {
 
     /* The same pull again: a union of the same records, stated as numbers. */
     src = toy_open(&toy, items, 3);
-    ASSERT_EQ(hyp_feed_ingest(&src, store, &stats), HYP_FEED_OK);
+    ASSERT_EQ(hyp_feed_ingest(&src, hyp_scrub_text, store, &stats), HYP_FEED_OK);
     ASSERT_EQ(stats.items, 3);
     ASSERT_EQ(stats.built, 0);
     ASSERT_EQ(stats.absorbed, 3);
@@ -206,7 +212,7 @@ TEST(feed_ingest_is_atomic) {
 
     hyp_feed_source_t src = toy_open(&toy, bad, 3);
     hyp_feed_ingest_stats_t stats;
-    ASSERT_EQ(hyp_feed_ingest(&src, store, &stats), HYP_FEED_ERR_ITEM);
+    ASSERT_EQ(hyp_feed_ingest(&src, hyp_scrub_text, store, &stats), HYP_FEED_ERR_ITEM);
     ASSERT_EQ((int)stats.record_status, (int)HYP_RECORD_ERR_CONTENT);
     ASSERT_EQ(hyp_record_set_count(store), 0);
     char after[HYP_RECORD_ID_LEN + 1];
@@ -220,7 +226,7 @@ TEST(feed_ingest_is_atomic) {
         toy_item("toy:3", "three", NULL),
     };
     src = toy_open(&toy, good, 3);
-    ASSERT_EQ(hyp_feed_ingest(&src, store, &stats), HYP_FEED_OK);
+    ASSERT_EQ(hyp_feed_ingest(&src, hyp_scrub_text, store, &stats), HYP_FEED_OK);
     ASSERT_EQ(hyp_record_set_count(store), 3);
 
     hyp_record_set_free(store);
@@ -236,17 +242,17 @@ TEST(feed_ingest_requires_an_origin) {
     ASSERT_NOT_NULL(store);
 
     hyp_feed_source_t src = toy_open(&toy, &anonymous, 1);
-    ASSERT_EQ(hyp_feed_ingest(&src, store, NULL), HYP_FEED_ERR_ORIGIN);
+    ASSERT_EQ(hyp_feed_ingest(&src, hyp_scrub_text, store, NULL), HYP_FEED_ERR_ORIGIN);
     ASSERT_EQ(hyp_record_set_count(store), 0);
 
     hyp_feed_item_t empty_origin = toy_item("", "content", NULL);
     src = toy_open(&toy, &empty_origin, 1);
-    ASSERT_EQ(hyp_feed_ingest(&src, store, NULL), HYP_FEED_ERR_ORIGIN);
+    ASSERT_EQ(hyp_feed_ingest(&src, hyp_scrub_text, store, NULL), HYP_FEED_ERR_ORIGIN);
 
     /* A skip notice needs a name too — and a stated reason. */
     hyp_feed_item_t nameless_skip = toy_skip(NULL, "because");
     src = toy_open(&toy, &nameless_skip, 1);
-    ASSERT_EQ(hyp_feed_ingest(&src, store, NULL), HYP_FEED_ERR_ORIGIN);
+    ASSERT_EQ(hyp_feed_ingest(&src, hyp_scrub_text, store, NULL), HYP_FEED_ERR_ORIGIN);
 
     /* And a notice with no stated policy is a source defect, not a policy —
      * the audit would otherwise carry a decline it cannot account for. */
@@ -256,7 +262,7 @@ TEST(feed_ingest_requires_an_origin) {
     defective.name = "toy-defective";
     defective.ctx = &spent;
     defective.next = reasonless_notice_next;
-    ASSERT_EQ(hyp_feed_ingest(&defective, store, NULL), HYP_FEED_ERR_SOURCE);
+    ASSERT_EQ(hyp_feed_ingest(&defective, hyp_scrub_text, store, NULL), HYP_FEED_ERR_SOURCE);
     ASSERT_EQ(hyp_record_set_count(store), 0);
 
     hyp_record_set_free(store);
@@ -275,7 +281,7 @@ TEST(feed_ingest_resolves_precursors_in_any_yield_order) {
     hyp_record_set_t *store = hyp_record_set_create();
     ASSERT_NOT_NULL(store);
     hyp_feed_source_t src = toy_open(&toy, items, 3);
-    ASSERT_EQ(hyp_feed_ingest(&src, store, NULL), HYP_FEED_OK);
+    ASSERT_EQ(hyp_feed_ingest(&src, hyp_scrub_text, store, NULL), HYP_FEED_OK);
     ASSERT_EQ(hyp_record_set_count(store), 3);
 
     const hyp_record_t *a = find_by_origin(store, "toy:a");
@@ -306,13 +312,13 @@ TEST(feed_ingest_refuses_an_unknown_precursor) {
     hyp_record_set_t *store = hyp_record_set_create();
     ASSERT_NOT_NULL(store);
     hyp_feed_source_t src = toy_open(&toy, items, 2);
-    ASSERT_EQ(hyp_feed_ingest(&src, store, NULL), HYP_FEED_ERR_PRECURSOR);
+    ASSERT_EQ(hyp_feed_ingest(&src, hyp_scrub_text, store, NULL), HYP_FEED_ERR_PRECURSOR);
     ASSERT_EQ(hyp_record_set_count(store), 0); /* atomic: toy:1 did not land */
 
     /* A cycle is the same defect wearing a loop. */
     const hyp_feed_item_t knot[] = {toy_item("toy:s", "self", "toy:s")};
     src = toy_open(&toy, knot, 1);
-    ASSERT_EQ(hyp_feed_ingest(&src, store, NULL), HYP_FEED_ERR_PRECURSOR);
+    ASSERT_EQ(hyp_feed_ingest(&src, hyp_scrub_text, store, NULL), HYP_FEED_ERR_PRECURSOR);
 
     /* The control: name a precursor the pull holds and the same feed lands. */
     const hyp_feed_item_t fixed[] = {
@@ -320,7 +326,7 @@ TEST(feed_ingest_refuses_an_unknown_precursor) {
         toy_item("toy:2", "two", "toy:1"),
     };
     src = toy_open(&toy, fixed, 2);
-    ASSERT_EQ(hyp_feed_ingest(&src, store, NULL), HYP_FEED_OK);
+    ASSERT_EQ(hyp_feed_ingest(&src, hyp_scrub_text, store, NULL), HYP_FEED_OK);
     ASSERT_EQ(hyp_record_set_count(store), 2);
 
     hyp_record_set_free(store);
@@ -336,7 +342,7 @@ TEST(feed_ingest_refuses_one_origin_with_two_contents) {
     hyp_record_set_t *store = hyp_record_set_create();
     ASSERT_NOT_NULL(store);
     hyp_feed_source_t src = toy_open(&toy, twins_differ, 2);
-    ASSERT_EQ(hyp_feed_ingest(&src, store, NULL), HYP_FEED_ERR_DUPLICATE);
+    ASSERT_EQ(hyp_feed_ingest(&src, hyp_scrub_text, store, NULL), HYP_FEED_ERR_DUPLICATE);
     ASSERT_EQ(hyp_record_set_count(store), 0);
 
     /* The control: the same origin repeated IDENTICALLY is the source
@@ -347,7 +353,7 @@ TEST(feed_ingest_refuses_one_origin_with_two_contents) {
     };
     src = toy_open(&toy, twins_same, 2);
     hyp_feed_ingest_stats_t stats;
-    ASSERT_EQ(hyp_feed_ingest(&src, store, &stats), HYP_FEED_OK);
+    ASSERT_EQ(hyp_feed_ingest(&src, hyp_scrub_text, store, &stats), HYP_FEED_OK);
     ASSERT_EQ(stats.items, 2);
     ASSERT_EQ(stats.built, 1);
     ASSERT_EQ(stats.absorbed, 1);
@@ -371,7 +377,7 @@ TEST(feed_skip_notices_are_counted_and_break_no_chain) {
     ASSERT_NOT_NULL(store);
     hyp_feed_source_t src = toy_open(&toy, items, 3);
     hyp_feed_ingest_stats_t stats;
-    ASSERT_EQ(hyp_feed_ingest(&src, store, &stats), HYP_FEED_OK);
+    ASSERT_EQ(hyp_feed_ingest(&src, hyp_scrub_text, store, &stats), HYP_FEED_OK);
     ASSERT_EQ(stats.items, 2);
     ASSERT_EQ(stats.skipped, 1);
     ASSERT_EQ(hyp_record_set_count(store), 2);
@@ -405,7 +411,7 @@ TEST(feed_audit_complete_with_identical_rows_and_names_the_missing_one) {
     hyp_record_set_t *store = hyp_record_set_create();
     ASSERT_NOT_NULL(store);
     hyp_feed_source_t src = toy_open(&toy, items, 6);
-    ASSERT_EQ(hyp_feed_ingest(&src, store, NULL), HYP_FEED_OK);
+    ASSERT_EQ(hyp_feed_ingest(&src, hyp_scrub_text, store, NULL), HYP_FEED_OK);
     ASSERT_EQ(hyp_record_set_count(store), 6); /* the twins stayed distinct */
 
     hyp_feed_audit_t report;
@@ -428,7 +434,7 @@ TEST(feed_audit_complete_with_identical_rows_and_names_the_missing_one) {
     hyp_record_set_t *lossy = hyp_record_set_create();
     ASSERT_NOT_NULL(lossy);
     src = toy_open(&toy, partial, 5);
-    ASSERT_EQ(hyp_feed_ingest(&src, lossy, NULL), HYP_FEED_OK);
+    ASSERT_EQ(hyp_feed_ingest(&src, hyp_scrub_text, lossy, NULL), HYP_FEED_OK);
 
     src = toy_open(&toy, items, 6);
     ASSERT_EQ(hyp_feed_audit_run(&src, lossy, &report), HYP_FEED_OK);
@@ -455,7 +461,7 @@ TEST(feed_audit_reports_skips_separately_from_loss) {
     hyp_record_set_t *store = hyp_record_set_create();
     ASSERT_NOT_NULL(store);
     hyp_feed_source_t src = toy_open(&toy, items, 3);
-    ASSERT_EQ(hyp_feed_ingest(&src, store, NULL), HYP_FEED_OK);
+    ASSERT_EQ(hyp_feed_ingest(&src, hyp_scrub_text, store, NULL), HYP_FEED_OK);
 
     hyp_feed_audit_t report;
     src = toy_open(&toy, items, 3);
@@ -486,9 +492,9 @@ TEST(feed_audit_is_per_feed_never_global) {
     ASSERT_NOT_NULL(store);
 
     hyp_feed_source_t src = toy_open(&toy, feed_a, 1);
-    ASSERT_EQ(hyp_feed_ingest(&src, store, NULL), HYP_FEED_OK);
+    ASSERT_EQ(hyp_feed_ingest(&src, hyp_scrub_text, store, NULL), HYP_FEED_OK);
     src = toy_open(&toy, feed_b, 2);
-    ASSERT_EQ(hyp_feed_ingest(&src, store, NULL), HYP_FEED_OK);
+    ASSERT_EQ(hyp_feed_ingest(&src, hyp_scrub_text, store, NULL), HYP_FEED_OK);
 
     hyp_record_input_t local;
     memset(&local, 0, sizeof(local));
@@ -523,13 +529,21 @@ TEST(feed_refuses_nothing_quietly) {
     hyp_record_set_t *store = hyp_record_set_create();
     ASSERT_NOT_NULL(store);
     hyp_feed_audit_t report;
-    ASSERT_EQ(hyp_feed_ingest(NULL, store, NULL), HYP_FEED_ERR_NULL);
+
+    /* The scrubber is checked before anything else, so a call missing BOTH
+     * the source and the scrubber names the scrubber. A caller who wired no
+     * scrubber must not be told about an argument they did supply. */
+    ASSERT_EQ(hyp_feed_ingest(NULL, NULL, NULL, NULL), HYP_FEED_ERR_NO_SCRUBBER);
+    ASSERT_STR_NEQ(hyp_feed_status_reason(HYP_FEED_ERR_NO_SCRUBBER),
+                   hyp_feed_status_reason(HYP_FEED_ERR_NULL));
+    ASSERT_EQ(hyp_feed_ingest(NULL, hyp_scrub_text, store, NULL), HYP_FEED_ERR_NULL);
     ASSERT_EQ(hyp_feed_audit_run(NULL, store, &report), HYP_FEED_ERR_NULL);
     ASSERT_EQ(hyp_feed_audit_run(NULL, store, NULL), HYP_FEED_ERR_NULL);
 
     toy_feed_t toy;
     hyp_feed_source_t src = toy_open(&toy, NULL, 0);
-    ASSERT_EQ(hyp_feed_ingest(&src, NULL, NULL), HYP_FEED_ERR_NULL);
+    ASSERT_EQ(hyp_feed_ingest(&src, hyp_scrub_text, NULL, NULL), HYP_FEED_ERR_NULL);
+    ASSERT_EQ(hyp_feed_ingest(&src, NULL, store, NULL), HYP_FEED_ERR_NO_SCRUBBER);
 
     /* An empty feed is a real answer: nothing expected, nothing missing. */
     src = toy_open(&toy, NULL, 0);
@@ -686,7 +700,7 @@ TEST(multica_messages_map_as_documented) {
     hyp_record_set_t *store = hyp_record_set_create();
     ASSERT_NOT_NULL(store);
     hyp_feed_ingest_stats_t stats;
-    ASSERT_EQ(hyp_feed_ingest(&src, store, &stats), HYP_FEED_OK);
+    ASSERT_EQ(hyp_feed_ingest(&src, hyp_scrub_text, store, &stats), HYP_FEED_OK);
     hyp_feed_source_close(&src);
     ASSERT_EQ(stats.items, 3);
     ASSERT_EQ(stats.built, 3);
@@ -754,7 +768,7 @@ TEST(multica_null_policy_is_the_stated_one) {
         fix_rows(&audit_ctx, HYP_MULTICA_MESSAGES_COLUMNS, messages_ncols(), POLICY_FIXTURE, 4);
 
     hyp_feed_ingest_stats_t stats;
-    ASSERT_EQ(hyp_feed_ingest(&src, store, &stats), HYP_FEED_OK);
+    ASSERT_EQ(hyp_feed_ingest(&src, hyp_scrub_text, store, &stats), HYP_FEED_OK);
     hyp_feed_source_close(&src);
     ASSERT_EQ(stats.items, 1);   /* only p4 became a record */
     ASSERT_EQ(stats.skipped, 3); /* each decline is on the books */
@@ -788,7 +802,7 @@ TEST(multica_null_policy_is_the_stated_one) {
     };
     rows = fix_rows(&ctx, HYP_MULTICA_MESSAGES_COLUMNS, messages_ncols(), NAMELESS_FIXTURE, 1);
     ASSERT_EQ(hyp_multica_messages_open(&rows, &src), HYP_FEED_OK);
-    ASSERT_EQ(hyp_feed_ingest(&src, store, NULL), HYP_FEED_ERR_SOURCE);
+    ASSERT_EQ(hyp_feed_ingest(&src, hyp_scrub_text, store, NULL), HYP_FEED_ERR_SOURCE);
     hyp_feed_source_close(&src);
 
     hyp_record_set_free(store);
@@ -843,18 +857,18 @@ TEST(multica_attribution_fails_closed) {
     hyp_multica_rows_t rows =
         fix_rows(&ctx, HYP_MULTICA_MESSAGES_COLUMNS, messages_ncols(), UNATTRIBUTED_TRUE, 1);
     ASSERT_EQ(hyp_multica_messages_open(&rows, &src), HYP_FEED_OK);
-    ASSERT_EQ(hyp_feed_ingest(&src, store, NULL), HYP_FEED_ERR_SOURCE);
+    ASSERT_EQ(hyp_feed_ingest(&src, hyp_scrub_text, store, NULL), HYP_FEED_ERR_SOURCE);
     hyp_feed_source_close(&src);
     ASSERT_EQ(hyp_record_set_count(store), 0);
 
     rows = fix_rows(&ctx, HYP_MULTICA_MESSAGES_COLUMNS, messages_ncols(), UNATTRIBUTED_UNKNOWN, 1);
     ASSERT_EQ(hyp_multica_messages_open(&rows, &src), HYP_FEED_OK);
-    ASSERT_EQ(hyp_feed_ingest(&src, store, NULL), HYP_FEED_ERR_SOURCE);
+    ASSERT_EQ(hyp_feed_ingest(&src, hyp_scrub_text, store, NULL), HYP_FEED_ERR_SOURCE);
     hyp_feed_source_close(&src);
 
     rows = fix_rows(&ctx, HYP_MULTICA_MESSAGES_COLUMNS, messages_ncols(), UNATTRIBUTED_FALSE, 1);
     ASSERT_EQ(hyp_multica_messages_open(&rows, &src), HYP_FEED_OK);
-    ASSERT_EQ(hyp_feed_ingest(&src, store, NULL), HYP_FEED_OK);
+    ASSERT_EQ(hyp_feed_ingest(&src, hyp_scrub_text, store, NULL), HYP_FEED_OK);
     hyp_feed_source_close(&src);
     const hyp_record_t *rec = find_by_origin(store, "multica:task_message:m1");
     ASSERT_NOT_NULL(rec);
@@ -889,13 +903,13 @@ TEST(multica_order_pin_refuses_a_wire_that_reorders) {
     hyp_multica_rows_t rows =
         fix_rows(&ctx, HYP_MULTICA_MESSAGES_COLUMNS, messages_ncols(), BACKWARDS, 2);
     ASSERT_EQ(hyp_multica_messages_open(&rows, &src), HYP_FEED_OK);
-    ASSERT_EQ(hyp_feed_ingest(&src, store, NULL), HYP_FEED_ERR_SOURCE);
+    ASSERT_EQ(hyp_feed_ingest(&src, hyp_scrub_text, store, NULL), HYP_FEED_ERR_SOURCE);
     hyp_feed_source_close(&src);
     ASSERT_EQ(hyp_record_set_count(store), 0);
 
     rows = fix_rows(&ctx, HYP_MULTICA_MESSAGES_COLUMNS, messages_ncols(), REGROUPED, 3);
     ASSERT_EQ(hyp_multica_messages_open(&rows, &src), HYP_FEED_OK);
-    ASSERT_EQ(hyp_feed_ingest(&src, store, NULL), HYP_FEED_ERR_SOURCE);
+    ASSERT_EQ(hyp_feed_ingest(&src, hyp_scrub_text, store, NULL), HYP_FEED_ERR_SOURCE);
     hyp_feed_source_close(&src);
 
     /* And a source that dies mid-pull aborts the pull, atomically. */
@@ -903,7 +917,7 @@ TEST(multica_order_pin_refuses_a_wire_that_reorders) {
         fix_rows(&ctx, HYP_MULTICA_MESSAGES_COLUMNS, messages_ncols(), MSG_FIXTURE, 3);
     ctx.fail_at = 2;
     ASSERT_EQ(hyp_multica_messages_open(&dying, &src), HYP_FEED_OK);
-    ASSERT_EQ(hyp_feed_ingest(&src, store, NULL), HYP_FEED_ERR_SOURCE);
+    ASSERT_EQ(hyp_feed_ingest(&src, hyp_scrub_text, store, NULL), HYP_FEED_ERR_SOURCE);
     hyp_feed_source_close(&src);
     ASSERT_EQ(hyp_record_set_count(store), 0);
 
@@ -922,7 +936,7 @@ TEST(multica_end_to_end_audit_names_the_lost_row) {
     hyp_multica_rows_t rows =
         fix_rows(&ctx, HYP_MULTICA_MESSAGES_COLUMNS, messages_ncols(), MSG_FIXTURE, 3);
     ASSERT_EQ(hyp_multica_messages_open(&rows, &src), HYP_FEED_OK);
-    ASSERT_EQ(hyp_feed_ingest(&src, store, NULL), HYP_FEED_OK);
+    ASSERT_EQ(hyp_feed_ingest(&src, hyp_scrub_text, store, NULL), HYP_FEED_OK);
     hyp_feed_source_close(&src);
 
     hyp_feed_audit_t report;
@@ -946,7 +960,7 @@ TEST(multica_end_to_end_audit_names_the_lost_row) {
     ASSERT_NOT_NULL(lossy);
     rows = fix_rows(&ctx, HYP_MULTICA_MESSAGES_COLUMNS, messages_ncols(), WITHOUT_M2, 2);
     ASSERT_EQ(hyp_multica_messages_open(&rows, &src), HYP_FEED_OK);
-    ASSERT_EQ(hyp_feed_ingest(&src, lossy, NULL), HYP_FEED_OK);
+    ASSERT_EQ(hyp_feed_ingest(&src, hyp_scrub_text, lossy, NULL), HYP_FEED_OK);
     hyp_feed_source_close(&src);
 
     rows = fix_rows(&ctx, HYP_MULTICA_MESSAGES_COLUMNS, messages_ncols(), MSG_FIXTURE, 3);
@@ -996,7 +1010,7 @@ TEST(multica_issues_map_and_pin_their_enums) {
     hyp_record_set_t *store = hyp_record_set_create();
     ASSERT_NOT_NULL(store);
     hyp_feed_ingest_stats_t stats;
-    ASSERT_EQ(hyp_feed_ingest(&src, store, &stats), HYP_FEED_OK);
+    ASSERT_EQ(hyp_feed_ingest(&src, hyp_scrub_text, store, &stats), HYP_FEED_OK);
     hyp_feed_source_close(&src);
     ASSERT_EQ(stats.items, 2);
     ASSERT_EQ(stats.skipped, 1); /* i3: nothing worth a record */
@@ -1024,7 +1038,7 @@ TEST(multica_issues_map_and_pin_their_enums) {
     };
     rows = fix_rows(&ctx, HYP_MULTICA_ISSUES_COLUMNS, issues_ncols(), DRIFTED, 1);
     ASSERT_EQ(hyp_multica_issues_open(&rows, &src), HYP_FEED_OK);
-    ASSERT_EQ(hyp_feed_ingest(&src, store, NULL), HYP_FEED_ERR_SCHEMA);
+    ASSERT_EQ(hyp_feed_ingest(&src, hyp_scrub_text, store, NULL), HYP_FEED_ERR_SCHEMA);
     hyp_feed_source_close(&src);
 
     hyp_record_set_free(store);
@@ -1233,6 +1247,117 @@ TEST(multica_schema_pin_fails_closed_on_drift) {
     PASS();
 }
 
+/* ── The SQL and the declaration, compared to EACH OTHER ────────────────── */
+
+/*
+ * Every other pin test here feeds HYP_MULTICA_*_COLUMNS into a fixture and
+ * then asserts the pin against that same array — the pin proven against
+ * itself. The `AS` aliases in the SQL are the only thing deciding what a live
+ * wire returns, and nothing read them. Rename one alias and the adapter
+ * refuses every real pull forever with ERR_SCHEMA, blaming upstream drift for
+ * a typo of ours, while every test in this file still prints PASS.
+ *
+ * So: parse the aliases out of the SQL text and compare them, in order,
+ * against the declaration. Two artifacts, compared to each other. A third
+ * hand-written list here would only be one more thing to keep in step.
+ */
+
+#define ALIAS_MAX 32
+#define ALIAS_LEN 64
+
+/* Explicit byte class, never <ctype.h>: a parser whose answer depends on the
+ * machine's locale is not a pin. */
+static bool alias_byte(char c) {
+    return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_';
+}
+
+/*
+ * The aliases a SQL statement's top-level select list declares, in order.
+ * Returns 0 for "could not parse", and the caller treats 0 as a failure: a
+ * parser that silently found nothing would make the comparison below
+ * vacuously green, which is precisely the shape of defect it exists to close.
+ * The select list ends at the first line-initial FROM — `extract(epoch FROM
+ * ...)` is inside a call, never at the start of a line.
+ */
+static size_t sql_select_aliases(const char *sql, char out[][ALIAS_LEN], size_t cap) {
+    const char *end = strstr(sql, "\nFROM ");
+    if (!end) {
+        return 0;
+    }
+    size_t n = 0;
+    for (const char *p = sql; p + 3 <= end; p++) {
+        if (!(p[0] == 'A' && p[1] == 'S' && p[2] == ' ')) {
+            continue;
+        }
+        if (p != sql && p[-1] != ' ' && p[-1] != '\n') {
+            continue; /* part of a longer word, not the keyword */
+        }
+        const char *id = p + 3;
+        size_t len = 0;
+        while (id[len] && alias_byte(id[len])) {
+            len++;
+        }
+        if (len == 0 || len >= ALIAS_LEN || n >= cap) {
+            return 0; /* fail closed rather than report a partial reading */
+        }
+        memcpy(out[n], id, len);
+        out[n][len] = '\0';
+        n++;
+    }
+    return n;
+}
+
+TEST(multica_sql_aliases_agree_with_the_pinned_columns) {
+    char probe[ALIAS_MAX][ALIAS_LEN];
+
+    /* The parser must be able to say NO, or "it found everything" is not
+     * evidence about anything. */
+    ASSERT_EQ(sql_select_aliases("SELECT 1", probe, ALIAS_MAX), 0);
+    ASSERT_EQ(sql_select_aliases("SELECT x AS \nFROM t\n", probe, ALIAS_MAX), 0);
+    ASSERT_EQ(sql_select_aliases(HYP_MULTICA_MESSAGES_SQL, probe, 2), 0); /* capped */
+
+    const struct {
+        const char *what;
+        const char *sql;
+        const char *const *declared;
+    } pairs[] = {
+        {"messages", HYP_MULTICA_MESSAGES_SQL, HYP_MULTICA_MESSAGES_COLUMNS},
+        {"issues", HYP_MULTICA_ISSUES_SQL, HYP_MULTICA_ISSUES_COLUMNS},
+        {"workspaces", HYP_MULTICA_WORKSPACES_SQL, HYP_MULTICA_WORKSPACES_COLUMNS},
+        {"schema pin", HYP_MULTICA_SCHEMA_PIN_SQL, HYP_MULTICA_SCHEMA_PIN_COLUMNS},
+    };
+
+    for (size_t i = 0; i < sizeof(pairs) / sizeof(pairs[0]); i++) {
+        char aliases[ALIAS_MAX][ALIAS_LEN];
+        size_t parsed = sql_select_aliases(pairs[i].sql, aliases, ALIAS_MAX);
+        if (parsed == 0) {
+            printf("\n    the %s SQL yielded no aliases — the parse failed, so this "
+                   "comparison would prove nothing\n",
+                   pairs[i].what);
+        }
+        ASSERT_GT(parsed, 0);
+
+        size_t declared = 0;
+        while (pairs[i].declared[declared]) {
+            declared++;
+        }
+        if (parsed != declared) {
+            printf("\n    the %s SQL declares %zu aliases, the pinned column list has %zu\n",
+                   pairs[i].what, parsed, declared);
+        }
+        ASSERT_EQ(parsed, declared);
+
+        for (size_t c = 0; c < declared; c++) {
+            if (strcmp(aliases[c], pairs[i].declared[c]) != 0) {
+                printf("\n    the %s SQL and its pinned columns disagree at position %zu\n",
+                       pairs[i].what, c);
+            }
+            ASSERT_STR_EQ(aliases[c], pairs[i].declared[c]);
+        }
+    }
+    PASS();
+}
+
 /* ── Suite ──────────────────────────────────────────────────────────────── */
 
 SUITE(feed) {
@@ -1264,4 +1389,5 @@ SUITE(feed) {
     RUN_TEST(multica_schema_pin_accepts_the_verified_catalog);
     RUN_TEST(multica_schema_pin_separates_required_from_ignored);
     RUN_TEST(multica_schema_pin_fails_closed_on_drift);
+    RUN_TEST(multica_sql_aliases_agree_with_the_pinned_columns);
 }

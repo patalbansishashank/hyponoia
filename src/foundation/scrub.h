@@ -37,9 +37,9 @@
  *
  * ── One prefix table, three readers ──────────────────────────────────────────
  *
- * The vendor prefix list below is THE list. It used to live as a static local
- * inside cli.c's config_looks_like_a_secret(); it moved here so that every
- * detector links (or parses) ONE definition instead of carrying a copy:
+ * The vendor prefix list below is THE list. It lives in a header, rather than
+ * as a static local inside the one detector that needed it first, so that
+ * every detector links (or parses) ONE definition instead of carrying a copy:
  *
  *   1. hyp_config_validate() (src/cli/cli.c) — refuses a pasted key where an
  *      environment variable NAME belongs.
@@ -160,11 +160,11 @@ typedef struct {
  *
  * `scrub` is REQUIRED. Passing NULL refuses with HYP_RECORD_ERR_NULL and
  * builds nothing: an ingest path with no scrubber wired cannot construct a
- * record at all. THIS IS THE REFUSAL D1 MUST ASSERT (§4 assertion table,
- * "D2 before D1"): D1's transcript store must construct records ONLY through
- * this seam, and D1's test must assert that ingest with no scrubber wired is
- * refused — not "a scrubber is available", but "unscrubbed ingest is
- * impossible". A scrubber that itself fails (allocation) refuses with
+ * record at all. THIS IS THE REFUSAL AN INGEST MUST ASSERT. A transcript store
+ * constructs records ONLY through this seam, and its test asserts that ingest
+ * with no scrubber wired is refused — not "a scrubber is available", but
+ * "unscrubbed ingest is impossible", because only the second claim is about
+ * the code. A scrubber that itself fails (allocation) refuses with
  * HYP_RECORD_ERR_ALLOC, again building nothing: fail closed, because a record
  * that slips past the scrub is permanent.
  */

@@ -2,10 +2,10 @@
  * ask_index.h — the per-declaration vector index the `ask` lane searches.
  *
  * A SECOND, OPT-IN store, sharing nothing with the static token vectors in
- * `nodes.properties`. §2.1's seam: "only `search_graph`'s optional parameter
- * and `SEMANTICALLY_RELATED` read the token vectors. The other fourteen tools
- * have no opinion about how they are made." This header does not touch them,
- * and `ask` cannot perturb them because it never reads them.
+ * `nodes.properties`. The seam is narrow on purpose: only `search_graph`'s
+ * optional parameter and `SEMANTICALLY_RELATED` read the token vectors, and
+ * every other tool has no opinion about how they are made. This header does
+ * not touch them, and `ask` cannot perturb them because it never reads them.
  *
  * ── The three unavailable states, and why they are not one ──
  *
@@ -85,17 +85,18 @@ typedef enum {
  * only when a truncated span ranked would be silent in exactly the case that
  * hurts, the one where truncation is WHY it did not. */
 /* The three states are defined once, in semantic/ask_embed.h, which this
- * header already includes. They used to be declared here AND in
- * src/ask/ask_vectors.h — the latter as a STRUCT of the same name — and the
- * collision was invisible until one file needed both. */
+ * header already includes. One definition, deliberately: a second declaration
+ * of the same name elsewhere — especially a struct wearing an enum's name —
+ * stays invisible until one file needs both, and then it is a compile error in
+ * a file that changed nothing. */
 
 typedef struct {
     hyp_ask_avail_t avail;
     hyp_ask_trunc_state_t trunc;
     int trunc_count; /* meaningful only when trunc == HYP_ASK_TRUNC_SOME */
     int n_vectors;   /* rows for this project; 0 unless AVAILABLE */
-    /* Whether spans covering a whole file were embedded (NEXT-STEPS §2.2
-     * lever 3). Read from the index, never assumed, and disclosed beside
+    /* Whether spans covering a whole file were embedded.
+     * Read from the index, never assumed, and disclosed beside
      * `population` on every answer for the same reason the truncation state
      * is: the caller cannot see what was NOT ranked, and "no file-level
      * answer exists" and "file-level answers were excluded from this index"

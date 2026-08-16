@@ -239,6 +239,24 @@ static const char PROMPT_ASK_GUIDANCE_GEN3[] =
     "project only to override that, and call list_projects only when an answer says it could "
     "not choose. ";
 
+/* Generation 4 ADDS one sentence, and adds nothing else. `search_memory` joins
+ * the analysis tool list in the same generation, and a tool in the list is not
+ * a tool the agent uses: the same surface shipped once with `ask` merely listed
+ * and it was called in 4 runs of 60, against 60 of 60 once one sentence in the
+ * body said WHEN. So the tool and the sentence ship together or neither ships.
+ *
+ * What the sentence must NOT do is describe the tool. The description is on the
+ * tool, the server sends it with every tools/list, and repeating it here is
+ * weight every run pays for a second copy of something it already has —
+ * generation 3 deleted exactly that. The one thing the server cannot say from
+ * inside a tool description is when to prefer this tool over the ones beside
+ * it, so that is the whole sentence.
+ *
+ * Scout never gets it: scout's promise is a small surface of fast positive
+ * discovery, and search_memory is not on it. */
+static const char PROMPT_MEMORY_GUIDANCE_GEN4[] =
+    "For why the code is the way it is — not what it does — call search_memory. ";
+
 char *hyp_render_graph_prompt_generation(hyp_graph_tier_t tier, hyp_graph_access_t access,
                                          unsigned generation) {
     if (!tier_valid(tier) || !access_valid(access) || generation > HYP_PROFILE_GENERATION) {
@@ -282,6 +300,9 @@ char *hyp_render_graph_prompt_generation(hyp_graph_tier_t tier, hyp_graph_access
             profile_buffer_append(&buffer, generation >= HYP_PROFILE_GENERATION_PROJECT_DEFAULT
                                                ? PROMPT_ASK_GUIDANCE_GEN3
                                                : PROMPT_ASK_GUIDANCE_GEN2);
+        }
+        if (tier != HYP_GRAPH_TIER_SCOUT && generation >= HYP_PROFILE_GENERATION_WORKSPACE_MEMORY) {
+            profile_buffer_append(&buffer, PROMPT_MEMORY_GUIDANCE_GEN4);
         }
         profile_buffer_append(
             &buffer,

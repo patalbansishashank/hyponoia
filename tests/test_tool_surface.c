@@ -1033,9 +1033,179 @@ TEST(tool_surface_declared_aliases_dispatch_and_are_never_advertised) {
  *
  * The old TOOL_ANNOTATIONS[] was keyed by name and consulted with
  * `def ? def->destructive : true`, so a tool nobody added to it shipped
- * advertising destructiveHint and openWorldHint. The values below are the ones
- * that have always been on the wire; asserting them is how the fold is shown to
- * have changed no client-visible byte. */
+ * advertising destructiveHint and openWorldHint. The fold made a missing
+ * annotation a compile error — and the test guarding it then checked only that
+ * the four KEYS were present, which is not a claim about any hint. Inverting
+ * readOnlyHint and idempotentHint on every row left it green.
+ *
+ * So the values are checked, and checked the only way that can catch an
+ * emitter that disagrees with the contract: this file expands the SAME table
+ * mcp.c expands, builds the expectation from it, and compares against what a
+ * client reads back over tools/list. Nothing is enumerated by hand, so a row
+ * added later is covered the day it is added.
+ *
+ * The one thing a table-derived expectation cannot catch is the table being
+ * wrong, so the row that carries the meaning is ALSO pinned to literals below
+ * — see tool_surface_erase_is_distinguishable_from_read. */
+static const struct {
+    bool read_only;
+    bool destructive;
+    bool idempotent;
+    bool open_world;
+} SURFACE_ANN_PROFILES[] = {
+#define SURFACE_ANN_PROFILE_ROW(profile, ro, destr, idem, open) {ro, destr, idem, open},
+    HYP_TOOL_ANNOTATION_PROFILES(SURFACE_ANN_PROFILE_ROW)
+#undef SURFACE_ANN_PROFILE_ROW
+};
+
+static const struct {
+    const char *name;
+    hyp_tool_annotation_profile_t annotations;
+} SURFACE_TOOL_ANN[] = {
+#define SURFACE_TOOL_ANN_ROW(name, alias, analysis, scout, generation, status, output_schema, ann) \
+    {name, ann},
+    HYP_TOOL_SURFACE(SURFACE_TOOL_ANN_ROW)
+#undef SURFACE_TOOL_ANN_ROW
+};
+
+/* The four hints one advertised tool carries, as a client holds them. False in
+ * `found` means the tool was not advertised at all. */
+typedef struct {
+    bool found;
+    bool read_only;
+    bool destructive;
+    bool idempotent;
+    bool open_world;
+} surface_hints_t;
+
+static surface_hints_t surface_hints_of(yyjson_val *tools, const char *tool) {
+    surface_hints_t out;
+    memset(&out, 0, sizeof(out));
+    size_t index = 0U;
+    size_t max = 0U;
+    yyjson_val *entry = NULL;
+    yyjson_arr_foreach(tools, index, max, entry) {
+        yyjson_val *name = yyjson_obj_get(entry, "name");
+        if (!name || !yyjson_is_str(name) || strcmp(yyjson_get_str(name), tool) != 0) {
+            continue;
+        }
+        yyjson_val *ann = yyjson_obj_get(entry, "annotations");
+        if (!ann || !yyjson_is_obj(ann)) {
+            return out;
+        }
+        yyjson_val *ro = yyjson_obj_get(ann, "readOnlyHint");
+        yyjson_val *de = yyjson_obj_get(ann, "destructiveHint");
+        yyjson_val *id = yyjson_obj_get(ann, "idempotentHint");
+        yyjson_val *ow = yyjson_obj_get(ann, "openWorldHint");
+        if (!ro || !de || !id || !ow || !yyjson_is_bool(ro) || !yyjson_is_bool(de) ||
+            !yyjson_is_bool(id) || !yyjson_is_bool(ow)) {
+            return out;
+        }
+        out.found = true;
+        out.read_only = yyjson_is_true(ro);
+        out.destructive = yyjson_is_true(de);
+        out.idempotent = yyjson_is_true(id);
+        out.open_world = yyjson_is_true(ow);
+        return out;
+    }
+    return out;
+}
+
+TEST(tool_surface_advertised_hints_equal_the_declared_profile) {
+    char *resp = surface_call(HYP_MCP_TOOL_PROFILE_ALL, "tools/list", NULL);
+    ASSERT_NOT_NULL(resp);
+    yyjson_doc *doc = yyjson_read(resp, strlen(resp), 0);
+    ASSERT_NOT_NULL(doc);
+    yyjson_val *result = yyjson_obj_get(yyjson_doc_get_root(doc), "result");
+    yyjson_val *tools = result ? yyjson_obj_get(result, "tools") : NULL;
+    ASSERT_NOT_NULL(tools);
+
+    const char *failure = NULL;
+    size_t checked = 0U;
+    for (size_t i = 0U; !failure && i < sizeof(SURFACE_TOOL_ANN) / sizeof(SURFACE_TOOL_ANN[0]);
+         i++) {
+        const char *name = SURFACE_TOOL_ANN[i].name;
+        bool advertised = hyp_mcp_tool_surface_status(name) != (int)HYP_TOOL_RESERVED;
+        surface_hints_t seen = surface_hints_of(tools, name);
+        if (!advertised) {
+            if (seen.found) {
+                failure = "a reserved row is advertised with annotations";
+            }
+            continue;
+        }
+        if (!seen.found) {
+            failure = "an advertised tool carries no complete boolean annotation set";
+            continue;
+        }
+        checked++;
+        const size_t p = (size_t)SURFACE_TOOL_ANN[i].annotations;
+        if (seen.read_only != SURFACE_ANN_PROFILES[p].read_only ||
+            seen.destructive != SURFACE_ANN_PROFILES[p].destructive ||
+            seen.idempotent != SURFACE_ANN_PROFILES[p].idempotent ||
+            seen.open_world != SURFACE_ANN_PROFILES[p].open_world) {
+            failure = "an advertised tool's hints differ from the annotation profile its row "
+                      "declares";
+        }
+        /* Two derived invariants that hold whatever the table says, so a wrong
+         * table is caught here too: a read-only tool cannot destroy, and every
+         * shipped tool is local. */
+        if (!failure && seen.read_only && seen.destructive) {
+            failure = "a tool advertises readOnlyHint and destructiveHint together";
+        }
+        if (!failure && seen.open_world) {
+            failure = "an advertised tool claims openWorldHint — every shipped tool is local";
+        }
+    }
+    yyjson_doc_free(doc);
+    free(resp);
+    if (failure) {
+        FAIL(failure);
+    }
+    ASSERT_EQ(checked, (size_t)hyp_mcp_tool_count());
+    PASS();
+}
+
+/* ── 6b · A client can tell the tool that erases from the tool that reads ──
+ *
+ * `delete_project` and `search_graph` shipped advertising byte-identical
+ * hints. Both said destructiveHint=true — one truthfully, one not — so a
+ * client that confirms before a destructive call either confirmed before every
+ * graph search or confirmed before none, and in neither case was it protecting
+ * the database. The literals here are deliberate: this is the one row whose
+ * meaning a table-derived check cannot defend, because inverting the table
+ * moves the expectation with it. */
+TEST(tool_surface_erase_is_distinguishable_from_read) {
+    char *resp = surface_call(HYP_MCP_TOOL_PROFILE_ALL, "tools/list", NULL);
+    ASSERT_NOT_NULL(resp);
+    yyjson_doc *doc = yyjson_read(resp, strlen(resp), 0);
+    ASSERT_NOT_NULL(doc);
+    yyjson_val *result = yyjson_obj_get(yyjson_doc_get_root(doc), "result");
+    yyjson_val *tools = result ? yyjson_obj_get(result, "tools") : NULL;
+    ASSERT_NOT_NULL(tools);
+
+    surface_hints_t erase = surface_hints_of(tools, "delete_project");
+    surface_hints_t read = surface_hints_of(tools, "search_graph");
+    yyjson_doc_free(doc);
+    free(resp);
+
+    if (!erase.found || !read.found) {
+        FAIL("delete_project and search_graph must both be advertised with full annotations");
+    }
+    /* Differ at all — the property the client needs. */
+    if (erase.read_only == read.read_only && erase.destructive == read.destructive &&
+        erase.idempotent == read.idempotent && erase.open_world == read.open_world) {
+        FAIL("delete_project and search_graph advertise identical hints: a client cannot tell "
+             "the tool that erases a database from the tool that reads it");
+    }
+    /* And differ the RIGHT way, so the fix cannot be satisfied by moving any
+     * bit at all. */
+    ASSERT_TRUE(erase.destructive);
+    ASSERT_FALSE(read.destructive);
+    ASSERT_FALSE(erase.read_only);
+    ASSERT_FALSE(read.read_only);
+    PASS();
+}
+
 TEST(tool_surface_every_advertised_tool_carries_complete_annotations) {
     char *resp = surface_call(HYP_MCP_TOOL_PROFILE_ALL, "tools/list", NULL);
     ASSERT_NOT_NULL(resp);
@@ -1088,6 +1258,147 @@ TEST(tool_surface_every_advertised_tool_carries_complete_annotations) {
     ASSERT_NOT_NULL(list);
     ASSERT_NOT_NULL(strstr(list, "\"name\":\"list_projects\""));
     free(list);
+    PASS();
+}
+
+/* ── 6c · The memory surface is reachable, and fails closed ────────────
+ *
+ * The mechanical half of reachability. `record_memory` and `search_memory` were
+ * RESERVED rows — published signatures, dispatched nowhere — and this asserts
+ * what a client gets now that they are not: a write that comes back with an
+ * id, the same record read back by the reader, and the two refusals that must
+ * stay refusals. A transcript kind accepted here would make the ingest
+ * completeness audit meaningless, and an anchor accepted here would create a
+ * record attached to a span nothing verified.
+ *
+ * The OTHER half — whether an agent actually calls it — cannot be asserted in
+ * a unit test at all, and is measured against a real client instead. */
+typedef struct {
+    char dir[256];
+    char *saved;
+} surface_memory_fixture_t;
+
+static bool surface_memory_begin(surface_memory_fixture_t *fx) {
+    snprintf(fx->dir, sizeof(fx->dir), "/tmp/hyp-tool-surface-mem-XXXXXX");
+    if (!hyp_mkdtemp(fx->dir)) {
+        return false;
+    }
+    const char *saved = getenv("HYP_MEMORY_DIR");
+    fx->saved = saved ? strdup(saved) : NULL;
+    hyp_setenv("HYP_MEMORY_DIR", fx->dir, 1);
+    return true;
+}
+
+static void surface_memory_end(surface_memory_fixture_t *fx) {
+    if (fx->saved) {
+        hyp_setenv("HYP_MEMORY_DIR", fx->saved, 1);
+        free(fx->saved);
+        fx->saved = NULL;
+    } else {
+        hyp_unsetenv("HYP_MEMORY_DIR");
+    }
+}
+
+/* One server for the whole exchange: a write and the read that must see it are
+ * the two ends this test exists to hold together. */
+static const char *surface_memory_text(hyp_mcp_server_t *srv, const char *tool, const char *args,
+                                       char *out, size_t cap, bool *is_error) {
+    char *resp = hyp_mcp_handle_tool(srv, tool, args);
+    out[0] = '\0';
+    if (is_error) {
+        *is_error = false;
+    }
+    if (!resp) {
+        return out;
+    }
+    yyjson_doc *doc = yyjson_read(resp, strlen(resp), 0);
+    yyjson_val *root = doc ? yyjson_doc_get_root(doc) : NULL;
+    if (is_error && root) {
+        yyjson_val *err = yyjson_obj_get(root, "isError");
+        *is_error = err && yyjson_is_true(err);
+    }
+    yyjson_val *content = root ? yyjson_obj_get(root, "content") : NULL;
+    yyjson_val *first = content && yyjson_is_arr(content) ? yyjson_arr_get_first(content) : NULL;
+    yyjson_val *text = first ? yyjson_obj_get(first, "text") : NULL;
+    if (text && yyjson_is_str(text)) {
+        snprintf(out, cap, "%s", yyjson_get_str(text));
+    }
+    yyjson_doc_free(doc);
+    free(resp);
+    return out;
+}
+
+TEST(tool_surface_memory_surface_is_live_and_fails_closed) {
+    surface_memory_fixture_t fx;
+    if (!surface_memory_begin(&fx)) {
+        FAIL("could not create a temporary memory store directory");
+    }
+    ASSERT_EQ(hyp_mcp_tool_surface_status("record_memory"), (int)HYP_TOOL_LIVE);
+    ASSERT_EQ(hyp_mcp_tool_surface_status("search_memory"), (int)HYP_TOOL_LIVE);
+
+    hyp_mcp_server_t *srv = hyp_mcp_server_new(NULL);
+    if (!srv) {
+        surface_memory_end(&fx);
+        FAIL("no server");
+    }
+    char text[8192];
+    bool is_error = false;
+
+    /* A transcript kind is refused, and the refusal NAMES the accepted set —
+     * an error that does not say what would work costs a turn to learn. */
+    surface_memory_text(srv, "record_memory",
+                        "{\"kind\":\"transcript\",\"title\":\"t\",\"body\":\"b\"}", text,
+                        sizeof(text), &is_error);
+    bool refused_transcript = is_error && strstr(text, "decision") && strstr(text, "verdict");
+    /* A supplied anchor is refused rather than stored unverified. */
+    surface_memory_text(srv, "record_memory",
+                        "{\"kind\":\"decision\",\"title\":\"t\",\"body\":\"b\","
+                        "\"anchor\":\"hyp1:w/r#foo\"}",
+                        text, sizeof(text), &is_error);
+    bool refused_anchor = is_error && strstr(text, "anchor") != NULL;
+
+    /* The write a client actually makes. */
+    surface_memory_text(srv, "record_memory",
+                        "{\"kind\":\"decision\",\"title\":\"Chose the id-keyed set\","
+                        "\"body\":\"A log has a machine-local order and the union has none.\","
+                        "\"tags\":[\"store\"]}",
+                        text, sizeof(text), &is_error);
+    bool wrote = !is_error && strstr(text, "\"id\"") && strstr(text, "\"anchor_status\"") &&
+                 strstr(text, "unanchored") && strstr(text, "\"written_at\"");
+
+    /* And the reader sees it — the two ends of one store, in one exchange.
+     * `tags` are searchable because they are part of what was said: the record
+     * shape is frozen and has no tag field, so they join the text rather than
+     * being silently dropped. */
+    surface_memory_text(srv, "search_memory", "{\"format\":\"json\",\"query\":\"id-keyed\"}", text,
+                        sizeof(text), &is_error);
+    bool read_back = !is_error && strstr(text, "Chose the id-keyed set") &&
+                     strstr(text, "\"matched\":1") && strstr(text, "store");
+    /* A filter this build cannot compute is refused, never ignored: an ignored
+     * filter returns a superset that reads exactly like a match. */
+    surface_memory_text(srv, "search_memory", "{\"status\":\"orphaned\"}", text, sizeof(text),
+                        &is_error);
+    bool refused_status = is_error && strstr(text, "orphaned") != NULL;
+
+    hyp_mcp_server_free(srv);
+    surface_memory_end(&fx);
+
+    if (!refused_transcript) {
+        FAIL("record_memory accepted a transcript kind, or refused it without naming the "
+             "kinds it accepts");
+    }
+    if (!refused_anchor) {
+        FAIL("record_memory accepted an anchor nothing in this build can resolve");
+    }
+    if (!wrote) {
+        FAIL("record_memory is live and a client gets no id back");
+    }
+    if (!read_back) {
+        FAIL("search_memory cannot see what record_memory just wrote");
+    }
+    if (!refused_status) {
+        FAIL("search_memory silently ignored a status filter it cannot compute");
+    }
     PASS();
 }
 
@@ -1162,6 +1473,9 @@ SUITE(tool_surface) {
     RUN_TEST(tool_surface_index_status_reports_two_freshnesses_separately);
     RUN_TEST(tool_surface_every_advertised_tool_dispatches);
     RUN_TEST(tool_surface_declared_aliases_dispatch_and_are_never_advertised);
+    RUN_TEST(tool_surface_advertised_hints_equal_the_declared_profile);
+    RUN_TEST(tool_surface_erase_is_distinguishable_from_read);
+    RUN_TEST(tool_surface_memory_surface_is_live_and_fails_closed);
     RUN_TEST(tool_surface_every_advertised_tool_carries_complete_annotations);
     RUN_TEST(tool_surface_transcript_kinds_are_not_authorable);
     RUN_TEST(tool_surface_no_reserved_surface_depends_on_the_deprecated_tool);

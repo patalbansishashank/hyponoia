@@ -31,6 +31,7 @@
 #include "daemon/version_cohort.h"
 #include "mcp/mcp.h"
 #include "mcp/index_supervisor.h"
+#include "memory/sync.h"
 #include "ask/ask_cmd.h"
 #include "ask/ask_llama.h"
 #include "ask/ask_provider.h" /* key custody: whose environment this process is */
@@ -40,6 +41,7 @@
 #include "cli/onboard.h"
 #include "cli/progress_sink.h"
 #include "foundation/constants.h"
+#include "memory/comment_migrate.h"
 
 enum {
     MAIN_MIN_ARGC = 1,
@@ -1143,6 +1145,11 @@ static int main_run_allow_root(int argc, char **argv) {
 
 #define HYP_CLI_CMD_BODY_config return hyp_cmd_config(argc - i - SKIP_ONE, argv + i + SKIP_ONE);
 
+#define HYP_CLI_CMD_BODY_sync return hyp_cmd_sync(argc - i - SKIP_ONE, argv + i + SKIP_ONE);
+
+#define HYP_CLI_CMD_BODY_migrate_comments \
+    return hyp_cmd_migrate_comments(argc - i - SKIP_ONE, argv + i + SKIP_ONE);
+
 /* Probe, propose, confirm — never interrogate. Decides and records;
  * deliberately does NOT start the index it prices. */
 #define HYP_CLI_CMD_BODY_onboard return hyp_cmd_onboard(argc - i - SKIP_ONE, argv + i + SKIP_ONE);
@@ -2155,8 +2162,8 @@ static void main_daemon_ctl_print_ui_configuration(void) {
     }
 }
 
-/* THE SPENDING SURFACE, WHERE SOMEONE WOULD GO LOOKING FOR IT
- * (NEXT-STEPS §3.2 step 5). A daemon reads the escalation key out of the
+/* THE SPENDING SURFACE, WHERE SOMEONE WOULD GO LOOKING FOR IT.
+ * A daemon reads the escalation key out of the
  * environment it was started with, so it can spend on behalf of clients that
  * never held the key. Whether it MAY is `ask.escalation.daemon_key`, and that
  * lives in the config database — machine-global, readable from here — so this
@@ -2578,8 +2585,8 @@ int main(int argc, char **argv) {
          * one-shot local CLI is the ONLY daemon-coordinated path that ignored
          * the HYP_TEST_DAEMON_RUNTIME_PARENT seam, so `hyponoia cli <tool>`
          * could not be isolated from the developer's real account-wide
-         * rendezvous even in a seam build. Found while measuring §2.2 lever 4:
-         * two other agents' binaries were holding the version cohort, and the
+         * rendezvous even in a seam build. It surfaces under concurrency:
+         * two other agents' binaries holding the version cohort, and the
          * seam that exists precisely to give a measurement its own namespace
          * did not reach the command being measured. With seams compiled OUT —
          * every production build — main_daemon_endpoint_new() IS
@@ -2897,8 +2904,8 @@ int main(int argc, char **argv) {
 
     if (role == HYP_DAEMON_PROCESS_DAEMON) {
         setup_signal_handlers();
-        /* THIS PROCESS'S ENVIRONMENT IS NOT ITS CALLERS' (NEXT-STEPS §3.2
-         * step 5). Declared here, at the one place a daemon is born, rather
+        /* THIS PROCESS'S ENVIRONMENT IS NOT ITS CALLERS'.
+         * Declared here, at the one place a daemon is born, rather
          * than per MCP session: `environ` was fixed at exec and belongs to the
          * shell that started this daemon, while the sessions, the CLI tool
          * invocations and the graph UI's HTTP routes it is about to serve all

@@ -1,5 +1,5 @@
 /*
- * test_ask_provider.c — the provider table's invariants (NEXT-STEPS.md §2.10 step 2).
+ * test_ask_provider.c — the provider table's invariants.
  *
  * No network. What is worth pinning here is not that HTTP works, it is that the
  * table cannot quietly acquire a row that lies: a provider whose asymmetry
@@ -34,37 +34,38 @@ TEST(ask_provider_table_rows_are_complete_and_asymmetric) {
         ASSERT_TRUE(t[i].max_rows_per_request > 0);
         /* THE ONE THAT MATTERS. Equal values are not a typo that shows up as a
          * crash; they are a silent 50% loss of the mechanism the whole lane
-         * exists for — §2.6 measured Jina's adapter worth +31% RR over sending
-         * no task at all. */
+         * exists for — Jina's own retrieval adapter is worth +31% RR over
+         * sending no task at all. */
         ASSERT_TRUE(strcmp(t[i].asym_document, t[i].asym_query) != 0);
     }
     PASS();
 }
 
-/* §3.1 step 4. When this was written NO CODE PATH READ dim_mode — the adapter
- * always asks the API for HYP_ASK_DIM and never cuts a wider vector itself —
- * so a wrong tag failed nothing, and voyage's was wrong for three days. Since
- * §3.1 step 3 one path does read it: `ask(escalate=true)` in query mode
+/* THIS PIN IS THE ONLY THING THAT CAN CATCH A WRONG dim_mode, and the reason
+ * is uncomfortable: almost no code path reads the field. The adapter always
+ * asks the API for HYP_ASK_DIM and never cuts a wider vector itself, so a
+ * mis-tagged row produces no wrong vector, no failing test and no symptom —
+ * a wrong tag can sit in the table indefinitely and nothing in the product
+ * will say so. One path does read it: `ask(escalate=true)` in query mode
  * refuses a REEMBEDS provider, because scoring its 1024 against a matrix
- * another model truncated to 1024 is cross-space. That makes THIS pin
- * load-bearing rather than documentary. It read REEMBEDS ("1024 and
- * 2048 are DIFFERENT SPACES, each costs its own pass") because §2.7 had run
- * voyage-code-3 at both widths as two document passes; that was how the
- * experiment was run, not a fact about the API. §2.15 asked the API
- * (engine/xmodel/probe_dims.py -> dims.json): voyage-4-large's
- * output_dimension=1024 IS the renormalised first 1024 of its own
- * output_dimension=2048, min cosine 1.000000, every returned width unit-norm.
- * One pass serves both widths. That is TRUNCATES, and it is pinned here so the
- * table cannot drift back to a claim the measurement contradicts. §2.7's
- * result — 2048 scores 0.56189 MRR@10 against 0.57323 at 1024 — is about
- * whether 2048 is worth STORING, and is unchanged by this. */
+ * another model truncated to 1024 is cross-space. That makes this pin
+ * load-bearing rather than documentary.
+ *
+ * TRUNCATES is the answer the API gives, and it is a different question from
+ * whether a width is worth storing. Running a model at two widths as two
+ * document passes is how an experiment can be run; it is not evidence about
+ * the API. Asked directly, voyage-4-large's output_dimension=1024 IS the
+ * renormalised first 1024 of its own output_dimension=2048, min cosine
+ * 1.000000, every returned width unit-norm — one pass serves both. The
+ * separate finding that 2048 scores 0.56189 MRR@10 against 0.57323 at 1024 is
+ * about storage, and leaves the space question untouched. */
 TEST(ask_provider_voyage_dimension_parameter_truncates_it_does_not_reembed) {
     const hyp_ask_provider_t *v = hyp_ask_provider_by_name("voyage");
     ASSERT_NOT_NULL(v);
     ASSERT_EQ(v->dim_mode, HYP_ASK_DIM_TRUNCATES);
     ASSERT_STR_EQ(v->dim_param, "output_dimension");
-    /* Jina's TRUNCATES was measured in §2.6: cutting to 512 cost -10.5% RR,
-     * which is a truncation cost, not a second pass. Unchanged. */
+    /* Jina's TRUNCATES is measured the same way: cutting to 512 costs -10.5%
+     * RR, which is a truncation cost, not a second pass. */
     const hyp_ask_provider_t *j = hyp_ask_provider_by_name("jina");
     ASSERT_NOT_NULL(j);
     ASSERT_EQ(j->dim_mode, HYP_ASK_DIM_TRUNCATES);
@@ -144,17 +145,17 @@ TEST(ask_provider_declared_but_unwired_refuses_instead_of_guessing) {
     PASS();
 }
 
-/* §2.10 step 5. The config DB is backed up and sits beside a graph.db.zst that
- * gets shared, so a key pasted into key_env is a key handed out. The docs
+/* The config DB is backed up and sits beside a graph.db.zst that
+ * gets shared, so a key pasted into key_env is a key handed out. Documentation
  * saying "name, not key" is not a mechanism; this is. */
 TEST(ask_provider_config_refuses_a_key_pasted_where_a_variable_name_goes) {
     char err[512];
 
-    /* The two shapes actually handled during §2.6 and §2.7, plus OpenAI's.
-     * THE PREFIX IS WHAT IS UNDER TEST — the body is filler on purpose. These
-     * fixtures were first written with the live keys from §2.6 and §2.7, which
-     * put a working Voyage key in a file this test exists to prevent. A test
-     * for "does this look like a vendor key" never needs a real one. */
+    /* The two vendor shapes this lane actually handles, plus OpenAI's.
+     * THE PREFIX IS WHAT IS UNDER TEST — the body is filler on purpose, and
+     * that is a rule rather than a style: writing a fixture like this with a
+     * live key puts a working key in the very file that exists to prevent one.
+     * A test for "does this look like a vendor key" never needs a real one. */
     ASSERT_TRUE(hyp_config_validate(HYP_CONFIG_ASK_ESC_KEY_ENV, "pa-abc123", err, sizeof(err)) !=
                 0);
     ASSERT_TRUE(hyp_config_validate(HYP_CONFIG_ASK_ESC_KEY_ENV, "jina_abc123", err, sizeof(err)) !=
@@ -191,7 +192,7 @@ TEST(ask_provider_config_refuses_an_unknown_provider_and_names_the_known_ones) {
     PASS();
 }
 
-/* §3.1 step 3. The mode decides WHAT LEAVES THE MACHINE on an escalated
+/* The mode decides WHAT LEAVES THE MACHINE on an escalated
  * question — the ~30-token question, or the whole corpus — so it is two words
  * and nothing else, and the refusal names both so a typo is one round trip. */
 TEST(ask_provider_config_mode_is_query_or_index_and_names_both_on_refusal) {
@@ -211,10 +212,10 @@ TEST(ask_provider_config_mode_is_query_or_index_and_names_both_on_refusal) {
     PASS();
 }
 
-/* ── Key custody (NEXT-STEPS §3.2 step 5) ──────────────────────────
+/* ── Key custody ───────────────────────────────────────────────────
  *
- * The measured fact this exists for: an escalated `ask` answered from a client
- * whose environment had no key, because the daemon serving it had read one out
+ * The observation this exists for: an escalated `ask` answers for a client
+ * whose environment has no key, because the daemon serving it read one out
  * of the shell that started it. Same uid and local-only, so not a privilege
  * escalation — but a spending surface nobody declared, in a lane whose entire
  * design is that money never moves by surprise.

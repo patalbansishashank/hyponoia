@@ -153,7 +153,7 @@ typedef struct {
 
 // Process multiple TS/JS files' cross-file LSP in one CGo call.
 // out must point to file_count pre-zeroed HYPResolvedCallArray structs.
-// Project-scope declaration merging happens here (per plan §17 finding #4).
+// Project-scope declaration merging happens here.
 void hyp_batch_ts_lsp_cross(HYPArena *arena, HYPBatchTSLSPFile *files, int file_count,
                             HYPResolvedCallArray *out);
 

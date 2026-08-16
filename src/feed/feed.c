@@ -3,8 +3,8 @@
  * feed.h for the contract: why pull and never push, why origin is required,
  * why precursor resolution is in-pull only, and why failure is atomic.
  *
- * THE SAME TWO STRUCTURAL PROPERTIES record.c HOLDS APPLY HERE, enforced by
- * tests/test_feed_contract.sh:
+ * THREE STRUCTURAL PROPERTIES, all enforced by a contract test rather than by
+ * anyone's discipline:
  *
  *   1. NO CLOCK. Item timestamps are the source's event time, supplied by the
  *      adapter. A clock read here would make ids machine-dependent and turn
@@ -13,6 +13,12 @@
  *      byte strings: copied, compared, never looked inside. The moment this
  *      file interpreted one it would inherit that adapter's schema, and the
  *      second adapter would have to translate into the first one's dialect.
+ *   3. NO hyp_record_build(). The only record constructor reachable from here
+ *      is hyp_record_ingest_scrubbed(), which cannot run without a scrubber.
+ *      A direct call to the builder is a path on which unscrubbed feed text
+ *      becomes a permanent, id-bound, syncing record — and an adapter's own
+ *      claim about how much it scrubbed cannot reach a record either, because
+ *      hyp_feed_item_t has no field to carry one.
  */
 #include "feed/feed.h"
 
@@ -30,6 +36,8 @@ const char *hyp_feed_status_reason(hyp_feed_status_t status) {
         return "the pull is exhausted";
     case HYP_FEED_SKIP:
         return "the adapter declined this row by stated policy";
+    case HYP_FEED_ERR_NO_SCRUBBER:
+        return "no scrubber was wired, so no record may be built from this feed";
     case HYP_FEED_ERR_NULL:
         return "a required argument was NULL";
     case HYP_FEED_ERR_SOURCE:
@@ -88,7 +96,6 @@ typedef struct {
     char *thread;
     char *parent_origin;
     int64_t timestamp_ms;
-    uint32_t redactions;
     bool built;
 } owned_item_t;
 
@@ -147,9 +154,12 @@ static bool grow(void **array, size_t *cap, size_t needed, size_t elem_size) {
 }
 
 static bool item_matches(const owned_item_t *have, const hyp_feed_item_t *item) {
+    /* The redaction count is deliberately absent from this comparison: it is
+     * not something an item can carry, so two yields of one origin are the
+     * same row or they are not, and the scrub run here decides the count. */
     return have->kind == item->kind && have->timestamp_ms == item->timestamp_ms &&
-           have->redactions == item->redactions && str_equal(have->author, item->author) &&
-           str_equal(have->content, item->content) && str_equal(have->thread, item->thread) &&
+           str_equal(have->author, item->author) && str_equal(have->content, item->content) &&
+           str_equal(have->thread, item->thread) &&
            str_equal(have->parent_origin, item->parent_origin);
 }
 
@@ -181,7 +191,6 @@ static hyp_feed_status_t pull_take_item(pull_t *pull, const hyp_feed_item_t *ite
     memset(slot, 0, sizeof(*slot));
     slot->kind = item->kind;
     slot->timestamp_ms = item->timestamp_ms;
-    slot->redactions = item->redactions;
     slot->author = dup_str(item->author);
     slot->content = dup_str(item->content);
     slot->origin = dup_str(item->origin);
@@ -275,13 +284,23 @@ static hyp_feed_status_t map_record_status(hyp_record_status_t st, hyp_feed_inge
     return HYP_FEED_ERR_ITEM;
 }
 
-hyp_feed_status_t hyp_feed_ingest(hyp_feed_source_t *src, hyp_record_set_t *store,
-                                  hyp_feed_ingest_stats_t *stats) {
+hyp_feed_status_t hyp_feed_ingest(hyp_feed_source_t *src, hyp_scrub_fn scrub,
+                                  hyp_record_set_t *store, hyp_feed_ingest_stats_t *stats) {
     hyp_feed_ingest_stats_t local;
     if (!stats) {
         stats = &local;
     }
     memset(stats, 0, sizeof(*stats));
+    /*
+     * The scrubber is checked FIRST, separately, and before the source is
+     * asked for anything. Refusing later would still build no record, but it
+     * would first pull a transcript into this process's memory to decide
+     * something the wiring already decided — and the refusal a caller reads
+     * must name the missing wire, not the row the wire happened to reach.
+     */
+    if (!scrub) {
+        return HYP_FEED_ERR_NO_SCRUBBER;
+    }
     if (!src || !src->next || !store) {
         return HYP_FEED_ERR_NULL;
     }
@@ -331,23 +350,33 @@ hyp_feed_status_t hyp_feed_ingest(hyp_feed_source_t *src, hyp_record_set_t *stor
                 }
             }
 
-            hyp_record_input_t in;
+            /*
+             * The scrub seam, and the only record constructor this file can
+             * reach. hyp_record_ingest_input_t has no `redactions` member and
+             * neither does hyp_feed_item_t, so the count on the finished
+             * record is what the scrubber just produced from this item's raw
+             * text — there is nowhere for anyone else's number to travel.
+             */
+            hyp_record_ingest_input_t in;
             memset(&in, 0, sizeof(in));
             in.kind = item->kind;
             in.author = item->author;
             in.timestamp_ms = item->timestamp_ms;
-            in.content = item->content;
+            in.content = item->content; /* RAW; the seam scrubs it */
             in.anchor = NULL;
             in.origin = item->origin;
             in.thread = item->thread;
             in.parent = parent_id;
-            in.redactions = item->redactions;
 
             const hyp_record_t *rec = NULL;
-            hyp_record_status_t rst = hyp_record_build(&in, &rec);
+            hyp_record_status_t rst = hyp_record_ingest_scrubbed(&in, scrub, &rec);
             if (rst != HYP_RECORD_OK) {
                 st = map_record_status(rst, stats);
                 goto done;
+            }
+            stats->redactions += rec->redactions;
+            if (rec->redactions > 0) {
+                stats->items_redacted++;
             }
             rst = hyp_record_set_add(staging, rec, NULL);
             char id[HYP_RECORD_ID_LEN + 1];
@@ -390,6 +419,15 @@ done:
     hyp_ht_free(ids_by_origin);
     hyp_record_set_free(staging);
     pull_release(&pull);
+    if (st != HYP_FEED_OK) {
+        /* Nothing merged, so nothing here is a fact about the store. The
+         * redaction counters would otherwise describe records that do not
+         * exist, which reads as evidence that a scrub protected something. */
+        stats->built = 0;
+        stats->absorbed = 0;
+        stats->redactions = 0;
+        stats->items_redacted = 0;
+    }
     return st;
 }
 

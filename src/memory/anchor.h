@@ -9,10 +9,9 @@
 #include "store/store.h"
 
 /*
- * anchor.h — anchor resolution against the live index. NEXT-STEPS §4 Phase 1,
- * unit C3u [C1].
+ * anchor.h — anchor resolution against the live index.
  *
- * A record (C2) carries `anchor` as OPAQUE BYTES — the core never parses it,
+ * A record carries `anchor` as OPAQUE BYTES — the core never parses it,
  * and that opacity is load-bearing (record.h). This module is the one producer
  * and the one consumer of what those bytes mean for the memory subsystem, and
  * this header is where the format is written down. Nothing else may parse an
@@ -58,7 +57,7 @@
  *   UNKNOWN_WORKSPACE the address names a workspace that matches none known.
  *                     A visible error NAMING the workspace, never an empty
  *                     result — empty would read as "nothing attached", which
- *                     is a different and false claim (§4 assertion table).
+ *                     is a different and false claim.
  *   ERROR             could not classify: unparseable anchor, store failure,
  *                     an unreadable span where a hash needed comparing. NOT a
  *                     state of the anchor; "I could not tell" must never be

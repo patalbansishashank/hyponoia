@@ -34,7 +34,7 @@ HYPLanguage hyp_language_for_extension(const char *ext);
  * Returns "Unknown" for HYP_LANG_COUNT or out-of-range values. */
 const char *hyp_language_name(HYPLanguage lang);
 
-/* Get the name to interpolate into the `ask` instruct prefix (§2.1) — the
+/* Get the name to interpolate into the `ask` instruct prefix — the
  * spelling a developer writes in prose, which is what the embedding model
  * saw in training: "C++", not "cpp"; "TypeScript", not "tsx".
  *

@@ -1,5 +1,5 @@
 /*
- * ask_provider.h — The escalation lane's API encoders (NEXT-STEPS.md §2.10 step 2).
+ * ask_provider.h — the escalation lane's API encoders.
  *
  * Two entry points, `embed_documents` and `embed_query`, and a table. The table
  * is the point: what actually differs between hosted embedding providers is not
@@ -9,15 +9,14 @@
  *
  * WHAT DOES NOT GENERALISE IS THE CONTRACT, AND IT IS NOT CODE. This interface
  * makes a provider callable; it says nothing about whether the model behind it
- * is any good, or which of its legs to use. Five encoders have been measured
- * across §2.5-§2.9 and every one wanted a different contract: Qwen3 an instruct
- * prefix worth +0.206 MRR@10, pplx DESTROYED by that same prefix, Jina its own
- * retrieval adapter (and hurt by ours), Voyage an `input_type`, nano two literal
- * strings. §2.9 then found one model wanting OPPOSITE contracts on two corpora.
+ * is any good, or which of its legs to use. Every encoder measured so far
+ * wanted a different contract: one gained +0.206 MRR@10 from an instruct
+ * prefix, another was DESTROYED by that same prefix, a third wanted its own
+ * retrieval adapter and was hurt by ours, a fourth an `input_type`, a fifth two
+ * literal strings — and one model wanted OPPOSITE contracts on two corpora.
  *
  * So: adding a row to this table makes a provider reachable. It does not make it
- * trusted. Measure its legs on the frozen 60 before shipping it as an option,
- * the way §2.6, §2.7 and §2.9 each did.
+ * trusted. Measure its legs on a held corpus before shipping it as an option.
  *
  * THE KEY IS NEVER STORED, LOGGED, OR PLACED IN argv. Config holds the NAME of
  * an environment variable (`ask.escalation.key_env`); the value is read at the
@@ -31,10 +30,9 @@
 #include <stddef.h>
 
 /* Providers this build knows how to talk to. Voyage and Jina are WIRED and
- * exercised; Gemini's row is present because §2.10 asks for the table to be
- * declared, and it is marked unimplemented rather than silently half-working —
- * a provider that returns a confident error is safer than one that returns
- * vectors from a request it built wrong. */
+ * exercised; Gemini's row is declared and marked unimplemented rather than
+ * left silently half-working — a provider that returns a confident error is
+ * safer than one that returns vectors from a request it built wrong. */
 typedef enum {
     HYP_ASK_PROVIDER_UNKNOWN = 0,
     HYP_ASK_PROVIDER_VOYAGE = 1,
@@ -56,28 +54,29 @@ typedef enum {
  * FIXED      — no dimension parameter; take the native width.
  *
  * THIS TAG IS A STATEMENT ABOUT SPACES, NOT ABOUT WHETHER A WIDTH IS WORTH
- * STORING. Those are separate measurements. Voyage was tagged REEMBEDS from
- * 2026-08-12 (ec6bde21) to 2026-08-15 because §2.7 had paid for two passes to
- * learn that voyage-code-3 at 2048 buys nothing (MRR@10 0.57323 at 1024 ->
- * 0.56189 at 2048 on the frozen 60); the utility result stands, but running
- * two passes was a choice, not a property of the API. §2.15 asked the API
- * (engine/xmodel/dims.json): voyage-4-large's output_dimension=1024 is the
- * renormalised first 1024 of its own output_dimension=2048, min cosine
- * 1.000000. That is TRUNCATES.
+ * STORING. Those are two different measurements, and the second is the easier
+ * one to mistake for the first: finding that a wider vector buys no accuracy
+ * says nothing about whether the narrow one is its renormalised prefix. Only
+ * asking the provider settles that. Voyage's answer is that
+ * output_dimension=1024 IS the renormalised first 1024 of its own
+ * output_dimension=2048, min cosine 1.000000 — so its row is TRUNCATES.
  *
- * ONE CODE PATH READS THIS FIELD, and it was the first: `ask(escalate=true)`
- * in ask.escalation.mode=query (src/mcp/mcp.c, NEXT-STEPS §3.1 step 3) refuses
- * a provider tagged REEMBEDS, because it scores a query the provider encoded
- * at the LOCAL index's width (1024) against document vectors another model
- * truncated to that width — an operation that is only the same on both sides
- * when "smaller dimension" means "the renormalised prefix of the wider vector"
- * on both sides. A re-embedding head is a different space at a different
- * width, so the gate says no. No row carries REEMBEDS today, so the branch is
- * dormant, but it is the branch that makes a future row's tag load-bearing.
- * The adapter itself still always requests HYP_ASK_DIM from the provider and
- * never truncates a wider vector locally, so a wrong tag cannot make an INDEX
- * wrong — which is why nothing failed while voyage's was. It is pinned by
- * tests/test_ask_provider.c so it cannot drift silently. */
+ * ONE CODE PATH READS THIS FIELD: `ask(escalate=true)` in
+ * ask.escalation.mode=query (src/mcp/mcp.c) refuses a provider tagged REEMBEDS,
+ * because it scores a query the provider encoded at the LOCAL index's width
+ * against document vectors another model truncated to that width — an operation
+ * that is only the same on both sides when "smaller dimension" means "the
+ * renormalised prefix of the wider vector" on both sides. A re-embedding head
+ * is a different space at a different width, so the gate says no. No row
+ * carries REEMBEDS, so the branch is dormant; it is what makes a future row's
+ * tag load-bearing.
+ *
+ * A WRONG TAG CANNOT MAKE AN INDEX WRONG, and that is the hazard rather than
+ * the comfort. The adapter always requests HYP_ASK_DIM from the provider and
+ * never truncates a wider vector locally, so a mis-tagged row changes no
+ * vector, fails no test and produces no symptom — it simply waits for the
+ * dormant branch above to become live. Nothing here will catch it; the pin in
+ * tests/test_ask_provider.c is what does. */
 typedef enum {
     HYP_ASK_DIM_FIXED = 0,
     HYP_ASK_DIM_TRUNCATES = 1,
@@ -139,13 +138,13 @@ const char *hyp_ask_provider_key(const char *key_env, char *err, size_t errlen);
 
 /* ── Key custody: WHOSE environment `getenv` above is reading ──────
  *
- * NEXT-STEPS §3.2 step 5. The rule at the top of this file — the key is never
- * stored, never logged, never in argv, read at the moment of use — is a rule
- * about the VALUE. It says nothing about whose environment the value is read
- * out of, and that turned out to matter.
+ * The rule at the top of this file — the key is never stored, never logged,
+ * never in argv, read at the moment of use — is a rule about the VALUE. It
+ * says nothing about whose environment the value is read out of, and that is a
+ * separate question with its own answer.
  *
- * Measured during §3.1's token harness: an escalated `ask` answered
- * `lane: escalation-query` from a client whose environment had no key at all.
+ * The observation that forces it: an escalated `ask` answers
+ * `lane: escalation-query` for a client whose environment has no key at all.
  * The read is per request (hyp_ask_provider_encoder_create runs on every
  * escalated call), but `environ` is a snapshot taken at exec, so a daemon
  * started from a shell that exported the key holds that key for its whole

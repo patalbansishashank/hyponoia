@@ -242,7 +242,7 @@ int hyp_mcp_server_run(hyp_mcp_server_t *srv, FILE *in, FILE *out);
  * Returns heap-allocated JSON response string, or NULL for notifications. */
 char *hyp_mcp_server_handle(hyp_mcp_server_t *srv, const char *line);
 
-/* ── §4 F3 · memory freshness, the seam ───────────────────────────
+/* ── Memory freshness, the seam ────────────────────────────────────
  *
  * index_status reports TWO freshnesses, separately and never merged: `code`
  * (this machine's index of the working tree) and `memory` (the append-only
@@ -298,14 +298,14 @@ void hyp_mcp_server_set_memory_upstream(hyp_mcp_server_t *srv, const char *feed,
 /* Handle a tools/call request. Returns MCP tool result JSON. */
 char *hyp_mcp_handle_tool(hyp_mcp_server_t *srv, const char *tool_name, const char *args_json);
 
-/* The `key_custody` disclosure an escalated answer carries (NEXT-STEPS §3.2
- * step 5), exposed because the escalated success path cannot be reached in a
+/* The `key_custody` disclosure an escalated answer carries,
+ * exposed because the escalated success path cannot be reached in a
  * test without a live, paid provider call — and the property that most needs
  * a test is that this sentence can never contain a key. `key_env` is a
  * variable NAME; it is echoed, so never pass a value. */
 void hyp_mcp_ask_key_custody_text_for_test(const char *key_env, char *out, size_t outlen);
 
-/* ── The 3-D view of the `ask` lane (NEXT-STEPS §3.1 step 5) ───────
+/* ── The 3-D view of the `ask` lane ────────────────────────────────
  *
  * Both return heap JSON (caller frees) or NULL on bad arguments. Neither is an
  * MCP tool: they are what the graph UI's /api/embed-view routes serve.

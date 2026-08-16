@@ -89,7 +89,7 @@ const char *hyp_index_worker_argv_status_message(hyp_index_worker_argv_status_t 
  * resolved the CURRENT executable and re-invoked it as
  * `<self> cli --index-worker …` — a test binary ignores those args and re-runs
  * its suites instead, producing recursive spawn chains (11-min hangs; kernel
- * VM-map pressure during the 2026-07-04 host panics). */
+ * VM-map pressure to the point of host panics). */
 void hyp_index_supervisor_mark_host(void);
 
 /* True when handle_index_repository must wrap the run in a supervised child:

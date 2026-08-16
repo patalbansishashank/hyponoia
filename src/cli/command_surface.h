@@ -109,6 +109,15 @@ typedef enum {
       HYP_CLI_DISPATCH_SUBCOMMAND, "  hyponoia update [-y|-n]\n")                                  \
     X(config, "config", HYP_DAEMON_PROCESS_LOCAL_CLI, HYP_CLI_HELP_DOWNGRADES,                     \
       HYP_CLI_DISPATCH_SUBCOMMAND, "  hyponoia config <list|get|set|reset>\n")                     \
+    /* The manual half of memory sync. The automatic half is the watcher,                          \
+     * which pulls when a repository changes locally; there is no                                  \
+     * agent-callable surface for either, by design. It merges two record                          \
+     * stores and touches no project, no index and no daemon state. */                             \
+    X(sync, "sync", HYP_DAEMON_PROCESS_STATELESS, HYP_CLI_HELP_PLAIN,                              \
+      HYP_CLI_DISPATCH_SUBCOMMAND,                                                                 \
+      "  hyponoia sync [--pull|--push] [--local <dir>] [--peer <dir>] [--json]\n"                  \
+      "                                      Merge this machine's record store with a\n"           \
+      "                                      peer's; the result is the union either way\n")        \
     X(onboard, "onboard", HYP_DAEMON_PROCESS_STATELESS, HYP_CLI_HELP_PLAIN,                        \
       HYP_CLI_DISPATCH_SUBCOMMAND,                                                                 \
       "  hyponoia onboard [dir] [--answers <file>] [--yes]\n"                                      \
@@ -124,6 +133,13 @@ typedef enum {
       "  hyponoia embed --project <name> [--status]\n"                                             \
       "                                      Opt-in second pass: per-declaration\n"                \
       "                                      vectors for the `ask` lane\n")                        \
+    /* Relocating comment prose into the decision store. A command a person                        \
+     * runs over a checkout, never anything the daemon or the MCP surface can                      \
+     * reach: it writes records, and a writer reachable from a read path is a                      \
+     * writer nobody audited. It reads a manifest and appends to a record                          \
+     * store the caller names — no graph, no index, no daemon. */                                  \
+    X(migrate_comments, "migrate-comments", HYP_DAEMON_PROCESS_STATELESS, HYP_CLI_HELP_PLAIN,      \
+      HYP_CLI_DISPATCH_SUBCOMMAND, NULL)                                                           \
     /* `fetch-model` writes ONE file into the user's cache and reads no                            \
      * project, no index and no store. It also has to work when the daemon                         \
      * cannot start, which is exactly when someone is trying to get the `ask`                      \

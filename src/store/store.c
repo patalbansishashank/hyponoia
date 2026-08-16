@@ -2041,11 +2041,22 @@ int hyp_store_find_node_by_qn(hyp_store_t *s, const char *project, const char *q
     if (!s || !s->db) {
         return HYP_STORE_ERR;
     }
+    /* LIMIT 2, and a second row is a refusal. The table declares
+     * UNIQUE(project, qualified_name), but a DECLARED constraint is only
+     * enforced on rows SQLite itself inserts: init_schema creates the table
+     * with CREATE TABLE IF NOT EXISTS and probes only edges.local_name_gen, so
+     * a database that arrives with a nodes table lacking the constraint opens
+     * and answers queries; and internal/hyp/sqlite_writer.c builds the file's
+     * pages and its sqlite_autoindex_nodes_1 by hand, where uniqueness holds by
+     * construction rather than by the engine. Reading one row and calling it
+     * the answer would resolve a colliding address CONFIDENTLY to whichever
+     * entity the index stepped first — the caller cannot tell that from a real
+     * hit, so this is the layer that has to. */
     sqlite3_stmt *stmt =
         prepare_cached(s, &s->stmt_find_node_by_qn,
                        "SELECT id, project, label, name, qualified_name, file_path, "
                        "start_line, end_line, properties FROM nodes "
-                       "WHERE project = ?1 AND qualified_name = ?2;");
+                       "WHERE project = ?1 AND qualified_name = ?2 LIMIT 2;");
     if (!stmt) {
         return HYP_STORE_ERR;
     }
@@ -2055,6 +2066,14 @@ int hyp_store_find_node_by_qn(hyp_store_t *s, const char *project, const char *q
     int rc = sqlite3_step(stmt);
     if (rc == SQLITE_ROW) {
         scan_node(stmt, out);
+        if (sqlite3_step(stmt) == SQLITE_ROW) {
+            hyp_node_free_fields(out);
+            memset(out, 0, sizeof(*out));
+            sqlite3_reset(stmt);
+            store_set_error(s, "qualified_name addresses more than one node");
+            hyp_log_warn("store.find_node_by_qn", "result", "ambiguous", "qualified_name", qn);
+            return HYP_STORE_AMBIGUOUS;
+        }
         sqlite3_reset(stmt);
         return HYP_STORE_OK;
     }

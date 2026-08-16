@@ -5252,6 +5252,194 @@ TEST(iris_export_xml_multi_class) {
     PASS();
 }
 
+/* ── C dynamic-loader call sites: what extraction can and cannot see ──────
+ *
+ * A C ABI edge (a dlopen/dlsym caller joined to the exported symbol it names)
+ * is only buildable if the strings are literals the extractor can reach. These
+ * characterize exactly where the literal survives and where it evaporates, so
+ * the boundary is asserted rather than argued. Each one states the mechanism
+ * that decides it.
+ *
+ * Read them in pairs: the first of each pair is what works, the second is the
+ * adjacent case that looks identical in source and yields nothing. */
+
+/* Find the Nth positional argument of a call, or NULL. */
+static const HYPCallArg *call_arg_at(const HYPCall *c, int index) {
+    if (!c) {
+        return NULL;
+    }
+    for (int i = 0; i < c->arg_count; i++) {
+        if (c->args[i].index == index) {
+            return &c->args[i];
+        }
+    }
+    return NULL;
+}
+
+/* Find a call to `callee` whose positional argument `index` carries the
+ * resolved string `value`; returns the call so the origin can be asserted. */
+static const HYPCall *find_call_with_arg_value(HYPFileResult *r, const char *callee, int index,
+                                               const char *value) {
+    for (int i = 0; i < r->calls.count; i++) {
+        const HYPCall *c = &r->calls.items[i];
+        if (!c->callee_name || strcmp(c->callee_name, callee) != 0) {
+            continue;
+        }
+        const HYPCallArg *a = call_arg_at(c, index);
+        if (a && a->value && strcmp(a->value, value) == 0) {
+            return c;
+        }
+    }
+    return NULL;
+}
+
+/* A bare literal at the call site reaches HYPCall.args[].value. Argument
+ * capture in extract_call_args is language-agnostic, so C gets it with no
+ * dlopen-specific code: the library path and the symbol name are both there. */
+TEST(c_abi_literal_loader_args_are_captured) {
+    HYPFileResult *r = extract("#include <dlfcn.h>\n"
+                               "void *load(void) {\n"
+                               "    void *h = dlopen(\"libplugin.so\", 2);\n"
+                               "    return dlsym(h, \"plugin_entry\");\n"
+                               "}\n",
+                               HYP_LANG_C, "t", "load.c");
+    ASSERT_NOT_NULL(r);
+    ASSERT_FALSE(r->has_error);
+    const HYPCall *open = find_call_with_arg_value(r, "dlopen", 0, "libplugin.so");
+    ASSERT_NOT_NULL(open);
+    ASSERT_EQ((int)open->source_origin, (int)HYP_SOURCE_ORIGIN_RAW);
+    const HYPCall *sym = find_call_with_arg_value(r, "dlsym", 1, "plugin_entry");
+    ASSERT_NOT_NULL(sym);
+    hyp_free_result(r);
+    PASS();
+}
+
+/* A macro-defined library name still reaches the extractor, because C/C++ run
+ * a second extraction pass over the preprocessed buffer and simplecpp
+ * round-trips string tokens verbatim. The occurrence is stamped PREPROCESSED —
+ * its byte span belongs to the expanded buffer, not the file on disk. */
+TEST(c_abi_macro_defined_library_survives_preprocessing) {
+    HYPFileResult *r = extract("#include <dlfcn.h>\n"
+                               "#define PLUGIN_LIB \"libplugin.so\"\n"
+                               "void *load(void) {\n"
+                               "    return dlopen(PLUGIN_LIB, 2);\n"
+                               "}\n",
+                               HYP_LANG_C, "t", "load_macro.c");
+    ASSERT_NOT_NULL(r);
+    ASSERT_FALSE(r->has_error);
+    const HYPCall *open = find_call_with_arg_value(r, "dlopen", 0, "libplugin.so");
+    ASSERT_NOT_NULL(open);
+    ASSERT_EQ((int)open->source_origin, (int)HYP_SOURCE_ORIGIN_PREPROCESSED);
+    hyp_free_result(r);
+    PASS();
+}
+
+/* A file-scope const carrying the same string does NOT resolve. Constant
+ * propagation accepts assignment/short_var_declaration/const_spec/
+ * variable_declarator; C spells a file-scope initializer `init_declarator`,
+ * which is not in that set, and a file with no directives gets no preprocessed
+ * pass to rescue it. The call is still extracted — only `value` is absent, so
+ * a matcher keying on the resolved string sees nothing here. */
+TEST(c_abi_file_scope_const_library_does_not_resolve) {
+    HYPFileResult *r = extract("void *dlopen(const char *p, int f);\n"
+                               "static const char *kLib = \"libplugin.so\";\n"
+                               "void *load(void) {\n"
+                               "    return dlopen(kLib, 2);\n"
+                               "}\n",
+                               HYP_LANG_C, "t", "load_const.c");
+    ASSERT_NOT_NULL(r);
+    ASSERT_FALSE(r->has_error);
+    ASSERT_NULL(find_call_with_arg_value(r, "dlopen", 0, "libplugin.so"));
+    const HYPCall *open = find_call_by_callee(r, "dlopen");
+    ASSERT_NOT_NULL(open);
+    const HYPCallArg *a = call_arg_at(open, 0);
+    ASSERT_NOT_NULL(a);
+    ASSERT_STR_EQ(a->expr, "kLib");
+    ASSERT_NULL(a->value);
+    hyp_free_result(r);
+    PASS();
+}
+
+/* The dominant real-world shape: the loader is wrapped, so the literal sits at
+ * the wrapper's caller and the parameter sits at the dlopen site. Both halves
+ * are extracted and neither is joined — closing the gap needs interprocedural
+ * constant propagation, which is a different capability from argument capture. */
+TEST(c_abi_wrapped_loader_separates_literal_from_call_site) {
+    HYPFileResult *r = extract("void *dlopen(const char *p, int f);\n"
+                               "static void *load_lib(const char *path) {\n"
+                               "    return dlopen(path, 2);\n"
+                               "}\n"
+                               "void *boot(void) {\n"
+                               "    return load_lib(\"libplugin.so\");\n"
+                               "}\n",
+                               HYP_LANG_C, "t", "load_wrapped.c");
+    ASSERT_NOT_NULL(r);
+    ASSERT_FALSE(r->has_error);
+    /* The literal is on the wrapper call ... */
+    ASSERT_NOT_NULL(find_call_with_arg_value(r, "load_lib", 0, "libplugin.so"));
+    /* ... and the dlopen site carries only the parameter name. */
+    ASSERT_NULL(find_call_with_arg_value(r, "dlopen", 0, "libplugin.so"));
+    const HYPCall *open = find_call_by_callee(r, "dlopen");
+    ASSERT_NOT_NULL(open);
+    const HYPCallArg *a = call_arg_at(open, 0);
+    ASSERT_NOT_NULL(a);
+    ASSERT_STR_EQ(a->expr, "path");
+    hyp_free_result(r);
+    PASS();
+}
+
+/* A macro-renamed resolver hides the callee name from the raw pass entirely.
+ * Keying a matcher on the callee name over raw source alone would miss every
+ * project that spells its own portability wrapper as a macro; the preprocessed
+ * pass is what makes such a matcher see them, and it is why an origin-blind
+ * count of dlsym call sites is a floor. */
+TEST(c_abi_macro_renamed_resolver_only_visible_preprocessed) {
+    HYPFileResult *r = extract("#include <dlfcn.h>\n"
+                               "#define app_dlsym(h, s) dlsym(h, s)\n"
+                               "void *find(void *h) {\n"
+                               "    return app_dlsym(h, \"plugin_entry\");\n"
+                               "}\n",
+                               HYP_LANG_C, "t", "resolver_macro.c");
+    ASSERT_NOT_NULL(r);
+    ASSERT_FALSE(r->has_error);
+    const HYPCall *sym = find_call_with_arg_value(r, "dlsym", 1, "plugin_entry");
+    ASSERT_NOT_NULL(sym);
+    ASSERT_EQ((int)sym->source_origin, (int)HYP_SOURCE_ORIGIN_PREPROCESSED);
+    /* The raw pass saw only the wrapper spelling. */
+    int raw_dlsym = 0;
+    for (int i = 0; i < r->calls.count; i++) {
+        if (r->calls.items[i].callee_name &&
+            strcmp(r->calls.items[i].callee_name, "dlsym") == 0 &&
+            r->calls.items[i].source_origin == HYP_SOURCE_ORIGIN_RAW) {
+            raw_dlsym++;
+        }
+    }
+    ASSERT_EQ(raw_dlsym, 0);
+    ASSERT_NOT_NULL(find_call_by_callee(r, "app_dlsym"));
+    hyp_free_result(r);
+    PASS();
+}
+
+/* A library path is not classified as a string reference, so nothing downstream
+ * of the call record carries it: hyp_classify_string keeps URLs and config-file
+ * extensions, and a shared-object suffix is neither. The captured argument is
+ * therefore the ONLY place a library name exists after extraction. */
+TEST(c_abi_library_path_is_not_a_string_ref) {
+    HYPFileResult *r = extract("#include <dlfcn.h>\n"
+                               "void *load(void) {\n"
+                               "    return dlopen(\"libplugin.so\", 2);\n"
+                               "}\n",
+                               HYP_LANG_C, "t", "load_ref.c");
+    ASSERT_NOT_NULL(r);
+    ASSERT_FALSE(r->has_error);
+    for (int i = 0; i < r->string_refs.count; i++) {
+        ASSERT(r->string_refs.items[i].value == NULL ||
+               strcmp(r->string_refs.items[i].value, "libplugin.so") != 0);
+    }
+    hyp_free_result(r);
+    PASS();
+}
+
 SUITE(extraction) {
     /* Initialize extraction library */
     hyp_init();
@@ -5573,6 +5761,14 @@ SUITE(extraction) {
     RUN_TEST(extract_production_file_never_marked_is_test);
     RUN_TEST(docstring_utf8_truncation_boundary_issue1017);
     RUN_TEST(extract_ts_decorators_survive_interleaved_comment);
+
+    /* C dynamic-loader call sites — the reachable/unreachable boundary */
+    RUN_TEST(c_abi_literal_loader_args_are_captured);
+    RUN_TEST(c_abi_macro_defined_library_survives_preprocessing);
+    RUN_TEST(c_abi_file_scope_const_library_does_not_resolve);
+    RUN_TEST(c_abi_wrapped_loader_separates_literal_from_call_site);
+    RUN_TEST(c_abi_macro_renamed_resolver_only_visible_preprocessed);
+    RUN_TEST(c_abi_library_path_is_not_a_string_ref);
 
     hyp_shutdown();
 }

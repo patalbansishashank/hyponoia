@@ -19,6 +19,7 @@ enum { PC_RING = 4, PC_RING_MASK = 3, PC_SIG_SCAN = 15, PC_REGEX_GRP = 2 };
 #include <stdint.h>
 #include "pipeline/pipeline_internal.h"
 #include "pipeline/lsp_resolve.h"
+#include "pipeline/pass_workspace_calls.h"
 #include "graph_buffer/graph_buffer.h"
 #include "foundation/log.h"
 #include "foundation/compat.h"
@@ -125,7 +126,18 @@ static int build_import_map(hyp_pipeline_ctx_t *ctx, const char *rel_path,
             if (!imp->local_name || !imp->local_name[0] || !imp->module_path) {
                 continue;
             }
-            char *target_qn = hyp_pipeline_fqn_module(ctx->project_name, imp->module_path);
+            /* module_path is the VERBATIM source specifier, so "./config" and
+             * ".config" are relative imports, not paths. Resolving against the
+             * importing file is what turns one into the other; handing the raw
+             * specifier to the QN derivation addresses a file that is not the
+             * imported one — ".foo" strips to the bare project QN, which IS the
+             * root Folder node, so the lookup HITS and the import map points at
+             * the repository root. Non-relative specifiers resolve to NULL and
+             * pass through unchanged. */
+            char *resolved = hyp_pipeline_resolve_relative_import(rel_path, imp->module_path);
+            char *target_qn =
+                hyp_pipeline_fqn_module(ctx->project_name, resolved ? resolved : imp->module_path);
+            free(resolved);
             const hyp_gbuf_node_t *target = hyp_gbuf_find_by_qn(ctx->gbuf, target_qn);
             free(target_qn);
             if (!target) {
@@ -579,6 +591,16 @@ static int resolve_single_call(hyp_pipeline_ctx_t *ctx, HYPCall *call,
                 emit_http_async_edge(ctx, call, source_node, NULL, &svc_res, esvc, false);
                 return SKIP_ONE;
             }
+        }
+        /* This member's registry has no answer at all, which is exactly
+         * the shape of a call into a SIBLING member of the workspace. Record it
+         * so pass_workspace_calls can resolve it once every member is in one
+         * store; before this the fact was dropped here and nothing downstream
+         * could ever know the call existed. Gated — see
+         * hyp_pipeline_ctx_records_workspace_evidence. The parallel path
+         * records at the same condition through the same writer. */
+        if (hyp_pipeline_ctx_records_workspace_evidence(ctx)) {
+            hyp_pipeline_record_unresolved_call(ctx->gbuf, source_node->id, call->callee_name);
         }
         return 0;
     }

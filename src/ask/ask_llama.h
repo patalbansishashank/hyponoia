@@ -1,7 +1,7 @@
 /*
  * ask_llama.h — the llama.cpp/GGUF encoder behind the `ask` lane's two seams.
  *
- * NEXT-STEPS.md §2.1 asks for Qwen3-Embedding-0.6B to run over WHOLE
+ * The encoder runs over WHOLE
  * declarations inside the binary, because encoding one token at a time deletes
  * attention, which is the only thing the model was for.
  * runs/ASK/T2-inference-runtime.json settled the vehicle with a working

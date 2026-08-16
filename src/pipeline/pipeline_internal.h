@@ -766,6 +766,16 @@ void hyp_pipeline_set_lsp_surfaces(hyp_pipeline_t *p, hyp_lsp_surface_row_t *row
 /* Pipeline accessors for incremental use */
 const char *hyp_pipeline_repo_path(const hyp_pipeline_t *p);
 atomic_int *hyp_pipeline_cancelled_ptr(hyp_pipeline_t *p);
+int hyp_pipeline_workspace_member_count(const hyp_pipeline_t *p);
+
+/* The workspace-evidence gate, as ONE predicate. True only when this run
+ * indexes one member of
+ * a workspace that has somewhere else to look; every site that records
+ * cross-member evidence asks this and nothing else, so the sequential and the
+ * parallel resolution paths cannot disagree about it. Derived from
+ * ctx->pipeline, which all three ctx initialisers already set — a field on the
+ * ctx would be a third place to forget. */
+bool hyp_pipeline_ctx_records_workspace_evidence(const hyp_pipeline_ctx_t *ctx);
 /* Record committed graph size (#334 gate axis) from the incremental path,
  * which cannot see the opaque hyp_pipeline struct. Call before the dump. */
 void hyp_pipeline_set_committed_counts(hyp_pipeline_t *p, int nodes, int edges);

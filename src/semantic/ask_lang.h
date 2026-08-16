@@ -1,7 +1,7 @@
 /*
  * ask_lang.h — which language the `ask` instruct prefix is rendered for.
  *
- * §2.1's one trap: `{language}` must be the DISPLAY NAME a developer writes
+ * The one trap: `{language}` must be the DISPLAY NAME a developer writes
  * in prose, never the grammar id. `cpp` -> `C++`, `csharp` -> `C#`, `tsx` ->
  * `TypeScript`. Rendered with the grammar id the prefix still encodes, still
  * ranks and still returns answers — it is simply no longer the 106 bytes the

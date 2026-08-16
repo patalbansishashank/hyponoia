@@ -300,6 +300,88 @@ TEST(store_node_find_by_file) {
     PASS();
 }
 
+/* A qualified name addresses exactly ONE node, and when it addresses two the
+ * lookup must say so rather than answer.
+ *
+ * `nodes` declares UNIQUE(project, qualified_name), which is why this looks
+ * impossible — but a DECLARED constraint only binds rows SQLite itself
+ * inserts. init_schema creates the table with CREATE TABLE IF NOT EXISTS and
+ * probes only edges.local_name_gen, so a database whose nodes table lacks the
+ * constraint opens and answers queries; and internal/hyp/sqlite_writer.c builds
+ * the file's pages and its sqlite_autoindex_nodes_1 by hand, where uniqueness
+ * holds by construction rather than by the engine. The fixture below IS that
+ * shape: the table without its constraint.
+ *
+ * What the refusal is worth: the anchor path rebuilds an address from the QN of
+ * whatever node it was handed, so a colliding QN compares EQUAL to the anchor
+ * and reports RESOLVED — confidently, to the wrong file, with nothing in the
+ * answer a reader could use to tell. This is the only layer that can see two
+ * rows at all. */
+TEST(store_find_by_qn_refuses_a_duplicate_qualified_name) {
+    hyp_store_t *s = hyp_store_open_memory();
+    ASSERT_NOT_NULL(s);
+    hyp_store_upsert_project(s, "proj", "/tmp/proj");
+
+    /* The nodes table as a hand-built file carries it: same columns, no
+     * uniqueness. */
+    ASSERT_EQ(hyp_store_exec(s, "DROP TABLE nodes;"), HYP_STORE_OK);
+    ASSERT_EQ(hyp_store_exec(s, "CREATE TABLE nodes ("
+                                "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
+                                "  project TEXT NOT NULL,"
+                                "  label TEXT NOT NULL,"
+                                "  name TEXT NOT NULL,"
+                                "  qualified_name TEXT NOT NULL,"
+                                "  file_path TEXT DEFAULT '',"
+                                "  start_line INTEGER DEFAULT 0,"
+                                "  end_line INTEGER DEFAULT 0,"
+                                "  properties TEXT DEFAULT '{}');"),
+              HYP_STORE_OK);
+
+    /* ONE row on the address: the lookup answers. Without this the refusal
+     * below would be indistinguishable from a lookup that always refuses. */
+    ASSERT_EQ(hyp_store_exec(s, "INSERT INTO nodes (project, label, name, qualified_name, "
+                                "file_path) VALUES ('proj','Project','proj','proj','');"),
+              HYP_STORE_OK);
+    hyp_node_t found = {0};
+    ASSERT_EQ(hyp_store_find_node_by_qn(s, "proj", "proj", &found), HYP_STORE_OK);
+    ASSERT_STR_EQ(found.label, "Project");
+    hyp_node_free_fields(&found);
+
+    /* The plant: a SECOND, different entity on the same address. This is the
+     * exact pair the dotfile derivation used to mint — a root dotfile's module
+     * QN stripped to the bare project name, which is the project node's QN. */
+    ASSERT_EQ(hyp_store_exec(s, "INSERT INTO nodes (project, label, name, qualified_name, "
+                                "file_path) VALUES "
+                                "('proj','Module','.gitattributes','proj','.gitattributes');"),
+              HYP_STORE_OK);
+
+    /* The plant took, and the pre-refusal shape WOULD have answered: two rows
+     * match, and a query that reads one row and stops gets a row. Asserting the
+     * refusal without this is asserting against a fixture nobody checked. */
+    sqlite3 *db = (sqlite3 *)hyp_store_get_db(s);
+    ASSERT_NOT_NULL(db);
+    sqlite3_stmt *probe = NULL;
+    ASSERT_EQ(sqlite3_prepare_v2(db,
+                                 "SELECT label FROM nodes WHERE project = ?1 AND "
+                                 "qualified_name = ?2;",
+                                 -1, &probe, NULL),
+              SQLITE_OK);
+    sqlite3_bind_text(probe, 1, "proj", -1, SQLITE_STATIC);
+    sqlite3_bind_text(probe, 2, "proj", -1, SQLITE_STATIC);
+    ASSERT_EQ(sqlite3_step(probe), SQLITE_ROW); /* a plausible answer exists */
+    ASSERT_EQ(sqlite3_step(probe), SQLITE_ROW); /* and so does a second one */
+    sqlite3_finalize(probe);
+
+    /* The refusal, and NO row handed back with it. */
+    memset(&found, 0, sizeof(found));
+    ASSERT_EQ(hyp_store_find_node_by_qn(s, "proj", "proj", &found), HYP_STORE_AMBIGUOUS);
+    ASSERT_NULL(found.qualified_name);
+    ASSERT_NULL(found.label);
+
+    hyp_store_close(s);
+    PASS();
+}
+
 TEST(store_node_find_not_found) {
     hyp_store_t *s = hyp_store_open_memory();
     hyp_store_upsert_project(s, "test", "/tmp/test");
@@ -2152,6 +2234,7 @@ SUITE(store_nodes) {
     RUN_TEST(store_node_dedup);
     RUN_TEST(store_node_find_by_label);
     RUN_TEST(store_node_find_by_file);
+    RUN_TEST(store_find_by_qn_refuses_a_duplicate_qualified_name);
     RUN_TEST(store_node_find_not_found);
     RUN_TEST(store_node_count_empty);
     RUN_TEST(store_node_delete_by_file);

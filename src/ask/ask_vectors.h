@@ -1,6 +1,5 @@
 /*
- * ask_vectors.h — per-declaration vector storage for the `ask` lane
- * (NEXT-STEPS §2.1, track 4).
+ * ask_vectors.h — per-declaration vector storage for the `ask` lane.
  *
  * ═════════════════════════════════════════════════════════════════════════
  * WHERE THIS LIVES, AND WHY IT IS ITS OWN FILE
@@ -9,8 +8,8 @@
  * One SQLite database per project, at <cache>/vectors/<project>.db, beside but
  * NOT INSIDE the graph database at <cache>/<project>.db.
  *
- * §2.1 says "per-declaration float vectors in a SQLite BLOB" and stops there,
- * which is a storage engine, not a schema and not a location. The reference
+ * "Per-declaration float vectors in a SQLite BLOB" names a storage engine, not
+ * a schema and not a location. The reference
  * implementation is no help on the question: it writes a numpy .npy plus a JSON
  * sidecar and has no SQLite in this lane at all. So this is a design decision,
  * and it is the one decision in track 4 that is hard to reverse. Four reasons,
@@ -27,7 +26,7 @@
  *    anything worth indexing, to rebuild bytes that were already correct.
  *
  * 2. THIS TABLE SCALES WITH THE CORPUS WHERE NOTHING ELSE IN THE STORE DOES —
- *    §2.1's own words — and everything that touches <project>.db as a WHOLE
+ *    and everything that touches <project>.db as a WHOLE
  *    would start paying for it. hyp_store_check_integrity is a full page scan
  *    and runs on the incremental route's health check and at publication (the
  *    code notes 35.5 s on a kernel-scale generation). Artifact export copies
@@ -57,7 +56,7 @@
  *   - NO SQL JOIN. The store's authorizer denies SQLITE_ATTACH on every
  *     connection (store.c:669-673), so a vector row cannot be joined to a node
  *     row in one statement. This costs nothing here: brute-force cosine is a
- *     full scan by construction — §2.1's own reason for having no vector index
+ *     full scan by construction, which is the reason there is no vector index
  *     — and only the k rows that survive the scan need any node metadata at
  *     all. The scan reads (rowid, vector); the join is a k-row lookup.
  *
@@ -82,7 +81,7 @@
  *
  * One row per DECLARATION, not per function. Every node the extractor produced
  * that has a source span is embedded — methods, fields, classes, enums, macros,
- * variables, modules. §2.1 forbids filtering by node kind, and the reason is
+ * variables, modules. Filtering by node kind is forbidden, and the reason is
  * arithmetic rather than taste: skipping a kind changes the DENOMINATOR, so
  * recall either looks better because the haystack shrank or worse because the
  * gold vanished, and the number stops being comparable to the frozen benchmark.
@@ -98,7 +97,7 @@
  *
  * The text itself is NOT stored here. Hyponoia already records the span and can
  * re-read the file; duplicating 3.4 MB of lld/ELF source into the sidecar the
- * way the reference implementation does would make §2.1's "~17 MB" dishonest.
+ * way the reference implementation does would make the ~17 MB figure dishonest.
  * The span IS stored — repo-relative path and both line numbers — so a ranked
  * answer can cite `Writer.cpp:2281-2456` without a round trip to the graph, and
  * can still cite it after a re-index has re-minted every node id.
@@ -135,7 +134,7 @@ typedef struct hyp_ask_vectors hyp_ask_vectors_t;
 /* Which index. The two are SEPARATE FILES with separate provenance and separate
  * staleness, because they are built by different models at different times and
  * are expected to drift apart — indexing daily and re-embedding the escalation
- * lane weekly is the normal case, not an error (NEXT-STEPS §2.10 step 4).
+ * lane weekly is the normal case, not an error.
  *
  * The local lane keeps the historical path so an index built before lanes
  * existed is still found; only the escalation lane gets a suffix. */
@@ -146,7 +145,7 @@ typedef enum {
 
 const char *hyp_ask_lane_name(hyp_ask_lane_t lane);
 
-/* ── The embedding SPACE a model's vectors live in (NEXT-STEPS §3.1 step 3) ──
+/* ── The embedding SPACE a model's vectors live in ──────────────────────────
  *
  * Which vectors may be scored against which. This is a DIFFERENT question from
  * the prefix contract below: the contract answers "were these encoded with the
@@ -165,7 +164,7 @@ const char *hyp_ask_lane_name(hyp_ask_lane_t lane);
  * written before the field existed, which is "not recorded", not "shared").
  *
  * The allowlist is MEASURED, not read off a vendor page, and it earns its
- * authority from the eight negative controls in §2.15 that all correctly said
+ * authority from eight negative controls that all correctly said
  * NO: a random orthogonal rotation of voyage-4-large (self-retrieval acc@1
  * 0.005), Qwen3-Embedding-0.6B (0.0034) and voyage-code-3 (0.0047), against a
  * 0.005 chance floor — while the four voyage-4 members score 0.985–0.995 both
@@ -190,15 +189,15 @@ typedef struct {
     char *project;
     char *model_id;
     /* WHICH PREFIX CONTRACT PRODUCED THESE DOCUMENT VECTORS, and therefore what
-     * a query must be encoded with to be in the same space (NEXT-STEPS §2.10
-     * step 3). A gate, not a disclosure: the contract is applied to the text
+     * a query must be encoded with to be in the same space.
+     * A gate, not a disclosure: the contract is applied to the text
      * BEFORE encoding, so changing it changes every vector in the table.
      *
      * Five encoders have now been measured on this corpus and all five wanted a
      * different one — Qwen3 an instruct prefix worth +0.206 MRR@10, pplx
      * destroyed by that same prefix, Jina its own LoRA adapter, Voyage an
-     * `input_type`, nano two literal strings from its model card. §2.9 then
-     * showed the same model wanting OPPOSITE contracts on two corpora. So the
+     * `input_type`, nano two literal strings from its model card — and one
+     * model wanted OPPOSITE contracts on two corpora. So the
      * model id alone does not identify the space, and that is why this field
      * exists rather than being inferred from model_id.
      *
@@ -233,8 +232,8 @@ typedef struct {
      * GPU-built index is searchable from a CPU query encoder and mixing the two
      * devices is safe. Mixing MODELS is not, and that is a separate field. */
     char *device_note;
-    /* "drop" or "keep" — what the build did with spans covering a whole file
-     * (NEXT-STEPS §2.2 lever 3). Recorded because the two policies index
+    /* "drop" or "keep" — what the build did with spans covering a whole file.
+     * Recorded because the two policies index
      * DIFFERENT POPULATIONS, and a recall number measured over one of them is
      * not comparable to one measured over the other. An index written before
      * the policy existed reads "keep", which is what it did.

@@ -156,6 +156,10 @@ struct hyp_pipeline {
     atomic_int *cancelled;
     bool persistence; /* write .hyponoia/graph.db.zst after indexing */
 
+    /* How many repositories the workspace this run belongs to contains.
+     * 0 = never declared. See hyp_pipeline_set_workspace_member_count. */
+    int workspace_member_count;
+
     /* Indexing state (set during run) */
     hyp_gbuf_t *gbuf;
     hyp_registry_t *registry;
@@ -417,6 +421,26 @@ atomic_int *hyp_pipeline_cancelled_ptr(hyp_pipeline_t *p) {
 
 int hyp_pipeline_get_mode(const hyp_pipeline_t *p) {
     return p ? (int)p->mode : 0;
+}
+
+void hyp_pipeline_set_workspace_member_count(hyp_pipeline_t *p, int member_count) {
+    if (p) {
+        p->workspace_member_count = member_count > 0 ? member_count : 0;
+    }
+}
+
+int hyp_pipeline_workspace_member_count(const hyp_pipeline_t *p) {
+    return p ? p->workspace_member_count : 0;
+}
+
+/* THE GATE. One predicate, read by every site that records cross-member
+ * evidence, so the sequential and parallel paths cannot come to different
+ * conclusions about whether this run is in a workspace. Undeclared (0) and a
+ * workspace of one (1) both mean "there is nowhere else to look", and the
+ * graph such a run produces is byte-identical to the graph it produced before
+ * this unit existed. */
+bool hyp_pipeline_ctx_records_workspace_evidence(const hyp_pipeline_ctx_t *ctx) {
+    return ctx && hyp_pipeline_workspace_member_count(ctx->pipeline) > 1;
 }
 
 void hyp_pipeline_get_excluded(const hyp_pipeline_t *p, char ***out, int *count) {

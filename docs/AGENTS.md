@@ -114,8 +114,9 @@ Kiro embeds this MCP server with `--tool-profile scout` for Scout and
 `--tool-profile analysis` for Verify/Auditor. Junie registers equivalent named
 server aliases because its subagent schema filters by server rather than by
 individual tool. Both process profiles use positive allowlists: Scout exposes 7
-fast inspection tools, Analysis exposes 12 — the same 7 plus `ask`,
-`query_graph`, `search_code`, `get_graph_schema`, and `detect_changes` — and
+fast inspection tools, Analysis exposes 13 — the same 7 plus `ask`,
+`query_graph`, `search_code`, `get_graph_schema`, `detect_changes`, and
+`search_memory` — and
 future or mutating tools remain unavailable until explicitly reviewed. `ask` is
 on Analysis and not on Scout because it can legitimately answer "unavailable"
 (its index is opt-in, see [ASK.md](ASK.md)) and Scout promises a surface where

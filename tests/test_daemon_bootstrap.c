@@ -303,6 +303,12 @@ TEST(daemon_bootstrap_classifies_stateless_commands_without_client) {
      * fall through to MCP_CLIENT and BLOCK serving the protocol on stdin
      * instead of downloading anything. */
     char *fetch_model[] = {"hyponoia", "fetch-model", "--path", NULL};
+    /* Same class, and the reason it is worth a row each: an unlisted top-level
+     * command exits 0 having printed nothing, because it fell through to
+     * MCP_CLIENT and served the protocol on a closed stdin. A dispatch entry in
+     * main.c is only half a command. */
+    char *onboard[] = {"hyponoia", "onboard", NULL};
+    char *migrate_comments[] = {"hyponoia", "migrate-comments", "--manifest", "m", NULL};
     ASSERT_EQ(classify(2, version), HYP_DAEMON_PROCESS_STATELESS);
     ASSERT_EQ(classify(3, help), HYP_DAEMON_PROCESS_STATELESS);
     ASSERT_EQ(classify(3, install), HYP_DAEMON_PROCESS_STATELESS);
@@ -310,6 +316,8 @@ TEST(daemon_bootstrap_classifies_stateless_commands_without_client) {
     ASSERT_EQ(classify(3, update), HYP_DAEMON_PROCESS_STATELESS);
     ASSERT_EQ(classify(2, verify_runtime_assets), HYP_DAEMON_PROCESS_STATELESS);
     ASSERT_EQ(classify(3, fetch_model), HYP_DAEMON_PROCESS_STATELESS);
+    ASSERT_EQ(classify(2, onboard), HYP_DAEMON_PROCESS_STATELESS);
+    ASSERT_EQ(classify(4, migrate_comments), HYP_DAEMON_PROCESS_STATELESS);
     ASSERT_FALSE(hyp_daemon_process_role_requires_client(HYP_DAEMON_PROCESS_STATELESS));
     PASS();
 }
@@ -999,13 +1007,13 @@ TEST(daemon_bootstrap_onboard_is_reachable_and_never_an_mcp_client) {
 /* Fail closed. An argument naming nothing this build has must be refused BY
  * NAME, never absorbed into the client role. */
 TEST(daemon_bootstrap_unclassified_command_refuses_and_names_it) {
-    char *word[] = {(char *)"hyponoia", (char *)"migrate-comments", NULL};
+    char *word[] = {(char *)"hyponoia", (char *)"reindex", NULL};
     char *flag[] = {(char *)"hyponoia", (char *)"--not-a-flag", NULL};
     char *after_client_args[] = {(char *)"hyponoia", (char *)"--profile", (char *)"h3-probe", NULL};
     ASSERT_EQ(classify(2, word), HYP_DAEMON_PROCESS_UNKNOWN_COMMAND);
     ASSERT_EQ(classify(2, flag), HYP_DAEMON_PROCESS_UNKNOWN_COMMAND);
     ASSERT_EQ(classify(3, after_client_args), HYP_DAEMON_PROCESS_UNKNOWN_COMMAND);
-    ASSERT_STR_EQ(hyp_daemon_process_unknown_command(2, word), "migrate-comments");
+    ASSERT_STR_EQ(hyp_daemon_process_unknown_command(2, word), "reindex");
     ASSERT_STR_EQ(hyp_daemon_process_unknown_command(2, flag), "--not-a-flag");
     ASSERT_STR_EQ(hyp_daemon_process_unknown_command(3, after_client_args), "h3-probe");
     ASSERT_FALSE(hyp_daemon_process_role_requires_client(HYP_DAEMON_PROCESS_UNKNOWN_COMMAND));

@@ -1,5 +1,5 @@
 /*
- * onboard.h — onboarding (NEXT-STEPS §4 Phase 1, Track B).
+ * onboard.h — onboarding.
  *
  * Detect, propose, confirm. Never interrogate. The four units live here
  * together because they share one vocabulary and one plan struct:
@@ -15,8 +15,9 @@
  *
  * ── The GPU answer is a RUN, not a belief ──
  *
- * §3 retracted a GPU path whose batched vectors were wrong, and the failure
- * survived a CPU-vs-GPU comparison because both sides were batched the same
+ * A GPU path whose batched vectors are wrong is a real, shipped failure mode,
+ * and it survives a CPU-vs-GPU comparison because both sides batch the
+ * same
  * wrong way. So "does GPU work" is answered by RUNNING the batching self-check
  * (`hyponoia embed --verify-batching`'s exact machinery,
  * hyp_ask_encoder_check_batching) on an encoder created on the GPU of THIS
@@ -64,8 +65,8 @@ typedef enum {
     /* The encoder refused to come up on a GPU (no device, no readable VRAM
      * ceiling, or HYP_ASK_GPU=none in this build's backend). */
     HYP_ONBOARD_GPU_UNUSABLE,
-    /* The batching check RAN on a GPU encoder and FAILED — the §3 failure
-     * class, caught before anything is indexed with it. */
+    /* The batching check RAN on a GPU encoder and FAILED — wrong vectors,
+     * caught before anything is indexed with them. */
     HYP_ONBOARD_GPU_FAILED,
     /* The batching check ran on a GPU encoder and passed. The only state that
      * proposes the GPU, and it requires gpu_check_ran. */
