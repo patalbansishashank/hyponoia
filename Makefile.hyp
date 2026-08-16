@@ -412,10 +412,7 @@ PIPELINE_SRCS = \
 # Memory module (§4 Track C/E): anchor resolution against the live index, and
 # the comment-prose migration that relocates history-shaped comments into the
 # decision store instead of deleting them.
-MEMORY_SRCS = src/memory/anchor.c src/memory/comment_migrate.c
-# Memory module (§4 Track C): anchor resolution against the live index, and
-# sync as a union of two record stores (C6u) with its `hyponoia sync` command.
-MEMORY_SRCS = src/memory/anchor.c src/memory/sync.c src/memory/sync_cmd.c
+MEMORY_SRCS = src/memory/anchor.c src/memory/comment_migrate.c src/memory/sync.c src/memory/sync_cmd.c
 
 # SimHash / MinHash module
 SIMHASH_SRCS = src/simhash/minhash.c
