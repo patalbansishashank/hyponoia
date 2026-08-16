@@ -17,10 +17,14 @@
 #      never greps a file on disk.
 #
 # THE PREFIX LIST IS NOT DUPLICATED HERE. It is parsed out of
-# src/cli/cli.c's VENDOR_PREFIXES, which is what hyp_config_validate() itself
-# matches on when it refuses a key in `key_env`. Two copies of that list means
-# one of them is wrong later, and it would be this one. If the parse fails this
-# script FAILS — it never falls back to a list of its own.
+# src/foundation/scrub.c's hyp_vendor_prefixes — the one table that
+# hyp_config_validate() matches on when it refuses a key in `key_env` and that
+# the transcript scrub (D2) replaces before a record id can bind the text.
+# (It lived in src/cli/cli.c until D2 moved it to foundation so the scrub could
+# link it.) Two copies of that list means one of them is wrong later, and it
+# would be this one. Same for the body threshold: HYP_SCRUB_MIN_BODY is parsed
+# out of src/foundation/scrub.h. If either parse fails this script FAILS — it
+# never falls back to a value of its own.
 #
 #   check-secret-history.sh                 scan the commits a push would send
 #   check-secret-history.sh --all           sweep every commit in the repository
@@ -29,7 +33,8 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-CLI_C="$ROOT/src/cli/cli.c"
+PREFIX_SRC="$ROOT/src/foundation/scrub.c"
+SCRUB_H="$ROOT/src/foundation/scrub.h"
 
 # The commit that carried the live key, kept as the self-test fixture. If this
 # ever stops being reachable the self-test says so rather than passing quietly.
@@ -65,21 +70,29 @@ ACKNOWLEDGED_REVOKED=(
     "d9a65a54"   # the squash of that fix onto main
 )
 
-# A vendor prefix followed by enough body to be a key rather than a word.
-# 20 is comfortably under the shortest real key (Voyage ~40, Google 35) and
-# comfortably over the filler fixtures this repository now uses ("pa-abc123").
-MIN_BODY=20
-
 die() { printf '\n[secret-history] %s\n' "$*" >&2; exit 1; }
 
 # ── The prefix list, read from the product ──────────────────────────
 extract_prefixes() {
-    [ -f "$CLI_C" ] || die "cannot read $CLI_C — the prefix list lives there, and this script refuses to invent one"
+    [ -f "$PREFIX_SRC" ] || die "cannot read $PREFIX_SRC — the prefix list lives there, and this script refuses to invent one"
     local line
-    line="$(grep -m1 'VENDOR_PREFIXES\[\] *=' "$CLI_C" || true)"
-    [ -n "$line" ] || die "VENDOR_PREFIXES not found in src/cli/cli.c. It was renamed or moved; point this script at the new definition rather than hardcoding the list."
+    line="$(grep -m1 'hyp_vendor_prefixes\[\] *=' "$PREFIX_SRC" || true)"
+    [ -n "$line" ] || die "hyp_vendor_prefixes not found in src/foundation/scrub.c. It was renamed or moved; point this script at the new definition rather than hardcoding the list."
     # "sk-", "pa-", ... -> one per line
     printf '%s\n' "$line" | grep -oE '"[^"]+"' | tr -d '"'
+}
+
+# A vendor prefix followed by enough body to be a key rather than a word. The
+# threshold is HYP_SCRUB_MIN_BODY in src/foundation/scrub.h — the scrub's own
+# rule, so "what this scanner refuses to push" and "what the scrub redacts
+# from a transcript" can never disagree. scrub.h documents the number's
+# reasoning (under every real key, over the filler fixtures).
+extract_min_body() {
+    [ -f "$SCRUB_H" ] || die "cannot read $SCRUB_H — the body threshold lives there, and this script refuses to invent one"
+    local n
+    n="$(grep -m1 -E '^#define HYP_SCRUB_MIN_BODY [0-9]+' "$SCRUB_H" | grep -oE '[0-9]+' || true)"
+    [ -n "$n" ] || die "HYP_SCRUB_MIN_BODY not found in src/foundation/scrub.h. It was renamed or moved; point this script at the new definition rather than hardcoding the threshold."
+    printf '%s' "$n"
 }
 
 build_regex() {
@@ -92,7 +105,7 @@ build_regex() {
         esc="$(printf '%s' "$p" | sed 's/[][\.*^$(){}?+|/]/\\&/g')"
         out="${out:+$out|}${esc}"
     done
-    [ -n "$out" ] || die "no prefixes parsed from VENDOR_PREFIXES"
+    [ -n "$out" ] || die "no prefixes parsed from hyp_vendor_prefixes"
     # Not preceded by a word character, so "compa-" and "task_" cannot match.
     printf '(^|[^A-Za-z0-9_])(%s)[A-Za-z0-9_-]{%d,}' "$out" "$MIN_BODY"
 }
@@ -145,9 +158,10 @@ main() {
     local mode="${1:-range}"
     local prefixes regex
     prefixes="$(extract_prefixes)"
+    MIN_BODY="$(extract_min_body)"
     regex="$(printf '%s\n' "$prefixes" | build_regex)"
-    printf '[secret-history] %d prefixes from src/cli/cli.c VENDOR_PREFIXES: %s\n' \
-        "$(printf '%s\n' "$prefixes" | grep -c .)" "$(printf '%s' "$prefixes" | tr '\n' ' ')"
+    printf '[secret-history] %d prefixes from src/foundation/scrub.c hyp_vendor_prefixes (body >= %s): %s\n' \
+        "$(printf '%s\n' "$prefixes" | grep -c .)" "$MIN_BODY" "$(printf '%s' "$prefixes" | tr '\n' ' ')"
 
     case "$mode" in
     --selftest)
