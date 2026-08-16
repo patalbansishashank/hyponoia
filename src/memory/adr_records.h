@@ -97,8 +97,8 @@
  * ONE AUTHORITY, ONE PROJECTION
  * ═════════════════════════════════════════════════════════════════════════
  *
- * hyp_adr_write() is the ONE writer, and both ends call it. It does two things
- * in a fixed order:
+ * hyp_adr_write() is the ONE writer, and both ends call it. It does three
+ * things in a fixed order:
  *
  *   1. folds whatever the row already holds into the record store, so the text
  *      about to be superseded survives the write that supersedes it;
