@@ -19,6 +19,7 @@ enum { PC_RING = 4, PC_RING_MASK = 3, PC_SIG_SCAN = 15, PC_REGEX_GRP = 2 };
 #include <stdint.h>
 #include "pipeline/pipeline_internal.h"
 #include "pipeline/lsp_resolve.h"
+#include "pipeline/pass_workspace_calls.h"
 #include "graph_buffer/graph_buffer.h"
 #include "foundation/log.h"
 #include "foundation/compat.h"
@@ -590,6 +591,16 @@ static int resolve_single_call(hyp_pipeline_ctx_t *ctx, HYPCall *call,
                 emit_http_async_edge(ctx, call, source_node, NULL, &svc_res, esvc, false);
                 return SKIP_ONE;
             }
+        }
+        /* This member's registry has no answer at all, which is exactly
+         * the shape of a call into a SIBLING member of the workspace. Record it
+         * so pass_workspace_calls can resolve it once every member is in one
+         * store; before this the fact was dropped here and nothing downstream
+         * could ever know the call existed. Gated — see
+         * hyp_pipeline_ctx_records_workspace_evidence. The parallel path
+         * records at the same condition through the same writer. */
+        if (hyp_pipeline_ctx_records_workspace_evidence(ctx)) {
+            hyp_pipeline_record_unresolved_call(ctx->gbuf, source_node->id, call->callee_name);
         }
         return 0;
     }

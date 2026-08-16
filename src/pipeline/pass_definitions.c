@@ -19,6 +19,7 @@ enum { PD_JSON_FIELD_OVERHEAD = 6 };
 #include "pipeline/pipeline.h"
 #include <stdint.h>
 #include "pipeline/pipeline_internal.h"
+#include "pipeline/pass_workspace_calls.h"
 #include "graph_buffer/graph_buffer.h"
 #include "foundation/log.h"
 #include "foundation/compat.h"
@@ -475,6 +476,13 @@ static int create_import_edges_for_file(hyp_pipeline_ctx_t *ctx, const HYPFileRe
                      imp->local_name ? imp->local_name : "");
             hyp_gbuf_insert_edge(ctx->gbuf, source_node->id, target->id, "IMPORTS", imp_props);
             count++;
+        } else if (!target && hyp_pipeline_ctx_records_workspace_evidence(ctx)) {
+            /* The specifier names no file in THIS member, which is what
+             * an include of a sibling member's header looks like from here.
+             * Recorded rather than dropped; the parallel path
+             * (create_imports_edges) records the same fact at the same
+             * condition through the same writer. */
+            hyp_pipeline_record_unresolved_import(ctx->gbuf, source_node->id, imp->module_path);
         }
     }
     free(file_qn);
