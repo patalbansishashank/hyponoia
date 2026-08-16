@@ -272,7 +272,10 @@ def annotation_view(tools):
         print("FAIL: destructiveHint is %r on delete_project and %r on search_graph"
               % (erase[1], read[1]))
         bad.append("annotations:erase-read-wrong-bit")
-    else:
+    # The reassuring line is printed only when NOTHING is wrong. A success
+    # message beside a failure list is how a reader comes away with the wrong
+    # summary, and this check exists to be read.
+    if not bad:
         print("annotations: %d tools match their declared profile; delete_project "
               "destructiveHint=True, search_graph destructiveHint=False" % len(seen))
     return bad
