@@ -36,6 +36,11 @@ on:
         required: false
         type: boolean
         default: false
+      skip_lint:
+        description: "Skip the lint phase entirely (tree whose lint already passed on the IDENTICAL commit; NOT a way to ship unlinted code)"
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -99,7 +104,20 @@ jobs:
     secrets: inherit
 
   # ── 1. Lint (cppcheck + clang-format) ───────────────────────────
+  # skip_lint is skip_tests' sibling and carries the same condition: the
+  # IDENTICAL commit has already been linted green, by the PR that merged it or
+  # by an earlier attempt at this same release. It is not a way to ship
+  # unlinted code — a tree nobody has linted must not take this flag, and a
+  # tree that was linted at a different sha has not been linted at all.
+  #
+  # It buys real wall clock, and only because lint sits at the HEAD of the
+  # chain. Measured on run 31924848305 (v0.3.1, skip_tests=true):
+  # `lint / lint` ran 03:41:35 → 03:53:52, 737s. `test` was skipped at
+  # 03:53:53 and `build` started at 03:53:56 — every downstream job waited the
+  # full 12m17s on a phase that produced no new information. Nothing else in
+  # the release is gated on lint, so skipping it moves `build` to t+0.
   lint:
+    if: ${{ !inputs.skip_lint }}
     uses: ./.github/workflows/_lint.yml
 
   # ── 2. Tests (all platforms, full suite for release) ────────────
@@ -107,8 +125,15 @@ jobs:
   # when only packaging/gating changed and the previous run proved the suites,
   # re-running ~2h of tests adds no information. It skips ONLY this phase —
   # build, smoke, soak and verify always run against the fresh artifacts.
+  #
+  # !cancelled() && !failure() is required here for the same reason `build` and
+  # `smoke` carry it (see below): with skip_lint=true the `lint` need is
+  # SKIPPED, and a bare `if: ${{ !inputs.skip_tests }}` implies `success()`,
+  # which a skipped need does not satisfy. Without the override, skipping lint
+  # would silently strand the entire test phase — the release would run no
+  # lint AND no tests while the input only claimed the first.
   test:
-    if: ${{ !inputs.skip_tests }}
+    if: ${{ !cancelled() && !failure() && !inputs.skip_tests }}
     needs: [lint]
     uses: ./.github/workflows/_test.yml
     with:

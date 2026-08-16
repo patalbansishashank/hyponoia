@@ -68,6 +68,26 @@ jobs:
       - name: No unexplained vendor key anywhere in history
         run: scripts/check-secret-history.sh --all
 
+  # NEXT-STEPS.md §3.2 step 6. The sibling of secret-history, and here for the
+  # same reason it is: `pkg/go/hyponoia`, a 9,428,133-byte compiled Go binary,
+  # was tracked from dd41cf92 and shipped inside two tags before anyone looked.
+  # dd41cf92 was a direct push to main — the path this header describes — so
+  # gating this on pull_request alone (pr.yml carries the same job) would have
+  # missed the very commit that motivated it. Runs in PARALLEL with
+  # build-and-test, so it costs no wall clock.
+  tracked-artifacts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # Detection before cleanliness, exactly as secret-history does it above.
+      - name: The gate must refuse planted binaries
+        run: scripts/ci/check-tracked-artifacts.sh --selftest
+
+      - name: No tracked file may be a build artifact
+        run: scripts/ci/check-tracked-artifacts.sh
+
   build-and-test:
     runs-on: ubuntu-latest
     timeout-minutes: 60
