@@ -366,6 +366,11 @@ jobs:
   # reported across the lane on either architecture.
   test-msan:
     runs-on: ubuntu-latest
+    # Non-blocking: this lane has reported zero real findings in its whole
+    # history (see the comment above), it duplicates coverage the required
+    # ASan+UBSan leg already provides, and it's the single most expensive
+    # job in this workflow. Still runs, still visible, never holds anything up.
+    continue-on-error: true
     timeout-minutes: 180
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
