@@ -89,6 +89,12 @@ typedef struct {
 
     /* What the PRODUCT observed at the after commit for the symbol the
      * corpus says this one became (same name, or the renamed one). */
+    /* Does the corpus name a successor for this fixture at all? The copy
+     * fixtures name several and the census counts none of them, so "no
+     * successor named" and "a successor named and not found" are separate
+     * facts, and only the second is a defect. */
+    bool after_expected;
+    char pa_why[256];
     bool pa_found;
     int pa_start, pa_end;
     char pa_hash[G1_HASH];
@@ -245,8 +251,23 @@ static bool g1_materialise(const char *commit, const char *rel, const char *tree
 
 /* ── Indexing ────────────────────────────────────────────────────── */
 
+/*
+ * Index one tree, and KEEP WHAT THE INDEXER SAID ABOUT IT.
+ *
+ * A run that skips a file still returns success, by design — the skip is
+ * surfaced rather than fatal. So a harness that reads only the return code
+ * indexes a tree with a file missing from it, then reports the consequence
+ * ("the index holds no node for this symbol") instead of the cause ("this
+ * file hit the extractor's per-file budget"). Those are two different
+ * sentences and only one of them is actionable, so the skip list is read
+ * here, while the pipeline still owns it, and carried into every message
+ * that could otherwise blame the symbol.
+ */
 static bool g1_index(const char *tree, const char *db, char *proj, size_t projsz, char *err,
-                     size_t errsz) {
+                     size_t errsz, char *skips, size_t skipsz) {
+    if (skips && skipsz) {
+        skips[0] = '\0';
+    }
     hyp_pipeline_t *p = hyp_pipeline_new(tree, db, HYP_MODE_FULL);
     if (!p) {
         snprintf(err, errsz, "pipeline_new failed for %s", tree);
@@ -255,6 +276,22 @@ static bool g1_index(const char *tree, const char *db, char *proj, size_t projsz
     const char *name = hyp_pipeline_project_name(p);
     snprintf(proj, projsz, "%s", name ? name : "");
     int rc = hyp_pipeline_run(p);
+    if (skips && skipsz) {
+        hyp_file_error_t *fe = NULL;
+        int nfe = 0;
+        hyp_pipeline_get_file_errors(p, &fe, &nfe);
+        size_t used = 0;
+        for (int i = 0; i < nfe && fe && used + 1 < skipsz; i++) {
+            int n = snprintf(skips + used, skipsz - used, "%s%s: %s (phase %s)",
+                             used ? "; " : "", fe[i].path ? fe[i].path : "(no path)",
+                             fe[i].reason ? fe[i].reason : "(no reason)",
+                             fe[i].phase ? fe[i].phase : "(no phase)");
+            if (n < 0 || (size_t)n >= skipsz - used) {
+                break;
+            }
+            used += (size_t)n;
+        }
+    }
     hyp_pipeline_free(p);
     g1_index_runs++;
     if (rc != 0) {
@@ -437,6 +474,7 @@ static void g1_note_candidates(g1_fix_t *fx, const hyp_anchor_res_t *res, bool p
 /* One commit pair, end to end. */
 static bool g1_run_pair(int pair, const char *tree, const char *db, char *err, size_t errsz) {
     const char *files[G1_MAX_FILES];
+    char skips[512] = {0};
 
     /* ── the before tree ── */
     if (th_mkdir_p(tree) != 0) {
@@ -450,8 +488,12 @@ static bool g1_run_pair(int pair, const char *tree, const char *db, char *err, s
         }
     }
     char proj[HYP_ADDR_SLUG_MAX + 1];
-    if (!g1_index(tree, db, proj, sizeof(proj), err, errsz)) {
+    if (!g1_index(tree, db, proj, sizeof(proj), err, errsz, skips, sizeof(skips))) {
         return false;
+    }
+    if (skips[0]) {
+        printf("  [g1] pair %02d before tree, files the indexer skipped: %s\n", pair, skips);
+        fflush(stdout);
     }
 
     /* ── write one anchor per fixture, from the product's own span ── */
@@ -471,8 +513,12 @@ static bool g1_run_pair(int pair, const char *tree, const char *db, char *err, s
         hyp_node_t node = {0};
         int rc = g1_find(s, proj, rel, name, &node, fx->pb_qn, sizeof(fx->pb_qn));
         if (rc != HYP_STORE_OK) {
-            snprintf(fx->why, sizeof(fx->why), "before index holds no node for %s in %s (rc=%d)",
-                     name, rel, rc);
+            /* The skip list separates "the indexer never read this file" from
+             * "the indexer read it and this symbol is not a definition it
+             * recognises". Without it both print as an absent node. */
+            snprintf(fx->why, sizeof(fx->why),
+                     "before index holds no node for %s in %s (rc=%d)%s%s", name, rel, rc,
+                     skips[0] ? "; the indexer skipped " : "", skips[0] ? skips : "");
             continue;
         }
         fx->pb_start = node.start_line;
@@ -530,8 +576,13 @@ static bool g1_run_pair(int pair, const char *tree, const char *db, char *err, s
         }
     }
     char proj2[HYP_ADDR_SLUG_MAX + 1];
-    if (!g1_index(tree, db, proj2, sizeof(proj2), err, errsz)) {
+    skips[0] = '\0';
+    if (!g1_index(tree, db, proj2, sizeof(proj2), err, errsz, skips, sizeof(skips))) {
         return false;
+    }
+    if (skips[0]) {
+        printf("  [g1] pair %02d after tree, files the indexer skipped: %s\n", pair, skips);
+        fflush(stdout);
     }
     if (strcmp(proj, proj2) != 0) {
         snprintf(err, errsz, "the same tree indexed as \"%s\" then \"%s\"", proj, proj2);
@@ -575,7 +626,15 @@ static bool g1_run_pair(int pair, const char *tree, const char *db, char *err, s
         if (after && aname) {
             const char *arel = g1_str(after, "file_path");
             hyp_node_t an = {0};
-            if (g1_find(s, proj, arel, aname, &an, fx->pa_qn, sizeof(fx->pa_qn)) == HYP_STORE_OK) {
+            fx->after_expected = true;
+            int arc = g1_find(s, proj, arel, aname, &an, fx->pa_qn, sizeof(fx->pa_qn));
+            if (arc != HYP_STORE_OK) {
+                snprintf(fx->pa_why, sizeof(fx->pa_why),
+                         "after index holds no node for %s in %s (rc=%d)%s%s", aname,
+                         arel ? arel : "(no path)", arc, skips[0] ? "; the indexer skipped " : "",
+                         skips[0] ? skips : "");
+            }
+            if (arc == HYP_STORE_OK) {
                 fx->pa_found = true;
                 fx->pa_start = an.start_line;
                 fx->pa_end = an.end_line;
@@ -640,7 +699,7 @@ static bool g1_run_pair(int pair, const char *tree, const char *db, char *err, s
         snprintf(fresh_db, sizeof(fresh_db), "%s.fresh.db", db);
         char fproj[HYP_ADDR_SLUG_MAX + 1];
         char ferr[256];
-        if (g1_index(tree, fresh_db, fproj, sizeof(fproj), ferr, sizeof(ferr))) {
+        if (g1_index(tree, fresh_db, fproj, sizeof(fproj), ferr, sizeof(ferr), NULL, 0)) {
             hyp_store_t *fs = hyp_store_open_path_query(fresh_db);
             if (fs) {
                 for (int i = 0; i < g1_n; i++) {
@@ -965,7 +1024,13 @@ static void g1_run(void) {
         if (!g1_run_pair(p, tree, db, err, sizeof(err))) {
             snprintf(g1_pair_err[p], sizeof(g1_pair_err[p]), "%s", err);
             for (int i = 0; i < g1_n; i++) {
-                if (g1_fix[i].pair == p && !g1_fix[i].reconstructed) {
+                /* A fixture that failed its own before-side lookup already
+                 * carries a reason, and it is a different one. Overwriting it
+                 * with the pair's stop reason files the second cause under the
+                 * first, which reads as one failure where there are two. Only
+                 * a fixture with no reason of its own inherits the pair's. */
+                if (g1_fix[i].pair == p && !g1_fix[i].reconstructed &&
+                    strcmp(g1_fix[i].why, "not replayed") == 0) {
                     snprintf(g1_fix[i].why, sizeof(g1_fix[i].why), "%s", err);
                 }
             }
@@ -1007,7 +1072,10 @@ static const char *g1_verdict(const char *id) {
         return g1_msg;
     }
     if (!fx->reconstructed) {
-        snprintf(g1_msg, sizeof(g1_msg), "%s could not be reconstructed: %s", id, fx->why);
+        bool also = g1_pair_err[fx->pair][0] && strcmp(g1_pair_err[fx->pair], fx->why) != 0;
+        snprintf(g1_msg, sizeof(g1_msg), "%s could not be reconstructed: %s%s%s", id, fx->why,
+                 also ? " | and its commit pair stopped separately: " : "",
+                 also ? g1_pair_err[fx->pair] : "");
         return g1_msg;
     }
     /* Nothing below this point is the product's answer unless the after tree
@@ -1171,6 +1239,19 @@ TEST(g1_span_agreement_census) {
                      g1_fix[i].pair, g1_fix[i].id ? g1_fix[i].id : "(unnamed)",
                      g1_pair_err[g1_fix[i].pair][0] ? g1_pair_err[g1_fix[i].pair]
                                                     : "no reason recorded");
+            FAIL(g1_msg);
+        }
+        /* The other way to be short: the pair replayed, the corpus named a
+         * successor, and the after index does not hold it. That is the index
+         * being incomplete, which is a third thing again — and it is the one
+         * that reaches a slow machine first, because the file it loses is the
+         * largest one. */
+        if (g1_fix[i].after_expected && !g1_fix[i].pa_found) {
+            snprintf(g1_msg, sizeof(g1_msg),
+                     "the after-span census is short because %s names a successor the after "
+                     "index does not hold: %s",
+                     g1_fix[i].id ? g1_fix[i].id : "(unnamed)",
+                     g1_fix[i].pa_why[0] ? g1_fix[i].pa_why : "no reason recorded");
             FAIL(g1_msg);
         }
     }
