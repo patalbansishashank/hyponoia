@@ -48,12 +48,19 @@ static const float ONBOARD_VERIFY_THRESHOLD = 0.999F;
 /* Fixture for the batching check: few texts, deliberately DIFFERENT lengths,
  * so the groups are ragged the way a real length-sorted pass is — the exact
  * shape that produced wrong batched vectors. */
+/* Hoisted rather than inlined: wrapped to the column limit it becomes two
+ * adjacent literals inside the initializer, which is indistinguishable from a
+ * missing comma and which clang rejects under -Wstring-concatenation. A name
+ * keeps the array one element per line. */
+#define ONBOARD_VERIFY_TEXT_PRIME                                                                \
+    "bool is_prime(unsigned n) {\n    if (n < 2) return false;\n    for (unsigned d = 2; d * d " \
+    "<= n; d++)\n        if (n % d == 0) return false;\n    return true;\n}"
+
 static const char *const ONBOARD_VERIFY_TEXTS[] = {
     "int add(int a, int b) { return a + b; }",
     "x = 1",
     "static void clear(char *p, size_t n) {\n    memset(p, 0, n);\n}",
-    "bool is_prime(unsigned n) {\n    if (n < 2) return false;\n    for (unsigned d = 2; "
-    "d * d <= n; d++)\n        if (n % d == 0) return false;\n    return true;\n}",
+    ONBOARD_VERIFY_TEXT_PRIME,
     "#define ARRAY_LEN(a) (sizeof(a) / sizeof((a)[0]))",
     "def parse(line):\n    return [int(x) for x in line.split(',') if x]",
 };
