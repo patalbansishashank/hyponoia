@@ -72,34 +72,6 @@ static uint64_t now_ns(void) {
     return ((uint64_t)ts.tv_sec * NSEC_PER_SEC) + (uint64_t)ts.tv_nsec;
 }
 
-/* ─────────────────────────────────────────────────────────────────
- * HYPMEASURE-TEMP — TEMPORARY INSTRUMENTATION. REVERT BEFORE MERGE.
- *
- * Emits one line per tree-sitter parse whose wall clock reaches the floor
- * below, so the per-file distribution can be read off a CI log. A timeout
- * teaches only "more than the budget"; this exists so the budget can be set
- * from what a parse actually needs. Deliberately NOT an env knob: a
- * diagnostic switch that survives into a release is surface nobody asked for.
- * ───────────────────────────────────────────────────────────────── */
-enum { HYP_MEASURE_FLOOR_US = 20000 }; /* 20 ms — keeps the tail, drops the noise */
-static void hyp_measure_emit(const char *what, const char *rel_path, int nbytes,
-                             uint64_t elapsed_ns, bool aborted) {
-    uint64_t us = elapsed_ns / 1000u;
-    if (us < (uint64_t)HYP_MEASURE_FLOOR_US) {
-        return;
-    }
-    char line[512];
-    int n =
-        snprintf(line, sizeof(line), "HYPMEASURE %s us=%llu bytes=%d aborted=%d path=%s\n", what,
-                 (unsigned long long)us, nbytes, aborted ? 1 : 0, rel_path ? rel_path : "(null)");
-    if (n > 0) {
-        fwrite(line, 1, (size_t)n < sizeof(line) ? (size_t)n : sizeof(line) - 1, stderr);
-        fflush(stderr);
-    }
-}
-#define HYP_MEASURE_EMIT(what, path, bytes, ns, aborted) \
-    hyp_measure_emit((what), (path), (int)(bytes), (uint64_t)(ns), (aborted))
-
 // hyp_get_profile returns accumulated parse/extract times and file count.
 void hyp_get_profile(hyp_profile_out_t out) {
     *out.parse_ns = atomic_load(&total_parse_ns);
@@ -1248,9 +1220,6 @@ HYPFileResult *hyp_extract_file_ex(const char *source, int source_len, HYPLangua
     TSTree *tree = ts_parser_parse_with_options(parser, NULL, ts_input, opts);
     uint64_t t1 = now_ns();
 
-    /* HYPMEASURE-TEMP: per-file raw-parse wall clock. REVERT BEFORE MERGE. */
-    HYP_MEASURE_EMIT("raw", rel_path, source_len, t1 - t0, tree == NULL);
-
     if (!tree) {
         result->has_error = true;
         result->error_msg =
@@ -1385,12 +1354,8 @@ HYPFileResult *hyp_extract_file_ex(const char *source, int source_len, HYPLangua
                     NULL,
                 };
                 TSParseOptions pp_opts = {0};
-                uint64_t pp_t0 = now_ns();
                 TSTree *pp_tree =
                     ts_parser_parse_with_options(pp_parser, NULL, pp_ts_input, pp_opts);
-                /* HYPMEASURE-TEMP: the expanded-source parse carries NO budget
-                 * today. REVERT BEFORE MERGE. */
-                HYP_MEASURE_EMIT("pp", rel_path, expanded_len, now_ns() - pp_t0, false);
                 if (pp_tree) {
                     TSNode pp_root = ts_tree_root_node(pp_tree);
 
