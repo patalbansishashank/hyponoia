@@ -80,9 +80,14 @@ so Analysis admits it and Scout — the small surface where every tool answers
 fast — does not.
 
 The store lives in a `memory` directory beside the indexes (`HYP_MEMORY_DIR`
-overrides). Anchoring a record to a specific span is **not** available yet: a
-supplied `anchor` is refused rather than stored unverified, because a record is
-never created already-orphaned and never attached to a plausible neighbour.
+overrides). Anchoring a record to a specific span is **not** available yet, and
+neither tool advertises an argument for it: there is no anchor resolver in this
+build, so `record_memory` takes no `anchor` and `search_memory` takes neither
+`anchor` nor `status`. Every record is repo-scoped. Both handlers still refuse a
+supplied `anchor` rather than storing or filtering on one unverified — a record
+is never created already-orphaned and never attached to a plausible neighbour,
+and a filter whose result cannot be reported returns a superset that reads
+exactly like a match. The arguments return together with the resolver.
 
 ## The `project` argument
 
