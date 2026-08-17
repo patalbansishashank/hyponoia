@@ -552,47 +552,48 @@
       "id": "G1-EDIT-003",
       "category": "body_changed",
       "provenance": {
-        "commit_before": "d3e9806f440fa7e18e3d5e02f55db000bd3df5c7",
-        "commit_after": "eef774b0add41be82285494b48aca1ac569d875e",
-        "commit_after_date": "2026-08-16",
-        "commit_after_subject": "perf(mcp): search_graph answers a retrieval miss with ten rows, not fifty",
+        "commit_before": "47e4d25dac2f87f32e943d2301f5e6d3ac2e9d45",
+        "commit_after": "60390affb8685f31a4f2339a7e451e63b1495527",
+        "commit_after_date": "2026-07-18",
+        "commit_after_subject": "fix(mcp): close the legacy-generation cursor gap; json = the tree model everywhere",
         "derived_by": "mine_g1.py over `git diff-tree -r -M -C --find-copies-harder <sha>^ <sha>` on every non-merge commit reachable from dev; spans by C brace-matching, hashes by spanhash.py",
-        "re_derive": "git diff d3e9806f eef774b0 -- src/mcp/mcp.c"
+        "re_derive": "git diff 47e4d25d 60390aff -- src/mcp/mcp.c",
+        "lineage_note": "re-derived over the same symbol and file after the earlier pair's after commit was found to be reachable from no published branch, which no clone of the remote can replay; the replacement is the most recent dev-reachable pair that edits this symbol and moves its start line and is not already a pair in this corpus"
       },
       "symbol": {
         "before_name": "handle_search_graph",
         "after_name": "handle_search_graph"
       },
       "before": {
-        "commit": "d3e9806f440fa7e18e3d5e02f55db000bd3df5c7",
+        "commit": "47e4d25dac2f87f32e943d2301f5e6d3ac2e9d45",
         "file_path": "src/mcp/mcp.c",
-        "start_line": 4044,
-        "end_line": 4312,
+        "start_line": 2939,
+        "end_line": 3214,
         "qualified_name": "hyponoia.src.mcp.mcp.handle_search_graph",
         "address": "hyp1:hyponoia/hyponoia#hyponoia.src.mcp.mcp.handle_search_graph",
-        "span_hash": "4b72db3fefe443c53b34583fc1e032de",
-        "verify": "python3 spanhash.py eef774b0^ src/mcp/mcp.c 4044 4312"
+        "span_hash": "816f101ccb9730045ae9976ecf96fd1d",
+        "verify": "python3 spanhash.py 60390aff^ src/mcp/mcp.c 2939 3214"
       },
       "after": {
-        "commit": "eef774b0add41be82285494b48aca1ac569d875e",
+        "commit": "60390affb8685f31a4f2339a7e451e63b1495527",
         "file_path": "src/mcp/mcp.c",
-        "start_line": 4153,
-        "end_line": 4421,
+        "start_line": 2956,
+        "end_line": 3211,
         "qualified_name": "hyponoia.src.mcp.mcp.handle_search_graph",
         "address": "hyp1:hyponoia/hyponoia#hyponoia.src.mcp.mcp.handle_search_graph",
-        "span_hash": "67749b7abdcccddf7ad4288f7a1005b2",
-        "verify": "python3 spanhash.py eef774b0 src/mcp/mcp.c 4153 4421"
+        "span_hash": "49dbb14ba5aac59dc6f833838893e519",
+        "verify": "python3 spanhash.py 60390aff src/mcp/mcp.c 2956 3211"
       },
-      "anchor_written_at_commit_before": "4b72db3fefe443c53b34583fc1e032de@hyp1:hyponoia/hyponoia#hyponoia.src.mcp.mcp.handle_search_graph",
-      "note": "body edited AND slid +109 \u2014 the discriminator against the RESOLVED cases",
+      "anchor_written_at_commit_before": "816f101ccb9730045ae9976ecf96fd1d@hyp1:hyponoia/hyponoia#hyponoia.src.mcp.mcp.handle_search_graph",
+      "note": "body edited AND slid +17 \u2014 the discriminator against the RESOLVED cases",
       "expected": {
         "hyp_anchor_status": "HYP_ANCHOR_RESOLVED_EDITED",
         "hyp_addr_relate": "HYP_ADDR_REL_EDITED",
         "candidate_count": 0,
         "resolved_to": {
           "file_path": "src/mcp/mcp.c",
-          "start_line": 4153,
-          "end_line": 4421
+          "start_line": 2956,
+          "end_line": 3211
         },
         "must_not": [
           "HYP_ANCHOR_RESOLVED",
