@@ -428,11 +428,10 @@ jobs:
     timeout-minutes: 120
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          # Same precondition as test-unix and test-diag: the full scripts/test.sh
-          # replays real history and resolves fixture commits against remote refs,
-          # neither of which a depth-1 checkout can supply.
-          fetch-depth: 0
+        # No fetch-depth here on purpose: scripts/test.sh --tsan runs make test-tsan
+        # and exits before Step 0, so this leg reaches neither the history replay nor
+        # the fixture-lineage gate. A full clone would be cost with nothing asking
+        # for it.
 
       - name: Install deps (Ubuntu)
         if: runner.os == 'Linux'
