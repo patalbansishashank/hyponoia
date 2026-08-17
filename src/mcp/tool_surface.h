@@ -498,21 +498,37 @@ typedef enum {
  *                would make D4's completeness audit meaningless.
  *    title       REQUIRED.
  *    body        REQUIRED.
+ *    supersedes  OPTIONAL record id. Supersession is a NEW RECORD naming the
+ *                old one. The superseded record is never edited and never
+ *                deleted — that is what keeps merge a union with no conflict
+ *                resolution and no merge UI.
+ *    tags        OPTIONAL array of strings.
+ *
+ *  ── NOT LIVE: record_memory's anchor ────────────────────────────────
+ *
+ *  `anchor` is SPECIFIED here and ADVERTISED NOWHERE, for the reason spelled
+ *  out under search_memory below and for one that is sharper here: the three
+ *  outcomes named next are an ALGORITHM, and no resolver exists to run it.
+ *  There is no unresolvable, no ambiguous and no candidate list in this build,
+ *  so a signature naming them describes a computation that has never once
+ *  happened. handle_record_memory refuses every non-empty anchor instead, and
+ *  that refusal is right and stays — storing one unverified is exactly how a
+ *  record becomes already-orphaned or attached to a neighbour.
+ *
  *    anchor      OPTIONAL object, C1's address of a span.
  *                  ABSENT      -> a repo-scoped record. Legitimate: a decision
  *                                 about code not yet written has nothing to
- *                                 attach to.
+ *                                 attach to. This is what EVERY record in this
+ *                                 build is, which is why withdrawing the
+ *                                 argument costs a caller nothing.
  *                  SUPPLIED and unresolvable -> ERROR. A record is never
  *                                 created already-orphaned, and never attached
  *                                 to the nearest plausible symbol. Rule (3).
  *                  SUPPLIED and ambiguous    -> ERROR listing the candidates.
  *                                 The tool does not choose among several, the
  *                                 same way project resolution does not.
- *    supersedes  OPTIONAL record id. Supersession is a NEW RECORD naming the
- *                old one. The superseded record is never edited and never
- *                deleted — that is what keeps merge a union with no conflict
- *                resolution and no merge UI.
- *    tags        OPTIONAL array of strings.
+ *
+ *  ── end NOT LIVE ────────────────────────────────────────────────────
  *
  *  There is NO `author` argument and there must never be one. A record id is
  *  derived from content + author + timestamp; an author a caller can state
@@ -521,7 +537,10 @@ typedef enum {
  *
  *  Returns a JSON object: { id, kind, project, project_source, anchor_status,
  *  written_at }. `anchor_status` is "attached" or "unanchored" — never
- *  "orphaned", because rule (3) forbids creating one.
+ *  "orphaned", because rule (3) forbids creating one. This key IS live and IS
+ *  emitted, and with no anchor argument to supply it always reads
+ *  "unanchored"; it says what a record IS rather than promising a filter, so
+ *  unlike search_memory's tri-state it costs a reader nothing to keep.
  *
  * ── search_memory ────────────────────────────────────────────────────
  *
@@ -532,6 +551,27 @@ typedef enum {
  *    kind        OPTIONAL. ABSENT means every kind — it does not mean none,
  *                and it is not an empty filter.
  *    query       OPTIONAL free text.
+ *    since/until OPTIONAL timestamps.
+ *    limit/offset, format  as elsewhere.
+ *
+ *  ── NOT LIVE: the anchor half of this contract ──────────────────────
+ *
+ *  This row is HYP_TOOL_LIVE, so read the next paragraph before believing
+ *  the paragraph after it. `anchor` and `status` are SPECIFIED here and
+ *  ADVERTISED NOWHERE: TOOLS[] in mcp.c deliberately does not carry them,
+ *  because this build has no anchor resolver behind them and the handler
+ *  refuses both fail-closed. A signature is not the place to keep a promise
+ *  nothing implements — a client generated from one sends the declared
+ *  default and is refused for obeying the contract it was handed. So the
+ *  three-state output below is the SHAPE C8u MUST SHIP, not a shape this
+ *  build produces: no answer it can build carries `anchor_status` at all.
+ *
+ *  It stays written down, in this header and only in this header, for the
+ *  same reason a reserved row does: an unlanded contract is documented where
+ *  the contract lives and published where nothing generates a caller from it.
+ *  The schema arguments and this output go live in the SAME COMMIT that wires
+ *  src/memory/orphan.c behind them. Two of the three is the divergence again.
+ *
  *    anchor      OPTIONAL, C1's address. Valid only for kinds that carry an
  *                anchor; supplying it with kind="transcript" is an ERROR and
  *                not a silently ignored argument, because an ignored filter
@@ -539,8 +579,6 @@ typedef enum {
  *    status      OPTIONAL: "attached" (default) | "orphaned" | "any".
  *                "orphaned" is how an orphaned anchor becomes VISIBLE. An
  *                orphan no query can list is a silent drop by another name.
- *    since/until OPTIONAL timestamps.
- *    limit/offset, format  as elsewhere.
  *
  *  Output, and this is the part that carries the unit:
  *
@@ -553,6 +591,8 @@ typedef enum {
  *                                 is a different and false claim.
  *    anchor_status "ambiguous" + candidates[] + records ABSENT -> fail closed.
  *                                 No nearest neighbour is ever returned.
+ *
+ *  ── end NOT LIVE ────────────────────────────────────────────────────
  *
  *  Truncation follows this surface's disclosure convention: a truncated answer
  *  states what was withheld and how to get it, and says NOTHING when nothing

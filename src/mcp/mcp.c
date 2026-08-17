@@ -846,6 +846,23 @@ static const tool_def_t TOOLS[] = {
      * because a signature kept somewhere else is a signature someone has to
      * remember to move. */
 
+    /* NO `anchor` PROPERTY BELOW, and no prose about resolution or ambiguity.
+     * Same defect as search_memory's, and the worse half of it: a declared
+     * default the handler refuses at least fails as a refusal, but the anchor
+     * prose here described an ALGORITHM — supplied-and-unresolvable is an
+     * error, supplied-and-ambiguous lists the candidates — and no resolver
+     * exists to produce an unresolvable, an ambiguous or a candidate list. An
+     * agent reading it builds calls around a tri-state nothing has ever
+     * computed. handle_record_memory refuses every non-empty anchor instead,
+     * which is right and stays: a record is never created already-orphaned and
+     * never attached to the nearest plausible symbol, and storing one
+     * unverified is how it would become both. Absent already means repo-scoped,
+     * so nothing a caller can do today is lost by not offering the argument.
+     *
+     * Both memory tools lose their anchor surface in one commit on purpose:
+     * they are one feature, and letting them drift apart is the failure this
+     * closes. Both regain it in the commit that wires src/memory/orphan.c —
+     * C8u's remaining work — with the full contract in tool_surface.h. */
     {"record_memory", "Record memory",
      "Append one record to the workspace memory store: a decision, a verdict, a summary or a "
      "signal. APPEND-ONLY — there is no mode that edits or deletes, because merging two stores "
@@ -853,45 +870,68 @@ static const tool_def_t TOOLS[] = {
      "one naming it in 'supersedes'; the earlier record is never mutated. The 'kind' must be one "
      "the tool accepts (transcript kinds are refused: transcripts enter only through a feed, and "
      "a forgeable transcript writer would make the ingest completeness audit meaningless) — a "
-     "refusal names the accepted set. If 'anchor' is supplied it must resolve: a record is never "
-     "created already-orphaned and is never attached to the nearest plausible symbol. Omit "
-     "'anchor' for a record about code that does not exist yet. There is no author argument; the "
-     "server derives provenance.",
+     "refusal names the accepted set. Records are repo-scoped; there is no way to attach one to "
+     "a particular span. There is no author argument; the server derives provenance.",
      "{\"type\":\"object\",\"properties\":{" TOOL_PROJECT_ARG ","
      "\"kind\":{\"type\":\"string\",\"description\":\"The record kind. Must be one of the "
      "agent-authorable kinds; a refusal names them. Transcript kinds are refused.\"},"
      "\"title\":{\"type\":\"string\"},"
      "\"body\":{\"type\":\"string\"},"
-     "\"anchor\":{\"type\":\"string\",\"description\":\"OPTIONAL. A canonical span address. "
-     "Absent means the record is repo-scoped. Supplied and unresolvable is an error, not an "
-     "orphan; supplied and ambiguous is an error listing the candidates.\"},"
      "\"supersedes\":{\"type\":\"string\",\"description\":\"OPTIONAL record id this one "
      "replaces. The named record is not modified.\"},"
      "\"tags\":{\"type\":\"array\",\"items\":{\"type\":\"string\"}}},"
      "\"required\":[\"kind\",\"title\",\"body\"]}"},
 
+    /* THE PROPERTIES BELOW CARRY NO `anchor` AND NO `status`, and the RESPONSE
+     * prose teaches no `anchor_status=resolved|orphaned|ambiguous` tri-state.
+     * Both absences are deliberate, and this is where the reason lives.
+     *
+     * WHY. This build has no anchor resolver, so handle_search_memory refuses
+     * a non-empty `anchor` and refuses every `status` but "any". Those refusals
+     * are RIGHT and they stay: filtering on an anchor whose state cannot be
+     * reported returns a superset that reads exactly like a match, which is the
+     * silent wrong answer this surface exists to refuse. The SIGNATURE is the
+     * half that must agree with them. Advertise an argument the handler
+     * refuses, and a client generated from the schema sends it — sends the
+     * declared default, even — and is refused for obeying the contract it was
+     * handed, while the prose teaches an agent to reach for precisely the
+     * arguments that fail. An unimplemented surface is advertised nowhere (C3).
+     *
+     * The refusals are deliberately NOT deleted: a caller who sends `anchor`
+     * or `status` anyway — from an older cached tool list, or by hand — still
+     * gets a named error rather than a silent superset. Fail closed at both
+     * ends, advertise at neither.
+     *
+     * RESTORING THEM. `anchor` and `status` come back in the SAME COMMIT that
+     * wires an anchor resolver behind them — src/memory/orphan.c exists and is
+     * unwired, and that is C8u's remaining work — and record_memory's `anchor`
+     * comes back in that commit too, because one resolver is what both tools
+     * are waiting on and a half-restored pair is this defect with one fewer
+     * tool. The contract they must implement is unchanged and still written
+     * down in tool_surface.h under "search_memory": anchor_status "resolved" +
+     * records:[] means resolved and nothing attached, "orphaned" means records
+     * ABSENT, "ambiguous" returns candidates and never a neighbour. Restore
+     * schema, prose and resolver together or not at all; two of the three is
+     * this defect again.
+     *
+     * Pinned from both directions, by
+     * the_published_signature_offers_nothing_this_build_refuses in
+     * tests/test_g2_retrieval.c and by
+     * tool_surface_every_declared_default_is_one_the_handler_takes in
+     * tests/test_tool_surface.c. */
     {"search_memory", "Search memory",
      "Read the workspace memory store: decisions, verdicts, summaries, signals and ingested "
      "transcript messages, across every repository in the workspace. Use it to answer WHY code "
      "is the way it is — get_code_snippet returns the code, this returns the reasoning. "
-     "RESPONSE: when 'anchor' is supplied, 'anchor_status' is always reported and decides how to "
-     "read the rest. anchor_status=resolved with an EMPTY records list means the anchor resolved "
-     "and nothing is attached — believe it. anchor_status=orphaned means the anchor did not "
-     "resolve and 'records' is ABSENT: look elsewhere, do not read it as 'nothing was recorded'. "
-     "anchor_status=ambiguous returns candidates and no records; no nearest-neighbour match is "
-     "ever returned in place of an exact one. Truncated answers state what was withheld and how "
-     "to get it, and say nothing when nothing was withheld.",
+     "RESPONSE: 'records' ABSENT means there is nowhere on this machine a record could have been "
+     "kept — look elsewhere; an EMPTY 'records' list means the store was read and nothing "
+     "matched. Truncated answers state what was withheld and how to get it, and say nothing when "
+     "nothing was withheld.",
      "{\"type\":\"object\",\"properties\":{" TOOL_PROJECT_ARG ","
      "\"kind\":{\"type\":\"string\",\"description\":\"OPTIONAL. Absent means every kind — it "
      "does not mean none.\"},"
      "\"query\":{\"type\":\"string\",\"description\":\"OPTIONAL free-text search over record "
      "text.\"},"
-     "\"anchor\":{\"type\":\"string\",\"description\":\"OPTIONAL canonical span address. Valid "
-     "only for kinds that carry an anchor; supplying it with a transcript kind is an error "
-     "rather than a silently ignored filter.\"},"
-     "\"status\":{\"type\":\"string\",\"enum\":[\"attached\",\"orphaned\",\"any\"],"
-     "\"default\":\"attached\",\"description\":\"orphaned lists records whose anchor no longer "
-     "resolves. An orphan no query can list is a silent drop by another name.\"},"
      "\"since\":{\"type\":\"string\"},\"until\":{\"type\":\"string\"},"
      "\"limit\":{\"type\":\"integer\",\"default\":50,\"minimum\":1,\"maximum\":500},"
      "\"offset\":{\"type\":\"integer\",\"default\":0,\"minimum\":0},"

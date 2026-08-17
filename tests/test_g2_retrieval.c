@@ -799,29 +799,47 @@ TEST(search_memory_refuses_an_anchor_rather_than_returning_a_superset) {
     PASS();
 }
 
-TEST(the_published_signature_offers_two_arguments_this_build_refuses) {
+TEST(the_published_signature_offers_nothing_this_build_refuses) {
     if (!g2_corpus_ensure()) {
         FAIL(g_c.why);
     }
-    /* A PINNED DIVERGENCE, not an approval of one. The signature a client is
-     * handed offers `anchor`, and a `status` whose declared default is
-     * "attached"; the handler refuses an anchor and refuses every status but
-     * "any", the declared default included. A client built from the schema,
-     * sending the schema's own default, is refused, and the tool's prose
-     * teaches an agent to reach for exactly the two arguments that fail.
+    /* THE CONVERGED STATE, pinned from both directions.
      *
-     * The refusals are the RIGHT end: filtering on an anchor whose state
+     * This test used to pin a live divergence: the signature a client was
+     * handed offered `anchor`, and a `status` whose declared default was
+     * "attached", while the handler refused an anchor and refused every status
+     * but "any" — the declared default included. A client built from the
+     * schema, sending the schema's own default, was refused, and the tool's
+     * prose taught an agent to reach for exactly the two arguments that fail.
+     *
+     * The refusals were the RIGHT end: filtering on an anchor whose state
      * cannot be reported hands back a superset that reads like a match. The
-     * published signature is the wrong end, because a surface with no
-     * implementation behind it is supposed to be advertised nowhere.
+     * published signature was the wrong end, because a surface with no
+     * implementation behind it is supposed to be advertised nowhere. So the
+     * schema lost both arguments and the anchor_status prose; the refusals
+     * stayed, so a caller who sends them anyway from a stale tool list still
+     * gets a named error rather than a superset.
      *
-     * The signature is read off tools/list rather than out of the table it is
-     * built from, because the question is what a client holds.
+     * Both halves are asserted here because either one alone re-opens the gap:
+     *   (a) NOT ADVERTISED — tools/list offers neither argument. Read off
+     *       tools/list rather than out of the table it is built from, because
+     *       the question is what a CLIENT holds.
+     *   (b) STILL REFUSED — the handler answers neither, and no answer carries
+     *       anchor_status.
+     * Re-advertise without wiring a resolver and (a) fails. Wire a resolver
+     * and stop refusing without re-advertising, and (b) fails. Either way the
+     * two ends are reconciled in one commit instead of drifting for a unit.
+     * The condition for going live is in TOOLS[]'s comment at the declaration:
+     * src/memory/orphan.c wired behind them, schema and handler together.
      *
-     * Written as a change detector in both directions. Wire a resolver and the
-     * refusals stop, this test fails, and whoever wires it reconciles the
-     * signature with the handler in one commit instead of leaving the two ends
-     * to drift for another unit. */
+     * BOTH MEMORY TOOLS, because one resolver is what both are waiting on and
+     * the failure being closed here is precisely two ends drifting. So (a)
+     * covers record_memory's `anchor` and its resolution/ambiguity prose too:
+     * that prose named an algorithm — unresolvable is an error, ambiguous
+     * lists the candidates — that nothing in this build can run. Its handler
+     * half is asserted next door, in test_tool_surface.c's
+     * tool_surface_memory_surface_is_live_and_fails_closed, which writes; this
+     * suite reads, and a detector should not need a mutation to fire. */
     char *listed = hyp_mcp_server_handle(
         g_c.srv, "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/list\",\"params\":{}}");
     if (!listed) {
@@ -830,47 +848,102 @@ TEST(the_published_signature_offers_two_arguments_this_build_refuses) {
     yyjson_doc *ldoc = yyjson_read(listed, strlen(listed), 0);
     yyjson_val *tools =
         ldoc ? yyjson_obj_get(yyjson_obj_get(yyjson_doc_get_root(ldoc), "result"), "tools") : NULL;
+    int seen = 0;
     bool offers_anchor = false;
-    char fallback[HYP_SZ_64];
-    fallback[0] = '\0';
+    bool offers_status = false;
+    bool teaches_anchor_status = false;
+    bool writer_offers_anchor = false;
+    bool writer_teaches_resolution = false;
     size_t ti = 0;
     size_t tmax = 0;
     yyjson_val *tool = NULL;
     yyjson_arr_foreach(tools, ti, tmax, tool) {
         const char *name = yyjson_get_str(yyjson_obj_get(tool, "name"));
-        if (!name || strcmp(name, "search_memory") != 0) {
+        if (!name) {
             continue;
         }
+        bool reader = strcmp(name, "search_memory") == 0;
+        bool writer = strcmp(name, "record_memory") == 0;
+        if (!reader && !writer) {
+            continue;
+        }
+        seen++;
         yyjson_val *props = yyjson_obj_get(yyjson_obj_get(tool, "inputSchema"), "properties");
-        offers_anchor = props && yyjson_obj_get(props, "anchor") != NULL;
-        yyjson_val *status = props ? yyjson_obj_get(props, "status") : NULL;
-        const char *declared = status ? yyjson_get_str(yyjson_obj_get(status, "default")) : NULL;
-        snprintf(fallback, sizeof(fallback), "%s", declared ? declared : "");
+        const char *desc = yyjson_get_str(yyjson_obj_get(tool, "description"));
+        if (reader) {
+            offers_anchor = props && yyjson_obj_get(props, "anchor") != NULL;
+            offers_status = props && yyjson_obj_get(props, "status") != NULL;
+            teaches_anchor_status = desc && strstr(desc, "anchor_status") != NULL;
+        } else {
+            writer_offers_anchor = props && yyjson_obj_get(props, "anchor") != NULL;
+            writer_teaches_resolution =
+                desc && (strstr(desc, "unresolvable") != NULL || strstr(desc, "ambiguous") != NULL);
+        }
     }
     yyjson_doc_free(ldoc);
     free(listed);
-    if (!offers_anchor || !fallback[0]) {
-        FAIL("the advertised signature stopped offering anchor or a default status — reconcile "
-             "the handler with it in the same commit");
+
+    /* The instrument, before anything that trusts it. A walk that never found
+     * the tools would report "advertises neither" on every tree forever. */
+    if (seen != 2) {
+        FAIL("tools/list does not carry both memory tools; the walk is broken, not the surface");
+    }
+    if (offers_anchor || offers_status) {
+        FAIL("the advertised signature offers anchor or status again while the handler still "
+             "refuses them — restore them only in the commit that wires src/memory/orphan.c");
+    }
+    if (teaches_anchor_status) {
+        FAIL("the tool description teaches anchor_status again — no answer this build produces "
+             "carries the key, so the prose sends an agent after a field that never arrives");
+    }
+    if (writer_offers_anchor) {
+        FAIL("record_memory advertises anchor again while its handler still refuses every one — "
+             "both memory tools regain it in the commit that wires src/memory/orphan.c, or "
+             "neither does");
+    }
+    if (writer_teaches_resolution) {
+        FAIL("record_memory's description teaches anchor resolution or ambiguity again — that "
+             "is an algorithm no resolver in this build can run, so it sends an agent after "
+             "outcomes nothing computes");
     }
 
-    char args[HYP_SZ_512];
-    snprintf(args, sizeof(args), "{\"status\":\"%s\",\"format\":\"json\"}", fallback);
-    g2_reply_t r;
-    if (!g2_call(args, &r)) {
-        g2_reply_free(&r);
+    /* (b) Still refused, so a stale tool list cannot buy a superset. Both
+     * arguments, and the status value the schema used to declare as its
+     * default, because that is the exact call the removed contract generated. */
+    yyjson_val *pair = yyjson_arr_get(g_c.pairs, 0);
+    const char *addr = g2_pair_address(pair);
+    ASSERT_NOT_NULL(addr);
+    char escaped[HYP_SZ_1K];
+    g2_json_escape(addr, escaped, sizeof(escaped));
+    char args[HYP_SZ_2K];
+    snprintf(args, sizeof(args), "{\"anchor\":\"%s\",\"format\":\"json\"}", escaped);
+    g2_reply_t anchored;
+    if (!g2_call(args, &anchored)) {
+        g2_reply_free(&anchored);
+        FAIL("the anchor call produced no reply a client could read");
+    }
+    bool anchor_refused = anchored.is_error;
+    g2_reply_free(&anchored);
+    if (!anchor_refused) {
+        FAIL("the handler now accepts an anchor it does not advertise — if a resolver landed, "
+             "re-advertise anchor and status in this same commit");
+    }
+
+    g2_reply_t defaulted;
+    if (!g2_call("{\"status\":\"attached\",\"format\":\"json\"}", &defaulted)) {
+        g2_reply_free(&defaulted);
         FAIL("the status call produced no reply a client could read");
     }
-    bool refused = r.is_error;
-    g2_reply_free(&r);
-    if (!refused) {
-        FAIL("the handler now accepts the status its own signature declares as the default — the "
-             "two ends converged, so unpin this and assert the answer shape instead");
+    bool status_refused = defaulted.is_error;
+    g2_reply_free(&defaulted);
+    if (!status_refused) {
+        FAIL("the handler now accepts status='attached' — the argument is answerable again, so "
+             "re-advertise it rather than leaving it undiscoverable");
     }
 
-    /* And the other half of the promise: the prose says anchor_status is
-     * always reported when an anchor is supplied. No answer this build can
-     * produce carries the key at all. */
+    /* And the removed half of the prose: it promised anchor_status is always
+     * reported when an anchor is supplied. No answer this build can produce
+     * carries the key at all, which is why the promise had to go. */
     g2_reply_t good;
     if (!g2_search("append-only", &good)) {
         g2_reply_free(&good);
@@ -879,13 +952,12 @@ TEST(the_published_signature_offers_two_arguments_this_build_refuses) {
     bool carries = good.structured && yyjson_obj_get(good.structured, "anchor_status") != NULL;
     g2_reply_free(&good);
     if (carries) {
-        FAIL("an answer now carries anchor_status — the tri-state the signature documents is "
-             "live, so this pin is stale");
+        FAIL("an answer now carries anchor_status — the tri-state is live, so restore the "
+             "arguments and the RESPONSE prose to the published signature");
     }
-    fprintf(stderr,
-            "\n  signature against handler: anchor offered and refused; status default '%s' "
-            "offered and refused; no answer carries anchor_status\n",
-            fallback);
+    fprintf(stderr, "\n  signature against handler: search_memory advertises no anchor and no "
+                    "status and refuses both; record_memory advertises no anchor; no answer "
+                    "carries anchor_status\n");
     PASS();
 }
 
@@ -1309,7 +1381,7 @@ SUITE(g2_retrieval) {
     RUN_TEST(the_module_address_the_product_derives_is_the_one_the_corpus_assumed);
     RUN_TEST(a_module_prefix_returns_the_decision_and_the_comments_about_that_file);
     RUN_TEST(search_memory_refuses_an_anchor_rather_than_returning_a_superset);
-    RUN_TEST(the_published_signature_offers_two_arguments_this_build_refuses);
+    RUN_TEST(the_published_signature_offers_nothing_this_build_refuses);
     RUN_TEST(free_text_from_the_symbol_name_finds_the_decision_about_it);
     RUN_TEST(free_text_from_the_question_wording_finds_the_decision);
     /* the controls, without which none of the above is believed */

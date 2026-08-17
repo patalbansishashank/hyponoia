@@ -1521,17 +1521,16 @@ TEST(tool_surface_the_deprecated_adr_tool_shares_no_vocabulary_with_the_memory_s
  * than either, because a client generated from the schema sends it BY DEFAULT
  * and is refused for obeying the contract it was handed.
  *
- * It is live in this tree. search_memory advertises
- *
- *     "status":{"enum":["attached","orphaned","any"],"default":"attached"}
- *
- * and its handler refuses every value but "any" — including the schema's own
- * declared default. Both ends are individually right: the handler fails closed
- * because this build has no anchor resolver, and refusing a filter it cannot
- * compute is correct (an ignored filter returns a superset that reads exactly
- * like a match). What is wrong is that the SCHEMA still promises what the
- * handler cannot do. Nothing could see it, because each end has a test that
- * agrees with itself.
+ * The case this check was built on is search_memory's `status`, and the shape
+ * of its close is the shape every later one takes. Its handler answers only
+ * status="any", because this build has no anchor resolver and a filter it
+ * cannot compute must be refused rather than ignored — an ignored filter
+ * returns a superset that reads exactly like a match. That end is RIGHT and
+ * stays. So the SIGNATURE is the end that moves: search_memory advertises no
+ * `status` and no `anchor`, and it regains both in the one commit that wires
+ * src/memory/orphan.c behind them. Neither end could see the gap alone,
+ * because each has a test that agrees with itself; this walk is the only
+ * reader that holds the two together.
  *
  * DERIVED, NOT LISTED. The set is walked: every advertised tool, every
  * property of its own inputSchema, every property carrying a `default`. A
@@ -1544,49 +1543,40 @@ TEST(tool_surface_the_deprecated_adr_tool_shares_no_vocabulary_with_the_memory_s
  * defaulted one is a finding. A tool that already refuses {} is skipped and
  * said so, because nothing about the argument can be concluded from it.
  *
+ * READ THE REACH BEFORE READING THE COUNT, and this is why the summary line
+ * prints OBSERVABLE rather than only the total. Most of the surface needs a
+ * seeded project, so most tools refuse {} for reasons that have nothing to do
+ * with any argument, and every default they carry is UNATTRIBUTABLE — counted,
+ * never judged. Observable is walked minus unattributable, and it has been a
+ * small fraction of walked, so "0 findings" means zero among the handful this
+ * check can actually attribute, NOT zero among every declared default in the
+ * tree. A gate that lets its clean result be read as full coverage is the next
+ * silent failure, so the two numbers ship side by side and neither is dropped.
+ *
+ * WHAT IT STILL CANNOT SEE, stated because a stated hole is not a silent one:
+ * an advertised property the handler refuses UNCONDITIONALLY but that declares
+ * no `default` is invisible here, since the walk enters only on a `default`
+ * being present. That is a strictly larger and more useful property — an
+ * advertised argument no call can ever use — and it has live instances.
+ *
  * PROBE-SAFE ONLY, derived from the annotation profile — a writer excludes
  * itself by its own row rather than by a skip list someone has to extend.
  *
- * RATCHETED, like the module ledger in tests/test_wired_contract.sh: the known
- * rows are pinned with the unit that closes each, a new one fails naming it,
- * and a row that is no longer a violation ALSO fails, naming the row to
- * strike. EXIT CONDITION: the table below is empty and the count is 0.
+ * ABSOLUTE, AND THAT IS THE RATCHET FINISHED. This check shipped as a ledger
+ * in the shape of tests/test_wired_contract.sh's — known rows pinned with the
+ * unit closing each, a new one failing by name, a row that stopped being a
+ * violation ALSO failing so the count could only go down. The count is 0 and
+ * the ledger is gone with it: EVERY declared default a handler refuses is a
+ * finding, with nowhere to pin it. A ledger holding no rows is worse than no
+ * ledger, because it reads as a gate while the first regression walks into an
+ * exemption slot nobody is watching.
+ *
+ * Reintroducing an exemption means reintroducing BOTH halves — the row and the
+ * strike-when-stale loop that makes the count converge — and a row without a
+ * named unit to close it is a silent exemption wearing a gate's clothes. The
+ * cheaper move is almost always the one search_memory took: withdraw the
+ * advertisement until the handler can honour it.
  */
-
-typedef struct {
-    const char *tool;
-    const char *property;
-    const char *unit;
-    const char *why;
-} surface_default_exemption_t;
-
-static const surface_default_exemption_t SURFACE_DEFAULT_EXEMPTIONS[] = {
-    {"search_memory", "status", "C8u",
-     "the schema declares default \"attached\" and an enum of three; this build "
-     "has no anchor resolver, so the handler answers only \"any\" and refuses "
-     "the rest fail-closed. The handler is right and the SCHEMA is the half "
-     "that must change until C8u wires src/memory/orphan.c behind it."},
-};
-
-static const size_t SURFACE_DEFAULT_EXEMPTION_COUNT =
-    sizeof(SURFACE_DEFAULT_EXEMPTIONS) / sizeof(SURFACE_DEFAULT_EXEMPTIONS[0]);
-
-/* Did this exact (tool, property) get called and refused? Kept beside the
- * table so a stale row can be named, which is the half that lets the count
- * converge. */
-static bool surface_default_seen[
-    sizeof(SURFACE_DEFAULT_EXEMPTIONS) / sizeof(SURFACE_DEFAULT_EXEMPTIONS[0])];
-
-static bool surface_default_is_exempt(const char *tool, const char *property) {
-    for (size_t i = 0; i < SURFACE_DEFAULT_EXEMPTION_COUNT; i++) {
-        if (strcmp(SURFACE_DEFAULT_EXEMPTIONS[i].tool, tool) == 0 &&
-            strcmp(SURFACE_DEFAULT_EXEMPTIONS[i].property, property) == 0) {
-            surface_default_seen[i] = true;
-            return true;
-        }
-    }
-    return false;
-}
 
 /* Call a tool on a fresh server and report only whether a CLIENT would read an
  * error. Not the emitted shape: the `isError` a client branches on. */
@@ -1620,15 +1610,10 @@ TEST(tool_surface_every_declared_default_is_one_the_handler_takes) {
     if (!surface_memory_begin(&fx)) {
         FAIL("could not create a temporary memory store directory");
     }
-    for (size_t i = 0; i < SURFACE_DEFAULT_EXEMPTION_COUNT; i++) {
-        surface_default_seen[i] = false;
-    }
-
     int walked_tools = 0;
     int walked_defaults = 0;
     int unattributable = 0;
     int findings = 0;
-    int pinned = 0;
     char report[4096];
     report[0] = '\0';
 
@@ -1690,10 +1675,6 @@ TEST(tool_surface_every_declared_default_is_one_the_handler_takes) {
             if (!surface_call_is_error(name, args, NULL)) {
                 continue;
             }
-            if (surface_default_is_exempt(name, prop)) {
-                pinned++;
-                continue;
-            }
             findings++;
             char line[256];
             snprintf(line, sizeof(line),
@@ -1712,26 +1693,21 @@ TEST(tool_surface_every_declared_default_is_one_the_handler_takes) {
              "derivation is broken, not the surface");
     }
 
-    /* The ratchet's other direction. */
-    for (size_t i = 0; i < SURFACE_DEFAULT_EXEMPTION_COUNT; i++) {
-        if (!surface_default_seen[i]) {
-            printf("\n    %s/%s is no longer refused — STRIKE its row from "
-                   "SURFACE_DEFAULT_EXEMPTIONS.\n"
-                   "      A pinned count the tree has already beaten cannot converge.\n",
-                   SURFACE_DEFAULT_EXEMPTIONS[i].tool, SURFACE_DEFAULT_EXEMPTIONS[i].property);
-            FAIL("a pinned schema-default refusal no longer reproduces; strike its row");
-        }
-    }
-
     if (findings > 0) {
-        printf("\n    check C: %d tool schemas walked, %d declared defaults, %d pinned, "
-               "%d unattributable (the tool refuses {} too).%s\n"
+        printf("\n    check C: %d tool schemas walked, %d declared defaults, %d unattributable "
+               "(the tool refuses {} too), %d OBSERVABLE.%s\n"
                "      A client generated from the schema sends the default and is refused "
-               "for obeying the contract.\n",
-               walked_tools, walked_defaults, pinned, unattributable, report);
+               "for obeying the contract. There is no exemption table to add a row to: "
+               "withdraw the advertisement, or make the handler take it.\n",
+               walked_tools, walked_defaults, unattributable, walked_defaults - unattributable,
+               report);
         FAIL("a tool advertises a default its own handler will not take");
     }
-    ASSERT_EQ(pinned, (int)SURFACE_DEFAULT_EXEMPTION_COUNT);
+    printf("\n    check C: %d tool schemas walked, %d declared defaults, %d unattributable "
+           "(the tool refuses {} too), %d OBSERVABLE and 0 of those refused.\n"
+           "      Read the 0 against OBSERVABLE, never against the total: the rest were "
+           "counted and never judged.\n",
+           walked_tools, walked_defaults, unattributable, walked_defaults - unattributable);
     PASS();
 }
 

@@ -180,7 +180,10 @@ UNREACHABLE_LEDGER = {
     'src/memory/orphan.c': (
         'C8u', 'the read path over anchored memory; search_memory\'s handler does '
                'not call it, which is why the handler refuses every status but "any". '
-               'Same defect as check C\'s row.'),
+               'Check C has no row for that refusal precisely because this one is '
+               'open: with no resolver to reach, search_memory advertises no '
+               '`status` and no `anchor`, so there is no declared default left to '
+               'refuse. Wiring this file is what puts both arguments back.'),
     # ── Pre-existing: predates Phase 1, no unit owns it ────────────────
     'src/foundation/str_intern.c': (
         'DECISION', 'added 2026-03-15, in FOUNDATION_SRCS, called by tests only.'),
