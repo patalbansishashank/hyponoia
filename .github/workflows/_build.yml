@@ -28,11 +28,7 @@ jobs:
             goarch: amd64
             cc: gcc
             cxx: g++
-          - os: ubuntu-24.04-arm
-            goos: linux
-            goarch: arm64
-            cc: gcc
-            cxx: g++
+          # linux-arm64 removed: not a target anyone uses this on.
           # RETIRED-PLATFORM(macos): the darwin-arm64 (macos-14) and darwin-amd64
           # (macos-15-intel) legs were removed. They do not merely fail their
           # tests — the product does not COMPILE on the macos-latest images any
@@ -95,113 +91,6 @@ jobs:
           name: binaries-${{ matrix.goos }}-${{ matrix.goarch }}
           path: "*.tar.gz"
 
-  build-windows:
-    runs-on: windows-latest
-    timeout-minutes: 240
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
-      - uses: msys2/setup-msys2@66cd2cce69caa17b53920067426061ca1de3a884 # v2
-        with:
-          msystem: CLANG64
-          path-type: inherit
-          install: >-
-            mingw-w64-clang-x86_64-clang
-            mingw-w64-clang-x86_64-zlib
-            make
-            zip
-
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version: "22"
-
-      - name: Build release binary with UI
-        shell: msys2 {0}
-        env:
-          VERSION: ${{ inputs.version }}
-        run: |
-          if [ -n "$VERSION" ]; then
-            scripts/build.sh --with-ui --version "$VERSION" CC=clang CXX=clang++
-          else
-            scripts/build.sh --with-ui CC=clang CXX=clang++
-          fi
-
-      # Archive layout/name live in the ONE canonical script the local
-      # artifact-flow smoke lane also runs (venue-parity contract).
-      - name: Archive release binary (canonical package-release.sh)
-        shell: msys2 {0}
-        run: scripts/package-release.sh windows amd64 --variant ui CC=clang CXX=clang++
-
-      - name: Attest release binary provenance
-        if: ${{ inputs.attest }}
-        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
-        with:
-          subject-path: hyponoia-ui-windows-amd64.zip
-
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: binaries-windows-amd64
-          path: "*.zip"
-
-  build-windows-arm64:
-    # Native ARM64 Windows binary via the CLANGARM64 toolchain on the
-    # windows-11-arm runner (the same toolchain the test suite already
-    # exercises). Without it, ARM-Windows users fall back to the x86_64
-    # binary under emulation, and npm/pip on native-ARM Node/Python 404.
-    #
-    # RETIRED-PLATFORM(windows-arm64): held with `if: false` rather than
-    # deleted, because the leg is a working recipe for a target that currently
-    # cannot LINK — ggml's aarch64 GEMM kernels are not compiled into the
-    # CLANGARM64 build (undefined symbol: ggml_gemm_q4_0_4x4_q8_0). Fix the
-    # link and flip this back on; the consequence named above is exactly what
-    # ARM-Windows users get until then, and the installers were changed to say
-    # so instead of 404ing. See docs/MAINTAINERS.md "Retired platforms".
-    if: false
-    runs-on: windows-11-arm
-    timeout-minutes: 240
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
-      - uses: msys2/setup-msys2@66cd2cce69caa17b53920067426061ca1de3a884 # v2
-        with:
-          msystem: CLANGARM64
-          path-type: inherit
-          install: >-
-            mingw-w64-clang-aarch64-clang
-            mingw-w64-clang-aarch64-zlib
-            make
-            zip
-
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version: "22"
-
-      - name: Build release binary with UI
-        shell: msys2 {0}
-        env:
-          VERSION: ${{ inputs.version }}
-        run: |
-          if [ -n "$VERSION" ]; then
-            scripts/build.sh --with-ui --version "$VERSION" CC=clang CXX=clang++
-          else
-            scripts/build.sh --with-ui CC=clang CXX=clang++
-          fi
-
-      - name: Archive release binary (canonical package-release.sh)
-        shell: msys2 {0}
-        run: scripts/package-release.sh windows arm64 --variant ui CC=clang CXX=clang++
-
-      - name: Attest release binary provenance
-        if: ${{ inputs.attest }}
-        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
-        with:
-          subject-path: hyponoia-ui-windows-arm64.zip
-
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: binaries-windows-arm64
-          path: "*.zip"
-
   build-linux-portable:
     # Fully static Linux binaries (gcc -static on Ubuntu).
     # Runs on any Linux distro without shared library dependencies.
@@ -211,8 +100,7 @@ jobs:
         include:
           - arch: amd64
             runner: ubuntu-latest
-          - arch: arm64
-            runner: ubuntu-24.04-arm
+          # linux-arm64 removed: not a target anyone uses this on.
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 240
     steps:

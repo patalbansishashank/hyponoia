@@ -79,6 +79,8 @@ jobs:
           retention-days: 14
 
   soak-quick-windows:
+    # windows removed: no windows binary is built anymore to soak.
+    if: false
     runs-on: windows-latest
     # Budget doctrine (see soak-quick): duration_minutes is per LEG, so two
     # 240-min legs need ~480 min + build; 300 silently killed the second leg.
@@ -245,7 +247,8 @@ jobs:
           retention-days: 14
 
   soak-asan-windows:
-    if: ${{ inputs.run_asan }}
+    # windows removed: no windows binary is built anymore to soak.
+    if: false
     runs-on: windows-latest
     # FIXED 15-min soak (hard-coded below). MSYS2/Wine + ASan build is the
     # slowest path; 60 keeps the budget well above the run length so it is

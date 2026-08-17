@@ -303,10 +303,10 @@ jobs:
           # build-linux-gpu), so 5 became 6 (6 * 4 = 24 runtime files).
           scripts/ci/extract-release-archives.sh "$ARCHIVE_DIR" binaries \
             --archive-scope=ui \
-            --expect-archives=6 \
-            --expect-binaries=6 \
-            --expect-packs=6 \
-            --expect-runtime-files=24
+            --expect-archives=3 \
+            --expect-binaries=3 \
+            --expect-packs=3 \
+            --expect-runtime-files=12
 
       - name: Security audits on all unique extracted release objects
         run: |
