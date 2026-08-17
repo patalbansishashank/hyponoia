@@ -23,6 +23,16 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
+# Best-effort: the compose venue runs this as root against a host-owned bind
+# mount (it writes into /root/.cache and /root/.ccache by design, so it can't
+# use --user the way CI's msan job now does), which trips git's
+# dubious-ownership guard — g1_replay's "git -C . rev-parse
+# --is-inside-work-tree" probe and scripts/lint-comments.py's "git rev-parse
+# --show-toplevel" both fail closed on it, and neither prints a message that
+# names ownership as the cause. A no-op where the running UID already owns
+# the checkout (CI): the guard never fires there.
+git config --global --add safe.directory "$ROOT" 2>/dev/null || true
+
 MSAN_PREFIX="${MSAN_PREFIX:-/opt/msan}"
 if [ ! -d "$MSAN_PREFIX/lib" ]; then
     echo "FATAL: MSan-instrumented runtime not found at $MSAN_PREFIX (build test-infrastructure/Dockerfile.msan)" >&2
