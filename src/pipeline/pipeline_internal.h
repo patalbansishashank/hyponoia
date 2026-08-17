@@ -23,8 +23,11 @@
 
 /* ── Shared pipeline constants ─────────────────────────────────── */
 
-/* Maximum byte budget for tree-sitter extraction per file */
-#define HYP_EXTRACT_BUDGET 5000000
+/* HYPMEASURE-TEMP: raised to 300 s so every parse RUNS TO COMPLETION and its
+ * true wall clock is observable. A timeout teaches only "longer than the
+ * budget". REVERT BEFORE MERGE — the shipped value is set from the numbers
+ * this run produces. */
+#define HYP_EXTRACT_BUDGET 300000000
 
 /* Route node QN buffer size (must fit __route__METHOD__/full/url/path) */
 #define HYP_ROUTE_QN_SIZE 768

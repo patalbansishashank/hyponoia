@@ -154,3 +154,86 @@ jobs:
         with:
           path: ${{ github.workspace }}/.ccache
           key: ci-ccache-${{ runner.os }}-${{ github.sha }}
+
+  # ══════════════════════════════════════════════════════════════════
+  # HYPMEASURE-TEMP — TEMPORARY. REVERT BEFORE MERGE.
+  #
+  # HYP_EXTRACT_BUDGET is a per-file wall-clock timeout, and on the slowest
+  # supported runner ordinary source files exceed it: the parse aborts, the
+  # file contributes zero definitions, and the run still reports success. A
+  # timeout teaches only "longer than the budget", so this job runs the same
+  # suite with the budget raised far past any plausible parse and with the
+  # extractor emitting one line per parse. That is the distribution the
+  # shipped constant is set from. Four legs so the two variables that move it
+  # — instruction set and sanitizer instrumentation — are separated rather
+  # than confounded.
+  # ══════════════════════════════════════════════════════════════════
+  budget-measure:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04-arm
+            sanitize: 'asan-ubsan'
+          - os: ubuntu-24.04-arm
+            sanitize: 'none'
+          - os: ubuntu-latest
+            sanitize: 'asan-ubsan'
+          - os: ubuntu-latest
+            sanitize: 'none'
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # g1_replay rebuilds this repository's tree at real commits; a
+          # shallow clone cannot do it and the suite refuses rather than
+          # reporting green. Same reason _test.yml pays this cost.
+          fetch-depth: 0
+
+      - name: Install deps
+        run: sudo apt-get update && sudo apt-get install -y zlib1g-dev ccache
+
+      - name: Report the runner this measurement is anchored to
+        run: |
+          echo "leg=${{ matrix.os }} sanitize=${{ matrix.sanitize }}"
+          nproc
+          uname -m
+          grep -m1 'model name' /proc/cpuinfo || grep -m1 'Model' /proc/cpuinfo || true
+          free -m | head -2
+
+      - name: Index the g1 corpus with every parse allowed to finish
+        run: |
+          set -o pipefail
+          rc=0
+          if [ "${{ matrix.sanitize }}" = "none" ]; then
+            scripts/test.sh --suites g1_replay BUILD_DIR=build/measure SANITIZE= \
+              > measure.out 2> measure.err || rc=$?
+          else
+            scripts/test.sh --suites g1_replay BUILD_DIR=build/measure \
+              > measure.out 2> measure.err || rc=$?
+          fi
+          echo "suite rc=$rc"
+          tail -60 measure.out
+
+      - name: The distribution, slowest first
+        if: always()
+        run: |
+          echo "── every parse over the 20 ms floor, slowest first ──"
+          grep '^HYPMEASURE' measure.err \
+            | sed 's/HYPMEASURE //' \
+            | sort -t' ' -k2.4 -rn \
+            | head -40 || echo "(no HYPMEASURE lines — instrumentation missing?)"
+          echo "── count ──"
+          grep -c '^HYPMEASURE' measure.err || true
+          echo "── any parse that still aborted ──"
+          grep '^HYPMEASURE' measure.err | grep 'aborted=1' || echo "(none — every parse ran to completion)"
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: budget-measure-${{ matrix.os }}-${{ matrix.sanitize }}
+          path: |
+            measure.out
+            measure.err
+          retention-days: 3
