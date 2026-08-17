@@ -1554,19 +1554,24 @@ TEST(tool_surface_the_deprecated_adr_tool_shares_no_vocabulary_with_the_memory_s
  *
  * THE VALUES A WALK CAN TRY come from three places and no fourth: what the
  * schema declares (its default, its enum, its type), what this fixture makes
- * true (the seeded project's name and its root path), and WHAT THE SURFACE
- * ITSELF SAYS — every token of every answer it gives and every refusal it
- * writes. That last source is the one that does the work, and it is not a
- * trick: this surface's refusals name what would work, so a walk that reads
- * the refusal is using the contract rather than guessing. An id that came out
- * of one answer is the value another argument wants; a refusal that lists the
- * kinds it accepts hands the walk the kind it needs.
+ * true (the seeded project's name and its root path), and WHAT THE TOOL
+ * ITSELF SAID — the answer it gave its own base call, the refusal the property
+ * under test just drew, and every answer it has given this walk so far. That
+ * last source is the one that does the work, and it is not a trick: this
+ * surface's refusals name the accepted set and its answers carry the values
+ * its own arguments take, so a walk that reads them is using the contract
+ * rather than guessing at it. A record id out of one answer is the value
+ * `supersedes` wants; a refusal listing the kinds it writes hands the walk the
+ * kind it needs; and a resume token exists at all only because the walk asked
+ * for a page small enough to truncate.
  *
  * ATTRIBUTED BY DIFFERENCE, so a refusal for an unrelated reason cannot be
  * blamed on an argument. The base call for a tool and the call with one
  * property added differ in exactly that property, and the fixture is restored
- * between them, so nothing else moved. A tool that already refuses its base
- * call the same way is counted and never judged.
+ * between them, so nothing else moved. A FINDING THEREFORE REQUIRES A BASE
+ * CALL THAT ANSWERED: where the tool refuses its own base call, a refusal of
+ * the property is a refusal of something else just as easily, and every
+ * property of that tool is counted and named rather than blamed.
  *
  * AND SEPARATED FROM A REFUSAL OF THE VALUE, which is the distinction this
  * check would be worthless without. `since` demanding a timestamp and `kind`
@@ -1576,33 +1581,38 @@ TEST(tool_surface_the_deprecated_adr_tool_shares_no_vocabulary_with_the_memory_s
  * refusals is a handler reading the value, and the property is reported as
  * unattributable rather than flagged. A value-independent refusal that no
  * value escapes is the finding — the argument itself is what is unsupported.
+ * The price of that separation, stated because a stated hole is not a silent
+ * one: an unconditional refusal that ECHOES THE VALUE it refused is invisible
+ * here. It moves with the value, so it reads exactly like a handler validating
+ * input, and nothing outside the handler tells the two apart. A check that
+ * guessed between them would report findings it cannot support.
  *
  * READ THE REACH BEFORE READING THE COUNT. The summary prints OBSERVABLE
- * beside the total and names every property it could not judge, because 0
+ * beside the total and NAMES every property, judged or not, because 0
  * findings is 0 among the properties this walk can attribute, never 0 among
  * every property in the tree. A gate that lets its clean result be read as
  * full coverage is the next silent failure.
  *
  * WHAT IT STILL CANNOT SEE, stated because a stated hole is not a silent one:
  * a property whose only legal values are ones neither the schema, this
- * fixture nor any answer on this surface contains; a property on a tool whose
- * base call cannot be made to answer at all; and any tool that leaves this
+ * fixture nor the tool's own words contain; a property on a tool whose base
+ * call cannot be made to answer at all; and any tool that leaves this
  * machine, which no fixture can contain. Each of those is counted, named and
  * printed on every run, pass or fail.
  */
 
 enum {
-    PROBE_TEXT_CAP = 2048,   /* one refusal or answer, for comparison */
-    PROBE_VALUE_CAP = 256,   /* one JSON-encoded argument value */
-    PROBE_KEY_CAP = 48,      /* one property name */
-    PROBE_PAIR_CAP = 16,     /* arguments in one base call */
-    PROBE_CAND_CAP = 24,     /* values tried for one property */
-    PROBE_TOKEN_CAP = 96,    /* one harvested word */
-    PROBE_POOL_CAP = 48,     /* words kept from this surface's own answers */
-    PROBE_TOOL_CAP = 32,     /* advertised tools */
-    PROBE_REPAIR_CAP = 40,   /* calls spent making one base call answer */
-    PROBE_BORROW_CAP = 12,   /* words borrowed per source, per property */
-    PROBE_ARGS_CAP = 6144    /* one rendered arguments object */
+    PROBE_TEXT_CAP = 24576, /* one refusal or answer, for comparison */
+    PROBE_VALUE_CAP = 256,  /* one JSON-encoded argument value */
+    PROBE_KEY_CAP = 48,     /* one property name */
+    PROBE_PAIR_CAP = 16,    /* arguments in one base call */
+    PROBE_CAND_CAP = 80,    /* values tried for one property */
+    PROBE_TOKEN_CAP = 96,   /* one borrowed word */
+    PROBE_WORDS_CAP = 512,  /* words kept from what one tool has said */
+    PROBE_TOOL_CAP = 32,    /* advertised tools */
+    PROBE_REPAIR_CAP = 40,  /* calls spent making one base call answer */
+    PROBE_BORROW_CAP = 20,  /* words borrowed from one thing it said */
+    PROBE_ARGS_CAP = 6144   /* one rendered arguments object */
 };
 
 /* Where a probed call's writes land, so "contained" is also restorable. */
@@ -1616,14 +1626,70 @@ static int probe_unanswered;
 
 #define PROBE_PROJECT "hyp-g6-probe"
 
-/* One project, seeded, so the server's own single-project rule resolves it. */
+/* One project, one symbol, and one CALL each way, seeded so the surface has
+ * something to answer ABOUT.
+ *
+ * The symbol is called `probe` because that word is in the walk's own value
+ * battery: a fixture whose one symbol no derived value can name leaves every
+ * symbol-taking tool unreachable, which is a hole in the reach report rather
+ * than a fact about the surface. It calls MORE THINGS THAN ONE PAGE HOLDS on
+ * purpose, and that is the load-bearing part: a tool mints a resume token only
+ * when it truncates, so an argument whose only legal values the tool itself
+ * issues is unexercisable until the fixture makes it issue one. The walk
+ * varies ONE property per call, which is what makes attribution possible and
+ * also what makes a value needing two properties at once out of reach — so the
+ * fixture, not the walk, is where that is fixed.
+ *
+ * Idempotent by inspection, not by hope: edges INSERT rather than upsert, so
+ * re-seeding blindly before every call would grow the graph under the walk and
+ * make one probe's answer depend on how many probes came before it. */
 static bool probe_seed(void) {
     hyp_store_t *store = hyp_store_open_path(probe_db_path);
-    bool ok = store != NULL && hyp_store_upsert_project(store, PROBE_PROJECT, probe_root_dir) ==
-                                   HYP_STORE_OK;
-    if (store) {
-        hyp_store_close(store);
+    if (!store) {
+        return false;
     }
+    hyp_node_t existing;
+    memset(&existing, 0, sizeof(existing));
+    if (hyp_store_find_node_by_qn(store, PROBE_PROJECT, "probe", &existing) == HYP_STORE_OK) {
+        hyp_node_free_fields(&existing);
+        hyp_store_close(store);
+        return true;
+    }
+    bool ok = hyp_store_upsert_project(store, PROBE_PROJECT, probe_root_dir) == HYP_STORE_OK;
+    if (ok) {
+        enum { PROBE_CALLEES = 140 };
+        int64_t root = 0;
+        for (int i = 0; i <= PROBE_CALLEES; i++) {
+            char named[64];
+            if (i == 0) {
+                snprintf(named, sizeof(named), "probe");
+            } else {
+                snprintf(named, sizeof(named), "probe_callee_%03d", i);
+            }
+            hyp_node_t node;
+            memset(&node, 0, sizeof(node));
+            node.project = PROBE_PROJECT;
+            node.label = "Function";
+            node.name = named;
+            node.qualified_name = named;
+            node.file_path = "probe.c";
+            node.start_line = i + 1;
+            node.end_line = i + 1;
+            int64_t id = hyp_store_upsert_node(store, &node);
+            if (i == 0) {
+                root = id;
+                continue;
+            }
+            hyp_edge_t edge;
+            memset(&edge, 0, sizeof(edge));
+            edge.project = PROBE_PROJECT;
+            edge.source_id = root;
+            edge.target_id = id;
+            edge.type = "CALLS";
+            (void)hyp_store_insert_edge(store, &edge);
+        }
+    }
+    hyp_store_close(store);
     return ok;
 }
 
@@ -1702,26 +1768,24 @@ static bool probe_call(const char *tool, const char *args, char *text, size_t ca
     return is_error;
 }
 
-/* ── The words this surface says, kept as candidate values ─────────────
+/* ── The words a tool says, kept as candidate values ───────────────────
  *
- * Restricted to characters that need no JSON escaping, so a harvested word is
+ * Restricted to characters that need no JSON escaping, so a borrowed word is
  * a legal argument by construction rather than by a quoting routine nobody
  * would test. */
 typedef struct {
-    char item[PROBE_POOL_CAP][PROBE_TOKEN_CAP];
+    char item[PROBE_WORDS_CAP][PROBE_TOKEN_CAP];
     int count;
-} probe_tokens_t;
-
-static probe_tokens_t probe_pool;
+} probe_words_t;
 
 static bool probe_token_char(char c) {
-    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') ||
-           c == '_' || c == '.' || c == '-' || c == ':' || c == '/' || c == '+' || c == '@';
+    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_' ||
+           c == '.' || c == '-' || c == ':' || c == '/' || c == '+' || c == '@';
 }
 
-static void probe_tokens_add(probe_tokens_t *set, const char *token) {
+static void probe_words_add(probe_words_t *set, const char *token) {
     size_t len = token ? strlen(token) : 0U;
-    if (len < 2U || len >= PROBE_TOKEN_CAP || set->count >= PROBE_POOL_CAP) {
+    if (len < 2U || len >= PROBE_TOKEN_CAP || set->count >= PROBE_WORDS_CAP) {
         return;
     }
     for (int i = 0; i < set->count; i++) {
@@ -1733,7 +1797,7 @@ static void probe_tokens_add(probe_tokens_t *set, const char *token) {
     set->count++;
 }
 
-static void probe_tokens_scan(probe_tokens_t *set, const char *text) {
+static void probe_words_absorb(probe_words_t *set, const char *text) {
     if (!text) {
         return;
     }
@@ -1752,10 +1816,15 @@ static void probe_tokens_scan(probe_tokens_t *set, const char *text) {
             char token[PROBE_TOKEN_CAP];
             memcpy(token, text + i, len);
             token[len] = '\0';
-            probe_tokens_add(set, token);
+            probe_words_add(set, token);
         }
         i = j;
     }
+}
+
+static void probe_words_scan(probe_words_t *set, const char *text) {
+    set->count = 0;
+    probe_words_absorb(set, text);
 }
 
 /* ── One JSON value of a declared shape ────────────────────────────────
@@ -1788,7 +1857,12 @@ static bool probe_scalar(const char *type, int variant, char *out, size_t cap) {
         return false;
     }
     if (variant == 0) {
-        snprintf(out, cap, "\"hyponoia probe\"");
+        /* The name the fixture's own symbol carries, FIRST. A base call is
+         * built from each property's first value, so the first string decides
+         * whether a tool that looks a symbol up finds one — and a tool whose
+         * base answers about nothing answers every later probe about nothing
+         * too. */
+        snprintf(out, cap, "\"probe\"");
         return true;
     }
     if (variant == 1) {
@@ -1800,7 +1874,14 @@ static bool probe_scalar(const char *type, int variant, char *out, size_t cap) {
         return true;
     }
     if (variant == 3) {
-        snprintf(out, cap, "\"probe\"");
+        snprintf(out, cap, "\"hyponoia probe\"");
+        return true;
+    }
+    if (variant == 4) {
+        /* A shape, not a word. A handler can require uppercase-and-underscores
+         * of an argument whose schema declares only `string`, and a walk that
+         * only ever sends lowercase would call that argument unusable. */
+        snprintf(out, cap, "\"PROBE\"");
         return true;
     }
     return false;
@@ -1841,8 +1922,8 @@ static bool probe_flat_value(yyjson_val *spec, int variant, char *out, size_t ca
             }
             yyjson_val *sub = yyjson_obj_iter_get_val(key);
             yyjson_val *sub_type = yyjson_is_obj(sub) ? yyjson_obj_get(sub, "type") : NULL;
-            const char *sub_name = sub_type && yyjson_is_str(sub_type) ? yyjson_get_str(sub_type)
-                                                                       : NULL;
+            const char *sub_name =
+                sub_type && yyjson_is_str(sub_type) ? yyjson_get_str(sub_type) : NULL;
             char value[PROBE_VALUE_CAP];
             if (!probe_scalar(sub_name, variant, value, sizeof(value))) {
                 continue;
@@ -1901,8 +1982,9 @@ static void probe_cand_push(probe_value_t *out, int cap, int *count, const char 
 }
 
 /* The declared default FIRST, always: it is the value a generated client sends
- * without being asked, so it is the one whose refusal is a finding on its own. */
-static int probe_candidates(yyjson_val *spec, const char *refusal, probe_value_t *out, int cap) {
+ * without being asked, so it is the one whose refusal is a finding on its own.
+ * Then the shapes the declared type admits. */
+static int probe_candidates(yyjson_val *spec, probe_value_t *out, int cap) {
     int count = 0;
     yyjson_val *fallback = spec ? yyjson_obj_get(spec, "default") : NULL;
     if (fallback) {
@@ -1919,59 +2001,96 @@ static int probe_candidates(yyjson_val *spec, const char *refusal, probe_value_t
         }
         probe_cand_push(out, cap, &count, buf);
     }
+    return count;
+}
 
+/* Borrow candidate values from something the tool SAID — its own answer, the
+ * refusal it just wrote, or the pile of answers it has given this walk so far.
+ * An enumerated property borrows nothing: its legal set is published, and
+ * widening it past the enum would let a value the schema never offered stand
+ * in for one it did.
+ *
+ * LONGEST FIRST when borrowing from the pile, and that ordering is the whole
+ * reason the pile is usable. A value this surface MINTS — a resume token, a
+ * record id, a timestamp — is long and unlike a word; the prose it is embedded
+ * in is short English, and a tool that hands back a token immediately explains
+ * in a sentence what to do with it. Taking the pile in text order spends the
+ * whole borrowing budget on that sentence. Taking it longest-first puts the
+ * minted value at the front, where a bounded budget can still reach it. */
+static int probe_borrow_words(yyjson_val *spec, const probe_words_t *words, bool longest_first,
+                              probe_value_t *out, int cap, int count) {
     yyjson_val *type_val = spec ? yyjson_obj_get(spec, "type") : NULL;
     const char *type = type_val && yyjson_is_str(type_val) ? yyjson_get_str(type_val) : NULL;
     yyjson_val *items = spec ? yyjson_obj_get(spec, "items") : NULL;
     yyjson_val *item_type_val = items ? yyjson_obj_get(items, "type") : NULL;
-    const char *item_type = item_type_val && yyjson_is_str(item_type_val)
-                                ? yyjson_get_str(item_type_val)
-                                : NULL;
+    const char *item_type =
+        item_type_val && yyjson_is_str(item_type_val) ? yyjson_get_str(item_type_val) : NULL;
     bool enumerated = spec != NULL && yyjson_obj_get(spec, "enum") != NULL;
     bool item_enumerated = items != NULL && yyjson_obj_get(items, "enum") != NULL;
     bool string_like = type == NULL || strcmp(type, "string") == 0;
-    bool number_like = type != NULL &&
-                       (strcmp(type, "integer") == 0 || strcmp(type, "number") == 0);
+    bool number_like =
+        type != NULL && (strcmp(type, "integer") == 0 || strcmp(type, "number") == 0);
     bool string_array = type != NULL && strcmp(type, "array") == 0 && item_type != NULL &&
                         strcmp(item_type, "string") == 0 && !item_enumerated;
-    if (enumerated || (!string_like && !number_like && !string_array)) {
+    if (!words || enumerated || (!string_like && !number_like && !string_array)) {
         return count;
     }
-
-    probe_tokens_t words;
-    words.count = 0;
-    probe_tokens_scan(&words, refusal);
-    for (int source = 0; source < 2; source++) {
-        const probe_tokens_t *set = source == 0 ? &probe_pool : &words;
-        int borrowed = 0;
-        for (int i = 0; i < set->count && borrowed < PROBE_BORROW_CAP && count < cap; i++) {
-            const char *token = set->item[i];
-            char buf[PROBE_VALUE_CAP];
-            if (number_like) {
-                bool digits = true;
-                for (const char *p = token; *p != '\0'; p++) {
-                    if (*p < '0' || *p > '9') {
-                        digits = false;
-                        break;
-                    }
+    bool spent[PROBE_WORDS_CAP];
+    memset(spent, 0, sizeof(spent));
+    int borrowed = 0;
+    for (int step = 0; step < words->count && borrowed < PROBE_BORROW_CAP && count < cap; step++) {
+        int i = step;
+        if (longest_first) {
+            i = -1;
+            size_t best = 0U;
+            for (int j = 0; j < words->count; j++) {
+                size_t len = strlen(words->item[j]);
+                if (!spent[j] && (i < 0 || len > best)) {
+                    i = j;
+                    best = len;
                 }
-                if (!digits) {
-                    continue;
+            }
+            if (i < 0) {
+                break;
+            }
+            spent[i] = true;
+        }
+        const char *token = words->item[i];
+        char buf[PROBE_VALUE_CAP];
+        if (number_like) {
+            bool digits = true;
+            for (const char *p = token; *p != '\0'; p++) {
+                if (*p < '0' || *p > '9') {
+                    digits = false;
+                    break;
                 }
-                snprintf(buf, sizeof(buf), "%s", token);
-            } else if (string_array) {
-                snprintf(buf, sizeof(buf), "[\"%s\"]", token);
-            } else {
-                snprintf(buf, sizeof(buf), "\"%s\"", token);
             }
-            int before = count;
-            probe_cand_push(out, cap, &count, buf);
-            if (count != before) {
-                borrowed++;
+            if (!digits) {
+                continue;
             }
+            snprintf(buf, sizeof(buf), "%s", token);
+        } else if (string_array) {
+            snprintf(buf, sizeof(buf), "[\"%s\"]", token);
+        } else {
+            snprintf(buf, sizeof(buf), "\"%s\"", token);
+        }
+        int before = count;
+        probe_cand_push(out, cap, &count, buf);
+        if (count != before) {
+            borrowed++;
         }
     }
     return count;
+}
+
+static int probe_borrow(yyjson_val *spec, const char *said, bool longest_first, probe_value_t *out,
+                        int cap, int count) {
+    if (!said) {
+        return count;
+    }
+    probe_words_t words;
+    probe_words_scan(&words, said);
+    return probe_borrow_words(spec, &words, longest_first, out, cap, count);
 }
 
 /* ── The arguments object one call carries ─────────────────────────────── */
@@ -2020,8 +2139,8 @@ static void probe_args_render(const probe_args_t *args, const char *key, const c
         used += (size_t)wrote;
     }
     if (key && !present && used + 8U < cap) {
-        int wrote = snprintf(out + used, cap - used, "%s\"%s\":%s", used > 1U ? "," : "", key,
-                             value);
+        int wrote =
+            snprintf(out + used, cap - used, "%s\"%s\":%s", used > 1U ? "," : "", key, value);
         if (wrote > 0 && (size_t)wrote < cap - used - 2U) {
             used += (size_t)wrote;
         }
@@ -2042,27 +2161,6 @@ static bool probe_is_required(yyjson_val *required, const char *name) {
         }
     }
     return false;
-}
-
-/* Can this refusal be blamed on the property? Three answers, and the third is
- * the one a check that guesses gets wrong:
- *
- *   - the base call ANSWERED and this one refuses: the property is the only
- *     thing that changed, so the property is why.
- *   - the base call refused with the SAME words: nothing about this property
- *     can be concluded.
- *   - the base call refused DIFFERENTLY and the new words name this property:
- *     the baseline refusal is not what was just read, and the new text says
- *     what is. */
-static bool probe_attributable(bool base_error, const char *base_text, const char *text,
-                               const char *property) {
-    if (!base_error) {
-        return true;
-    }
-    if (strcmp(text, base_text) == 0) {
-        return false;
-    }
-    return strstr(text, property) != NULL;
 }
 
 static void probe_append(char *buf, size_t cap, const char *line) {
@@ -2092,8 +2190,7 @@ static bool probe_build_base(const char *tool, yyjson_val *props, yyjson_val *re
             continue;
         }
         probe_value_t seeds[PROBE_CAND_CAP];
-        int seed_count = probe_candidates(yyjson_obj_iter_get_val(key), NULL, seeds,
-                                          PROBE_CAND_CAP);
+        int seed_count = probe_candidates(yyjson_obj_iter_get_val(key), seeds, PROBE_CAND_CAP);
         if (seed_count > 0) {
             probe_args_set(base, name, seeds[0].text);
         }
@@ -2119,9 +2216,13 @@ static bool probe_build_base(const char *tool, yyjson_val *props, yyjson_val *re
                 if ((pass == 0) != wanted) {
                     continue;
                 }
+                yyjson_val *spec = yyjson_obj_iter_get_val(pkey);
                 probe_value_t cands[PROBE_CAND_CAP];
-                int count = probe_candidates(yyjson_obj_iter_get_val(pkey), text, cands,
-                                             PROBE_CAND_CAP);
+                int count = probe_candidates(spec, cands, PROBE_CAND_CAP);
+                /* Whatever the tool last said, longest first when it ANSWERED (a
+                 * minted value is long) and in text order when it REFUSED (a
+                 * refusal names what would work in its first sentence). */
+                count = probe_borrow(spec, text, !is_error, cands, PROBE_CAND_CAP, count);
                 int nudge = -1;
                 char nudge_text[PROBE_TEXT_CAP];
                 nudge_text[0] = '\0';
@@ -2159,6 +2260,12 @@ static bool probe_build_base(const char *tool, yyjson_val *props, yyjson_val *re
 static probe_args_t probe_base[PROBE_TOOL_CAP];
 static char probe_base_text[PROBE_TOOL_CAP][PROBE_TEXT_CAP];
 static bool probe_base_error[PROBE_TOOL_CAP];
+/* Every word every ANSWER this tool has given the walk. A value only this
+ * surface can mint is in here or nowhere. */
+static probe_words_t probe_said[PROBE_TOOL_CAP];
+/* What the base call ASKED, kept so the report can show it. A reach number
+ * nobody can check is a number; the call that produced it is evidence. */
+static char probe_base_args[PROBE_TOOL_CAP][192];
 
 TEST(tool_surface_every_advertised_property_is_one_the_handler_accepts) {
     surface_memory_fixture_t memory;
@@ -2186,12 +2293,14 @@ TEST(tool_surface_every_advertised_property_is_one_the_handler_accepts) {
     snprintf(source, sizeof(source), "%s/probe.c", root);
     FILE *seedfile = fopen(source, "w");
     if (seedfile) {
-        fputs("int hyp_probe_symbol(void) { return 0; }\n", seedfile);
+        fputs("int probe(void) { return 0; }\n", seedfile);
         fclose(seedfile);
     }
-    probe_pool.count = 0;
     probe_calls = 0;
     probe_unanswered = 0;
+    for (int i = 0; i < PROBE_TOOL_CAP; i++) {
+        probe_said[i].count = 0;
+    }
     if (!probe_seed()) {
         surface_cache_end(&cache);
         surface_memory_end(&memory);
@@ -2221,10 +2330,14 @@ TEST(tool_surface_every_advertised_property_is_one_the_handler_accepts) {
     int open_world = 0;
     int base_unanswered = 0;
     char report[6000];
+    char bases[9000];
+    char taken[4000];
     char blind_tool[2400];
     char blind_value[2400];
     char blind_base[600];
     report[0] = '\0';
+    bases[0] = '\0';
+    taken[0] = '\0';
     blind_tool[0] = '\0';
     blind_value[0] = '\0';
     blind_base[0] = '\0';
@@ -2238,8 +2351,8 @@ TEST(tool_surface_every_advertised_property_is_one_the_handler_accepts) {
                 break;
             }
             yyjson_val *name_val = yyjson_obj_get(tool, "name");
-            const char *name = name_val && yyjson_is_str(name_val) ? yyjson_get_str(name_val)
-                                                                   : NULL;
+            const char *name =
+                name_val && yyjson_is_str(name_val) ? yyjson_get_str(name_val) : NULL;
             yyjson_val *hints = yyjson_obj_get(tool, "annotations");
             yyjson_val *open = hints ? yyjson_obj_get(hints, "openWorldHint") : NULL;
             if (!name || !open) {
@@ -2270,7 +2383,17 @@ TEST(tool_surface_every_advertised_property_is_one_the_handler_accepts) {
                     snprintf(line, sizeof(line), "%s%s", blind_base[0] ? ", " : "", name);
                     probe_append(blind_base, sizeof(blind_base), line);
                 } else {
-                    probe_tokens_scan(&probe_pool, probe_base_text[slot]);
+                    probe_words_absorb(&probe_said[slot], probe_base_text[slot]);
+                }
+                {
+                    char rendered[PROBE_ARGS_CAP];
+                    probe_args_render(&probe_base[slot], NULL, NULL, rendered, sizeof(rendered));
+                    snprintf(probe_base_args[slot], sizeof(probe_base_args[0]), "%s", rendered);
+                    char line[640];
+                    snprintf(line, sizeof(line), "\n        %-22s %-8s %.60s -> %.300s", name,
+                             probe_base_error[slot] ? "REFUSED" : "answered",
+                             probe_base_args[slot], probe_base_text[slot]);
+                    probe_append(bases, sizeof(bases), line);
                 }
                 continue;
             }
@@ -2286,65 +2409,97 @@ TEST(tool_surface_every_advertised_property_is_one_the_handler_accepts) {
                 yyjson_val *spec = yyjson_obj_iter_get_val(key);
                 bool declares_default = spec != NULL && yyjson_obj_get(spec, "default") != NULL;
                 probe_value_t cands[PROBE_CAND_CAP];
-                int count = probe_candidates(spec, probe_base_text[slot], cands, PROBE_CAND_CAP);
+                int schema_count = probe_candidates(spec, cands, PROBE_CAND_CAP);
+                int count = probe_borrow(spec, probe_base_text[slot], !probe_base_error[slot],
+                                         cands, PROBE_CAND_CAP, schema_count);
                 walked_props++;
-                if (count == 0) {
-                    unattr_value++;
-                    char line[160];
-                    snprintf(line, sizeof(line), "%s%s.%s", blind_value[0] ? ", " : "", name, prop);
-                    probe_append(blind_value, sizeof(blind_value), line);
-                    continue;
-                }
 
                 bool took_it = false;
-                bool attributed = false;
-                bool value_dependent = false;
                 bool default_refused = false;
+                int distinct = 0;
+                int tried = 0;
                 char first_refusal[PROBE_TEXT_CAP];
                 char default_refusal[PROBE_TEXT_CAP];
+                char longest_tried[PROBE_VALUE_CAP];
                 first_refusal[0] = '\0';
                 default_refusal[0] = '\0';
-                for (int c = 0; c < count; c++) {
-                    char args[PROBE_ARGS_CAP];
-                    char answer[PROBE_TEXT_CAP];
-                    probe_args_render(&probe_base[slot], prop, cands[c].text, args, sizeof(args));
-                    bool failed = probe_call(name, args, answer, sizeof(answer));
-                    if (!failed) {
-                        took_it = true;
+                longest_tried[0] = '\0';
+
+                /* Round 0 tries what the schema declares plus what the tool
+                 * said to its own base call; round 1 what the refusal itself
+                 * named — the handler saying what would have worked; round 2
+                 * everything this tool has answered so far, newest first,
+                 * which is where a token the tool mints at run time lives.
+                 *
+                 * THE SCHEMA-DECLARED VALUES ARE ALL TRIED EVEN AFTER ONE IS
+                 * ACCEPTED, and that is not waste: an argument accepted at its
+                 * default may only MINT the value another argument needs at a
+                 * different one, and a walk that stops at the first success
+                 * never causes the answer it will later have to borrow from. */
+                int done = 0;
+                for (int round = 0; round < 3 && count > 0; round++) {
+                    for (int c = done; c < count; c++) {
+                        if (took_it && c >= schema_count) {
+                            break;
+                        }
+                        char args[PROBE_ARGS_CAP];
+                        char answer[PROBE_TEXT_CAP];
+                        probe_args_render(&probe_base[slot], prop, cands[c].text, args,
+                                          sizeof(args));
+                        bool failed = probe_call(name, args, answer, sizeof(answer));
+                        tried++;
+                        if (strlen(cands[c].text) > strlen(longest_tried)) {
+                            snprintf(longest_tried, sizeof(longest_tried), "%s", cands[c].text);
+                        }
+                        if (!failed) {
+                            took_it = true;
+                            probe_words_absorb(&probe_said[slot], answer);
+                            continue;
+                        }
+                        if (c == 0 && declares_default) {
+                            default_refused = true;
+                            snprintf(default_refusal, sizeof(default_refusal), "%s", answer);
+                        }
+                        if (distinct == 0) {
+                            distinct = 1;
+                            snprintf(first_refusal, sizeof(first_refusal), "%s", answer);
+                        } else if (distinct == 1 && strcmp(first_refusal, answer) != 0) {
+                            distinct = 2;
+                        }
+                    }
+                    done = count;
+                    if (took_it) {
                         break;
                     }
-                    bool blame = probe_attributable(probe_base_error[slot], probe_base_text[slot],
-                                                    answer, prop);
-                    if (c == 0 && declares_default && blame) {
-                        default_refused = true;
-                        snprintf(default_refusal, sizeof(default_refusal), "%s", answer);
+                    if (round == 0) {
+                        count = probe_borrow(spec, first_refusal, false, cands,
+                                             PROBE_CAND_CAP, count);
+                    } else {
+                        count = probe_borrow_words(spec, &probe_said[slot], true, cands,
+                                                   PROBE_CAND_CAP, count);
                     }
-                    if (blame) {
-                        if (!attributed) {
-                            attributed = true;
-                            snprintf(first_refusal, sizeof(first_refusal), "%s", answer);
-                        } else if (strcmp(first_refusal, answer) != 0) {
-                            value_dependent = true;
-                        }
+                    if (count == done) {
+                        break;
                     }
                 }
 
-                if (default_refused) {
-                    findings++;
-                    char line[600];
-                    snprintf(line, sizeof(line),
-                             "\n      %s advertises \"%s\" with a DEFAULT its handler refuses: %.220s",
-                             name, prop, default_refusal);
-                    probe_append(report, sizeof(report), line);
-                }
                 if (took_it) {
                     accepted++;
-                } else if (!attributed) {
+                    char line[160];
+                    snprintf(line, sizeof(line), "%s%s.%s", taken[0] ? ", " : "", name, prop);
+                    probe_append(taken, sizeof(taken), line);
+                } else if (probe_base_error[slot] || count == 0) {
+                    /* The tool refuses its own base call, so a refusal of this
+                     * property is a refusal of something else as easily as of
+                     * this argument. Counted, named, never blamed. */
                     unattr_tool++;
                     char line[160];
                     snprintf(line, sizeof(line), "%s%s.%s", blind_tool[0] ? ", " : "", name, prop);
                     probe_append(blind_tool, sizeof(blind_tool), line);
-                } else if (value_dependent) {
+                } else if (distinct >= 2) {
+                    /* The refusal moved with the value, so the handler READ the
+                     * value: the argument is reachable and this walk simply
+                     * could not derive a legal one. */
                     unattr_value++;
                     char line[160];
                     snprintf(line, sizeof(line), "%s%s.%s", blind_value[0] ? ", " : "", name, prop);
@@ -2352,10 +2507,29 @@ TEST(tool_surface_every_advertised_property_is_one_the_handler_accepts) {
                 } else {
                     findings++;
                     char line[600];
+                    char vocab[1600];
+                    vocab[0] = '\0';
+                    for (int w = 0; w < probe_said[slot].count; w++) {
+                        char one[128];
+                        snprintf(one, sizeof(one), "%s%s", w ? " " : "", probe_said[slot].item[w]);
+                        probe_append(vocab, sizeof(vocab), one);
+                    }
                     snprintf(line, sizeof(line),
                              "\n      %s advertises \"%s\", and NO value this walk can derive is "
-                             "one the handler takes (%d tried, one refusal for all): %.200s",
-                             name, prop, count, first_refusal);
+                             "one the handler takes (%d tried, longest %.50s): %.130s"
+                             "\n        every word this tool said: %.1400s",
+                             name, prop, tried, longest_tried, first_refusal, vocab);
+                    probe_append(report, sizeof(report), line);
+                }
+                /* A refused DEFAULT is its own finding even when some other
+                 * value works: a generated client sends the default. */
+                if (default_refused && !probe_base_error[slot]) {
+                    findings++;
+                    char line[600];
+                    snprintf(line, sizeof(line),
+                             "\n      %s advertises \"%s\" with a DEFAULT its handler refuses: "
+                             "%.200s",
+                             name, prop, default_refusal);
                     probe_append(report, sizeof(report), line);
                 }
             }
@@ -2383,17 +2557,19 @@ TEST(tool_surface_every_advertised_property_is_one_the_handler_accepts) {
 
     int observable = accepted + findings;
     printf("\n    check C: %d tools walked (%d skipped: they leave this machine), %d advertised "
-           "properties, %d OBSERVABLE (%d accepted, %d refused), %d unattributable.\n"
-           "      %d unreachable through the tool: it refuses the base call the same way — %s\n"
-           "      %d unreachable through the value: the refusal moves with the value, and no "
+           "properties, %d OBSERVABLE (%d accepted, %d refused), %d unattributable, in %d calls.\n"
+           "      accepted — %s\n"
+           "      unreachable THROUGH THE TOOL (%d): it refuses the base call the same way — %s\n"
+           "      unreachable THROUGH THE VALUE (%d): the refusal moves with the value and no "
            "legal one was derivable — %s\n"
-           "      %d tools whose base call never answered: %s\n"
-           "      %d calls made. Read OBSERVABLE, never the total: the rest were counted and "
-           "never judged.\n",
+           "      base call never answered (%d tools): %s\n"
+           "      the base call every probe of a tool differs from by exactly one property:%s\n"
+           "      Read OBSERVABLE, never the total: the rest were counted and never judged.\n",
            walked_tools, open_world, walked_props, observable, accepted, findings,
-           unattr_tool + unattr_value, unattr_tool, blind_tool[0] ? blind_tool : "none",
-           unattr_value, blind_value[0] ? blind_value : "none", base_unanswered,
-           blind_base[0] ? blind_base : "none", probe_calls);
+           unattr_tool + unattr_value, probe_calls, taken[0] ? taken : "none", unattr_tool,
+           blind_tool[0] ? blind_tool : "none", unattr_value,
+           blind_value[0] ? blind_value : "none", base_unanswered,
+           blind_base[0] ? blind_base : "none", bases);
 
     if (findings > 0) {
         printf("%s\n"
@@ -2405,6 +2581,7 @@ TEST(tool_surface_every_advertised_property_is_one_the_handler_accepts) {
     }
     PASS();
 }
+
 
 SUITE(tool_surface) {
     RUN_TEST(tool_surface_registry_and_table_describe_the_same_tools);
