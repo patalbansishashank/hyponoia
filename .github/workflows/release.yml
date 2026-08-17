@@ -182,11 +182,27 @@ jobs:
       version: ${{ inputs.version }}
 
   # ── 6. Create DRAFT release ────────────────────────────────────
-  # Requires smoke to have actually SUCCEEDED, not merely "not failed". The bare
+  # Requires smoke to have actually RUN, not merely "not failed". The bare
   # !cancelled() && !failure() form is fail-OPEN: a skipped smoke is neither
   # cancelled nor failed, so a draft was one condition away from being cut from
   # binaries nobody had run. soak may legitimately be 'skipped' (soak_level=none),
   # so that one is enumerated explicitly rather than lumped in.
+  #
+  # needs.smoke.result != 'skipped' -- NOT == 'success'. _smoke.yml's
+  # smoke-packages job is continue-on-error: true by design (it checks a
+  # homebrew formula against the *previous* published release and is expected
+  # to legitimately fail before the first release, or on upstream Homebrew
+  # policy changes -- see its own comment in _smoke.yml). continue-on-error
+  # makes !failure() correctly ignore that job, but needs.smoke.result is the
+  # RAW reusable-workflow conclusion string, which still reads 'failure' when
+  # only a continue-on-error job inside it failed -- an explicit == 'success'
+  # check does not see the difference and blocks the whole publish chain on a
+  # check that was explicitly designed to never block it. This bit real:
+  # v0.10.6's first release run built, tested, and smoke-tested clean, then
+  # sat at release-draft: skipped for two hours because smoke-packages hit a
+  # new Homebrew tap-trust policy. != 'skipped' keeps the original protection
+  # (a smoke that never ran must not silently pass) without re-introducing
+  # that block.
   release-draft:
     # security is a dependency because this job pushes the tag, and a tag is
     # irreversible. Without it a security failure still published the tag and
@@ -196,7 +212,7 @@ jobs:
     if: >-
       ${{ !cancelled() && !failure()
       && needs.security.result == 'success'
-      && needs.smoke.result == 'success'
+      && needs.smoke.result != 'skipped'
       && (needs.soak.result == 'success' || needs.soak.result == 'skipped') }}
     runs-on: ubuntu-latest
     permissions:

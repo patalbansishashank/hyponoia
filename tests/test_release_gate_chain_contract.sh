@@ -17,12 +17,24 @@
 # have stranded the entire test phase while the input only claimed to skip
 # lint. `test` is therefore in TOLERATE now too.
 #
+# v0.10.6's release run added a second incident to the one above: smoke's
+# `smoke-packages` job is continue-on-error (it checks a homebrew formula
+# against the *previous* published release and is expected to legitimately
+# fail before the first release). continue-on-error makes `!failure()`
+# correctly ignore it, but `needs.smoke.result` is the RAW reusable-workflow
+# conclusion string, which still reads 'failure' when only a continue-on-error
+# job inside it failed. The original property 2 below (`== 'success'`)
+# couldn't tell that apart from smoke genuinely breaking, and blocked a clean
+# release from ever publishing for two hours. Property 2 now pins
+# `!= 'skipped'` instead: still catches "smoke never ran", no longer catches
+# "smoke ran and only its continue-on-error leg complained".
+#
 # Three properties are pinned:
 #   1. every job downstream of an optional phase carries the
 #      `!cancelled() && !failure()` override, so it runs when an ancestor was
 #      deliberately skipped;
-#   2. release-draft requires `needs.smoke.result == 'success'` explicitly, so a
-#      skipped smoke BLOCKS the draft instead of sailing past it;
+#   2. release-draft requires `needs.smoke.result != 'skipped'` explicitly, so a
+#      smoke that never ran BLOCKS the draft instead of sailing past it;
 #   3. every `skip_*` boolean input is actually READ by some job's `if:` — an
 #      input nobody consults is a switch that silently does nothing.
 set -euo pipefail
@@ -78,11 +90,16 @@ for job in TOLERATE:
             f"{job}: `if:` lacks `!cancelled() && !failure()` (got: {c or '<none>'}).\n"
             f"      With skip_tests=true a skipped ancestor SKIPS this job silently.")
 
-# 2. The draft must require smoke to have genuinely succeeded.
+# 2. The draft must require smoke to have actually run. NOT == 'success':
+#    smoke-packages inside _smoke.yml is continue-on-error, so a legitimate
+#    continue-on-error failure still leaves needs.smoke.result == 'failure'
+#    and an == 'success' check can't distinguish that from smoke genuinely
+#    breaking -- see the file header. != 'skipped' keeps the real protection
+#    (a smoke that never ran must not silently pass) without that false block.
 draft = cond("release-draft")
-if "needs.smoke.result == 'success'" not in draft:
+if "needs.smoke.result != 'skipped'" not in draft:
     failures.append(
-        "release-draft: `if:` must require needs.smoke.result == 'success'.\n"
+        "release-draft: `if:` must require needs.smoke.result != 'skipped'.\n"
         "      `!cancelled() && !failure()` alone is fail-open: a SKIPPED smoke\n"
         "      passes it, and the draft gets cut from unsmoked binaries.")
 

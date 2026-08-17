@@ -81,8 +81,15 @@ jobs:
       shard_suites: true
 
   # ── Build all platforms ────────────────────────────────────────
+  # !failure(), not an explicit needs.test.result check: _test.yml has
+  # continue-on-error legs (windows, arm) whose raw reusable-workflow result
+  # string still reads 'failure' even though they're designed not to block.
+  # !failure() is continue-on-error-aware and correctly treats those as
+  # non-blocking while still catching a real test failure; an explicit
+  # == 'success' / == 'skipped' check does not see the difference and blocks
+  # release.yml's release-draft this same way — see its comment.
   build:
-    if: ${{ inputs.skip_builds != true && !cancelled() && (needs.test.result == 'success' || needs.test.result == 'skipped') }}
+    if: ${{ inputs.skip_builds != true && !cancelled() && !failure() }}
     needs: [test]
     permissions:
       contents: read
@@ -131,8 +138,15 @@ jobs:
   # them: a skipped smoke or soak leaves the scan reachable (result 'skipped',
   # which is not 'failure'), while a FAILED one withholds it — if the artifacts
   # are broken, a verdict on them is not worth two hours of polling.
+  # !failure() covers smoke/soak instead of explicit != 'failure' checks, for
+  # the same continue-on-error reason as the build gate above: _smoke.yml's
+  # smoke-packages job is continue-on-error and can leave needs.smoke.result
+  # reading 'failure' even when nothing that matters actually broke. build
+  # keeps its explicit == 'success' check since _build.yml legs are all
+  # blocking (per the smoke job's comment above) -- skipped build must still
+  # withhold the scan, and only !failure() would let a skipped build through.
   virustotal:
-    if: ${{ inputs.skip_builds != true && inputs.skip_virustotal != true && !cancelled() && needs.build.result == 'success' && needs.smoke.result != 'failure' && needs.soak.result != 'failure' }}
+    if: ${{ inputs.skip_builds != true && inputs.skip_virustotal != true && !cancelled() && !failure() && needs.build.result == 'success' }}
     needs: [build, smoke, soak]
     runs-on: ubuntu-latest
     permissions:
