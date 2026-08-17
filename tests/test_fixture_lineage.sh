@@ -24,12 +24,23 @@
 # commit object is a commit the fixture names, and everything else (span hashes,
 # blob ids, prose) is left alone by construction rather than by exclusion.
 #
-# LIMIT, stated rather than discovered: "a ref a clone would have" is read as
-# refs/remotes/origin/* plus refs/tags/*, which is what the checkout action
-# fetches. A tag that exists only locally would satisfy this check and not a
-# clone. Resolving that needs the network, which a test gate does not get, so
-# the satisfying ref is printed for every commit and a reader can see which one
-# carried it.
+# TAGS COUNT, and the reason is not convenience. A commit can be on no branch
+# at all and still be something every clone resolves, because a tag is a ref
+# and the checkout action fetches refs/tags/*. This repository already uses
+# that deliberately: its record/* tags are the only ref their commits have, and
+# they exist so a corpus can cite a decision whose commit was never merged.
+# Refusing a tag would refuse the mechanism built for exactly this case.
+#
+# A tag is the weaker carrier though — it is one ref with no branch behind it,
+# and it can be deleted without a branch noticing — so a commit that only a tag
+# holds is REPORTED rather than passed in silence. That is a disclosure, not a
+# failure, and the count is printed either way.
+#
+# LIMIT, stated rather than discovered: refs/tags/* is a LOCAL namespace that
+# happens to mirror what was fetched, so a tag created locally and never pushed
+# satisfies this gate and would not satisfy a clone. Closing that needs
+# `git ls-remote origin 'refs/tags/*'`, which needs the network, which a test
+# gate does not get. Anyone relying on a tag-only row should run it once.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -56,6 +67,7 @@ fi
 checked=0
 resolved=0
 violations=0
+tag_only=0
 
 while IFS= read -r file; do
     checked=$((checked + 1))
@@ -70,19 +82,29 @@ while IFS= read -r file; do
         git rev-parse --verify --quiet "${token}^{commit}" >/dev/null 2>&1 || continue
         sha="$(git rev-parse --verify --quiet "${token}^{commit}")"
         resolved=$((resolved + 1))
-        carrier="$(git for-each-ref --count=1 --contains "$sha" --format='%(refname)' \
-            refs/remotes/origin refs/tags 2>/dev/null || true)"
-        if [ -z "$carrier" ]; then
-            violations=$((violations + 1))
-            echo "VIOLATION: $file names $token ($sha)"
-            echo "           reachable from no ref a clone of the remote would have;" \
-                 "$(git for-each-ref --count=3 --contains "$sha" --format='%(refname)' \
-                    refs/heads 2>/dev/null | tr '\n' ' ')holds it locally and nothing else does"
+        branch_ref="$(git for-each-ref --count=1 --contains "$sha" --format='%(refname)' \
+            refs/remotes/origin 2>/dev/null || true)"
+        if [ -n "$branch_ref" ]; then
+            continue
         fi
+        tag_ref="$(git for-each-ref --count=1 --contains "$sha" --format='%(refname)' \
+            refs/tags 2>/dev/null || true)"
+        if [ -n "$tag_ref" ]; then
+            tag_only=$((tag_only + 1))
+            echo "TAG-ONLY: $file names $token"
+            echo "          on no remote branch; $tag_ref is the only ref carrying it"
+            continue
+        fi
+        violations=$((violations + 1))
+        echo "VIOLATION: $file names $token ($sha)"
+        echo "           reachable from no ref a clone of the remote would have;" \
+             "$(git for-each-ref --count=3 --contains "$sha" --format='%(refname)' \
+                refs/heads 2>/dev/null | tr '\n' ' ')holds it locally and nothing else does"
     done < <(tr -c '0-9a-f' '\n' <"$file" | sort -u)
 done < <(find "$FIXTURES" -type f | sort)
 
-echo "fixture lineage: $checked files, $resolved commit references, $violations unreachable"
+echo "fixture lineage: $checked files, $resolved commit references,"\
+     "$tag_only carried only by a tag, $violations unreachable"
 
 if [ "$resolved" -eq 0 ]; then
     echo "FAIL: no fixture named a single resolvable commit, so this gate checked nothing." \

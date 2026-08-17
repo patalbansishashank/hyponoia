@@ -760,8 +760,14 @@ static const char *g1_fixture_for_commit(const char *sha) {
  * commit that lives only on an unpushed local branch is present on the machine
  * that mined the corpus and absent from every clone of it, so a check against
  * local refs passes exactly where the defect is and fails only where it lands.
- * The question this asks is the one the corpus's own lineage field declares:
- * can a clone of the remote see this commit?
+ *
+ * The ref it resolves against is the one THIS CORPUS DECLARES, which is
+ * narrower than "published at all" on purpose. A commit carried only by a tag
+ * is resolvable in any clone and still refused here, correctly, because this
+ * corpus says its commits sit on one branch. The wider question — can a clone
+ * resolve this at all — belongs to the fixture-lineage contract, which sweeps
+ * every corpus, accepts a tag, and runs before the compiler. Two invariants,
+ * deliberately different, and each message names which one refused.
  *
  * Both classes are fatal, and both are printed as they are found, because a
  * message buffer truncates and a count is always a floor.
