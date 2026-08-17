@@ -1,6 +1,6 @@
 /*
- * ask_view.h — the 3-D view of the `ask` lane's vector space
- * (NEXT-STEPS §3.1 step 5: "alongside, and gating nothing: see the embeddings").
+ * ask_view.h — the 3-D view of the `ask` lane's vector space. Alongside, and
+ * gating nothing: it lets someone SEE the embeddings.
  *
  * ═════════════════════════════════════════════════════════════════════════
  * WHAT THIS IS, AND WHAT IT IS NOT

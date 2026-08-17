@@ -16,6 +16,8 @@
 
 #include <store/store.h>
 
+#include <sqlite3.h>
+
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
@@ -247,6 +249,261 @@ TEST(ask_embed_reuses_byte_identical_declarations_on_a_rerun) {
     hyp_ask_embed_report_free(&first);
     hyp_ask_embed_report_free(&second);
     hyp_ask_embed_report_free(&third);
+    hyp_ask_encoder_destroy(enc);
+    th_cleanup(dir);
+    PASS();
+}
+
+/* ── The pull, at file granularity ─────────────────────────────── */
+
+/* Twelve files, two declarations each. The clause under test is the
+ * GRANULARITY of reuse: "a pull touching twelve files re-embeds twelve files'
+ * worth of spans, not the corpus". Here the pull touches 3 of the 12 — every
+ * span in a touched file changes, nothing else does — and between the two runs
+ * every node id in the graph is re-minted the way a real re-index re-mints
+ * them, so the same run also proves the reuse key is (qualified_name,
+ * content_hash) and never the node id. */
+enum { F2_FILES = 12, F2_SPANS_PER_FILE = 2, F2_TOUCHED = 3 };
+
+/* The span text of declaration `a` or `b` in file `idx`, as the pass reads
+ * it: three lines, joined with '\n', no trailing newline. One producer for
+ * both the fixture and the expected hashes, so they cannot drift apart. */
+static void f2_span_text(int idx, char which, bool touched, char *buf, size_t bufsz) {
+    int value = which == 'a' ? (touched ? 900 + idx : idx) : (touched ? 800 + idx : idx + 1);
+    snprintf(buf, bufsz,
+             "int %c%02d(void) {\n"
+             "    return %d;\n"
+             "}",
+             which, idx, value);
+}
+
+static int f2_write_source(const char *dir, int idx, bool touched) {
+    char path[600];
+    snprintf(path, sizeof(path), "%s/src/f%02d.c", dir, idx);
+    char a[128];
+    char b[128];
+    f2_span_text(idx, 'a', touched, a, sizeof(a));
+    f2_span_text(idx, 'b', touched, b, sizeof(b));
+    char body[512];
+    /* The touch edits BYTES, not geometry: both shapes are lines 1-3 and 4-6,
+     * so the graph rows stay accurate without a re-extract. */
+    snprintf(body, sizeof(body), "%s\n%s\n", a, b);
+    return th_write_file(path, body);
+}
+
+static int f2_build_fixture(const char *dir, const char *graph_db, const char *project) {
+    char src[512];
+    snprintf(src, sizeof(src), "%s/src", dir);
+    if (th_mkdir_p(src) != 0) {
+        return -1;
+    }
+    for (int i = 0; i < F2_FILES; i++) {
+        if (f2_write_source(dir, i, false) != 0) {
+            return -1;
+        }
+    }
+    hyp_store_t *s = hyp_store_open_path(graph_db);
+    if (!s) {
+        return -1;
+    }
+    if (hyp_store_upsert_project(s, project, dir) != HYP_STORE_OK) {
+        hyp_store_close(s);
+        return -1;
+    }
+    hyp_node_t nodes[F2_FILES * F2_SPANS_PER_FILE];
+    char qn[F2_FILES * F2_SPANS_PER_FILE][32];
+    char nm[F2_FILES * F2_SPANS_PER_FILE][16];
+    char fp[F2_FILES][32];
+    memset(nodes, 0, sizeof(nodes));
+    for (int i = 0; i < F2_FILES; i++) {
+        snprintf(fp[i], sizeof(fp[i]), "src/f%02d.c", i);
+        for (int j = 0; j < F2_SPANS_PER_FILE; j++) {
+            int k = (i * F2_SPANS_PER_FILE) + j;
+            snprintf(nm[k], sizeof(nm[k]), "%c%02d", j == 0 ? 'a' : 'b', i);
+            snprintf(qn[k], sizeof(qn[k]), "p.f%02d.%s", i, nm[k]);
+            nodes[k] = (hyp_node_t){.project = project,
+                                    .label = "Function",
+                                    .name = nm[k],
+                                    .qualified_name = qn[k],
+                                    .file_path = fp[i],
+                                    .start_line = j == 0 ? 1 : 4,
+                                    .end_line = j == 0 ? 3 : 6};
+        }
+    }
+    int rc = hyp_store_upsert_node_batch(s, nodes, F2_FILES * F2_SPANS_PER_FILE, NULL);
+    hyp_store_close(s);
+    return rc == HYP_STORE_OK ? 0 : -1;
+}
+
+TEST(ask_embed_touching_three_of_twelve_files_reembeds_their_spans_not_the_corpus) {
+    char *dir = th_mktempdir("hyp-askpull");
+    ASSERT_NOT_NULL(dir);
+    char graph_db[512];
+    char vec_db[512];
+    snprintf(graph_db, sizeof(graph_db), "%s/graph.db", dir);
+    snprintf(vec_db, sizeof(vec_db), "%s/vec.db", dir);
+    if (f2_build_fixture(dir, graph_db, "p") != 0) {
+        th_cleanup(dir);
+        FAIL("could not build the graph fixture");
+    }
+    hyp_ask_encoder_t *enc = hyp_ask_encoder_stub_create(16, 32768, true);
+    ASSERT_NOT_NULL(enc);
+    hyp_ask_embed_opts_t opts;
+    memset(&opts, 0, sizeof(opts));
+    opts.project = "p";
+    opts.graph_db_path = graph_db;
+    opts.vectors_db_path = vec_db;
+
+    hyp_ask_embed_report_t first;
+    ASSERT_EQ(hyp_ask_embed_run(enc, &opts, &first), 0);
+    ASSERT_EQ(first.declarations_seen, F2_FILES * F2_SPANS_PER_FILE);
+    ASSERT_EQ(first.embedded, F2_FILES * F2_SPANS_PER_FILE);
+    ASSERT_EQ(first.reused, 0);
+    hyp_ask_embed_report_free(&first);
+
+    /* The pull: three files change, nine do not. */
+    for (int i = 0; i < F2_TOUCHED; i++) {
+        ASSERT_EQ(f2_write_source(dir, i, true), 0);
+    }
+    /* The re-index that follows a pull re-mints EVERY node id, touched or
+     * not. Reuse must not notice, because the key is the content hash under
+     * the qualified name — a reuse path keyed on node id would re-embed the
+     * whole corpus here and this test would count it. */
+    hyp_store_t *s = hyp_store_open_path(graph_db);
+    ASSERT_NOT_NULL(s);
+    ASSERT_EQ(hyp_store_exec(s, "UPDATE nodes SET id = id + 1000;"), HYP_STORE_OK);
+    hyp_store_close(s);
+
+    hyp_ask_embed_report_t second;
+    ASSERT_EQ(hyp_ask_embed_run(enc, &opts, &second), 0);
+    ASSERT_EQ(second.declarations_seen, F2_FILES * F2_SPANS_PER_FILE);
+    /* THE CLAUSE: three files' worth of spans re-embed; the rest are reused. */
+    ASSERT_EQ(second.embedded, F2_TOUCHED * F2_SPANS_PER_FILE);
+    ASSERT_EQ(second.reused, (F2_FILES - F2_TOUCHED) * F2_SPANS_PER_FILE);
+    ASSERT_EQ(second.pruned, 0);
+    ASSERT_EQ(second.skipped_unreadable, 0);
+    hyp_ask_embed_report_free(&second);
+
+    /* The stored hashes agree: a touched span carries the NEW text's hash, an
+     * untouched span still carries the original's. */
+    hyp_ask_vectors_t *v = hyp_ask_vectors_open_path("p", vec_db);
+    ASSERT_NOT_NULL(v);
+    ASSERT_EQ(hyp_ask_vectors_count(v), F2_FILES * F2_SPANS_PER_FILE);
+    char text[128];
+    char expect[HYP_ASK_VEC_HASH_LEN + 1];
+    char stored[HYP_ASK_VEC_HASH_LEN + 1];
+    f2_span_text(0, 'a', true, text, sizeof(text));
+    hyp_ask_content_hash(text, expect);
+    ASSERT_EQ(hyp_ask_vectors_stored_hash(v, "p.f00.a00", stored, NULL), HYP_ASK_VEC_OK);
+    ASSERT_STR_EQ(stored, expect);
+    f2_span_text(5, 'a', false, text, sizeof(text));
+    hyp_ask_content_hash(text, expect);
+    ASSERT_EQ(hyp_ask_vectors_stored_hash(v, "p.f05.a05", stored, NULL), HYP_ASK_VEC_OK);
+    ASSERT_STR_EQ(stored, expect);
+    hyp_ask_vectors_close(v);
+    hyp_ask_encoder_destroy(enc);
+    th_cleanup(dir);
+    PASS();
+}
+
+TEST(ask_embed_reuse_recites_a_span_that_moved_without_changing) {
+    /* THE DRIFT RISK the F2 audit found, pinned. A pull that inserts lines
+     * above a declaration moves its span and re-mints its node id while
+     * leaving its bytes alone — the hash matches, so the vector is reused —
+     * and the read path cites file and lines STRAIGHT OFF the vector row
+     * (store/ask_index.c converts hits without touching the graph). A reused
+     * row must therefore cite where the span IS, or every embed run after a
+     * pull republishes citations to lines the checkout no longer has. */
+    char *dir = th_mktempdir("hyp-askmove");
+    ASSERT_NOT_NULL(dir);
+    char graph_db[512];
+    char vec_db[512];
+    snprintf(graph_db, sizeof(graph_db), "%s/graph.db", dir);
+    snprintf(vec_db, sizeof(vec_db), "%s/vec.db", dir);
+    if (build_fixture(dir, graph_db, "p") != 0) {
+        th_cleanup(dir);
+        FAIL("could not build the graph fixture");
+    }
+    hyp_ask_encoder_t *enc = hyp_ask_encoder_stub_create(16, 32768, true);
+    ASSERT_NOT_NULL(enc);
+    hyp_ask_embed_opts_t opts;
+    memset(&opts, 0, sizeof(opts));
+    opts.project = "p";
+    opts.graph_db_path = graph_db;
+    opts.vectors_db_path = vec_db;
+    hyp_ask_embed_report_t first;
+    ASSERT_EQ(hyp_ask_embed_run(enc, &opts, &first), 0);
+    ASSERT_EQ(first.embedded, 3);
+    hyp_ask_embed_report_free(&first);
+
+    /* Two new lines of preamble: every declaration slides down two lines,
+     * byte-for-byte unchanged. The re-index records the new spans and
+     * re-mints the ids; the source matches it. */
+    char file[600];
+    snprintf(file, sizeof(file), "%s/src/x.c", dir);
+    ASSERT_EQ(th_write_file(file,
+                            "/* two new lines\n"
+                            " * of preamble */\n"
+                            "int alpha(void) {\n"
+                            "    return 1;\n"
+                            "}\n"
+                            "int beta(void) {\n"
+                            "    return 2;\n"
+                            "}\n"
+                            "struct Gamma {\n"
+                            "    int f;\n"
+                            "};\n"),
+              0);
+    hyp_store_t *s = hyp_store_open_path(graph_db);
+    ASSERT_NOT_NULL(s);
+    ASSERT_EQ(hyp_store_exec(s, "UPDATE nodes SET id = id + 500,"
+                                "  start_line = start_line + 2, end_line = end_line + 2"
+                                " WHERE start_line > 0;"),
+              HYP_STORE_OK);
+    /* What the graph now says alpha's id is — the id the citation must carry. */
+    sqlite3_stmt *st = NULL;
+    int64_t alpha_id = 0;
+    ASSERT_EQ(sqlite3_prepare_v2(hyp_store_get_db(s),
+                                 "SELECT id FROM nodes WHERE qualified_name = 'p.alpha'", -1, &st,
+                                 NULL),
+              SQLITE_OK);
+    ASSERT_EQ(sqlite3_step(st), SQLITE_ROW);
+    alpha_id = sqlite3_column_int64(st, 0);
+    sqlite3_finalize(st);
+    hyp_store_close(s);
+    ASSERT_GT(alpha_id, 0);
+
+    hyp_ask_embed_report_t second;
+    ASSERT_EQ(hyp_ask_embed_run(enc, &opts, &second), 0);
+    /* Nothing re-encodes — the bytes did not change... */
+    ASSERT_EQ(second.embedded, 0);
+    ASSERT_EQ(second.reused, 3);
+    hyp_ask_embed_report_free(&second);
+
+    /* ...and the CITATION is current anyway. Asserted through search — the
+     * same rows the read path converts into an answer's file:line cite. */
+    hyp_ask_vectors_t *v = hyp_ask_vectors_open_path("p", vec_db);
+    ASSERT_NOT_NULL(v);
+    float q[16] = {0};
+    q[0] = 1.0F;
+    hyp_ask_vec_hit_t *hits = NULL;
+    int n = 0;
+    ASSERT_EQ(hyp_ask_vectors_search(v, q, 16, 10, &hits, &n), HYP_ASK_VEC_OK);
+    ASSERT_EQ(n, 3);
+    bool found = false;
+    for (int i = 0; i < n; i++) {
+        if (strcmp(hits[i].qualified_name, "p.alpha") != 0) {
+            continue;
+        }
+        found = true;
+        ASSERT_STR_EQ(hits[i].file_path, "src/x.c");
+        ASSERT_EQ(hits[i].start_line, 3);
+        ASSERT_EQ(hits[i].end_line, 5);
+        ASSERT_EQ(hits[i].node_id, alpha_id);
+    }
+    ASSERT(found);
+    hyp_ask_vec_hits_free(hits, n);
+    hyp_ask_vectors_close(v);
     hyp_ask_encoder_destroy(enc);
     th_cleanup(dir);
     PASS();
@@ -902,6 +1159,8 @@ SUITE(ask_embed) {
     RUN_TEST(ask_embed_content_hash_is_stable_and_32_hex);
     RUN_TEST(ask_embed_runs_end_to_end_and_embeds_every_spanned_node);
     RUN_TEST(ask_embed_reuses_byte_identical_declarations_on_a_rerun);
+    RUN_TEST(ask_embed_touching_three_of_twelve_files_reembeds_their_spans_not_the_corpus);
+    RUN_TEST(ask_embed_reuse_recites_a_span_that_moved_without_changing);
     RUN_TEST(ask_embed_prunes_declarations_that_no_longer_exist);
     RUN_TEST(ask_embed_limited_run_is_marked_partial_and_never_prunes);
     RUN_TEST(ask_embed_truncation_unknown_then_reprobed_to_attested);

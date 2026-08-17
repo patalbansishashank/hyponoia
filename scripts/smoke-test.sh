@@ -1482,7 +1482,7 @@ assert_tier_profile_set() {
         echo "FAIL 8aw: $label $tier direct profile lacks source fallback"
         exit 1
       fi
-      # `ask` is on the analysis tiers and never on scout (src/mcp/tool_tiers.h).
+      # `ask` is on the analysis tiers and never on scout (src/mcp/tool_surface.h).
       # Checked wherever the dialect names tools at all (Junie names a server),
       # in every dialect's identifier form: mcp__hyponoia__ask, mcp_hyponoia_ask,
       # hyponoia/ask, @hyponoia/ask, hyponoia_ask, "ask".

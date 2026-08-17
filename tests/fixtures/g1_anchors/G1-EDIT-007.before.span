@@ -1,0 +1,134 @@
+static ask_llama_t *ask_llama_open(hyp_ask_device_pref_t pref, char *err, size_t errlen) {
+    char path[HYP_MODEL_PATH_MAX];
+    if (!hyp_model_ask_path(path, sizeof(path)) || path[0] == '\0') {
+        (void)snprintf(err, errlen, "the model cache directory cannot be resolved");
+        return NULL;
+    }
+    if (!hyp_model_ask_present()) {
+        (void)snprintf(err, errlen,
+                       "the ask lane's embedding weights are not on this machine (%s). Run `%s`.",
+                       path, HYP_MODEL_ASK_COMMAND);
+        return NULL;
+    }
+
+    ask_llama_backend_once();
+
+    ask_llama_t *s = (ask_llama_t *)calloc(1, sizeof(*s));
+    if (!s) {
+        (void)snprintf(err, errlen, "out of memory");
+        return NULL;
+    }
+
+    /* WHICH DEVICE. The request is an input; what follows is the outcome, and
+     * they are recorded separately so a run that asked for a GPU and got a CPU
+     * is visible rather than merely fifteen times slower. */
+    char gpu_name[128];
+    bool gpu_available = (pref != HYP_ASK_DEVICE_CPU) && ask_llama_gpu_present(gpu_name,
+                                                                               sizeof(gpu_name));
+    double total = 0.0;
+    double used = 0.0;
+    bool vram_readable = hyp_ask_device_vram_mib(&total, &used);
+    bool use_gpu = false;
+
+    if (gpu_available) {
+        if (!vram_readable) {
+            /* A ceiling that cannot be CHECKED must never be ASSUMED — see
+             * the two lost desktop sessions in ask_batch.h. */
+            if (pref == HYP_ASK_DEVICE_GPU) {
+                (void)snprintf(err, errlen,
+                               "--device gpu: a GPU is present (%s) but no device exposes its VRAM "
+                               "to this process, so the allocation ceiling cannot be checked. "
+                               "REFUSING rather than guessing; use --device auto or cpu",
+                               gpu_name);
+                free(s);
+                return NULL;
+            }
+        } else {
+            s->ceiling_mib = hyp_ask_gpu_ceiling_mib(total, used);
+            hyp_ask_kv_plan_t probe;
+            /* The smallest bucket has to fit at one sequence, or there is no
+             * GPU pass to be had at all. */
+            use_gpu = hyp_ask_kv_plan(1, ASK_SEQ_BUCKETS[0], s->ceiling_mib, &probe);
+            if (!use_gpu && pref == HYP_ASK_DEVICE_GPU) {
+                (void)snprintf(err, errlen,
+                               "--device gpu: %.0f MiB of %.0f MiB VRAM is free (this card also "
+                               "drives the display), giving a %.0f MiB ceiling — not enough for "
+                               "the backend's %.0f MiB fixed cost plus a minimum KV cache. "
+                               "REFUSING rather than attempting",
+                               total - used, total, s->ceiling_mib, HYP_ASK_LLAMA_FIXED_MIB);
+                free(s);
+                return NULL;
+            }
+        }
+    } else if (pref == HYP_ASK_DEVICE_GPU) {
+        (void)snprintf(err, errlen,
+                       "--device gpu: this build has no GPU backend it can reach. %s",
+                       llama_supports_gpu_offload()
+                           ? "A GPU backend is compiled in but no device answered."
+                           : "This binary was built with HYP_ASK_GPU=none.");
+        free(s);
+        return NULL;
+    }
+
+    struct llama_model_params mp = llama_model_default_params();
+    mp.n_gpu_layers = use_gpu ? ASK_NGL_ALL : 0;
+    s->model = llama_model_load_from_file(path, mp);
+    if (!s->model) {
+        (void)snprintf(err, errlen, "llama could not load the GGUF at %s", path);
+        free(s);
+        return NULL;
+    }
+    s->vocab = llama_model_get_vocab(s->model);
+    s->n_embd = llama_model_n_embd(s->model);
+    s->model_window = HYP_ASK_MODEL_WINDOW;
+    {
+        int trained = llama_model_n_ctx_train(s->model);
+        if (trained > 0 && trained < s->model_window) {
+            s->model_window = trained;
+        }
+    }
+    s->on_gpu = use_gpu;
+
+    if (s->n_embd != HYP_ASK_DIM) {
+        (void)snprintf(err, errlen,
+                       "the GGUF emits %d dimensions, not the %d every measured number here is "
+                       "about",
+                       s->n_embd, HYP_ASK_DIM);
+        llama_model_free(s->model);
+        free(s);
+        return NULL;
+    }
+
+    /* THE SECOND ARTIFACT. Without it this encoder would emit nano's
+     * pre-projection hidden state: same width, unit length, different space,
+     * and nothing downstream could tell. So a missing or wrong-sized
+     * projection is fatal at open, never a degraded mode. */
+    if (!ask_llama_load_projection(s, err, errlen)) {
+        llama_model_free(s->model);
+        free(s);
+        return NULL;
+    }
+
+    if (use_gpu) {
+        (void)snprintf(s->device_note, sizeof(s->device_note),
+                       "GPU (%s, Vulkan) — %.0f MiB free of %.0f MiB, ceiling %.0f MiB", gpu_name,
+                       total - used, total, s->ceiling_mib);
+    } else if (pref == HYP_ASK_DEVICE_AUTO && gpu_available) {
+        (void)snprintf(s->device_note, sizeof(s->device_note),
+                       "CPU (%d threads) — DOWNGRADED from the GPU that is present (%s): not "
+                       "enough free VRAM for a safe allocation",
+                       ASK_CPU_THREADS, gpu_name);
+    } else {
+        (void)snprintf(s->device_note, sizeof(s->device_note), "CPU (%d threads)",
+                       ASK_CPU_THREADS);
+    }
+
+    /* The model id is the identity of the WEIGHTS AND their configuration —
+     * it is what `ask` refuses a mixed index on, so the quantisation and the
+     * pinned revision both belong in it. */
+    (void)snprintf(s->model_id, sizeof(s->model_id), "%s-%s@%.12s", HYP_MODEL_ASK_MODEL,
+                   HYP_MODEL_ASK_QUANT, HYP_MODEL_ASK_REVISION);
+
+    (void)ask_toks_reserve(s, 4096);
+    return s;
+}

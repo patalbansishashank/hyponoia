@@ -17,6 +17,7 @@
 #include <mcp/index_supervisor.h> /* spawn-count hook — #845 in-process guard */
 #include <mcp/mcp.h>
 #include <mcp/mcp_internal.h>
+#include <memory/adr_records.h>
 #include <pipeline/pipeline.h>
 #include <store/store.h>
 #include <watcher/watcher.h>
@@ -826,14 +827,41 @@ TEST(mcp_tools_list_latest_metadata) {
     ASSERT_NOT_NULL(strstr(json, "\"title\":\"Search graph\""));
     ASSERT_NOT_NULL(strstr(json, "\"title\":\"Index repository\""));
     ASSERT_NOT_NULL(strstr(json, "\"title\":\"Check index coverage\""));
-    /* NO outputSchema is advertised. It was
+    /* NO BLANKET outputSchema. It was
      * {"type":"object","additionalProperties":true} on every tool — a schema
      * constraining nothing, whose only effect was to tell clients
      * "structuredContent is the result". Most tools answer in TOON, which is
      * not a JSON object, so those clients read an empty result for
-     * query_graph and ask. Declare one again only per-tool, and only where the
-     * tool genuinely returns a JSON object. */
-    ASSERT_NULL(strstr(json, "\"outputSchema\""));
+     * query_graph and ask.
+     *
+     * This assertion USED to be `no outputSchema anywhere`, which was stricter
+     * than the rule its own comment stated — "declare one again only per-tool,
+     * and only where the tool genuinely returns a JSON object". index_status
+     * declares one (mcp/tool_surface.h), because its handler builds a
+     * yyjson object, so the promise is keepable. What must stay true is the
+     * rule, not the count: nothing constrains-nothing, and no tool that answers
+     * in TOON declares a shape.
+     *
+     * The other half of the promise — that a declared schema's `required`
+     * fields actually reach a client — cannot be checked here, because checking
+     * it against the emitted JSON is precisely the mistake that let four tests
+     * pass while three tools rendered blank. It is checked by reading a
+     * response, in tests/test_tool_surface.c and scripts/ci/mcp-client-view.py. */
+    ASSERT_NULL(strstr(json, "\"additionalProperties\":true"));
+    {
+        static const char *const toon_answerers[] = {
+            "query_graph", "search_graph",     "ask",             "trace_path",
+            "search_code", "get_code_snippet", "get_architecture",
+        };
+        for (size_t t = 0U; t < sizeof(toon_answerers) / sizeof(toon_answerers[0]); t++) {
+            if (hyp_mcp_tool_declared_output_schema(toon_answerers[t])) {
+                free(json);
+                FAIL("a tool that answers in TOON declares an outputSchema it cannot keep");
+            }
+        }
+        ASSERT_NOT_NULL(hyp_mcp_tool_declared_output_schema("index_status"));
+        ASSERT_NOT_NULL(strstr(json, "\"outputSchema\""));
+    }
     /* search_graph's compact degree columns intentionally count the graph
      * relationships used for call/reference/type centrality, not every edge
      * family (for example DEFINES or CONTAINS_FILE). Keep the public contract
@@ -855,23 +883,28 @@ TEST(mcp_tools_have_behavior_annotations) {
     } expected[] = {
         {"index_repository", false, false, true, false},
         /* These query tools can reach resolve_store(), whose corrupt-store
-         * recovery quarantines/removes database files. Keep the annotations
-         * conservative until query resolution is strictly non-mutating. */
-        {"search_graph", false, true, true, false},
-        {"ask", false, true, true, false},
-        {"query_graph", false, true, true, false},
-        {"trace_path", false, true, true, false},
-        {"get_code_snippet", false, true, true, false},
-        {"get_graph_schema", false, true, true, false},
-        {"get_architecture", false, true, true, false},
-        {"search_code", false, true, true, false},
+         * recovery quarantines/removes database files, so read_only stays
+         * false. destructive does NOT: a graph read destroys nothing, and
+         * while it said otherwise `delete_project` and `search_graph`
+         * advertised byte-identical hints — a client had no way to tell the
+         * tool that erases a database from the tool that reads it. */
+        {"search_graph", false, false, true, false},
+        {"ask", false, false, true, false},
+        {"query_graph", false, false, true, false},
+        {"trace_path", false, false, true, false},
+        {"get_code_snippet", false, false, true, false},
+        {"get_graph_schema", false, false, true, false},
+        {"get_architecture", false, false, true, false},
+        {"search_code", false, false, true, false},
         {"list_projects", true, false, true, false},
         {"delete_project", false, true, true, false},
-        {"index_status", false, true, true, false},
-        {"check_index_coverage", false, true, true, false},
-        {"detect_changes", false, true, true, false},
+        {"index_status", false, false, true, false},
+        {"check_index_coverage", false, false, true, false},
+        {"detect_changes", false, false, true, false},
         {"manage_adr", false, true, false, false},
         {"ingest_traces", false, false, false, false},
+        {"record_memory", false, false, false, false},
+        {"search_memory", false, false, true, false},
     };
 
     char *json = hyp_mcp_tools_list();
@@ -1279,13 +1312,28 @@ TEST(server_handle_tools_list_defaults_to_all_tools_and_accepts_cursor) {
     ASSERT_NOT_NULL(strstr(resp, "ingest_traces"));
     free(resp);
 
-    resp = hyp_mcp_server_handle(
-        srv,
-        "{\"jsonrpc\":\"2.0\",\"id\":201,\"method\":\"tools/list\",\"params\":{\"cursor\":\"8\"}}");
+    /* Paging is a PROPERTY, not a number: a page that does not reach the end
+     * carries a cursor and the last page does not. Written against the count of
+     * the day, this leg asserted "cursor 8 is the last page" and started
+     * failing the moment two tools went live — a test pinned to an arithmetic
+     * coincidence rather than to the rule. */
+    char request[160];
+    snprintf(request, sizeof(request),
+             "{\"jsonrpc\":\"2.0\",\"id\":201,\"method\":\"tools/list\",\"params\":"
+             "{\"cursor\":\"%d\"}}",
+             hyp_mcp_tool_count() - 1);
+    resp = hyp_mcp_server_handle(srv, request);
     ASSERT_NOT_NULL(resp);
     ASSERT_NOT_NULL(strstr(resp, "\"id\":201"));
     ASSERT_NULL(strstr(resp, "\"nextCursor\""));
-    ASSERT_NOT_NULL(strstr(resp, "manage_adr"));
+    free(resp);
+
+    resp = hyp_mcp_server_handle(
+        srv,
+        "{\"jsonrpc\":\"2.0\",\"id\":203,\"method\":\"tools/list\",\"params\":{\"cursor\":\"0\"}}");
+    ASSERT_NOT_NULL(resp);
+    ASSERT_NOT_NULL(strstr(resp, "\"id\":203"));
+    ASSERT_NOT_NULL(strstr(resp, "\"nextCursor\""));
     free(resp);
 
     hyp_mcp_server_free(srv);
@@ -1308,10 +1356,13 @@ TEST(server_handle_analysis_profile_filters_and_rejects_mutators) {
 
     resp = hyp_mcp_server_handle(srv, "{\"jsonrpc\":\"2.0\",\"id\":220,\"method\":\"tools/list\"}");
     ASSERT_NOT_NULL(resp);
+    /* search_memory joins at generation 4; record_memory never does — a tier
+     * whose own description says read-only does not request a writer. */
     static const char *const analysis_tools[] = {
-        "search_graph",     "ask",                  "query_graph",          "trace_path",
-        "get_code_snippet", "get_graph_schema",     "get_architecture",     "search_code",
-        "list_projects",    "index_status",         "check_index_coverage", "detect_changes",
+        "search_graph",     "ask",              "query_graph",          "trace_path",
+        "get_code_snippet", "get_graph_schema", "get_architecture",     "search_code",
+        "list_projects",    "index_status",     "check_index_coverage", "detect_changes",
+        "search_memory",
     };
     ASSERT_EQ(mcp_response_tool_count(resp), sizeof(analysis_tools) / sizeof(analysis_tools[0]));
     for (size_t i = 0U; i < sizeof(analysis_tools) / sizeof(analysis_tools[0]); i++) {
@@ -4127,6 +4178,12 @@ static const project_disclosure_case_t PROJECT_DISCLOSURE_CASES[] = {
     {"detect_changes", "{\"scope\":\"files\",\"format\":\"json\"}"},
     {"manage_adr", "{\"mode\":\"get\"}"},
     {"ingest_traces", "{\"traces\":[]}"},
+    /* The memory surface answers the same way. record_memory writes into the
+     * temporary cache this test already isolates, and search_memory discloses
+     * on both paths — with a store and, before anything is written, without. */
+    {"record_memory", "{\"kind\":\"decision\",\"title\":\"t\",\"body\":\"b\"}"},
+    {"search_memory", "{}"},
+    {"search_memory", "{\"format\":\"json\"}"},
 };
 
 TEST(tool_every_derivable_project_answer_discloses_its_source_step2) {
@@ -4306,9 +4363,9 @@ TEST(mcp_project_argument_is_optional_on_every_tool_but_delete_step2) {
     free(resp);
     hyp_mcp_server_free(srv);
 
-    /* 14 tools take `project`; exactly one still demands it. */
-    ASSERT_EQ(with_project, 14);
-    ASSERT_EQ(optional, 13);
+    /* 16 tools take `project`; exactly one still demands it. */
+    ASSERT_EQ(with_project, 16);
+    ASSERT_EQ(optional, 15);
     ASSERT_EQ(required, 1);
     ASSERT_TRUE(strcmp(required_names, "delete_project") == 0);
     PASS();
@@ -5034,10 +5091,48 @@ TEST(tool_manage_adr_get_with_existing_adr) {
     PASS();
 }
 
+/* An ADR update appends a record to the machine's decision store, so every
+ * test that performs one must point HYP_CACHE_DIR at a throwaway directory —
+ * a suite that writes into the real corpus is a suite with a side effect. */
+typedef struct {
+    char dir[HYP_SZ_256];
+    char *saved;
+    bool active;
+} adr_cache_scope_t;
+
+static bool adr_cache_scope_begin(adr_cache_scope_t *scope, const char *tag) {
+    memset(scope, 0, sizeof(*scope));
+    const char *made = th_mktempdir(tag);
+    if (!made) {
+        return false;
+    }
+    snprintf(scope->dir, sizeof(scope->dir), "%s", made);
+    const char *saved = getenv("HYP_CACHE_DIR");
+    scope->saved = saved ? hyp_strdup(saved) : NULL;
+    scope->active = hyp_setenv("HYP_CACHE_DIR", scope->dir, 1) == 0;
+    return scope->active;
+}
+
+static void adr_cache_scope_end(adr_cache_scope_t *scope) {
+    if (!scope->active) {
+        return;
+    }
+    restore_cache_dir(scope->saved);
+    free(scope->saved);
+    scope->saved = NULL;
+    (void)th_rmtree(scope->dir);
+    scope->active = false;
+}
+
 /* issue #256: manage_adr (MCP) and the UI /api/adr endpoints must share ONE
  * backend. A manage_adr(update) write must be readable via hyp_store_adr_get
- * (the exact API the UI's /api/adr GET uses). */
+ * (the exact API the UI's /api/adr GET uses). The backend they share is the
+ * append-only record set with that row as its projection, so the property the
+ * test was written for is the property still asserted. */
 TEST(tool_manage_adr_unified_backend_issue256) {
+    adr_cache_scope_t cache;
+    ASSERT_TRUE(adr_cache_scope_begin(&cache, "hyp_mcp_adr_unify"));
+
     hyp_mcp_server_t *srv = hyp_mcp_server_new(NULL);
     ASSERT_NOT_NULL(srv);
     hyp_store_t *st = hyp_mcp_server_store(srv);
@@ -5073,6 +5168,89 @@ TEST(tool_manage_adr_unified_backend_issue256) {
     free(resp);
 
     hyp_mcp_server_free(srv);
+    adr_cache_scope_end(&cache);
+    PASS();
+}
+
+/* The client's own view of what an update does. Two claims at once, and they
+ * are only interesting together:
+ *
+ *   NOTHING ON THE WIRE MOVED. Every byte a client reads from update, get and
+ *   sections is what it always was, including the `semantics` field, which
+ *   describes the interface (this call supplies the whole document) and not
+ *   the storage. A deprecated row is a marker for a migration, never a place
+ *   to change a contract.
+ *
+ *   AND THE LOSS STOPPED. Two updates leave TWO decision records; the
+ *   superseded document is still readable, where the UPSERT it replaced left
+ *   one row and no way back to the text it destroyed. */
+TEST(tool_manage_adr_update_keeps_the_document_it_supersedes) {
+    adr_cache_scope_t cache;
+    ASSERT_TRUE(adr_cache_scope_begin(&cache, "hyp_mcp_adr_append"));
+
+    hyp_mcp_server_t *srv = hyp_mcp_server_new(NULL);
+    ASSERT_NOT_NULL(srv);
+    hyp_store_t *st = hyp_mcp_server_store(srv);
+    ASSERT_NOT_NULL(st);
+    hyp_store_upsert_project(st, "adr-append", "/tmp/adr-append");
+    hyp_mcp_server_set_project(srv, "adr-append");
+
+    char *first = hyp_mcp_server_handle(
+        srv, "{\"jsonrpc\":\"2.0\",\"id\":130,\"method\":\"tools/call\","
+             "\"params\":{\"name\":\"manage_adr\",\"arguments\":{\"project\":\"adr-append\","
+             "\"mode\":\"update\",\"content\":\"## PURPOSE\\nThe first answer.\\n\"}}}");
+    ASSERT_NOT_NULL(first);
+    ASSERT_NOT_NULL(strstr(first, "updated"));
+    ASSERT_NULL(strstr(first, "\"isError\":true"));
+    /* Unchanged on the wire, asserted rather than assumed. */
+    ASSERT_TRUE(response_contains_json_fragment(first, "\"semantics\""));
+    ASSERT_TRUE(response_contains_json_fragment(first, "whole_document_replaced"));
+    free(first);
+
+    /* A second update whose content differs. The mutable path would destroy
+     * the first document here. */
+    char *second = hyp_mcp_server_handle(
+        srv, "{\"jsonrpc\":\"2.0\",\"id\":131,\"method\":\"tools/call\","
+             "\"params\":{\"name\":\"manage_adr\",\"arguments\":{\"project\":\"adr-append\","
+             "\"mode\":\"update\",\"content\":\"## PURPOSE\\nThe second answer.\\n\"}}}");
+    ASSERT_NOT_NULL(second);
+    ASSERT_NOT_NULL(strstr(second, "updated"));
+    free(second);
+
+    /* mode:"get" answers with the current document, exactly as before. */
+    char *get = hyp_mcp_server_handle(
+        srv, "{\"jsonrpc\":\"2.0\",\"id\":132,\"method\":\"tools/call\","
+             "\"params\":{\"name\":\"manage_adr\",\"arguments\":{\"project\":\"adr-append\","
+             "\"mode\":\"get\"}}}");
+    ASSERT_NOT_NULL(get);
+    ASSERT_NOT_NULL(strstr(get, "The second answer."));
+    free(get);
+
+    /* And BOTH documents are in the record set, read back through the plain
+     * record store surface with no ADR vocabulary involved. */
+    hyp_record_store_t *records = NULL;
+    ASSERT_EQ(hyp_adr_records_open(NULL, &records), HYP_RECORD_STORE_OK);
+    hyp_record_store_query_t query;
+    memset(&query, 0, sizeof(query));
+    query.has_kind = true;
+    query.kind = HYP_RECORD_DECISION;
+    query.origin = "adr-append";
+    hyp_record_set_t *found = NULL;
+    ASSERT_EQ(hyp_record_store_query(records, &query, &found), HYP_RECORD_STORE_OK);
+    ASSERT_EQ(hyp_record_set_count(found), 2);
+    bool saw_first_document = false;
+    for (size_t i = 0; i < hyp_record_set_count(found); i++) {
+        const hyp_record_t *rec = hyp_record_set_at(found, i);
+        if (strstr(rec->content, "The first answer.")) {
+            saw_first_document = true;
+        }
+    }
+    ASSERT_TRUE(saw_first_document);
+    hyp_record_set_free(found);
+    hyp_record_store_close(records);
+
+    hyp_mcp_server_free(srv);
+    adr_cache_scope_end(&cache);
     PASS();
 }
 
@@ -5116,6 +5294,8 @@ TEST(tool_manage_adr_rejects_removed_sections_argument) {
 
 TEST(tool_manage_adr_mutation_guard_balances_success) {
     const char *project = "guard-adr-success";
+    adr_cache_scope_t cache;
+    ASSERT_TRUE(adr_cache_scope_begin(&cache, "hyp_mcp_adr_guard"));
     hyp_mcp_server_t *srv = hyp_mcp_server_new(NULL);
     ASSERT_NOT_NULL(srv);
     hyp_store_t *store = hyp_mcp_server_store(srv);
@@ -5139,6 +5319,7 @@ TEST(tool_manage_adr_mutation_guard_balances_success) {
     free(resp);
 
     hyp_mcp_server_free(srv);
+    adr_cache_scope_end(&cache);
     PASS();
 }
 
@@ -11099,6 +11280,7 @@ SUITE(mcp) {
     RUN_TEST(tool_manage_adr_no_project);
     RUN_TEST(tool_manage_adr_get_with_existing_adr);
     RUN_TEST(tool_manage_adr_unified_backend_issue256);
+    RUN_TEST(tool_manage_adr_update_keeps_the_document_it_supersedes);
     RUN_TEST(tool_manage_adr_rejects_removed_sections_argument);
     RUN_TEST(tool_index_repository_reports_store_backed_adr);
     RUN_TEST(tool_index_repository_resolves_root_path_from_project_name_issue1211);

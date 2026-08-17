@@ -23,8 +23,64 @@
 
 /* ── Shared pipeline constants ─────────────────────────────────── */
 
-/* Maximum byte budget for tree-sitter extraction per file */
-#define HYP_EXTRACT_BUDGET 5000000
+/* Per-file WALL-CLOCK ceiling on the tree-sitter parse, in MICROSECONDS --
+ * the unit hyp_extract_file()'s timeout_micros parameter takes. It bounds
+ * ts_parser_parse_with_options() and nothing else: not the extraction walks
+ * that follow it, and not the second parse of preprocessed C/C++ source,
+ * which passes pp_opts = {0} and has no ceiling at all. On a large C file
+ * the parse this does bound is about a tenth of what the file costs.
+ *
+ * It is NOT a byte cap. hyp_max_file_bytes() is the byte cap; it reports
+ * under its own "oversized" skip phase and has nothing to do with this.
+ *
+ * It is NOT the hang guard either. The index supervisor kills a worker that
+ * emits no progress for 900 seconds and quarantines the file it was on. This
+ * ceiling exists so that ONE pathological parse costs ONE skipped file
+ * rather than a killed worker, which gives it an UPPER bound as well as a
+ * lower one: progress is logged every PP_LOG_INTERVAL completed files and
+ * MIN_WORKERS is 1, so a single-worker run -- a supported shape -- has to fit
+ * PP_LOG_INTERVAL consecutive worst-case files inside that window.
+ * 10 x ceiling < 900 s, so the ceiling stays under 90 seconds; 60 keeps 1.5x
+ * under the derived bound.
+ *
+ * The lower bound is the slowest LEGITIMATE parse on the slowest supported
+ * runner, because expiry returns an EMPTY result: no definitions for the
+ * file, a skip that is not fatal, and a run that still reports success. A
+ * ceiling an ordinary file can reach is a hole in the graph whose size
+ * depends on how fast the machine is, and nothing in the answer says so.
+ *
+ * Measured with the ceiling lifted so every parse ran to completion, over
+ * this repository's own history. On the slowest supported runner
+ * (ubuntu-24.04-arm, 4 vCPU, the ASan+UBSan build the test venue uses) the
+ * slowest raw parse is 28.6 s for a 447 KB file; src/mcp/mcp.c measures 22.0
+ * s median over 18 observations with a 1.32x spread, and throughput sits
+ * between 14 and 37 kB/s across 49 parses. The same 447 KB file parses in
+ * 430 ms on an x86 runner of the same size and generation. That is 62x to
+ * 66x median-to-median on files with 18 and 3 paired observations, so it is
+ * a property of the machine rather than a spike.
+ *
+ * The bracket is therefore [28.6 s, 90 s]: a factor of 3.1 between the
+ * slowest legitimate parse and the structural ceiling. Sixty seconds is 2.1x
+ * over the first and 1.5x under the second, and NEITHER margin is
+ * comfortable -- no value inside a 3.1x bracket is. At that runner's
+ * throughput this admits files up to roughly 1.3 MB, and three files in this
+ * tree are larger, the largest by two orders of magnitude. Without the
+ * sanitizer the same ceiling admits several times more: instrumentation
+ * costs 3.1x to 5.6x on identical input.
+ *
+ * Wall clock is the wrong unit and this value only buys room. Parse cost is
+ * linear in bytes (r = 0.98 across the measured set), so the ceiling is a
+ * file-size cap scaled by machine speed; adversarial C -- deep nesting,
+ * whole-file error recovery, dense declaration ambiguity, huge single
+ * expressions, stacked casts -- parses within a factor of 4 of ordinary
+ * source, while the same file costs more than 11x more on a slow runner than
+ * a fast one. The spread this cannot distinguish from sickness is larger than
+ * any sickness measured, so what it still catches is a parse whose throughput
+ * has collapsed by orders of magnitude, and nothing subtler. The guard that
+ * would be right is the supervisor's own shape one level down: TSParseState
+ * carries current_byte_offset, so the progress callback can abort a parse
+ * that has stopped ADVANCING rather than one that is merely slow. */
+#define HYP_PARSE_TIMEOUT_US 60000000
 
 /* Route node QN buffer size (must fit __route__METHOD__/full/url/path) */
 #define HYP_ROUTE_QN_SIZE 768
@@ -688,11 +744,18 @@ enum { HYP_SEMANTIC_INDEX_VERSION = 3 };
 typedef struct {
     hyp_gbuf_t *gbuf;
     const char *final_db_path;
+    /* Where the durable half of the store still lives while this generation is
+     * being built: the LIVE database, not the staging copy of it. The two
+     * differ exactly when they matter — a forced full rebuild unlinks the
+     * staging copy before indexing, and a failed backup never makes one — so
+     * reading the previous generation from final_db_path would find nothing
+     * and publish an empty registry. NULL falls back to final_db_path, which
+     * is right for a caller whose destination IS the live file. */
+    const char *previous_db_path;
     const char *project;
     atomic_int *cancelled;
     const hyp_file_hash_t *manifest;
     int manifest_count;
-    const char *adr_content;
     const hyp_coverage_row_t *coverage;
     int coverage_count;
     hyp_coverage_meta_t coverage_meta;
@@ -765,7 +828,20 @@ void hyp_pipeline_set_lsp_surfaces(hyp_pipeline_t *p, hyp_lsp_surface_row_t *row
 
 /* Pipeline accessors for incremental use */
 const char *hyp_pipeline_repo_path(const hyp_pipeline_t *p);
+/* The live database this run replaces, or NULL when the destination IS it.
+ * Publication reads the previous generation's durable rows from here. */
+const char *hyp_pipeline_live_db_path(const hyp_pipeline_t *p);
 atomic_int *hyp_pipeline_cancelled_ptr(hyp_pipeline_t *p);
+int hyp_pipeline_workspace_member_count(const hyp_pipeline_t *p);
+
+/* The workspace-evidence gate, as ONE predicate. True only when this run
+ * indexes one member of
+ * a workspace that has somewhere else to look; every site that records
+ * cross-member evidence asks this and nothing else, so the sequential and the
+ * parallel resolution paths cannot disagree about it. Derived from
+ * ctx->pipeline, which all three ctx initialisers already set — a field on the
+ * ctx would be a third place to forget. */
+bool hyp_pipeline_ctx_records_workspace_evidence(const hyp_pipeline_ctx_t *ctx);
 /* Record committed graph size (#334 gate axis) from the incremental path,
  * which cannot see the opaque hyp_pipeline struct. Call before the dump. */
 void hyp_pipeline_set_committed_counts(hyp_pipeline_t *p, int nodes, int edges);
@@ -829,7 +905,7 @@ void hyp_pipeline_incremental_test_force_legacy_partial_once(void);
 void hyp_pipeline_incremental_test_fail_after_stage_dump_once(void);
 void hyp_pipeline_incremental_test_cancel_after_predump_once(void);
 void hyp_pipeline_incremental_test_cancel_after_destination_prepare_once(void);
-void hyp_pipeline_incremental_test_fail_adr_capture_once(void);
+void hyp_pipeline_incremental_test_fail_carry_forward_once(void);
 typedef void (*hyp_pipeline_test_hook_fn)(void *userdata);
 void hyp_pipeline_incremental_test_before_final_manifest_once(hyp_pipeline_test_hook_fn hook,
                                                               void *userdata);
@@ -841,6 +917,7 @@ void hyp_pipeline_incremental_test_reset_faults(void);
 bool hyp_pipeline_persist_test_take_failure_after_stage_dump(void);
 bool hyp_pipeline_persist_test_take_cancel_after_predump(void);
 bool hyp_pipeline_persist_test_take_cancel_after_destination_prepare(void);
+bool hyp_pipeline_persist_test_take_failure_carry_forward(void);
 void hyp_pipeline_persist_test_run_before_final_manifest(void);
 void hyp_pipeline_persist_test_reset_faults(void);
 #endif

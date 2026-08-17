@@ -8,10 +8,8 @@ name: OpenSSF Scorecard
 # not a bot poking a tracker nobody reads.
 
 on:
-  push:
-    branches: [main]
-  schedule:
-    - cron: '0 6 * * 1' # Every Monday at 06:00 UTC
+  # No automatic trigger -- same instruction as ci.yml. Runnable by hand.
+  workflow_dispatch: {}
 
 permissions: read-all
 

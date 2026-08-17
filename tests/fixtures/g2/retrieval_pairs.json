@@ -1,0 +1,1369 @@
+{
+  "fixture_set": "G2 \u2014 retrieval against decisions that were actually taken",
+  "how_the_gold_was_obtained": "Every gold below is a VERBATIM paragraph lifted from the cited source by build_g2.py, located by the recorded marker string. No gold was written for this fixture. If a marker stops matching the source, the build fails rather than paraphrasing.",
+  "selection": "commits scored by mine_g2.py for reason-markers (because / rather than / deliberately / instead of / would otherwise / measured / fail closed ...) over all 2,103 non-merge commits; 208 scored >= 3 with >= 5 body lines; these are drawn from that set plus NEXT-STEPS.md \u00a74.",
+  "scoring": "a returned answer is CORRECT if it contains the cited source's decision; substring containment against decision_verbatim is the cheap check, and the source citation is what a human re-derives.",
+  "pairs": [
+    {
+      "id": "G2-001",
+      "question": "Why does the vector store live in its own SQLite file instead of a table in the graph database?",
+      "gold": {
+        "decision_verbatim": "The store is a SEPARATE SQLite file, <cache>/vectors/<project>.db, and\nthat is the decision worth arguing. A full re-index does not edit the\ngraph database, it RENAMES a new one over it \u2014 so a vector table living\ninside it is destroyed by every successful re-index, throwing away 23.5\nCPU-minutes of encoding that was still correct because the declarations\ndid not change. This table also scales with the corpus where nothing\nelse in the store does, so inside the graph file it would be scanned by\nevery integrity check, copied by every VACUUM INTO, and shipped to\nteammates inside graph.db.zst as 17 MB of float32 they cannot use. And\nthe graph database is not written by SQLite at all: it comes out of a\nhand-rolled B-tree page writer whose sqlite_master is hardcoded, which\nis not a thing to extend for a pass that runs separately afterwards.",
+        "source": {
+          "kind": "commit_message",
+          "commit": "948bdb53d3d8691c8feb1e1009f0bc2a98e93ebc",
+          "date": "2026-08-10",
+          "author": "Shashank",
+          "subject": "ask: per-declaration vector storage and the opt-in embed pass",
+          "cite": "git log -1 --format=%B 948bdb53"
+        },
+        "marker": "The store is a SEPARATE SQLite file"
+      },
+      "must_not_return": [
+        "because SQLite tables are slow",
+        "for concurrency"
+      ],
+      "asked_about": {
+        "file_path": "src/ask/ask_vectors.c",
+        "symbol": "hyp_ask_vectors_open",
+        "verified_at": "d3e9806f",
+        "qualified_name": "hyponoia.src.ask.ask_vectors.hyp_ask_vectors_open",
+        "address": "hyp1:hyponoia/hyponoia#hyponoia.src.ask.ask_vectors.hyp_ask_vectors_open",
+        "note": "the symbol an agent would have open when asking; the anchor is where the gold should be reachable from once the decision store holds it"
+      }
+    },
+    {
+      "id": "G2-002",
+      "question": "Why are ask vector rows keyed on qualified_name rather than node id?",
+      "gold": {
+        "decision_verbatim": "Rows are keyed on qualified_name, not node id, because a full re-index\nre-mints node ids 1..N \u2014 a vector table keyed on them would point at the\nwrong declarations even where it survived. node_id is carried as a\nper-generation hint. The span is stored so an answer can cite\nWriter.cpp:2281-2456 without a round trip; the TEXT is not, because\nHyponoia can re-read it, and duplicating it would make \u00a72.1's \"~17 MB\"\nuntrue.",
+        "source": {
+          "kind": "commit_message",
+          "commit": "948bdb53d3d8691c8feb1e1009f0bc2a98e93ebc",
+          "date": "2026-08-10",
+          "author": "Shashank",
+          "subject": "ask: per-declaration vector storage and the opt-in embed pass",
+          "cite": "git log -1 --format=%B 948bdb53"
+        },
+        "marker": "Rows are keyed on qualified_name, not node id"
+      },
+      "must_not_return": [],
+      "asked_about": {
+        "file_path": "src/ask/ask_vectors.c",
+        "symbol": "hyp_ask_vectors_open",
+        "verified_at": "d3e9806f",
+        "qualified_name": "hyponoia.src.ask.ask_vectors.hyp_ask_vectors_open",
+        "address": "hyp1:hyponoia/hyponoia#hyponoia.src.ask.ask_vectors.hyp_ask_vectors_open",
+        "note": "the symbol an agent would have open when asking; the anchor is where the gold should be reachable from once the decision store holds it"
+      }
+    },
+    {
+      "id": "G2-003",
+      "question": "Why is the record id a digest of every field and not just content + author + timestamp?",
+      "gold": {
+        "decision_verbatim": "The id is a SHA-256 over a domain-tagged, length-prefixed canonical encoding of EVERY field, not only of content + author + timestamp as \u00a74 words it. Those three are the substance of identity \u2014 they are what makes two machines agree \u2014 but an id that covers only them makes the union LOSSY: two signals with the same text, by the same author, at the same millisecond, anchored to two different symbols collide, and a set keyed on id then holds one id and two payloads with no way out but picking one. Picking one is last-writer-wins wearing a different name, and it is exactly what this contract exists to delete. union_keeps_records_that_share_all_three_substantive_fields is that argument as a test: seven records identical in content, author and timestamp, all seven kept.",
+        "source": {
+          "kind": "commit_message",
+          "commit": "ea450411d091bfaf6270c8b73bbff003222e2f73",
+          "date": "2026-08-16",
+          "author": "Shashank",
+          "subject": "record: one append-only shape whose id IS its content, so merging two stores is a union",
+          "cite": "git log -1 --format=%B ea450411"
+        },
+        "marker": "The id is a SHA-256 over a domain-tagged"
+      },
+      "must_not_return": [],
+      "asked_about": {
+        "file_path": "src/foundation/record.c",
+        "symbol": "hyp_record_build",
+        "verified_at": "feat/p1-a1",
+        "qualified_name": "hyponoia.src.foundation.record.hyp_record_build",
+        "address": "hyp1:hyponoia/hyponoia#hyponoia.src.foundation.record.hyp_record_build",
+        "note": "the symbol an agent would have open when asking; the anchor is where the gold should be reachable from once the decision store holds it"
+      }
+    },
+    {
+      "id": "G2-004",
+      "question": "Why does a record carry an `origin` field at all?",
+      "gold": {
+        "decision_verbatim": "origin \u2014 the feed adapter's own name for the row this came from, opaque, NULL when authored locally. Without it D4's completeness audit is not merely awkward, it is impossible: two distinct source rows carrying identical text at the same millisecond collapse into one record, and a count of stored records against the source's count(*) then reports a permanent shortfall indistinguishable from real loss. Dedup and loss look the same from a count.",
+        "source": {
+          "kind": "commit_message",
+          "commit": "ea450411d091bfaf6270c8b73bbff003222e2f73",
+          "date": "2026-08-16",
+          "author": "Shashank",
+          "subject": "record: one append-only shape whose id IS its content, so merging two stores is a union",
+          "cite": "git log -1 --format=%B ea450411"
+        },
+        "marker": "origin \u2014 the feed adapter's own name"
+      },
+      "must_not_return": [],
+      "asked_about": {
+        "file_path": "src/foundation/record.h",
+        "symbol": "hyp_record_build",
+        "verified_at": "feat/p1-a1 (textual: not a C function span)",
+        "qualified_name": "hyponoia.src.foundation.record.hyp_record_build",
+        "address": "hyp1:hyponoia/hyponoia#hyponoia.src.foundation.record.hyp_record_build",
+        "note": "the symbol an agent would have open when asking; the anchor is where the gold should be reachable from once the decision store holds it"
+      }
+    },
+    {
+      "id": "G2-005",
+      "question": "Why does a record carry a `thread` field when it already has `parent`?",
+      "gold": {
+        "decision_verbatim": "thread \u2014 which conversation a record belongs to, opaque, NULL when none. Reconstructing a conversation from parent links alone fails OPEN: one missing record splits a session into two components, every count still balances, and nothing reports the break. A reader then believes it holds a whole conversation and does not.",
+        "source": {
+          "kind": "commit_message",
+          "commit": "ea450411d091bfaf6270c8b73bbff003222e2f73",
+          "date": "2026-08-16",
+          "author": "Shashank",
+          "subject": "record: one append-only shape whose id IS its content, so merging two stores is a union",
+          "cite": "git log -1 --format=%B ea450411"
+        },
+        "marker": "thread \u2014 which conversation a record belongs to"
+      },
+      "must_not_return": [],
+      "asked_about": {
+        "file_path": "src/foundation/record.h",
+        "symbol": "hyp_record_build",
+        "verified_at": "feat/p1-a1 (textual: not a C function span)",
+        "qualified_name": "hyponoia.src.foundation.record.hyp_record_build",
+        "address": "hyp1:hyponoia/hyponoia#hyponoia.src.foundation.record.hyp_record_build",
+        "note": "the symbol an agent would have open when asking; the anchor is where the gold should be reachable from once the decision store holds it"
+      }
+    },
+    {
+      "id": "G2-006",
+      "question": "Why are record timestamps supplied by the caller instead of captured?",
+      "gold": {
+        "decision_verbatim": "Timestamps are supplied by the caller and never captured. A captured timestamp makes an id depend on the machine that built it, so the same event ingested twice on two machines gets two ids and sync becomes a duplicate storm rather than a union; re-ingesting one row is idempotent by construction instead of by an \"already seen\" table someone has to remember to consult. record.c contains no clock at all \u2014 the wall clock is its own translation unit and the contract script asserts the absence, because that failure only surfaces after two machines have both ingested the same feed.",
+        "source": {
+          "kind": "commit_message",
+          "commit": "ea450411d091bfaf6270c8b73bbff003222e2f73",
+          "date": "2026-08-16",
+          "author": "Shashank",
+          "subject": "record: one append-only shape whose id IS its content, so merging two stores is a union",
+          "cite": "git log -1 --format=%B ea450411"
+        },
+        "marker": "Timestamps are supplied by the caller and never captured"
+      },
+      "must_not_return": [],
+      "asked_about": {
+        "file_path": "src/foundation/record_clock.c",
+        "symbol": "hyp_record_wall_clock_ms",
+        "verified_at": "feat/p1-a1",
+        "qualified_name": "hyponoia.src.foundation.record_clock.hyp_record_wall_clock_ms",
+        "address": "hyp1:hyponoia/hyponoia#hyponoia.src.foundation.record_clock.hyp_record_wall_clock_ms",
+        "note": "the symbol an agent would have open when asking; the anchor is where the gold should be reachable from once the decision store holds it"
+      }
+    },
+    {
+      "id": "G2-007",
+      "question": "Why does the address wrap the qualified name instead of replacing it?",
+      "gold": {
+        "decision_verbatim": "The qualified name is FORMALISED, not superseded. A canonical name already\nexists and is load-bearing in four places \u2014 UNIQUE(project, qualified_name) in\nstore.c, the graph-buffer merge key, the vector table's primary key and the MCP\nhandle. Superseding it would leave the address and the store's own uniqueness\nkey disagreeing about what one node is, which is the two-ends divergence this\nphase exists to prevent. So the address wraps the qualified name in the two\nscopes it does not carry and leaves it byte-for-byte untouched as the terminal\nfield.",
+        "source": {
+          "kind": "commit_message",
+          "commit": "a582645da2771a6b4cfb715f7b2c23d7ea61725d",
+          "date": "2026-08-16",
+          "author": "Shashank",
+          "subject": "identity: one address for a workspace, a repo and a node \u2014 the qualified name formalised, not replaced",
+          "cite": "git log -1 --format=%B a582645d"
+        },
+        "marker": "The qualified name is FORMALISED, not superseded"
+      },
+      "must_not_return": [],
+      "asked_about": {
+        "file_path": "src/foundation/identity.c",
+        "symbol": "hyp_addr_init",
+        "verified_at": "feat/p1-a1",
+        "qualified_name": "hyponoia.src.foundation.identity.hyp_addr_init",
+        "address": "hyp1:hyponoia/hyponoia#hyponoia.src.foundation.identity.hyp_addr_init",
+        "note": "the symbol an agent would have open when asking; the anchor is where the gold should be reachable from once the decision store holds it"
+      }
+    },
+    {
+      "id": "G2-008",
+      "question": "Why is the unescaped dot in a qualified name not fixed?",
+      "gold": {
+        "decision_verbatim": "The unescaped dot is not fixed, deliberately. fqn_compute(\"proj\", \".env.local\",\n\"__file__\") is still \"proj..env.local.__file__\" and a qualified name still\ncannot be split back into segments. The ADDRESS is unambiguous anyway, because\nit never splits one: slugs are project names, so neither '/' nor '#' can occur\nin them, and the leftmost split of each separates the fields exactly with the\nqualified name taken verbatim to end of string. Escaping would identify a node\nthe store cannot look up.",
+        "source": {
+          "kind": "commit_message",
+          "commit": "a582645da2771a6b4cfb715f7b2c23d7ea61725d",
+          "date": "2026-08-16",
+          "author": "Shashank",
+          "subject": "identity: one address for a workspace, a repo and a node \u2014 the qualified name formalised, not replaced",
+          "cite": "git log -1 --format=%B a582645d"
+        },
+        "marker": "The unescaped dot is not fixed, deliberately"
+      },
+      "must_not_return": [],
+      "asked_about": {
+        "file_path": "src/foundation/identity.c",
+        "symbol": "hyp_addr_parse",
+        "verified_at": "feat/p1-a1",
+        "qualified_name": "hyponoia.src.foundation.identity.hyp_addr_parse",
+        "address": "hyp1:hyponoia/hyponoia#hyponoia.src.foundation.identity.hyp_addr_parse",
+        "note": "the symbol an agent would have open when asking; the anchor is where the gold should be reachable from once the decision store holds it"
+      }
+    },
+    {
+      "id": "G2-009",
+      "question": "Why is the span hash taken over lines that include the declaration line?",
+      "gold": {
+        "decision_verbatim": "| I4 | the span includes the decl line \u21d2 symbol rename changes QN AND hash |",
+        "source": {
+          "kind": "plan_section",
+          "file": "/media/DEV/Projects/context-engine/NEXT-STEPS.md",
+          "line": 3111,
+          "cite": "sed -n '3109,3119p' NEXT-STEPS.md"
+        },
+        "marker": "the span includes the decl line"
+      },
+      "must_not_return": [],
+      "asked_about": {
+        "file_path": "src/foundation/identity.c",
+        "symbol": "hyp_addr_span_hash",
+        "verified_at": "feat/p1-a1",
+        "qualified_name": "hyponoia.src.foundation.identity.hyp_addr_span_hash",
+        "address": "hyp1:hyponoia/hyponoia#hyponoia.src.foundation.identity.hyp_addr_span_hash",
+        "note": "the symbol an agent would have open when asking; the anchor is where the gold should be reachable from once the decision store holds it"
+      }
+    },
+    {
+      "id": "G2-010",
+      "question": "Why does a content match at a different address never re-attach the anchor?",
+      "gold": {
+        "decision_verbatim": "CANDIDATES ARE EVIDENCE, NEVER A DECISION (I5). Cross-directory move, file\nrename and copy-paste all produce the identical observation \u2014 a different\naddress whose content hashes the same, HYP_ADDR_REL_CONTENT_ONLY \u2014 and this\ncontract cannot tell them apart, so it does not pretend to. A copy-paste yields\nSEVERAL candidates, possibly with the untouched original among them;\nre-attaching to one automatically would pin last month's reasoning to code that\nnever had it. So a hash match at a DIFFERENT QN is never RESOLVED. This unit\nGATHERS candidates with their evidence; C4u presents them; nothing re-attaches.\nThey are sorted by address so presentation is deterministic, and scan_skipped\nis published because a candidate list is a FLOOR whenever a span could not be\nread or addressed \u2014 C4u must disclose that, not absorb it.",
+        "source": {
+          "kind": "commit_message",
+          "commit": "213e01dff4a0b59ce6f216ac4aa5002a793bb415",
+          "date": "2026-08-16",
+          "author": "Shashank",
+          "subject": "anchor: the qualified name is the identity, and a content match at a different address is evidence, never a re-attachment",
+          "cite": "git log -1 --format=%B 213e01df"
+        },
+        "marker": "CANDIDATES ARE EVIDENCE, NEVER A DECISION"
+      },
+      "must_not_return": [],
+      "asked_about": {
+        "file_path": "src/memory/anchor.c",
+        "symbol": "hyp_anchor_resolve",
+        "verified_at": "feat/p1-a11",
+        "qualified_name": "hyponoia.src.memory.anchor.hyp_anchor_resolve",
+        "address": "hyp1:hyponoia/hyponoia#hyponoia.src.memory.anchor.hyp_anchor_resolve",
+        "note": "the symbol an agent would have open when asking; the anchor is where the gold should be reachable from once the decision store holds it"
+      }
+    },
+    {
+      "id": "G2-011",
+      "question": "Why does the span hash ride in FRONT of the address in an anchor string?",
+      "gold": {
+        "decision_verbatim": "The hash rides in FRONT. The QN is the address's TERMINAL field and may contain\nany printable byte, '@' included, so a suffix hash could collide with a QN that\nends in '@' + 32 hex chars \u2014 re-opening exactly the ambiguity identity.h closed\nby making the QN terminal. A prefix cannot collide: an address always begins\n\"hyp1:\" and 'y' is not a hex digit, so the two grammars are disjoint at byte 1.\nA test composes that adversarial QN and round-trips it.",
+        "source": {
+          "kind": "commit_message",
+          "commit": "213e01dff4a0b59ce6f216ac4aa5002a793bb415",
+          "date": "2026-08-16",
+          "author": "Shashank",
+          "subject": "anchor: the qualified name is the identity, and a content match at a different address is evidence, never a re-attachment",
+          "cite": "git log -1 --format=%B 213e01df"
+        },
+        "marker": "The hash rides in FRONT"
+      },
+      "must_not_return": [],
+      "asked_about": {
+        "file_path": "src/memory/anchor.c",
+        "symbol": "hyp_anchor_format",
+        "verified_at": "feat/p1-a11",
+        "qualified_name": "hyponoia.src.memory.anchor.hyp_anchor_format",
+        "address": "hyp1:hyponoia/hyponoia#hyponoia.src.memory.anchor.hyp_anchor_format",
+        "note": "the symbol an agent would have open when asking; the anchor is where the gold should be reachable from once the decision store holds it"
+      }
+    },
+    {
+      "id": "G2-012",
+      "question": "Why does a symbol that slides 200 lines still resolve?",
+      "gold": {
+        "decision_verbatim": "CLASSIFICATION, AS IMPLEMENTED. Symbol identity first, content hash second,\nline numbers NEVER \u2014 lines are output only, which is why a symbol that slides\n200 lines stays RESOLVED with no special case: there was never a line number in\nthe question. The test asserts exactly that, with start_line visibly moving\n1 -> 201 while the classification does not move at all.\n\n  RESOLVED           QN found; no hash recorded, or the recorded hash matches.\n  RESOLVED_EDITED    QN found, hash differs. STILL ATTACHED \u2014 the QN is the\n                     identity; reasoning gone stale is a different problem from\n                     reasoning gone lost.\n  ORPHANED           QN not found. With a recorded hash, every span in the\n                     workspace whose CURRENT content hashes to it becomes a\n                     candidate.\n  UNKNOWN_WORKSPACE  the address names a workspace matching none known. A\n                     visible error NAMING the workspace \u2014 never an empty\n                     result, which would read as \"nothing attached\" and is a\n                     claim about the wrong universe.\n  ERROR (= 0)        could not classify. Deliberately the zero value, so a\n                     zeroed struct reads as \"no classification happened\" and\n                     never as a state.",
+        "source": {
+          "kind": "commit_message",
+          "commit": "213e01dff4a0b59ce6f216ac4aa5002a793bb415",
+          "date": "2026-08-16",
+          "author": "Shashank",
+          "subject": "anchor: the qualified name is the identity, and a content match at a different address is evidence, never a re-attachment",
+          "cite": "git log -1 --format=%B 213e01df"
+        },
+        "marker": "CLASSIFICATION, AS IMPLEMENTED"
+      },
+      "must_not_return": [],
+      "asked_about": {
+        "file_path": "src/memory/anchor.c",
+        "symbol": "hyp_anchor_resolve",
+        "verified_at": "feat/p1-a11",
+        "qualified_name": "hyponoia.src.memory.anchor.hyp_anchor_resolve",
+        "address": "hyp1:hyponoia/hyponoia#hyponoia.src.memory.anchor.hyp_anchor_resolve",
+        "note": "the symbol an agent would have open when asking; the anchor is where the gold should be reachable from once the decision store holds it"
+      }
+    },
+    {
+      "id": "G2-013",
+      "question": "Why is ERROR the zero value of the anchor status enum?",
+      "gold": {
+        "decision_verbatim": "  RESOLVED           QN found; no hash recorded, or the recorded hash matches.\n  RESOLVED_EDITED    QN found, hash differs. STILL ATTACHED \u2014 the QN is the\n                     identity; reasoning gone stale is a different problem from\n                     reasoning gone lost.\n  ORPHANED           QN not found. With a recorded hash, every span in the\n                     workspace whose CURRENT content hashes to it becomes a\n                     candidate.\n  UNKNOWN_WORKSPACE  the address names a workspace matching none known. A\n                     visible error NAMING the workspace \u2014 never an empty\n                     result, which would read as \"nothing attached\" and is a\n                     claim about the wrong universe.\n  ERROR (= 0)        could not classify. Deliberately the zero value, so a\n                     zeroed struct reads as \"no classification happened\" and\n                     never as a state.",
+        "source": {
+          "kind": "commit_message",
+          "commit": "213e01dff4a0b59ce6f216ac4aa5002a793bb415",
+          "date": "2026-08-16",
+          "author": "Shashank",
+          "subject": "anchor: the qualified name is the identity, and a content match at a different address is evidence, never a re-attachment",
+          "cite": "git log -1 --format=%B 213e01df"
+        },
+        "marker": "ERROR (= 0)"
+      },
+      "must_not_return": [],
+      "asked_about": {
+        "file_path": "src/memory/anchor.h",
+        "symbol": "hyp_anchor_status_str",
+        "verified_at": "feat/p1-a11 (textual: not a C function span)",
+        "qualified_name": "hyponoia.src.memory.anchor.hyp_anchor_status_str",
+        "address": "hyp1:hyponoia/hyponoia#hyponoia.src.memory.anchor.hyp_anchor_status_str",
+        "note": "the symbol an agent would have open when asking; the anchor is where the gold should be reachable from once the decision store holds it"
+      }
+    },
+    {
+      "id": "G2-014",
+      "question": "Why is the decision store an id-keyed set rather than an append-only log?",
+      "gold": {
+        "decision_verbatim": "NOT A LOG, AND WHERE THAT IS ACTUALLY ENFORCED. The obvious implementation is\nan append-only log, and it breaks the union: a log has an order, the order is\nmachine-local, and the moment it means anything two stores holding the same\nrecords stop being the same store. So the on-disk form is an ID-KEYED SET.\n`records` is WITHOUT ROWID, which does not merely leave the engine's insertion\ncounter unused \u2014 `SELECT rowid FROM records` does not parse. The column set is\nexactly id plus the nine frozen record fields: no sequence, no offset, no\nposition, no workspace, no store-invented timestamp. Kind is stored by its\nstable NAME, so renumbering the enum cannot rewrite anyone's store.",
+        "source": {
+          "kind": "commit_message",
+          "commit": "b393c7211826f435cc70d434bdce7f103558f4c8",
+          "date": "2026-08-16",
+          "author": "Shashank",
+          "subject": "store: the decision store is an id-keyed set, and the set type is what makes it one",
+          "cite": "git log -1 --format=%B b393c721"
+        },
+        "marker": "NOT A LOG, AND WHERE THAT IS ACTUALLY ENFORCED"
+      },
+      "must_not_return": [],
+      "asked_about": {
+        "file_path": "src/store/record_store.c",
+        "symbol": "hyp_record_store_open",
+        "verified_at": "feat/p1-a11",
+        "qualified_name": "hyponoia.src.store.record_store.hyp_record_store_open",
+        "address": "hyp1:hyponoia/hyponoia#hyponoia.src.store.record_store.hyp_record_store_open",
+        "note": "the symbol an agent would have open when asking; the anchor is where the gold should be reachable from once the decision store holds it"
+      }
+    },
+    {
+      "id": "G2-015",
+      "question": "What did planting a log-shaped record store actually break, and what still passed?",
+      "gold": {
+        "decision_verbatim": "  NC1 \u2014 make enumeration insertion-ordered: drop WITHOUT ROWID so `records`\n        becomes a rowid heap, and enumerate `ORDER BY rowid`. Result:\n        two_write_orders_one_enumeration FAILS, at the raw-scan clause and\n        nowhere earlier \u2014 the digest comparison, the pairwise enumeration and\n        the ascending check all still PASSED with the store as a log, which is\n        the finding above stated as a measurement. schema_exposes_no_sequence\n        also fires (`SELECT rowid` now parses). Restored: green.\n\n  NC2 \u2014 expose a sequence column: `seq INTEGER NOT NULL`, populated with a\n        machine-local counter. Result: schema_exposes_no_sequence_and_no_extra\n        _column FAILS on the surplus column, by name, before anyone argues\n        about what it is for. two_write_orders still passes, correctly: a\n        sequence that exists but orders nothing is caught by the schema, not\n        by the enumeration. The two controls have different teeth on purpose.\n        Restored: green.",
+        "source": {
+          "kind": "commit_message",
+          "commit": "b393c7211826f435cc70d434bdce7f103558f4c8",
+          "date": "2026-08-16",
+          "author": "Shashank",
+          "subject": "store: the decision store is an id-keyed set, and the set type is what makes it one",
+          "cite": "git log -1 --format=%B b393c721"
+        },
+        "marker": "NC1 \u2014 make enumeration insertion-ordered"
+      },
+      "must_not_return": [],
+      "asked_about": {
+        "file_path": "src/store/record_store.c",
+        "symbol": "hyp_record_store_open",
+        "verified_at": "feat/p1-a11",
+        "qualified_name": "hyponoia.src.store.record_store.hyp_record_store_open",
+        "address": "hyp1:hyponoia/hyponoia#hyponoia.src.store.record_store.hyp_record_store_open",
+        "note": "the symbol an agent would have open when asking; the anchor is where the gold should be reachable from once the decision store holds it"
+      }
+    },
+    {
+      "id": "G2-016",
+      "question": "Why are record vectors keyed on a hash of the content instead of the record id?",
+      "gold": {
+        "decision_verbatim": "THE KEY. A record's id is a digest of EVERY field \u2014 author, timestamp, origin,\nthread, anchor. An embedding is a function of the TEXT alone. Key the vectors\non the id and identical text observed in N sessions is N ids, N embed jobs and\nN rows: exactly the N\u00d7 VRAM this unit exists to delete. So the key is\nhyp_addr_span_hash(content) \u2014 one hash for the whole engine (I1; the width is\n_Static_asserted equal to HYP_ASK_VEC_HASH_LEN in this file, so it cannot even\nbuild against a world where the two diverged).",
+        "source": {
+          "kind": "commit_message",
+          "commit": "4443a32731ef3939432e28c111a37e2134ca3dcb",
+          "date": "2026-08-16",
+          "author": "Shashank",
+          "subject": "ask: record vectors keyed on the content hash, because the id is the expensive key",
+          "cite": "git log -1 --format=%B 4443a327"
+        },
+        "marker": "THE KEY. A record's id is a digest of EVERY field"
+      },
+      "must_not_return": [],
+      "asked_about": {
+        "file_path": "src/ask/record_vectors.c",
+        "symbol": "hyp_record_vectors_open",
+        "verified_at": "feat/p1-a11",
+        "qualified_name": "hyponoia.src.ask.record_vectors.hyp_record_vectors_open",
+        "address": "hyp1:hyponoia/hyponoia#hyponoia.src.ask.record_vectors.hyp_record_vectors_open",
+        "note": "the symbol an agent would have open when asking; the anchor is where the gold should be reachable from once the decision store holds it"
+      }
+    },
+    {
+      "id": "G2-017",
+      "question": "Why do record vectors live in a sibling store rather than in ask_vectors' file?",
+      "gold": {
+        "decision_verbatim": "WHY A SIBLING STORE, NOT A TABLE IN ask_vectors' FILE. Same schema family,\ndifferent scope. <cache>/vectors/<project>.db is per-project and every claim it\nmakes \u2014 graph_generation, whole_file_spans, prune-by-QN \u2014 is a claim about one\nproject's corpus. Records are global memory: no project, no generation, no\nqualified name. Housing them there either duplicates them per project (the N\u00d7\nagain, one level down) or nominates one project's file as \"the\" memory store.\nhyp_ask_vectors_drop() also deletes a project's vectors with the project, and\nrecord vectors must outlive that. And the code-span table is keyed on\nqualified_name for documented reasons; one table with two key disciplines needs\na type column and nullable keys.",
+        "source": {
+          "kind": "commit_message",
+          "commit": "4443a32731ef3939432e28c111a37e2134ca3dcb",
+          "date": "2026-08-16",
+          "author": "Shashank",
+          "subject": "ask: record vectors keyed on the content hash, because the id is the expensive key",
+          "cite": "git log -1 --format=%B 4443a327"
+        },
+        "marker": "WHY A SIBLING STORE, NOT A TABLE"
+      },
+      "must_not_return": [],
+      "asked_about": {
+        "file_path": "src/ask/record_vectors.c",
+        "symbol": "hyp_record_vectors_open",
+        "verified_at": "feat/p1-a11",
+        "qualified_name": "hyponoia.src.ask.record_vectors.hyp_record_vectors_open",
+        "address": "hyp1:hyponoia/hyponoia#hyponoia.src.ask.record_vectors.hyp_record_vectors_open",
+        "note": "the symbol an agent would have open when asking; the anchor is where the gold should be reachable from once the decision store holds it"
+      }
+    },
+    {
+      "id": "G2-018",
+      "question": "Why does the secret scrub run before the record is built rather than after?",
+      "gold": {
+        "decision_verbatim": "WHY THE ORDER IS THE WHOLE UNIT. Transcripts contain pasted keys \u2014 the session\nthat scheduled this one contained two. C2 makes that permanent rather than\nmerely embarrassing: the id commits to `content`, records are immutable, and\nsync is a union, so an unscrubbed record may already be on another machine\nbefore anyone notices. There is no post-hoc scrub. Scrubbing after the build\nchanges the content, which changes the id, which is a DIFFERENT record \u2014 the\noriginal is still there, still syncing. So the scrub runs before construction\nand the scrubbed text is what the id binds.",
+        "source": {
+          "kind": "commit_message",
+          "commit": "4bc93289ebf97c3a5c71f0b0d2df3d2cc3f46515",
+          "date": "2026-08-16",
+          "author": "Shashank",
+          "subject": "foundation: the secret scrub, in front of the record id rather than beside it",
+          "cite": "git log -1 --format=%B 4bc93289"
+        },
+        "marker": "WHY THE ORDER IS THE WHOLE UNIT"
+      },
+      "must_not_return": [],
+      "asked_about": {
+        "file_path": "src/foundation/scrub.c",
+        "symbol": "hyp_scrub_text",
+        "verified_at": "feat/p1-a11",
+        "qualified_name": "hyponoia.src.foundation.scrub.hyp_scrub_text",
+        "address": "hyp1:hyponoia/hyponoia#hyponoia.src.foundation.scrub.hyp_scrub_text",
+        "note": "the symbol an agent would have open when asking; the anchor is where the gold should be reachable from once the decision store holds it"
+      }
+    },
+    {
+      "id": "G2-019",
+      "question": "Why does index_status report `missing` rather than `behind`?",
+      "gold": {
+        "decision_verbatim": "`missing`, NEVER `behind`. The record store is an id-keyed set whose canonical\norder is content-addressed and deliberately non-semantic (C2). A union has no\ntotal order, so \"40 behind\" is a number nothing can produce; \"40 records the\nupstream set holds that I do not\" is one that can. Set-digest compare first \u2014\nequal digests are equal sets, so the yes/no is free \u2014 then an id walk for the\ncount plus the NAMES, because a bare count is a number nobody can act on. The\nlist is capped at 64 and the withheld remainder is disclosed; the disclosure\nkey is ABSENT when nothing was withheld. Records only the LOCAL side holds are\nnot counted: those are writes a push has not delivered, not staleness here.",
+        "source": {
+          "kind": "commit_message",
+          "commit": "4559ce8463432ba56eeee604a6dcd52992c0a043",
+          "date": "2026-08-16",
+          "author": "Shashank",
+          "subject": "mcp: two freshnesses in index_status, and the no_project answer finally reaches a client",
+          "cite": "git log -1 --format=%B 4559ce84"
+        },
+        "marker": "`missing`, NEVER `behind`"
+      },
+      "must_not_return": [],
+      "asked_about": {
+        "file_path": "src/mcp/mcp.c",
+        "symbol": "handle_index_status",
+        "verified_at": "d3e9806f",
+        "qualified_name": "hyponoia.src.mcp.mcp.handle_index_status",
+        "address": "hyp1:hyponoia/hyponoia#hyponoia.src.mcp.mcp.handle_index_status",
+        "note": "the symbol an agent would have open when asking; the anchor is where the gold should be reachable from once the decision store holds it"
+      }
+    },
+    {
+      "id": "G2-020",
+      "question": "Why was index_status' no_project branch dead, and what fixed it?",
+      "gold": {
+        "decision_verbatim": "THE DEAD BRANCH, MADE LIVE. Phase 0 pinned the finding; this is the fix.\nhandle_index_status ended with `else { status: \"no_project\" }` \u2014 a documented,\nstructured answer for \"no project could be resolved\". It was unreachable from\nthe day it shipped: the branch needed store != NULL with project == NULL, and\nresolve_store returns NULL the moment project is NULL, so REQUIRE_STORE\nreturned isError prose first, every time. An agent in an unindexed directory\ngot an error where the tool advertised a status, which is the absent/empty rule\nbroken at exactly the tool \u00a74 F3 extends to carry two freshnesses.",
+        "source": {
+          "kind": "commit_message",
+          "commit": "4559ce8463432ba56eeee604a6dcd52992c0a043",
+          "date": "2026-08-16",
+          "author": "Shashank",
+          "subject": "mcp: two freshnesses in index_status, and the no_project answer finally reaches a client",
+          "cite": "git log -1 --format=%B 4559ce84"
+        },
+        "marker": "THE DEAD BRANCH, MADE LIVE"
+      },
+      "must_not_return": [],
+      "asked_about": {
+        "file_path": "src/mcp/mcp.c",
+        "symbol": "handle_index_status",
+        "verified_at": "d3e9806f",
+        "qualified_name": "hyponoia.src.mcp.mcp.handle_index_status",
+        "address": "hyp1:hyponoia/hyponoia#hyponoia.src.mcp.mcp.handle_index_status",
+        "note": "the symbol an agent would have open when asking; the anchor is where the gold should be reachable from once the decision store holds it"
+      }
+    },
+    {
+      "id": "G2-021",
+      "question": "Why does a repository's role come from existing registries instead of a list?",
+      "gold": {
+        "decision_verbatim": "WHY THIS IS NOT A LIST. A workspace holds many trees and only some of them are\nyours. The cheap way to answer \"which\" is a hand-written list of vendored\ndirectories \u2014 and a list is only as good as its enumeration. Twice in this\nproject the missed entry was the most user-facing one. So every rule here READS\na registry that already exists somewhere else, and adds no second place to\ndeclare anything:\n\n  - A2 vendored   scripts/vendored-checksums.txt, the same manifest\n                  security-vendored.sh verifies and license-gate.sh walks. This\n                  module is a fourth reader of it. Newly vendored code becomes\n                  role `vendored` the moment the existing gates learn about it,\n                  with no edit here.\n  - A3 generated  two signals: the tree is gitignored by its enclosing\n                  repository (same hyp_gitignore engine discovery uses), or a\n                  bounded sample says so \u2014 up to 64 files, first 4096 bytes of\n                  each, strict majority carrying DO NOT EDIT / @generated.\n                  A sample, deliberately: reading every byte of every file to\n                  answer a metadata question is the wrong trade, and the\n                  derived-do-not-edit token is what keeps the heuristic honest.\n  - A4 upstream   THE RULE: normalise the tree's origin remote to a lowercase\n                  \"owner/name\" coordinate (files only, worktree gitdir and\n                  commondir indirection followed, no subprocess). Equal to the\n                  workspace's own origin \u2192 not upstream, that is another\n                  checkout of this project. In the known-upstream set \u2192 upstream.\n                  Anything else \u2192 no signal; a random clone is not \"upstream of\n                  nothing\". The set is loaded from audit-license-provenance.py's\n                  LIBS/FORKS tables and the grammar MANIFEST.md upstream rows \u2014\n                  read, never typed.\n  - A5 reference  the only role that cannot be derived, because \"I added this\n                  repo for inspiration\" is intent, not a property of a tree.",
+        "source": {
+          "kind": "commit_message",
+          "commit": "53e978d401823e95c49e0e91a6c15644d14b8c60",
+          "date": "2026-08-16",
+          "author": "Shashank",
+          "subject": "discover: a repository's role is derived from the registries that already exist, never from a list",
+          "cite": "git log -1 --format=%B 53e978d4"
+        },
+        "marker": "WHY THIS IS NOT A LIST"
+      },
+      "must_not_return": [],
+      "asked_about": {
+        "file_path": "src/discover/role.c",
+        "symbol": "hyp_role_derive",
+        "verified_at": "feat/p1-a11",
+        "qualified_name": "hyponoia.src.discover.role.hyp_role_derive",
+        "address": "hyp1:hyponoia/hyponoia#hyponoia.src.discover.role.hyp_role_derive",
+        "note": "the symbol an agent would have open when asking; the anchor is where the gold should be reachable from once the decision store holds it"
+      }
+    },
+    {
+      "id": "G2-022",
+      "question": "Why is the workspace id derived rather than taken from the first repo's slug?",
+      "gold": {
+        "decision_verbatim": "THE ID IS DERIVED, NEVER \"THE FIRST REPO'S SLUG\". Two machines that name a\nworkspace differently produce disjoint address spaces, and C6u's union merges\nthem SILENTLY \u2014 the record field set is frozen, so prevention here is the only\nfix available. In order: the TOML `name` when present; otherwise, for one\nmember, that member's own slug (this is what makes the migration an identity);\notherwise \"ws-\" + 16 hex of SHA-256 over the SORTED member slugs,\ndomain-tagged and length-prefixed. A pure function of the member SET \u2014\nenumeration order, declaration order, and which repo happened to come first\ncannot reach it. The stated limitation is in the header rather than papered\nover: member slugs are per-path, so the same repos checked out elsewhere derive\na different id, and the remedy is the TOML name.",
+        "source": {
+          "kind": "commit_message",
+          "commit": "5ea97e326bc4ae0b90ee9c80054d9b191b04b55a",
+          "date": "2026-08-16",
+          "author": "Shashank",
+          "subject": "store: one workspace, one addressing scheme \u2014 and the migration is the identity function",
+          "cite": "git log -1 --format=%B 5ea97e32"
+        },
+        "marker": "THE ID IS DERIVED, NEVER \"THE FIRST REPO'S SLUG\""
+      },
+      "must_not_return": [],
+      "asked_about": {
+        "file_path": "src/store/workspace_resolve.c",
+        "symbol": "hyp_wsr_resolve",
+        "verified_at": "feat/p1-a1",
+        "qualified_name": "hyponoia.src.store.workspace_resolve.hyp_wsr_resolve",
+        "address": "hyp1:hyponoia/hyponoia#hyponoia.src.store.workspace_resolve.hyp_wsr_resolve",
+        "note": "the symbol an agent would have open when asking; the anchor is where the gold should be reachable from once the decision store holds it"
+      }
+    },
+    {
+      "id": "G2-023",
+      "question": "Why is `origin` in the watched-ingest format a file position?",
+      "gold": {
+        "decision_verbatim": "ORIGIN IS POSITIONAL, AND THAT IS THE WHOLE DESIGN. `wd1:<relpath>@<offset>`.\nThe same file position re-ingests to the same record id, so re-ingest is\nidempotent with no dedup table anywhere (I8). Two byte-identical rows at two\npositions stay two records \u2014 which is what makes D4's set-of-origins audit a\nreal comparison instead of a count, because a count cannot tell dedup from\nloss. The price is stated in the doc rather than hidden: feed files must be\nappended to, never rewritten or truncated. A shrunk file is refused by name and\nstays refused for the scanner's lifetime; regrowing it does not restore trust\nin offsets already ingested under the old ones.",
+        "source": {
+          "kind": "commit_message",
+          "commit": "051c766d89de98ff7b6fc51abac919ecad67b50e",
+          "date": "2026-08-16",
+          "author": "Shashank",
+          "subject": "ingest: a feed format any harness can write, whose origins are positions",
+          "cite": "git log -1 --format=%B 051c766d"
+        },
+        "marker": "ORIGIN IS POSITIONAL, AND THAT IS THE WHOLE DESIGN"
+      },
+      "must_not_return": [],
+      "asked_about": {
+        "file_path": "src/ingest/watched_ingest.c",
+        "symbol": "hyp_watched_scan_once",
+        "verified_at": "feat/p1-a11",
+        "qualified_name": "hyponoia.src.ingest.watched_ingest.hyp_watched_scan_once",
+        "address": "hyp1:hyponoia/hyponoia#hyponoia.src.ingest.watched_ingest.hyp_watched_scan_once",
+        "note": "the symbol an agent would have open when asking; the anchor is where the gold should be reachable from once the decision store holds it"
+      }
+    },
+    {
+      "id": "G2-024",
+      "question": "Why does watched ingest refuse a line that supplies its own origin or id?",
+      "gold": {
+        "decision_verbatim": "THE WRITER SUPPLIES WHAT WAS SAID; THE ADAPTER DERIVES WHERE IT CAME FROM.\n`author`, `timestamp_ms` and `content` are required; `kind`, `anchor`,\n`thread`, `parent` and `v` are optional with stated defaults. `origin`,\n`redactions` and `id` are REFUSED when a line supplies them rather than\nsilently ignored \u2014 ignoring them would be provenance forgery that appears to\nhave worked. Unknown other keys are ignored, so a harness may keep its own\nbookkeeping in the same line.",
+        "source": {
+          "kind": "commit_message",
+          "commit": "051c766d89de98ff7b6fc51abac919ecad67b50e",
+          "date": "2026-08-16",
+          "author": "Shashank",
+          "subject": "ingest: a feed format any harness can write, whose origins are positions",
+          "cite": "git log -1 --format=%B 051c766d"
+        },
+        "marker": "THE WRITER SUPPLIES WHAT WAS SAID"
+      },
+      "must_not_return": [],
+      "asked_about": {
+        "file_path": "src/ingest/watched_ingest.c",
+        "symbol": "hyp_watched_scan_once",
+        "verified_at": "feat/p1-a11",
+        "qualified_name": "hyponoia.src.ingest.watched_ingest.hyp_watched_scan_once",
+        "address": "hyp1:hyponoia/hyponoia#hyponoia.src.ingest.watched_ingest.hyp_watched_scan_once",
+        "note": "the symbol an agent would have open when asking; the anchor is where the gold should be reachable from once the decision store holds it"
+      }
+    },
+    {
+      "id": "G2-025",
+      "question": "Why does search_graph default to ten rows instead of fifty?",
+      "gold": {
+        "decision_verbatim": "THE DEFAULT IS 10 BECAUSE THAT IS WHAT THE TRANSCRIPTS SAY. The 60 gen-3 runs contain 59 real search_graph calls over 33 questions (27 never called it). Replaying every one of them against a build of the base commit \u2014 which reproduces each transcript response byte-for-byte, modulo a constant 66-byte project_source line \u2014 and asking where the question's gold declaration ranks:\n\n  best gold rank    1    2    3   4-5  6-10  11-20  21-30  never\n  questions         8    1    3    1     5      2      2     11\n\n  limit             3      5     10     15      30    50 (before)\n  bytes        37,005 46,081 68,141 90,240 147,137   212,849\n  golds kept    12/22  13/22  18/22  20/22   22/22     22/22",
+        "source": {
+          "kind": "commit_message",
+          "commit": "eef774b0add41be82285494b48aca1ac569d875e",
+          "date": "2026-08-16",
+          "author": "Shashank",
+          "subject": "perf(mcp): search_graph answers a retrieval miss with ten rows, not fifty",
+          "cite": "git log -1 --format=%B eef774b0"
+        },
+        "marker": "THE DEFAULT IS 10 BECAUSE THAT IS WHAT THE TRANSCRIPTS SAY"
+      },
+      "must_not_return": [
+        "because fifty was arbitrary"
+      ],
+      "asked_about": {
+        "file_path": "src/mcp/mcp.c",
+        "symbol": "handle_search_graph",
+        "verified_at": "d3e9806f",
+        "qualified_name": "hyponoia.src.mcp.mcp.handle_search_graph",
+        "address": "hyp1:hyponoia/hyponoia#hyponoia.src.mcp.mcp.handle_search_graph",
+        "note": "the symbol an agent would have open when asking; the anchor is where the gold should be reachable from once the decision store holds it"
+      }
+    },
+    {
+      "id": "G2-026",
+      "question": "Why does ask return the verbatim source of only the top two candidates?",
+      "gold": {
+        "decision_verbatim": "RANK 3 CARRIED NO GOLD AT ALL, so two spans, not three; a third would cost bytes\non every question to buy nothing measurable. The per-span caps are set so THE\nMEDIAN GOLD DECLARATION ARRIVES WHOLE \u2014 across the 75 gold spans the median is\n37 lines and 1,382 bytes (p75 71 / 2,793) \u2014 and cut the tail, which is the half\nwhere a second call was going to happen anyway.",
+        "source": {
+          "kind": "commit_message",
+          "commit": "ecc20ba141e3df48c5378ddb75640969f4ab087e",
+          "date": "2026-08-16",
+          "author": "Shashank",
+          "subject": "ask: one call and the lines named \u2014 the top two candidates arrive with their source, and ten rows become three",
+          "cite": "git log -1 --format=%B ecc20ba1"
+        },
+        "marker": "RANK 3 CARRIED NO GOLD AT ALL"
+      },
+      "must_not_return": [],
+      "asked_about": {
+        "file_path": "src/mcp/mcp.c",
+        "symbol": "handle_ask",
+        "verified_at": "d3e9806f",
+        "qualified_name": "hyponoia.src.mcp.mcp.handle_ask",
+        "address": "hyp1:hyponoia/hyponoia#hyponoia.src.mcp.mcp.handle_ask",
+        "note": "the symbol an agent would have open when asking; the anchor is where the gold should be reachable from once the decision store holds it"
+      }
+    },
+    {
+      "id": "G2-027",
+      "question": "What does ask's `exact` marker actually mean, and how often does it fire?",
+      "gold": {
+        "decision_verbatim": "THE EXACTNESS MARKER IS NOT A CONFIDENCE, AND ITS FIRE RATE IS IN THE COMMENT",
+        "source": {
+          "kind": "commit_message",
+          "commit": "ecc20ba141e3df48c5378ddb75640969f4ab087e",
+          "date": "2026-08-16",
+          "author": "Shashank",
+          "subject": "ask: one call and the lines named \u2014 the top two candidates arrive with their source, and ten rows become three",
+          "cite": "git log -1 --format=%B ecc20ba1"
+        },
+        "marker": "THE EXACTNESS MARKER IS NOT A CONFIDENCE"
+      },
+      "must_not_return": [],
+      "asked_about": {
+        "file_path": "src/mcp/mcp.c",
+        "symbol": "handle_ask",
+        "verified_at": "d3e9806f",
+        "qualified_name": "hyponoia.src.mcp.mcp.handle_ask",
+        "address": "hyp1:hyponoia/hyponoia#hyponoia.src.mcp.mcp.handle_ask",
+        "note": "the symbol an agent would have open when asking; the anchor is where the gold should be reachable from once the decision store holds it"
+      }
+    },
+    {
+      "id": "G2-028",
+      "question": "Why is the GPU the primary path for the embed pass rather than the CPU?",
+      "gold": {
+        "decision_verbatim": "Track 2 recommended shipping the in-binary lane CPU-only, on install-story\ngrounds. That was weighed and overridden, on track 2's own numbers:\n24.09 docs/s against 1.581 is 15.2x \u2014 lld/ELF is ~3 minutes against ~45,\nand on a corpus of any real size the CPU path is not slow, it is\nunusable. An opt-in pass nobody can afford to opt into is not a feature.\nThe CPU path stays as a fallback and is never removed.",
+        "source": {
+          "kind": "commit_message",
+          "commit": "c1eb553f5f536501239673ffc402e5bcf16b3610",
+          "date": "2026-08-10",
+          "author": "Shashank",
+          "subject": "ask: GPU is the primary path, and which device ran is never a guess",
+          "cite": "git log -1 --format=%B c1eb553f"
+        },
+        "marker": "Track 2 recommended shipping the in-binary lane CPU-only"
+      },
+      "must_not_return": [],
+      "asked_about": {
+        "file_path": "src/ask/ask_embed.c",
+        "symbol": "hyp_ask_embed_run",
+        "verified_at": "d3e9806f",
+        "qualified_name": "hyponoia.src.ask.ask_embed.hyp_ask_embed_run",
+        "address": "hyp1:hyponoia/hyponoia#hyponoia.src.ask.ask_embed.hyp_ask_embed_run",
+        "note": "the symbol an agent would have open when asking; the anchor is where the gold should be reachable from once the decision store holds it"
+      }
+    },
+    {
+      "id": "G2-029",
+      "question": "Why does the encoder have to report which device actually ran?",
+      "gold": {
+        "decision_verbatim": "The thing that makes a fallback safe is that it is never silent. A run\nthat asked for a GPU and quietly got a CPU takes fifteen times as long\nand produces an identical file, so the only defence is to write down\nwhat happened:\n\n  - the encoder seam gains device_note() and device_is_gpu(), both\n    required, and an encoder that will not say gets \"UNKNOWN\" rather\n    than a guessed \"CPU\" \u2014 a wrong device note is worse than an absent\n    one because it is believed;\n  - `--device auto|gpu|cpu` expresses the REQUEST, device_note reports\n    the OUTCOME, and the two are deliberately different fields;\n  - the pass logs a warning and the command prints a starred line when\n    a GPU was asked for and not used;\n  - ask_index gains a device_note column, so `--status` can say what a\n    45-minute build and a 3-minute build otherwise cannot be told apart\n    by. Not a reuse gate: track 2 measured GPU and CPU vectors agreeing\n    at min cosine 0.9996, so mixing devices is safe. Mixing models is\n    not, and that is a separate field.",
+        "source": {
+          "kind": "commit_message",
+          "commit": "c1eb553f5f536501239673ffc402e5bcf16b3610",
+          "date": "2026-08-10",
+          "author": "Shashank",
+          "subject": "ask: GPU is the primary path, and which device ran is never a guess",
+          "cite": "git log -1 --format=%B c1eb553f"
+        },
+        "marker": "The thing that makes a fallback safe is that it is never silent"
+      },
+      "must_not_return": [],
+      "asked_about": {
+        "file_path": "src/ask/ask_encoder.c",
+        "symbol": "hyp_ask_encoder_device_note",
+        "verified_at": "d3e9806f",
+        "qualified_name": "hyponoia.src.ask.ask_encoder.hyp_ask_encoder_device_note",
+        "address": "hyp1:hyponoia/hyponoia#hyponoia.src.ask.ask_encoder.hyp_ask_encoder_device_note",
+        "note": "the symbol an agent would have open when asking; the anchor is where the gold should be reachable from once the decision store holds it"
+      }
+    },
+    {
+      "id": "G2-030",
+      "question": "Why is n_ctx sized as n_seq_max * seq_len and not n_batch * n_seq_max?",
+      "gold": {
+        "decision_verbatim": "  - n_ctx is TOTAL KV capacity and llama.cpp DIVIDES it by n_seq_max, so\n    the correct sizing is n_seq_max * seq_len. The line that looks right\n    and is not is n_batch * n_seq_max: 8192 x 64 is 524,288 tokens of\n    KV, about 57 GB. There is a test asserting that exact combination is\n    inadmissible on this card, forever.\n  - KV per token is arithmetic, not a fit: 28 layers x 2 x 1024 x 2\n    bytes = 112 KiB. It reproduces all five of track 2's measured\n    configurations exactly (896 / 2,016 / 4,032 / 8,064 / 14,336 MB),\n    which is why the budget can be derived from it rather than guessed.\n  - the ceiling is CHECKED, from sysfs, and taken from what is FREE\n    rather than what the card has: this card also drives the display and\n    holds ~2.4 GB before anything starts. Measured live: 16,368 total,\n    2,394 used, ceiling 9,782 MiB, admissible plan n_seq_max=8 x\n    seq_len=8,779.\n  - no device exposing its VRAM is a REFUSAL under --device gpu, not a\n    fallback to a guessed ceiling.",
+        "source": {
+          "kind": "commit_message",
+          "commit": "c1eb553f5f536501239673ffc402e5bcf16b3610",
+          "date": "2026-08-10",
+          "author": "Shashank",
+          "subject": "ask: GPU is the primary path, and which device ran is never a guess",
+          "cite": "git log -1 --format=%B c1eb553f"
+        },
+        "marker": "n_ctx is TOTAL KV capacity"
+      },
+      "must_not_return": [],
+      "asked_about": {
+        "file_path": "src/ask/ask_llama.c",
+        "symbol": "ask_llama_make_ctx",
+        "verified_at": "d3e9806f",
+        "qualified_name": "hyponoia.src.ask.ask_llama.ask_llama_make_ctx",
+        "address": "hyp1:hyponoia/hyponoia#hyponoia.src.ask.ask_llama.ask_llama_make_ctx",
+        "note": "the symbol an agent would have open when asking; the anchor is where the gold should be reachable from once the decision store holds it"
+      }
+    },
+    {
+      "id": "G2-031",
+      "question": "Why did the escalation default become query mode rather than index mode?",
+      "gold": {
+        "decision_verbatim": "WHY THE DEFAULT IS QUERY, SAID PRECISELY. Query mode is licensed on QUALITY:\nnano documents scored by voyage-4-large questions beat nano/nano by +0.2087\nMRR@10 on the vocabulary-gap frozen 60 (runs/XMODEL) and by +0.444% RR,\nCI [+0.00222, +0.00628], Wilcoxon p 5.47e-05, on 8,122 public CodeSearchNet-Go\nqueries (runs/XMODEL-PUBLIC). Its case OVER index mode is OPERATIONAL, not a\nquality margin: index mode replicates at that scale too (+0.00473, p 1.99e-05)\nand the two are statistically indistinguishable there (\u22120.00047, p 0.62). The\nquery-encoder share of the gain is 47.9% on CSN Go; the larger share seen on\nthe frozen 60 was a property of that vocabulary-gap set. So: no second index,\nno drift, no corpus bill, only the question leaves \u2014 that is the argument.",
+        "source": {
+          "kind": "commit_message",
+          "commit": "fd89a8d5ce443d625419134bf81ebbb41ff42815",
+          "date": "2026-08-16",
+          "author": "Shashank",
+          "subject": "feat(ask): escalate the question, not the corpus \u2014 ask.escalation.mode = query | index, gated on a measured embedding space",
+          "cite": "git log -1 --format=%B fd89a8d5"
+        },
+        "marker": "WHY THE DEFAULT IS QUERY, SAID PRECISELY"
+      },
+      "must_not_return": [],
+      "asked_about": {
+        "file_path": "src/mcp/mcp.c",
+        "symbol": "handle_ask",
+        "verified_at": "d3e9806f",
+        "qualified_name": "hyponoia.src.mcp.mcp.handle_ask",
+        "address": "hyp1:hyponoia/hyponoia#hyponoia.src.mcp.mcp.handle_ask",
+        "note": "the symbol an agent would have open when asking; the anchor is where the gold should be reachable from once the decision store holds it"
+      }
+    },
+    {
+      "id": "G2-032",
+      "question": "What gates escalation \u2014 the prefix contract or something else?",
+      "gold": {
+        "decision_verbatim": "THE GATE IS A SPACE ID, NOT THE PREFIX CONTRACT. A cosine between two models'\nvectors means something only if they share an embedding space, and cross-space\nfailure is SILENT \u2014 score a Qwen3 index against a voyage query and nothing\nerrors, the ranking is ordinary-looking and wrong, the worst failure for a\ntool an agent trusts. `hyp_ask_space_id_for_model` (ask_vectors.h, the storage\nseam both the embed pass and the ask handler already include) returns\n\"voyage-4\" for the voyage-4 family (nano/large/lite/4, with or without the\n\"voyage/\" provider prefix, prefix-matched because the local id continues\n\"-Q8_0@<revision>\") and NULL for EVERYTHING else \u2014 voyage-code-3 (same vendor,\none generation back, measured NOT shared: 0.0047 vs 0.005 chance), Qwen3\n(0.0034), Jina, Gemini (unmeasured -> refused), \"\" (not recorded). The\nallowlist earns its authority from \u00a72.15's eight negative controls, and is\nextended by a measurement, never a model card. The index stamps\n`ask_index.space_id` (added defaulted column, the prefix_contract precedent;\nno format bump) from the document encoder's model id through that function;\nat ask time the stamp is used if present, else derived from model_id through\nthe same function \u2014 and the answer says which. Query mode refuses when either\nspace is unknown or the two differ, naming both model ids and both spaces, and\nwhen the provider's dim_mode is REEMBEDS (a re-embedding head is a different\nspace at a different width) \u2014 the first code path to read dim_mode.",
+        "source": {
+          "kind": "commit_message",
+          "commit": "fd89a8d5ce443d625419134bf81ebbb41ff42815",
+          "date": "2026-08-16",
+          "author": "Shashank",
+          "subject": "feat(ask): escalate the question, not the corpus \u2014 ask.escalation.mode = query | index, gated on a measured embedding space",
+          "cite": "git log -1 --format=%B fd89a8d5"
+        },
+        "marker": "THE GATE IS A SPACE ID, NOT THE PREFIX CONTRACT"
+      },
+      "must_not_return": [],
+      "asked_about": {
+        "file_path": "src/ask/ask_provider.c",
+        "symbol": "hyp_ask_provider_encoder_create",
+        "verified_at": "d3e9806f (textual: not a C function span)",
+        "qualified_name": "hyponoia.src.ask.ask_provider.hyp_ask_provider_encoder_create",
+        "address": "hyp1:hyponoia/hyponoia#hyponoia.src.ask.ask_provider.hyp_ask_provider_encoder_create",
+        "note": "the symbol an agent would have open when asking; the anchor is where the gold should be reachable from once the decision store holds it"
+      }
+    },
+    {
+      "id": "G2-033",
+      "question": "Why did a warm daemon spend the owner's escalation key?",
+      "gold": {
+        "decision_verbatim": "The read itself is per request \u2014 `getenv` runs inside\nhyp_ask_provider_encoder_create on every escalated call \u2014 but `environ` is a\nsnapshot taken at exec, so the value it finds belongs to the shell that started\nthe process doing the reading. In this build that process is always the daemon:\nthe stdio MCP entry point is a thin frontend to it, `hyponoia cli <tool>`\nconnects to it, and the graph UI's /api/embed-view/ask runs inside it. So any\nlocal process of this uid that can reach the socket could spend against the\nowner's account without ever holding the key.",
+        "source": {
+          "kind": "commit_message",
+          "commit": "530014385790cd9dc515ba9ce39c6fa129c79726",
+          "date": "2026-08-16",
+          "author": "Shashank",
+          "subject": "keep a warm daemon from spending the owner's escalation key",
+          "cite": "git log -1 --format=%B 53001438"
+        },
+        "marker": "The read itself is per request"
+      },
+      "must_not_return": [],
+      "asked_about": {
+        "file_path": "src/ask/ask_provider.c",
+        "symbol": "hyp_ask_provider_encoder_create",
+        "verified_at": "d3e9806f (textual: not a C function span)",
+        "qualified_name": "hyponoia.src.ask.ask_provider.hyp_ask_provider_encoder_create",
+        "address": "hyp1:hyponoia/hyponoia#hyponoia.src.ask.ask_provider.hyp_ask_provider_encoder_create",
+        "note": "the symbol an agent would have open when asking; the anchor is where the gold should be reachable from once the decision store holds it"
+      }
+    },
+    {
+      "id": "G2-034",
+      "question": "Why was reading the key from the requesting context rejected?",
+      "gold": {
+        "decision_verbatim": "(a) Read the key from the REQUESTING context. Rejected on its merits, not for\n    effort. The client is a third-party MCP host; only hyponoia's own frontend\n    sees its environment, and forwarding the VALUE over the socket would put\n    the key in a second process's heap and on a wire for the life of a session\n    \u2014 the exact opposite of ask_provider.h's rule that it is read at the moment\n    of use and never stored. Forwarding a HASH instead leaks nothing, and buys\n    nothing: against a same-uid threat model where /proc/<daemon>/environ is\n    already readable, proof-of-possession stops accidents, not adversaries. It\n    would cost a change to the daemon's session-context frame, and would still\n    leave the graph UI's HTTP route uncovered, because a browser has no\n    environment at all.\n(b) Keep the read, make it visible. Necessary and not sufficient: it tells the\n    owner what happened and gives them no way to stop it.\n(c) Require an opt-in for a shared process to hold a key at all.\n(d) (c) with (b) \u2014 what this does.",
+        "source": {
+          "kind": "commit_message",
+          "commit": "530014385790cd9dc515ba9ce39c6fa129c79726",
+          "date": "2026-08-16",
+          "author": "Shashank",
+          "subject": "keep a warm daemon from spending the owner's escalation key",
+          "cite": "git log -1 --format=%B 53001438"
+        },
+        "marker": "(a) Read the key from the REQUESTING context"
+      },
+      "must_not_return": [],
+      "asked_about": {
+        "file_path": "src/ask/ask_provider.c",
+        "symbol": "hyp_ask_provider_encoder_create",
+        "verified_at": "d3e9806f (textual: not a C function span)",
+        "qualified_name": "hyponoia.src.ask.ask_provider.hyp_ask_provider_encoder_create",
+        "address": "hyp1:hyponoia/hyponoia#hyponoia.src.ask.ask_provider.hyp_ask_provider_encoder_create",
+        "note": "the symbol an agent would have open when asking; the anchor is where the gold should be reachable from once the decision store holds it"
+      }
+    },
+    {
+      "id": "G2-035",
+      "question": "Why is the doc comment included in the embedded text, and why is it placed first?",
+      "gold": {
+        "decision_verbatim": "The composed document is now, in file order:\n\n    // <Label> <qualified name, project segment removed> in <file path>\n    <the leading comment block, verbatim>\n    <the declaration's source lines, verbatim>",
+        "source": {
+          "kind": "commit_message",
+          "commit": "eaeb30bef1a765c2ab556031bc2ef5c2e61e3dee",
+          "date": "2026-08-10",
+          "author": "Shashank",
+          "subject": "feat(ask): put the doc comment and the qualified name into the embedded text",
+          "cite": "git log -1 --format=%B eaeb30be"
+        },
+        "marker": "The composed document is now, in file order"
+      },
+      "must_not_return": [],
+      "asked_about": {
+        "file_path": "src/ask/ask_doctext.c",
+        "symbol": "hyp_ask_leading_comment_start",
+        "verified_at": "eaeb30bef1a765c2ab556031bc2ef5c2e61e3dee",
+        "qualified_name": "hyponoia.src.ask.ask_doctext.hyp_ask_leading_comment_start",
+        "address": "hyp1:hyponoia/hyponoia#hyponoia.src.ask.ask_doctext.hyp_ask_leading_comment_start",
+        "note": "the symbol an agent would have open when asking; the anchor is where the gold should be reachable from once the decision store holds it"
+      }
+    },
+    {
+      "id": "G2-036",
+      "question": "Why are line numbers deliberately kept out of the composed document header?",
+      "gold": {
+        "decision_verbatim": "Line numbers are deliberately NOT in the header: no semantic content, and they\nwould invalidate the content hash \u2014 the reuse key \u2014 for every declaration below\nany edit.",
+        "source": {
+          "kind": "commit_message",
+          "commit": "eaeb30bef1a765c2ab556031bc2ef5c2e61e3dee",
+          "date": "2026-08-10",
+          "author": "Shashank",
+          "subject": "feat(ask): put the doc comment and the qualified name into the embedded text",
+          "cite": "git log -1 --format=%B eaeb30be"
+        },
+        "marker": "Line numbers are deliberately NOT in the header"
+      },
+      "must_not_return": [],
+      "asked_about": {
+        "file_path": "src/ask/ask_doctext.c",
+        "symbol": "hyp_ask_header_line",
+        "verified_at": "eaeb30bef1a765c2ab556031bc2ef5c2e61e3dee",
+        "qualified_name": "hyponoia.src.ask.ask_doctext.hyp_ask_header_line",
+        "address": "hyp1:hyponoia/hyponoia#hyponoia.src.ask.ask_doctext.hyp_ask_header_line",
+        "note": "the symbol an agent would have open when asking; the anchor is where the gold should be reachable from once the decision store holds it"
+      }
+    },
+    {
+      "id": "G2-037",
+      "question": "Why did the soak report a 17-trillion-megabyte leak?",
+      "gold": {
+        "decision_verbatim": "There is no leak. 18446744073580445696 is 2^64 - 129,105,920: a small negative\nnumber cast to size_t. On amd64 the value is byte-identical across all 53\nsamples, and in every row rss_bytes == heap_committed_bytes \u2014 a leak grows, this\ndoes not.",
+        "source": {
+          "kind": "commit_message",
+          "commit": "732775db539a2b78801352272787931ed8a83ffe",
+          "date": "2026-08-15",
+          "author": "Shashank",
+          "subject": "fix(mem): the soak reported a 17-trillion-megabyte leak because the meter was broken",
+          "cite": "git log -1 --format=%B 732775db"
+        },
+        "marker": "There is no leak."
+      },
+      "must_not_return": [
+        "a real leak in the query path"
+      ],
+      "asked_about": {
+        "file_path": "src/foundation/diagnostics.c",
+        "symbol": "write_diagnostics",
+        "verified_at": "d3e9806f",
+        "qualified_name": "hyponoia.src.foundation.diagnostics.write_diagnostics",
+        "address": "hyp1:hyponoia/hyponoia#hyponoia.src.foundation.diagnostics.write_diagnostics",
+        "note": "the symbol an agent would have open when asking; the anchor is where the gold should be reachable from once the decision store holds it"
+      }
+    },
+    {
+      "id": "G2-038",
+      "question": "Why did the MCP server die on a large query_graph reply, and what replaced that?",
+      "gold": {
+        "decision_verbatim": "Root cause is a conflation, not the limit itself. application_mcp_request\nchecked only response_length > UINT32_MAX and passed anything smaller on, so an\noversized reply reached the transport, which rejected the frame. The frontend\nworker cannot tell that rejection from a dead socket, and for a dead socket it\ndeliberately _Exit()s the process \u2014 closing the kernel IPC handle is the only\nportable way to cancel daemon session ownership from a thread blocked in stdio.\nCorrect for a broken transport; a fatal over-reaction to a large answer.",
+        "source": {
+          "kind": "commit_message",
+          "commit": "5efa57492aa2bbe7f620342446029d6cf0f0b7b5",
+          "date": "2026-08-07",
+          "author": "Martin Vogel",
+          "subject": "fix(daemon): answer an oversized MCP reply with an error, not process death (#1375)",
+          "cite": "git log -1 --format=%B 5efa5749"
+        },
+        "marker": "Root cause is a conflation, not the limit itself"
+      },
+      "must_not_return": [],
+      "asked_about": {
+        "file_path": "src/daemon/application.c",
+        "symbol": "application_mcp_request",
+        "verified_at": "d3e9806f",
+        "qualified_name": "hyponoia.src.daemon.application.application_mcp_request",
+        "address": "hyp1:hyponoia/hyponoia#hyponoia.src.daemon.application.application_mcp_request",
+        "note": "the symbol an agent would have open when asking; the anchor is where the gold should be reachable from once the decision store holds it"
+      }
+    },
+    {
+      "id": "G2-039",
+      "question": "Why did 9,676 test functions rank as production code?",
+      "gold": {
+        "decision_verbatim": "hyp_is_test_file() has always classified a FILE, and extract_defs.c has always\ncopied that onto the Module node \u2014 but nothing carried it to the definitions\ninside. Only Rust propagated it, through rust_def_is_test(), and the comment on\nthat function describes this exact leak: \"hyp's test detection is otherwise\nfile-path-based ... leak past the store.c `is_test != 1` filter into graph/agent\ncontext\". It was closed for Rust in #855 and left open for every other language.",
+        "source": {
+          "kind": "commit_message",
+          "commit": "9ad2705690da50acb262f149d06a3e0fa9a5173e",
+          "date": "2026-08-16",
+          "author": "Shashank",
+          "subject": "extract: is_test reached the Module row and stopped, so 9,676 test functions ranked as production code",
+          "cite": "git log -1 --format=%B 9ad27056"
+        },
+        "marker": "hyp_is_test_file() has always classified a FILE"
+      },
+      "must_not_return": [],
+      "asked_about": {
+        "file_path": "internal/hyp/helpers.c",
+        "symbol": "hyp_is_test_file",
+        "verified_at": "d3e9806f",
+        "qualified_name": "hyponoia.internal.hyp.helpers.hyp_is_test_file",
+        "address": "hyp1:hyponoia/hyponoia#hyponoia.internal.hyp.helpers.hyp_is_test_file",
+        "note": "the symbol an agent would have open when asking; the anchor is where the gold should be reachable from once the decision store holds it"
+      }
+    },
+    {
+      "id": "G2-040",
+      "question": "Why does ordinary malloc go through mimalloc on Linux but not on macOS?",
+      "gold": {
+        "decision_verbatim": "macOS stays off deliberately and permanently: enabling the override there\ncompiles alloc-override.c's forwarding definitions, and under the two-level\nnamespace this binary's free becomes mi_free while system libraries keep\nallocating from the system allocator, so the first pointer crossing that\nboundary aborts with \"mi_free: invalid pointer\". ELF's flat namespace has no\nsuch split, which is why Linux can have this and macOS cannot.",
+        "source": {
+          "kind": "commit_message",
+          "commit": "452372eec5a208947846245550b3d85744723479",
+          "date": "2026-08-06",
+          "author": "Martin Vogel",
+          "subject": "fix(mem): route ordinary malloc through mimalloc on Linux (#1360)",
+          "cite": "git log -1 --format=%B 452372ee"
+        },
+        "marker": "macOS stays off deliberately and permanently"
+      },
+      "must_not_return": [],
+      "asked_about": {
+        "file_path": "src/foundation/mem.c",
+        "symbol": "hyp_mem_init_with_cap",
+        "verified_at": "d3e9806f",
+        "qualified_name": "hyponoia.src.foundation.mem.hyp_mem_init_with_cap",
+        "address": "hyp1:hyponoia/hyponoia#hyponoia.src.foundation.mem.hyp_mem_init_with_cap",
+        "note": "the symbol an agent would have open when asking; the anchor is where the gold should be reachable from once the decision store holds it"
+      }
+    },
+    {
+      "id": "G2-041",
+      "question": "Why did every row but the shortest come out wrong in a batched encode?",
+      "gold": {
+        "decision_verbatim": "THE PATTERN, from a new alone-vs-batched harness on the encoder itself\n(`hyponoia embed --verify-batching`, every batched row scored against its\nown alone vector and every other alone vector in its group), CPU and GPU:\n\n  16 real declarations, ragged, one pass:  15 rows at 0.63-0.91 to their\n    own reference, the SHORTEST row (10 tokens) at 1.000000; no row closer\n    to another text than to itself (contamination, never misassignment)\n  8 rows of identical token count, one pass:  all 1.000000\n  a 10-token and a 21-token row, either order:  short 1.000000, long\n    0.914683 both ways \u2014 position in the batch is irrelevant\n  two identical texts:  identical vectors, wrong if not the shortest\n  first decode after context creation vs later:  no difference",
+        "source": {
+          "kind": "commit_message",
+          "commit": "58df35bb7c48094add0d7d3dec17ed644069ae70",
+          "date": "2026-08-16",
+          "author": "Shashank",
+          "subject": "fix(ask): a ragged batch through llama.cpp's per-sequence KV streams was split by length, and every row but the shortest came out wrong",
+          "cite": "git log -1 --format=%B 58df35bb"
+        },
+        "marker": "THE PATTERN, from a new alone-vs-batched harness"
+      },
+      "must_not_return": [],
+      "asked_about": {
+        "file_path": "src/ask/ask_llama.c",
+        "symbol": "ask_llama_encode",
+        "verified_at": "d3e9806f",
+        "qualified_name": "hyponoia.src.ask.ask_llama.ask_llama_encode",
+        "address": "hyp1:hyponoia/hyponoia#hyponoia.src.ask.ask_llama.ask_llama_encode",
+        "note": "the symbol an agent would have open when asking; the anchor is where the gold should be reachable from once the decision store holds it"
+      }
+    },
+    {
+      "id": "G2-042",
+      "question": "Why does the release publish only the ui variant?",
+      "gold": {
+        "decision_verbatim": "DECISION: the UI variant is the only variant. The pack is ~1.3 MB of a ~41 MB\narchive, so a standard build would save 3% and cost a second full product build\nper platform. An explicit --standard is REFUSED with a message rather than\nsilently handed the ui archive: a flag that returns something other than what it\nnames is the defect being fixed, not a workaround for it.",
+        "source": {
+          "kind": "commit_message",
+          "commit": "c2f1a92ef69bb9db9610987851fd7ae4bfe18d5f",
+          "date": "2026-08-15",
+          "author": "Shashank",
+          "subject": "fix: the release publishes only UI archives, and six installers asked for the other name",
+          "cite": "git log -1 --format=%B c2f1a92e"
+        },
+        "marker": "DECISION: the UI variant is the only variant"
+      },
+      "must_not_return": [],
+      "asked_about": {
+        "file_path": "install.sh",
+        "symbol": "detect_os",
+        "verified_at": "d3e9806f (textual: not a C function span)",
+        "qualified_name": "hyponoia.install.detect_os",
+        "address": "hyp1:hyponoia/hyponoia#hyponoia.install.detect_os",
+        "note": "the symbol an agent would have open when asking; the anchor is where the gold should be reachable from once the decision store holds it"
+      }
+    },
+    {
+      "id": "G2-043",
+      "question": "Why do the installers refuse macOS instead of just 404ing?",
+      "gold": {
+        "decision_verbatim": "Retiring macOS and ARM64 Windows in CI is only half the change. Every installer\nderives its download URL from the running platform, so the other half is what a\nuser on one of those platforms experiences \u2014 and left alone that was a bare\ncurl 404 under `set -euo pipefail`, with nothing anywhere saying the platform\nwas retired. A silent 404 reads as \"the project is broken\", which is a worse\nanswer than \"this platform has no binary\" and takes longer to act on.",
+        "source": {
+          "kind": "commit_message",
+          "commit": "f1dfa0b6ddd670283c3fc19f66fedd2ce2a5f737",
+          "date": "2026-08-15",
+          "author": "Shashank",
+          "subject": "fix(install): six installers computed an asset name for a platform that no longer has one",
+          "cite": "git log -1 --format=%B f1dfa0b6"
+        },
+        "marker": "A silent 404 reads as"
+      },
+      "must_not_return": [],
+      "asked_about": {
+        "file_path": "install.sh",
+        "symbol": "detect_os",
+        "verified_at": "d3e9806f (textual: not a C function span)",
+        "qualified_name": "hyponoia.install.detect_os",
+        "address": "hyp1:hyponoia/hyponoia#hyponoia.install.detect_os",
+        "note": "the symbol an agent would have open when asking; the anchor is where the gold should be reachable from once the decision store holds it"
+      }
+    },
+    {
+      "id": "G2-044",
+      "question": "Why is the executable-stack note added to the vendored vector blob?",
+      "gold": {
+        "decision_verbatim": "Executable stack (the worst of the findings). vendored/nomic/code_vectors_blob.S\nis the only assembly in the build and carried no .note.GNU-stack. An unannotated\nobject makes ld assume the worst for the whole link, so EVERY Linux release we\nhave ever shipped had GNU_STACK RWE. Adds the note (cause) plus ELF-only\n-Wl,-z,noexecstack (outcome); the gate fails the release if it returns.",
+        "source": {
+          "kind": "commit_message",
+          "commit": "1f674c805e395b0d06d161c429cfffda74f7e5a9",
+          "date": "2026-07-29",
+          "author": "Martin Vogel",
+          "subject": "harden: remove capability that should never have shipped",
+          "cite": "git log -1 --format=%B 1f674c80"
+        },
+        "marker": "Executable stack (the worst of the findings)"
+      },
+      "must_not_return": [],
+      "asked_about": {
+        "file_path": "vendored/nomic/code_vectors_blob.S",
+        "symbol": "code_vectors",
+        "verified_at": "d3e9806f (textual: not a C function span)",
+        "qualified_name": "hyponoia.vendored.nomic.code_vectors_blob.code_vectors",
+        "address": "hyp1:hyponoia/hyponoia#hyponoia.vendored.nomic.code_vectors_blob.code_vectors",
+        "note": "the symbol an agent would have open when asking; the anchor is where the gold should be reachable from once the decision store holds it"
+      }
+    },
+    {
+      "id": "G2-045",
+      "question": "Why are test seams opt-in rather than opt-out?",
+      "gold": {
+        "decision_verbatim": "Test seams are now opt-in, never opt-out. TEST_SEAMS=1 defines\nCBM_ENABLE_TEST_SEAMS; without it the crash-orphan probe -- which forks a child\nthat ignores SIGTERM and loops forever, then writes its pid to a caller-supplied\npath -- and the lease-ownership marker compile to trivial stubs, so call sites are\nuntouched and the binary holds no fork, no signal handler and no env-var string.\nOpt-IN is the point: forgetting the flag yields a clean binary rather than a leaky\none. scripts/test.sh requests it in the leg that consumes it, and\ntests/test_worker_watchdog.sh now asserts the capability up front instead of\ndying later with an opaque \"Killed: 9\".",
+        "source": {
+          "kind": "commit_message",
+          "commit": "1f674c805e395b0d06d161c429cfffda74f7e5a9",
+          "date": "2026-07-29",
+          "author": "Martin Vogel",
+          "subject": "harden: remove capability that should never have shipped",
+          "cite": "git log -1 --format=%B 1f674c80"
+        },
+        "marker": "Test seams are now opt-in, never opt-out"
+      },
+      "must_not_return": [],
+      "asked_about": {
+        "file_path": "src/cli/cli.c",
+        "symbol": "hyp_cli_activation_guard_with_ops",
+        "verified_at": "d3e9806f",
+        "qualified_name": "hyponoia.src.cli.cli.hyp_cli_activation_guard_with_ops",
+        "address": "hyp1:hyponoia/hyponoia#hyponoia.src.cli.cli.hyp_cli_activation_guard_with_ops",
+        "note": "the symbol an agent would have open when asking; the anchor is where the gold should be reachable from once the decision store holds it"
+      }
+    },
+    {
+      "id": "G2-046",
+      "question": "Why does the cohort guard key the rendezvous on the cache root?",
+      "gold": {
+        "decision_verbatim": "HYP_DAEMON_RUNTIME_PARENT is the escape a normal build gets, and it keeps the\nprotection by making the rendezvous A FUNCTION OF THE CACHE ROOT: the directory\ncreated under the caller's parent is `hyp-scope-<12 hex of the canonical\nHYP_CACHE_DIR>`. Two processes on one cache still land on one rendezvous and\nstill meet the guard; two processes on two caches share no socket, no cohort\nrecord and no lease file. Several isolated runs can share one parent and stay\nseparated by their caches alone.",
+        "source": {
+          "kind": "commit_message",
+          "commit": "ec7940b6885c20d73af78e8eae9041b2ae239fd5",
+          "date": "2026-08-16",
+          "author": "Shashank",
+          "subject": "fix: three defects that cost a week of workarounds \u2014 an escape from the cohort guard, an install refusal that says what it refused, and a --version that names a tree",
+          "cite": "git log -1 --format=%B ec7940b6"
+        },
+        "marker": "HYP_DAEMON_RUNTIME_PARENT is the escape"
+      },
+      "must_not_return": [],
+      "asked_about": {
+        "file_path": "src/daemon/bootstrap.c",
+        "symbol": "hyp_daemon_bootstrap_endpoint_new",
+        "verified_at": "d3e9806f",
+        "qualified_name": "hyponoia.src.daemon.bootstrap.hyp_daemon_bootstrap_endpoint_new",
+        "address": "hyp1:hyponoia/hyponoia#hyponoia.src.daemon.bootstrap.hyp_daemon_bootstrap_endpoint_new",
+        "note": "the symbol an agent would have open when asking; the anchor is where the gold should be reachable from once the decision store holds it"
+      }
+    },
+    {
+      "id": "G2-047",
+      "question": "Why is the build fingerprint deliberately not a rendezvous input?",
+      "gold": {
+        "decision_verbatim": "THE BUILD FINGERPRINT IS DELIBERATELY NOT A RENDEZVOUS INPUT, though \u00a73.2\nsuggested it. Keying the meeting place by build is exactly how two builds would\nstop meeting while still writing to one store \u2014 the corruption the guard exists\nto prevent, spelled as a feature. It stays what the cohort COMPARES once two\nprocesses have met. For the same reason the escape is refused outright while\nHYP_CACHE_DIR still resolves to the account default: a private socket over the\nshared store is the one combination that loses data.",
+        "source": {
+          "kind": "commit_message",
+          "commit": "ec7940b6885c20d73af78e8eae9041b2ae239fd5",
+          "date": "2026-08-16",
+          "author": "Shashank",
+          "subject": "fix: three defects that cost a week of workarounds \u2014 an escape from the cohort guard, an install refusal that says what it refused, and a --version that names a tree",
+          "cite": "git log -1 --format=%B ec7940b6"
+        },
+        "marker": "THE BUILD FINGERPRINT IS DELIBERATELY NOT A RENDEZVOUS INPUT"
+      },
+      "must_not_return": [],
+      "asked_about": {
+        "file_path": "src/daemon/bootstrap.c",
+        "symbol": "hyp_daemon_bootstrap_endpoint_new",
+        "verified_at": "d3e9806f",
+        "qualified_name": "hyponoia.src.daemon.bootstrap.hyp_daemon_bootstrap_endpoint_new",
+        "address": "hyp1:hyponoia/hyponoia#hyponoia.src.daemon.bootstrap.hyp_daemon_bootstrap_endpoint_new",
+        "note": "the symbol an agent would have open when asking; the anchor is where the gold should be reachable from once the decision store holds it"
+      }
+    },
+    {
+      "id": "G2-048",
+      "question": "Why is there one HYP_TOOL_SURFACE table instead of four tool lists?",
+      "gold": {
+        "decision_verbatim": "WHAT WAS ACTUALLY WRONG. `tool_tiers.h` called itself \"the one table of which\ntools the restricted MCP profiles expose\". It was one table of TIER MEMBERSHIP\nfor 12 of 16 registered tools, and three other hand-written lists of the same\ntools sat beside it: TOOLS[] (the registry), TOOL_ANNOTATIONS[] (the\nclient-visible hints, consulted with `def ? def->destructive : true`, so a tool\nnobody added still shipped claiming destructive and open-world), and the\ndispatch if-chain. `index_repository`, `delete_project`, `manage_adr` and\n`ingest_traces` were in the registry and in no tier row at all \u2014 intended by\nsomeone, checked by nobody. A tool added to the registry and forgotten in the\ntier table shipped silently off every tier: `ask` exactly, one level above\nwhere `ask` was fixed. The fix had closed the hole between two of the four\nlists.",
+        "source": {
+          "kind": "commit_message",
+          "commit": "bdfef203a697948f7e69a62a7e0145d05cc8f81b",
+          "date": "2026-08-16",
+          "author": "Shashank",
+          "subject": "mcp: the two-ends fix had a fourth site nobody had counted, and two more found while writing the contract",
+          "cite": "git log -1 --format=%B bdfef203"
+        },
+        "marker": "WHAT WAS ACTUALLY WRONG"
+      },
+      "must_not_return": [],
+      "asked_about": {
+        "file_path": "src/mcp/tool_surface.h"
+      }
+    },
+    {
+      "id": "G2-049",
+      "question": "Why do new MCP tools ship as `reserved`?",
+      "gold": {
+        "decision_verbatim": "- **C3 \u00b7 Tool surface.** Signatures only for every MCP tool this section adds or changes. Publish\n  before implementing, because \u00a73.1 shipped `ask` that the server allowed and the generated agent\n  profile never offered, and \u00a73 shipped three tools that rendered blank. **Both ends come from one\n  source of truth or this repeats a third time.** Phase 0 found the count was worse than three:\n  there are **four** hand-written tool enumerations \u2014 `TOOLS[]` (`mcp.c:411`),\n  `TOOL_ANNOTATIONS[]` (`mcp.c:848`), `tool_tiers.h` (which calls itself \"the one table\" and holds\n  12 of 16), and the dispatch if-chain \u2014 and `TOOL_ANNOTATIONS` has a silent fallback\n  (`def ? def->destructive : true`, `mcp.c:903`) so an absent tool still ships. One\n  `HYP_TOOL_SURFACE(X)` table makes a missing row a compile error. New \u00a74 tools ship in-table but\n  **`reserved`** \u2014 complete rows, not advertised until a one-token flip, tests asserting both\n  directions \u2014 because \u00a73.1 measured that a listed tool is not a used tool even when it works, and\n  a listed tool that errors only charges agents a turn to learn it. Writer is\n  `record_memory(kind=\u2026)` restricted to agent-authorable kinds and **refusing transcript kinds\n  fail-closed** (a forgeable transcript writer would make D4's count meaningless); reader is\n  `search_memory(kind=\u2026)`. `index_status` reports `memory.behind` as **absent, never 0**, when the\n  upstream count cannot be read.",
+        "source": {
+          "kind": "plan_section",
+          "file": "/media/DEV/Projects/context-engine/NEXT-STEPS.md",
+          "line": 3174,
+          "cite": "sed -n '3172,3182p' NEXT-STEPS.md"
+        },
+        "marker": "New \u00a74 tools ship in-table but"
+      },
+      "must_not_return": [],
+      "asked_about": {
+        "file_path": "src/mcp/tool_surface.h"
+      }
+    },
+    {
+      "id": "G2-050",
+      "question": "Why does the fixture for Track G come from git history rather than being written?",
+      "gold": {
+        "decision_verbatim": "**Do not author the fixture.** A gold standard invented mid-flight is precisely where false\npositives come from, and this plan has the scar: the original `ctxlab` corpus looked fine and was\ninvalid \u2014 7,365 generated files carrying **2 type annotations** \u2014 so every number measured against\nit meant nothing. **Derive the fixture from history instead**, which is free, already exists, and\nnobody can bias.",
+        "source": {
+          "kind": "plan_section",
+          "file": "/media/DEV/Projects/context-engine/NEXT-STEPS.md",
+          "line": 3502,
+          "cite": "sed -n '3500,3510p' NEXT-STEPS.md"
+        },
+        "marker": "Do not author the fixture"
+      },
+      "must_not_return": []
+    },
+    {
+      "id": "G2-051",
+      "question": "Why is `sync_memory` not an MCP tool?",
+      "gold": {
+        "decision_verbatim": "- **C6u** [C1u] Sync: push/pull as a **union** of append-only records. Push is \"merge my set into\n  theirs\", pull is the reverse \u2014 **no outbox, no pending-write queue**, which would be state that\n  can disagree with the store. Offline writes locally and pushes later by the same merge.\n  **The trigger is the code index, not an agent and not a clock.** `sync_memory` as an MCP tool is\n  **CUT** \u2014 its own author named it the cut-first candidate, and the owner's ruling is sharper: sync\n  runs **when a repo in the workspace changes locally**, because a changed tree is exactly the\n  moment an agent will ask \"what happened here\" and the relevant memory must already be present.\n  The watcher that already re-indexes on change fires the memory pull in the same pass. Push\n  follows a local `record_memory`. No agent-callable sync surface; `hyp sync` on the CLI for the\n  manual case.",
+        "source": {
+          "kind": "plan_section",
+          "file": "/media/DEV/Projects/context-engine/NEXT-STEPS.md",
+          "line": 3303,
+          "cite": "sed -n '3301,3311p' NEXT-STEPS.md"
+        },
+        "marker": "The trigger is the code index, not an agent and not a clock"
+      },
+      "must_not_return": [],
+      "asked_about": {
+        "file_path": "src/mcp/tool_surface.h"
+      }
+    },
+    {
+      "id": "G2-052",
+      "question": "Why is the margin gate forbidden?",
+      "gold": {
+        "decision_verbatim": "- **No confidence-triggered auto-escalation and no margin gates.** Closed by measurement in \u00a72.4:\n  two corpora disagreed 3\u00d7 on band width, so a constant fitted on one fires on every query of the\n  other.",
+        "source": {
+          "kind": "plan_section",
+          "file": "/media/DEV/Projects/context-engine/NEXT-STEPS.md",
+          "line": 3567,
+          "cite": "sed -n '3565,3575p' NEXT-STEPS.md"
+        },
+        "marker": "No confidence-triggered auto-escalation and no margin gates"
+      },
+      "must_not_return": [],
+      "asked_about": {
+        "file_path": "src/mcp/mcp.c",
+        "symbol": "handle_ask",
+        "verified_at": "d3e9806f",
+        "qualified_name": "hyponoia.src.mcp.mcp.handle_ask",
+        "address": "hyp1:hyponoia/hyponoia#hyponoia.src.mcp.mcp.handle_ask",
+        "note": "the symbol an agent would have open when asking; the anchor is where the gold should be reachable from once the decision store holds it"
+      }
+    },
+    {
+      "id": "G2-053",
+      "question": "Why is there no learned bridge between embedding spaces?",
+      "gold": {
+        "decision_verbatim": "- **No learned bridge between embedding spaces.** Identity scores 0.866; ridge 0.675, Procrustes\n  0.531. The mapping is already correct.",
+        "source": {
+          "kind": "plan_section",
+          "file": "/media/DEV/Projects/context-engine/NEXT-STEPS.md",
+          "line": 3570,
+          "cite": "sed -n '3568,3578p' NEXT-STEPS.md"
+        },
+        "marker": "No learned bridge between embedding spaces"
+      },
+      "must_not_return": [],
+      "asked_about": {
+        "file_path": "src/ask/ask_provider.c",
+        "symbol": "hyp_ask_provider_encoder_create",
+        "verified_at": "d3e9806f (textual: not a C function span)",
+        "qualified_name": "hyponoia.src.ask.ask_provider.hyp_ask_provider_encoder_create",
+        "address": "hyp1:hyponoia/hyponoia#hyponoia.src.ask.ask_provider.hyp_ask_provider_encoder_create",
+        "note": "the symbol an agent would have open when asking; the anchor is where the gold should be reachable from once the decision store holds it"
+      }
+    },
+    {
+      "id": "G2-054",
+      "question": "Why is an unknown repository role defaulted to `reference`?",
+      "gold": {
+        "decision_verbatim": "- **A5** [C1] Declare role `reference` \u2014 **the only role that cannot be derived**, because \"I added\n  this repo for inspiration\" is intent, not a property of a tree. Unknown role **defaults to\n  `reference`**: wrong-but-read-only is recoverable, wrong-but-editable means an agent rewrites a\n  dependency.",
+        "source": {
+          "kind": "plan_section",
+          "file": "/media/DEV/Projects/context-engine/NEXT-STEPS.md",
+          "line": 3202,
+          "cite": "sed -n '3200,3210p' NEXT-STEPS.md"
+        },
+        "marker": "Unknown role **defaults to"
+      },
+      "must_not_return": [],
+      "asked_about": {
+        "file_path": "src/discover/role.c",
+        "symbol": "hyp_role_derive",
+        "verified_at": "feat/p1-a11",
+        "qualified_name": "hyponoia.src.discover.role.hyp_role_derive",
+        "address": "hyp1:hyponoia/hyponoia#hyponoia.src.discover.role.hyp_role_derive",
+        "note": "the symbol an agent would have open when asking; the anchor is where the gold should be reachable from once the decision store holds it"
+      }
+    },
+    {
+      "id": "G2-055",
+      "question": "Why can orphan-ness not be stored on the record?",
+      "gold": {
+        "decision_verbatim": "- **C4u** [C3u] **Orphaning, and this is the unit that matters most.** First, a constraint from C2:\n  **orphan-ness cannot live ON the record** \u2014 the anchor is in the id preimage, so a record cannot\n  be marked. It is either **derived at read time** or recorded as a new `signal` pointing back via\n  `parent`, and it is a property of *(record, index state)*, so two machines may legitimately\n  disagree about it. \"Visibly orphaned\" means visible in the read path, not a flag. **Any change to\n  the qualified name orphans an anchor, and the content hash yields candidates that include\n  copies** \u2014 cross-dir move, file rename and copy-paste all land in the same\n  `CONTENT_ONLY` relation, so the copy-paste case yields TWO candidates and re-attaches to neither.\n  A rename orphans an anchor \u2014\n  `f95d6841` broke seven things a rename could not see. An orphaned anchor becomes **visibly\n  orphaned**: never silently dropped, never silently re-attached to a plausible neighbour. A false\n  negative makes a decision unfindable; a false positive attaches last month's reasoning to code\n  that never had it, which is worse.",
+        "source": {
+          "kind": "plan_section",
+          "file": "/media/DEV/Projects/context-engine/NEXT-STEPS.md",
+          "line": 3287,
+          "cite": "sed -n '3285,3295p' NEXT-STEPS.md"
+        },
+        "marker": "orphan-ness cannot live ON the record"
+      },
+      "must_not_return": [],
+      "asked_about": {
+        "file_path": "src/memory/anchor.c",
+        "symbol": "hyp_anchor_resolve",
+        "verified_at": "feat/p1-a11",
+        "qualified_name": "hyponoia.src.memory.anchor.hyp_anchor_resolve",
+        "address": "hyp1:hyponoia/hyponoia#hyponoia.src.memory.anchor.hyp_anchor_resolve",
+        "note": "the symbol an agent would have open when asking; the anchor is where the gold should be reachable from once the decision store holds it"
+      }
+    },
+    {
+      "id": "G2-056",
+      "question": "Why is the pre-push hook not widened to the full lint?",
+      "gold": {
+        "decision_verbatim": "- **Do not widen the pre-push hook to the full lint** \u2014 that is 586\u2013667s in CI, nearly all cppcheck,\n  and a ten-minute hook gets exported around rather than run.",
+        "source": {
+          "kind": "plan_section",
+          "file": "/media/DEV/Projects/context-engine/NEXT-STEPS.md",
+          "line": 3574,
+          "cite": "sed -n '3572,3582p' NEXT-STEPS.md"
+        },
+        "marker": "Do not widen the pre-push hook to the full lint"
+      },
+      "must_not_return": [],
+      "asked_about": {
+        "file_path": "scripts/pre-push"
+      }
+    }
+  ]
+}

@@ -2,6 +2,7 @@
 #include "test_framework.h"
 #include "test_helpers.h"
 
+#include "cli/command_surface.h"
 #include "daemon/bootstrap.h"
 #include "daemon/ipc.h"
 #include "daemon/service.h"
@@ -11,6 +12,7 @@
 #include "foundation/platform.h"
 
 #include <stdatomic.h>
+#include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -301,6 +303,12 @@ TEST(daemon_bootstrap_classifies_stateless_commands_without_client) {
      * fall through to MCP_CLIENT and BLOCK serving the protocol on stdin
      * instead of downloading anything. */
     char *fetch_model[] = {"hyponoia", "fetch-model", "--path", NULL};
+    /* Same class, and the reason it is worth a row each: an unlisted top-level
+     * command exits 0 having printed nothing, because it fell through to
+     * MCP_CLIENT and served the protocol on a closed stdin. A dispatch entry in
+     * main.c is only half a command. */
+    char *onboard[] = {"hyponoia", "onboard", NULL};
+    char *migrate_comments[] = {"hyponoia", "migrate-comments", "--manifest", "m", NULL};
     ASSERT_EQ(classify(2, version), HYP_DAEMON_PROCESS_STATELESS);
     ASSERT_EQ(classify(3, help), HYP_DAEMON_PROCESS_STATELESS);
     ASSERT_EQ(classify(3, install), HYP_DAEMON_PROCESS_STATELESS);
@@ -308,6 +316,8 @@ TEST(daemon_bootstrap_classifies_stateless_commands_without_client) {
     ASSERT_EQ(classify(3, update), HYP_DAEMON_PROCESS_STATELESS);
     ASSERT_EQ(classify(2, verify_runtime_assets), HYP_DAEMON_PROCESS_STATELESS);
     ASSERT_EQ(classify(3, fetch_model), HYP_DAEMON_PROCESS_STATELESS);
+    ASSERT_EQ(classify(2, onboard), HYP_DAEMON_PROCESS_STATELESS);
+    ASSERT_EQ(classify(4, migrate_comments), HYP_DAEMON_PROCESS_STATELESS);
     ASSERT_FALSE(hyp_daemon_process_role_requires_client(HYP_DAEMON_PROCESS_STATELESS));
     PASS();
 }
@@ -925,7 +935,255 @@ TEST(daemon_bootstrap_isolated_rendezvous_is_scoped_by_cache_and_refuses_the_def
 #endif
 }
 
+/* ── The command surface: one table, both ends ──────────────────────
+ *
+ * These assert the PROPERTY that a command cannot exist at one end only. They
+ * are written by expanding HYP_CLI_COMMAND_SURFACE, never by listing commands
+ * again — a hand-written list here would be the fourth enumeration of the
+ * thing this table exists to stop enumerating.
+ */
+
+#define BOOTSTRAP_SURFACE_TOKEN(id, token, role, help, dispatch, usage) token,
+static const char *const bootstrap_surface_tokens[] = {
+    HYP_CLI_COMMAND_SURFACE(BOOTSTRAP_SURFACE_TOKEN)};
+_Static_assert(sizeof(bootstrap_surface_tokens) / sizeof(bootstrap_surface_tokens[0]) ==
+                   (size_t)HYP_CLI_COMMAND_SURFACE_ROW_COUNT,
+               "command surface row count must match the table it is derived from");
+
+#define BOOTSTRAP_CLIENT_ARGUMENT_TEXT(text, kind) text,
+static const char *const bootstrap_client_argument_texts[] = {
+    HYP_CLI_CLIENT_ARGUMENTS(BOOTSTRAP_CLIENT_ARGUMENT_TEXT)};
+
+/* Every row classifies as the role its own table row states. A row whose role
+ * disagrees with the classifier is the two-ends bug in its smallest form. */
+#define BOOTSTRAP_ROW_CLASSIFIES(id, token, role, help, dispatch, usage)                            \
+    {                                                                                               \
+        char *row_argv[] = {(char *)"hyponoia", (char *)token, NULL};                               \
+        if (classify(2, row_argv) != (role)) {                                                      \
+            FAIL("command row must classify as the role its table row states: " token);             \
+        }                                                                                           \
+    }
+
+TEST(daemon_bootstrap_every_command_row_classifies_as_its_table_role) {
+    HYP_CLI_COMMAND_SURFACE(BOOTSTRAP_ROW_CLASSIFIES)
+    PASS();
+}
+
+/* Row order is presentation order only, and that is safe exactly while no two
+ * rows can match one argument. */
+TEST(daemon_bootstrap_command_tokens_are_pairwise_distinct) {
+    const size_t rows = sizeof(bootstrap_surface_tokens) / sizeof(bootstrap_surface_tokens[0]);
+    for (size_t first = 0; first < rows; first++) {
+        if (!bootstrap_surface_tokens[first] || !bootstrap_surface_tokens[first][0]) {
+            FAIL("a command row must carry a non-empty token");
+        }
+        for (size_t second = first + 1; second < rows; second++) {
+            if (strcmp(bootstrap_surface_tokens[first], bootstrap_surface_tokens[second]) == 0) {
+                char message[256];
+                (void)snprintf(message, sizeof(message), "two command rows share the token '%s'",
+                               bootstrap_surface_tokens[first]);
+                FAIL(message);
+            }
+        }
+    }
+    PASS();
+}
+
+/* The live instance this table was built for. `onboard` was dispatched by
+ * main.c and classified by nothing, so it became an MCP client, served the
+ * protocol on a closed stdin, and exited 0 having done nothing. Named
+ * explicitly rather than left to the derived sweep above, because it is the
+ * case that shipped. */
+TEST(daemon_bootstrap_onboard_is_reachable_and_never_an_mcp_client) {
+    char *bare[] = {(char *)"hyponoia", (char *)"onboard", NULL};
+    char *with_args[] = {(char *)"hyponoia", (char *)"onboard", (char *)".", (char *)"--yes", NULL};
+    ASSERT_EQ(classify(2, bare), HYP_DAEMON_PROCESS_STATELESS);
+    ASSERT_EQ(classify(4, with_args), HYP_DAEMON_PROCESS_STATELESS);
+    ASSERT_FALSE(hyp_daemon_process_role_requires_client(classify(2, bare)));
+    ASSERT_NULL(hyp_daemon_process_unknown_command(2, bare));
+    PASS();
+}
+
+/* Fail closed. An argument naming nothing this build has must be refused BY
+ * NAME, never absorbed into the client role. */
+TEST(daemon_bootstrap_unclassified_command_refuses_and_names_it) {
+    char *word[] = {(char *)"hyponoia", (char *)"reindex", NULL};
+    char *flag[] = {(char *)"hyponoia", (char *)"--not-a-flag", NULL};
+    char *after_client_args[] = {(char *)"hyponoia", (char *)"--profile", (char *)"h3-probe", NULL};
+    ASSERT_EQ(classify(2, word), HYP_DAEMON_PROCESS_UNKNOWN_COMMAND);
+    ASSERT_EQ(classify(2, flag), HYP_DAEMON_PROCESS_UNKNOWN_COMMAND);
+    ASSERT_EQ(classify(3, after_client_args), HYP_DAEMON_PROCESS_UNKNOWN_COMMAND);
+    ASSERT_STR_EQ(hyp_daemon_process_unknown_command(2, word), "reindex");
+    ASSERT_STR_EQ(hyp_daemon_process_unknown_command(2, flag), "--not-a-flag");
+    ASSERT_STR_EQ(hyp_daemon_process_unknown_command(3, after_client_args), "h3-probe");
+    ASSERT_FALSE(hyp_daemon_process_role_requires_client(HYP_DAEMON_PROCESS_UNKNOWN_COMMAND));
+    PASS();
+}
+
+/* The other direction, and the one that keeps the refusal honest: the MCP
+ * client role must still be reachable, from bare argv and from every argument
+ * shape a client legitimately carries. Derived from the client-argument table
+ * so a new client argument cannot be added without this proving it survives. */
+#define BOOTSTRAP_CLIENT_ARGUMENT_IS_NOT_A_COMMAND(text, kind)                                      \
+    {                                                                                               \
+        char *exact_argv[] = {(char *)"hyponoia", (char *)text, NULL};                              \
+        char *valued_argv[] = {(char *)"hyponoia", (char *)text, (char *)"analysis", NULL};         \
+        char *prefixed_argv[] = {(char *)"hyponoia", (char *)text "analysis", NULL};                \
+        int used_argc = ((kind) == HYP_CLI_ARG_VALUE) ? 3 : 2;                                      \
+        char **used_argv = ((kind) == HYP_CLI_ARG_PREFIX)                                           \
+                               ? prefixed_argv                                                      \
+                               : (((kind) == HYP_CLI_ARG_VALUE) ? valued_argv : exact_argv);        \
+        if (classify(used_argc, used_argv) != HYP_DAEMON_PROCESS_MCP_CLIENT) {                      \
+            FAIL("an MCP client argument must not be read as an unknown command: " text);           \
+        }                                                                                           \
+    }
+
+TEST(daemon_bootstrap_mcp_client_role_is_earned_by_argv_not_left_over) {
+    char *bare[] = {(char *)"hyponoia", NULL};
+    ASSERT_EQ(classify(1, bare), HYP_DAEMON_PROCESS_MCP_CLIENT);
+    ASSERT_NULL(hyp_daemon_process_unknown_command(1, bare));
+    HYP_CLI_CLIENT_ARGUMENTS(BOOTSTRAP_CLIENT_ARGUMENT_IS_NOT_A_COMMAND)
+    PASS();
+}
+
+/* A help block that does not name its own command is a row copied from the row
+ * above it. */
+#define BOOTSTRAP_HELP_BLOCK_NAMES_ITS_COMMAND(id, token, role, help, dispatch, usage)              \
+    {                                                                                               \
+        const char *block = (usage);                                                                \
+        if (block && !strstr(block, token)) {                                                       \
+            FAIL("a command's help block must name the command: " token);                           \
+        }                                                                                           \
+    }
+
+TEST(daemon_bootstrap_help_blocks_name_their_own_command) {
+    HYP_CLI_COMMAND_SURFACE(BOOTSTRAP_HELP_BLOCK_NAMES_ITS_COMMAND)
+    PASS();
+}
+
+static char *bootstrap_read_source_alloc(const char *path) {
+    FILE *file = fopen(path, "rb");
+    if (!file) {
+        return NULL;
+    }
+    if (fseek(file, 0, SEEK_END) != 0) {
+        (void)fclose(file);
+        return NULL;
+    }
+    long size = ftell(file);
+    if (size < 0 || fseek(file, 0, SEEK_SET) != 0) {
+        (void)fclose(file);
+        return NULL;
+    }
+    char *data = (char *)malloc((size_t)size + 1U);
+    if (!data) {
+        (void)fclose(file);
+        return NULL;
+    }
+    size_t read = fread(data, 1, (size_t)size, file);
+    (void)fclose(file);
+    data[read] = '\0';
+    return data;
+}
+
+/*
+ * The direction generation cannot close on its own.
+ *
+ * handle_subcommand()'s chain is expanded from the table, so a command in the
+ * table with no dispatch is a build error and a command in the chain that is
+ * absent from the table cannot be written there — unless someone hand-writes
+ * an `if` beside the generated line, which is exactly how the surface came to
+ * have two enumerations in the first place. This reads the dispatcher and
+ * fails, naming the literal, if any command comparison appears that the table
+ * did not produce.
+ *
+ * It asserts its own instrument first: the expansion must be present, and the
+ * scan must have found at least one comparison. A guard that silently matches
+ * nothing is a test that cannot fail.
+ */
+TEST(daemon_bootstrap_dispatcher_contains_no_hand_written_command) {
+    char *source = bootstrap_read_source_alloc("src/main.c");
+    if (!source) {
+        FAIL("could not read src/main.c to check the dispatcher against the command table");
+    }
+    const char *start = strstr(source, "static int handle_subcommand(");
+    if (!start) {
+        free(source);
+        FAIL("src/main.c no longer defines handle_subcommand under that name");
+    }
+    const char *end = strstr(start, "\n}\n");
+    if (!end) {
+        free(source);
+        FAIL("could not find the end of handle_subcommand in src/main.c");
+    }
+    size_t span = (size_t)(end - start);
+    char *body = (char *)malloc(span + 1U);
+    if (!body) {
+        free(source);
+        FAIL("out of memory reading the dispatcher body");
+    }
+    memcpy(body, start, span);
+    body[span] = '\0';
+    free(source);
+
+    if (!strstr(body, "HYP_CLI_COMMAND_SURFACE(MAIN_SUBCOMMAND_ROW)")) {
+        free(body);
+        FAIL("the dispatcher must be expanded from HYP_CLI_COMMAND_SURFACE, not hand-written");
+    }
+
+    const size_t allowed_count =
+        sizeof(bootstrap_client_argument_texts) / sizeof(bootstrap_client_argument_texts[0]);
+    int comparisons = 0;
+    for (const char *cursor = strstr(body, "strcmp("); cursor;
+         cursor = strstr(cursor + 1, "strcmp(")) {
+        const char *quote = strchr(cursor, '"');
+        if (!quote || quote - cursor > 200) {
+            continue;
+        }
+        const char *close = strchr(quote + 1, '"');
+        if (!close) {
+            continue;
+        }
+        comparisons++;
+        size_t length = (size_t)(close - quote - 1);
+        char literal[128];
+        if (length >= sizeof(literal)) {
+            length = sizeof(literal) - 1U;
+        }
+        memcpy(literal, quote + 1, length);
+        literal[length] = '\0';
+        bool allowed = false;
+        for (size_t i = 0; i < allowed_count; i++) {
+            if (strcmp(literal, bootstrap_client_argument_texts[i]) == 0) {
+                allowed = true;
+                break;
+            }
+        }
+        if (!allowed) {
+            char message[256];
+            (void)snprintf(message, sizeof(message),
+                           "the dispatcher compares argv against '%s', which no table row "
+                           "produced; add a row instead",
+                           literal);
+            free(body);
+            FAIL(message);
+        }
+    }
+    free(body);
+    if (comparisons == 0) {
+        FAIL("the dispatcher scan found no argv comparison at all, so it proves nothing");
+    }
+    PASS();
+}
+
 SUITE(daemon_bootstrap) {
+    RUN_TEST(daemon_bootstrap_every_command_row_classifies_as_its_table_role);
+    RUN_TEST(daemon_bootstrap_command_tokens_are_pairwise_distinct);
+    RUN_TEST(daemon_bootstrap_onboard_is_reachable_and_never_an_mcp_client);
+    RUN_TEST(daemon_bootstrap_unclassified_command_refuses_and_names_it);
+    RUN_TEST(daemon_bootstrap_mcp_client_role_is_earned_by_argv_not_left_over);
+    RUN_TEST(daemon_bootstrap_help_blocks_name_their_own_command);
+    RUN_TEST(daemon_bootstrap_dispatcher_contains_no_hand_written_command);
     RUN_TEST(daemon_bootstrap_classifies_default_and_ui_as_mcp_clients);
     RUN_TEST(daemon_bootstrap_classifies_stateless_commands_without_client);
     RUN_TEST(daemon_bootstrap_classifies_config_as_coordinated_local_cli);

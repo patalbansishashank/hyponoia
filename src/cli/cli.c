@@ -21,6 +21,7 @@
 #include "foundation/platform.h"
 #include "foundation/constants.h"
 #include "foundation/log.h"
+#include "foundation/scrub.h"
 #include "foundation/sha256.h"
 #include "cli/client_adapter.h"
 #include "cli/integration_assets.h"
@@ -6465,9 +6466,11 @@ int hyp_config_get_int(hyp_config_t *cfg, const char *key, int default_val) {
  * guard-rail, not a proof — an all-uppercase key would still pass — so it is
  * paired with the documentation rather than replacing it. */
 static bool config_looks_like_a_secret(const char *s) {
-    static const char *const VENDOR_PREFIXES[] = {"sk-", "pa-", "jina_", "AIza", "sk_", "voy-"};
-    for (size_t i = 0; i < sizeof(VENDOR_PREFIXES) / sizeof(VENDOR_PREFIXES[0]); i++) {
-        if (strncmp(s, VENDOR_PREFIXES[i], strlen(VENDOR_PREFIXES[i])) == 0) {
+    /* The vendor prefix table lives in foundation/scrub.c — one table shared
+     * by this guard, the transcript scrub (D2), and the pre-push history
+     * scanner, so a prefix added there is enforced here with no second list. */
+    for (size_t i = 0; i < hyp_vendor_prefix_count; i++) {
+        if (strncmp(s, hyp_vendor_prefixes[i], strlen(hyp_vendor_prefixes[i])) == 0) {
             return true;
         }
     }
@@ -7534,8 +7537,16 @@ static void reconcile_cline_context_hooks(const char *cline_root, const char *bi
 static void install_agent_skill(const char *label, const char *skills_dir, bool force,
                                 bool dry_run) {
     char skill_path[CLI_BUF_1K];
-    int written = snprintf(skill_path, sizeof(skill_path), "%s/hyponoia/SKILL.md", skills_dir);
+    int written = skills_dir
+                      ? snprintf(skill_path, sizeof(skill_path), "%s/hyponoia/SKILL.md", skills_dir)
+                      : -1;
+    /* A skill path this vendor's config root cannot express is a vendor the
+     * install cannot serve, and returning quietly leaves the caller holding a
+     * success it did not earn: the plan lists the file, the run prints nothing,
+     * and the missing skill surfaces as an agent that never finds the graph.
+     * Refuse instead, and name the vendor and the directory that defeated it. */
     if (written < 0 || (size_t)written >= sizeof(skill_path)) {
+        record_agent_config_error(false, label, "skill_path_resolve", skills_dir);
         return;
     }
     if (g_install_plan) {
@@ -7597,7 +7608,7 @@ static hyp_graph_access_t hyp_tiered_profile_set_access(hyp_tiered_profile_set_t
  * owned document is only replaced or removed when its bytes equal the current
  * rendering or one of these, so the set has to be complete: the other access
  * mode, the Codex rc.1 form, the pre-tier Verify text, and every earlier
- * profile generation in both access modes (mcp/tool_tiers.h; a generation is
+ * profile generation in both access modes (mcp/tool_surface.h; a generation is
  * a change to the tool set a tier requests). Missing one here would strand a
  * user on the older profile with a "preserved modified profile" notice for a
  * file they never touched. */

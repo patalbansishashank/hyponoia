@@ -31,13 +31,17 @@
 #include "daemon/version_cohort.h"
 #include "mcp/mcp.h"
 #include "mcp/index_supervisor.h"
+#include "memory/sync.h"
 #include "ask/ask_cmd.h"
 #include "ask/ask_llama.h"
 #include "ask/ask_provider.h" /* key custody: whose environment this process is */
 #include "cli/cli.h"
+#include "cli/command_surface.h"
 #include "cli/model_fetch.h"
+#include "cli/onboard.h"
 #include "cli/progress_sink.h"
 #include "foundation/constants.h"
+#include "memory/comment_migrate.h"
 
 enum {
     MAIN_MIN_ARGC = 1,
@@ -943,24 +947,25 @@ static int run_cli(int argc, char **argv, hyp_project_lock_manager_t *project_lo
 
 /* ── Help ───────────────────────────────────────────────────────── */
 
+/* One row of the shared command table as the help listing reads it. A NULL
+ * usage block folds away at compile time. */
+#define MAIN_HELP_ROW(id, token, role, help, dispatch, usage) \
+    {                                                         \
+        const char *hyp_help_block = (usage);                 \
+        if (hyp_help_block) {                                 \
+            (void)fputs(hyp_help_block, stdout);              \
+        }                                                     \
+    }
+
 static void print_help(void) {
     printf("hyponoia %s\n\n", HYP_VERSION);
     printf("Usage:\n");
     printf("  hyponoia              Run MCP server on stdio\n");
-    printf("  hyponoia cli [--progress] [--json] <tool> [args]\n");
-    printf("                                      Run one tool locally, then exit\n");
-    printf("  hyponoia install [-y|-n] [--force] [--dry-run] "
-           "[--dir=<path>] [--skip-config]\n");
-    printf("  hyponoia uninstall [-y|-n] [--dry-run]\n");
-    printf("  hyponoia update [-y|-n]\n");
-    printf("  hyponoia config <list|get|set|reset>\n");
-    printf("  hyponoia embed --project <name> [--status]\n"
-           "                                      Opt-in second pass: per-declaration\n"
-           "                                      vectors for the `ask` lane\n");
-    printf("  hyponoia fetch-model [-y] [--force] [--verify] [--path]\n");
-    printf("                                      Download the `ask` lane's embedding model\n");
-    printf("  hyponoia --version    Print version\n");
-    printf("  hyponoia --help       Print this help\n");
+    /* Rendered from the command table, for the same reason the tool list below
+     * is rendered from the tool registry: a hand-maintained copy here is a
+     * third enumeration of the commands, and it had already fallen behind the
+     * other two. A command with no help block says so in its row. */
+    HYP_CLI_COMMAND_SURFACE(MAIN_HELP_ROW)
     printf("\nUI options:\n");
     printf("  --ui=true    Enable HTTP graph visualization (persisted)\n");
     printf("  --ui=false   Disable HTTP graph visualization (persisted)\n");
@@ -1092,71 +1097,100 @@ static int main_run_allow_root(int argc, char **argv) {
     return 0;
 }
 
+/* ── The dispatcher, expanded from the command table ─────────────────
+ *
+ * One body per SUBCOMMAND row, and the chain below is generated. A row added
+ * to the table with no body here does not compile: the expansion leaves
+ * HYP_CLI_CMD_BODY_<id> as an undeclared identifier and the error names the
+ * row. That is the point — the classifier in bootstrap.c and this dispatcher
+ * read the same table, so neither end can carry a command the other has never
+ * heard of.
+ *
+ * `i` and the two coordination handles are the surrounding loop's; a body is
+ * a statement list, never an expression, because the bodies genuinely differ
+ * (some initialise the allocator first, some need the project locks, and one
+ * validates its own argc before running).
+ */
+#define HYP_CLI_CMD_BODY_verify_runtime_assets                                             \
+    if (i != SKIP_ONE || argc != MAIN_CLI_ARGC) {                                          \
+        (void)fprintf(stderr, "hyponoia: --verify-runtime-assets accepts no arguments\n"); \
+        return 2;                                                                          \
+    }                                                                                      \
+    return hyp_cmd_verify_runtime_assets();
+
+#define HYP_CLI_CMD_BODY_version \
+    main_print_version();        \
+    return 0;
+
+#define HYP_CLI_CMD_BODY_help \
+    print_help();             \
+    return 0;
+
+#define HYP_CLI_CMD_BODY_help_short HYP_CLI_CMD_BODY_help
+
+#define HYP_CLI_CMD_BODY_allow_root \
+    return main_run_allow_root(argc - i - SKIP_ONE, argv + i + SKIP_ONE);
+
+#define HYP_CLI_CMD_BODY_cli                                                           \
+    hyp_mem_init_with_cap(hyp_mem_ram_fraction_for_total(hyp_system_info().total_ram), \
+                          hyp_index_worker_memory_budget_bytes());                     \
+    return run_cli(argc - i - SKIP_ONE, argv + i + SKIP_ONE, project_locks, maintenance_context);
+
+#define HYP_CLI_CMD_BODY_install return hyp_cmd_install(argc - i - SKIP_ONE, argv + i + SKIP_ONE);
+
+#define HYP_CLI_CMD_BODY_uninstall \
+    return hyp_cmd_uninstall(argc - i - SKIP_ONE, argv + i + SKIP_ONE);
+
+#define HYP_CLI_CMD_BODY_update return hyp_cmd_update(argc - i - SKIP_ONE, argv + i + SKIP_ONE);
+
+#define HYP_CLI_CMD_BODY_config return hyp_cmd_config(argc - i - SKIP_ONE, argv + i + SKIP_ONE);
+
+#define HYP_CLI_CMD_BODY_sync return hyp_cmd_sync(argc - i - SKIP_ONE, argv + i + SKIP_ONE);
+
+#define HYP_CLI_CMD_BODY_migrate_comments \
+    return hyp_cmd_migrate_comments(argc - i - SKIP_ONE, argv + i + SKIP_ONE);
+
+/* Probe, propose, confirm — never interrogate. Decides and records;
+ * deliberately does NOT start the index it prices. */
+#define HYP_CLI_CMD_BODY_onboard return hyp_cmd_onboard(argc - i - SKIP_ONE, argv + i + SKIP_ONE);
+
+/* The `ask` lane's opt-in second pass. Deliberately NOT a flag on
+ * index_repository: keeping it a separate invocation is what makes "the
+ * structural index is untouched" a property of the build rather than a claim
+ * about a branch nobody took. */
+#define HYP_CLI_CMD_BODY_embed                                                 \
+    hyp_mem_init(hyp_mem_ram_fraction_for_total(hyp_system_info().total_ram)); \
+    return hyp_cmd_embed(argc - i - SKIP_ONE, argv + i + SKIP_ONE);
+
+/* The ONLY caller of the model fetcher, and it is a command a person types.
+ * Nothing on the MCP or daemon path can reach it, which is what keeps "no
+ * network request by default" a property of this binary rather than a claim
+ * about it. See src/cli/model_fetch.h. */
+#define HYP_CLI_CMD_BODY_fetch_model \
+    return hyp_cmd_fetch_model(argc - i - SKIP_ONE, argv + i + SKIP_ONE);
+
+/* A MAIN_ROLE row is dispatched by main()'s role branch, so it gets no arm
+ * here. An arm would be unreachable: the classifier routes those tokens to
+ * roles that never call handle_subcommand(). */
+#define MAIN_SUBCOMMAND_ARM_HYP_CLI_DISPATCH_MAIN_ROLE(id, token)
+#define MAIN_SUBCOMMAND_ARM_HYP_CLI_DISPATCH_SUBCOMMAND(id, token) \
+    if (strcmp(argv[i], token) == 0) {                             \
+        HYP_CLI_CMD_BODY_##id                                      \
+    }
+#define MAIN_SUBCOMMAND_ROW(id, token, role, help, dispatch, usage) \
+    MAIN_SUBCOMMAND_ARM_##dispatch(id, token)
+
 static int handle_subcommand(int argc, char **argv, hyp_project_lock_manager_t *project_locks,
                              main_local_maintenance_context_t *maintenance_context) {
-    /* First scan: global flags */
+    /* First scan: global flags. `--profile` modifies any role rather than
+     * selecting one, so it is a client argument in the table, not a command. */
     for (int i = SKIP_ONE; i < argc; i++) {
         if (strcmp(argv[i], "--profile") == 0) {
             hyp_profile_enable();
         }
     }
     for (int i = SKIP_ONE; i < argc; i++) {
-        if (strcmp(argv[i], "--verify-runtime-assets") == 0) {
-            if (i != SKIP_ONE || argc != MAIN_CLI_ARGC) {
-                (void)fprintf(stderr, "hyponoia: --verify-runtime-assets accepts no arguments\n");
-                return 2;
-            }
-            return hyp_cmd_verify_runtime_assets();
-        }
-        if (strcmp(argv[i], "--version") == 0) {
-            main_print_version();
-            return 0;
-        }
-        if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) {
-            print_help();
-            return 0;
-        }
-        if (strcmp(argv[i], "allow-root") == 0) {
-            return main_run_allow_root(argc - i - SKIP_ONE, argv + i + SKIP_ONE);
-        }
-        if (strcmp(argv[i], "cli") == 0) {
-            hyp_mem_init_with_cap(hyp_mem_ram_fraction_for_total(hyp_system_info().total_ram),
-                                  hyp_index_worker_memory_budget_bytes());
-            return run_cli(argc - i - SKIP_ONE, argv + i + SKIP_ONE, project_locks,
-                           maintenance_context);
-        }
-        if (strcmp(argv[i], "hook-augment") == 0) {
-            hyp_mem_init(hyp_mem_ram_fraction_for_total(hyp_system_info().total_ram));
-            return hyp_cmd_hook_augment(argc - i - SKIP_ONE, argv + i + SKIP_ONE);
-        }
-        if (strcmp(argv[i], "install") == 0) {
-            return hyp_cmd_install(argc - i - SKIP_ONE, argv + i + SKIP_ONE);
-        }
-        if (strcmp(argv[i], "uninstall") == 0) {
-            return hyp_cmd_uninstall(argc - i - SKIP_ONE, argv + i + SKIP_ONE);
-        }
-        if (strcmp(argv[i], "update") == 0) {
-            return hyp_cmd_update(argc - i - SKIP_ONE, argv + i + SKIP_ONE);
-        }
-        if (strcmp(argv[i], "config") == 0) {
-            return hyp_cmd_config(argc - i - SKIP_ONE, argv + i + SKIP_ONE);
-        }
-        /* The `ask` lane's opt-in second pass. Deliberately NOT a flag on
-         * index_repository: keeping it a separate invocation is what makes
-         * "the structural index is untouched" a property of the build rather
-         * than a claim about a branch nobody took. */
-        if (strcmp(argv[i], "embed") == 0) {
-            hyp_mem_init(hyp_mem_ram_fraction_for_total(hyp_system_info().total_ram));
-            return hyp_cmd_embed(argc - i - SKIP_ONE, argv + i + SKIP_ONE);
-        }
-
-        /* The ONLY caller of the model fetcher, and it is a command a person
-         * types. Nothing on the MCP or daemon path can reach it, which is what
-         * keeps "no network request by default" a property of this binary
-         * rather than a claim about it. See src/cli/model_fetch.h. */
-        if (strcmp(argv[i], "fetch-model") == 0) {
-            return hyp_cmd_fetch_model(argc - i - SKIP_ONE, argv + i + SKIP_ONE);
-        }
+        HYP_CLI_COMMAND_SURFACE(MAIN_SUBCOMMAND_ROW)
     }
     return HYP_NOT_FOUND;
 }
@@ -2128,8 +2162,8 @@ static void main_daemon_ctl_print_ui_configuration(void) {
     }
 }
 
-/* THE SPENDING SURFACE, WHERE SOMEONE WOULD GO LOOKING FOR IT
- * (NEXT-STEPS §3.2 step 5). A daemon reads the escalation key out of the
+/* THE SPENDING SURFACE, WHERE SOMEONE WOULD GO LOOKING FOR IT.
+ * A daemon reads the escalation key out of the
  * environment it was started with, so it can spend on behalf of clients that
  * never held the key. Whether it MAY is `ask.escalation.daemon_key`, and that
  * lives in the config database — machine-global, readable from here — so this
@@ -2478,6 +2512,16 @@ int main(int argc, char **argv) {
         (void)fprintf(stderr, "hyponoia: invalid internal process arguments\n");
         return EXIT_FAILURE;
     }
+    /* Refuse by name rather than defaulting to the MCP client role. The
+     * default was silent in the one direction that matters: with stdin closed
+     * an unclassified command exited 0 having produced nothing, and with a
+     * terminal it hung. A confident error beats a plausible wrong answer. */
+    if (role == HYP_DAEMON_PROCESS_UNKNOWN_COMMAND) {
+        const char *unknown = hyp_daemon_process_unknown_command(argc, argv);
+        (void)fprintf(stderr, "hyponoia: unknown command '%s'\n", unknown ? unknown : "");
+        (void)fprintf(stderr, "hyponoia: run `hyponoia --help` for the commands this build has\n");
+        return 2;
+    }
 #ifndef _WIN32
     if (role == HYP_DAEMON_PROCESS_DAEMON) {
         (void)umask(077);
@@ -2541,8 +2585,8 @@ int main(int argc, char **argv) {
          * one-shot local CLI is the ONLY daemon-coordinated path that ignored
          * the HYP_TEST_DAEMON_RUNTIME_PARENT seam, so `hyponoia cli <tool>`
          * could not be isolated from the developer's real account-wide
-         * rendezvous even in a seam build. Found while measuring §2.2 lever 4:
-         * two other agents' binaries were holding the version cohort, and the
+         * rendezvous even in a seam build. It surfaces under concurrency:
+         * two other agents' binaries holding the version cohort, and the
          * seam that exists precisely to give a measurement its own namespace
          * did not reach the command being measured. With seams compiled OUT —
          * every production build — main_daemon_endpoint_new() IS
@@ -2860,8 +2904,8 @@ int main(int argc, char **argv) {
 
     if (role == HYP_DAEMON_PROCESS_DAEMON) {
         setup_signal_handlers();
-        /* THIS PROCESS'S ENVIRONMENT IS NOT ITS CALLERS' (NEXT-STEPS §3.2
-         * step 5). Declared here, at the one place a daemon is born, rather
+        /* THIS PROCESS'S ENVIRONMENT IS NOT ITS CALLERS'.
+         * Declared here, at the one place a daemon is born, rather
          * than per MCP session: `environ` was fixed at exec and belongs to the
          * shell that started this daemon, while the sessions, the CLI tool
          * invocations and the graph UI's HTTP routes it is about to serve all

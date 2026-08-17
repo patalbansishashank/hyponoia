@@ -1,8 +1,8 @@
 /*
  * model_fetch.h — fetch-on-first-use for the `ask` lane's embedding weights.
  *
- * NEXT-STEPS.md §2.1 costs the `ask` lane at "~600 MB against today's 31 MB
- * blob"; runs/ASK/T2-inference-runtime.json measured the alternatives and
+ * The `ask` lane costs ~600 MB of weights against the 31 MB static blob;
+ * runs/ASK/T2-inference-runtime.json measured the alternatives and
  * closed the question: EMBED is out on size (the cheapest quantisation that
  * holds cosine >= 0.99 is Q6_K at 495 MB — 23% off Q8_0, not an order of
  * magnitude), SHIP-BESIDE is the same bytes while breaking "one file, no
@@ -51,17 +51,17 @@
  *
  * Compile-time constants, all four of them per model, because "fetch the
  * latest" is how a verified download becomes an unverified one. The revision is
- * a git commit on the GGUF repository, NOT the safetensors revision 97b0c614…
- * that §2 pinned — a GGUF is a different artifact built from those weights, so
- * it carries its own identity and its own digest.
+ * a git commit on the GGUF repository, NOT the safetensors revision the
+ * measurements pinned — a GGUF is a different artifact built from those
+ * weights, so it carries its own identity and its own digest.
  *
  * The digest is the one T2 actually measured against (min cosine 0.999276 vs
  * sentence-transformers fp32 over 45 texts) and is byte-identical to the LFS
  * sha256 Hugging Face publishes for the same file. Both were checked.
  */
-/* voyage-4-nano, replacing Qwen3-Embedding-0.6B (NEXT-STEPS.md §2.10 step 1).
- * Smaller (346M against 596M), Apache 2.0, and better on public C/C++: it beats
- * Qwen3 on 7 of 8 CLARC splits, significantly on all seven. */
+/* voyage-4-nano. Smaller than the Qwen3 encoder it replaces (346M against
+ * 596M), Apache 2.0, and better on public C/C++: it wins 7 of 8 CLARC splits,
+ * significantly on all seven. */
 #define HYP_MODEL_ASK_MODEL "voyage-4-nano"
 #define HYP_MODEL_ASK_QUANT "Q8_0"
 #define HYP_MODEL_ASK_FILE HYP_MODEL_ASK_MODEL "-q8_0.gguf"
@@ -130,9 +130,9 @@ enum {
 
 /* ── One artifact, described once ────────────────────────────────────
  *
- * Everything below used to be spelled with the HYP_MODEL_ASK_* macros directly,
- * which was right while there was one model and becomes two copies of a
- * download-and-verify state machine the moment there are two. The struct is the
+ * Spelling this with the HYP_MODEL_ASK_* macros directly is right while there
+ * is one model, and becomes two copies of a download-and-verify state machine
+ * the moment there are two. The struct is the
  * seam: the machinery is written once against it, and adding a third model is a
  * table entry rather than a second copy of the failure taxonomy.
  *

@@ -188,9 +188,14 @@ jobs:
   # binaries nobody had run. soak may legitimately be 'skipped' (soak_level=none),
   # so that one is enumerated explicitly rather than lumped in.
   release-draft:
-    needs: [smoke, soak]
+    # security is a dependency because this job pushes the tag, and a tag is
+    # irreversible. Without it a security failure still published the tag and
+    # created the draft, then stranded it: the gate reported after the step it
+    # was meant to gate.
+    needs: [security, smoke, soak]
     if: >-
       ${{ !cancelled() && !failure()
+      && needs.security.result == 'success'
       && needs.smoke.result == 'success'
       && (needs.soak.result == 'success' || needs.soak.result == 'skipped') }}
     runs-on: ubuntu-latest

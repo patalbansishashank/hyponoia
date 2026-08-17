@@ -1,12 +1,12 @@
 /*
- * ask_embed.h — the opt-in second indexing pass (NEXT-STEPS §2.1, track 4).
+ * ask_embed.h — the opt-in second indexing pass.
  *
  * ═════════════════════════════════════════════════════════════════════════
  * WHY THIS IS A SEPARATE INVOCATION AND NOT A PIPELINE PASS
  * ═════════════════════════════════════════════════════════════════════════
  *
- * §2.1 requires that "the structural index keeps the speed it has today,
- * untouched", and that the embed work be opt-in because it scales with
+ * The structural index keeps the speed it has, untouched, and the embed work
+ * is opt-in because it scales with
  * declaration count: 4,117 declarations on lld/ELF are ~3 minutes on a GPU and
  * ~45 minutes on a CPU, against ten seconds for the whole structural index.
  *
@@ -95,7 +95,7 @@
 #define HYP_ASK_GPU_DOCS_PER_SEC 24.093
 
 /* ═════════════════════════════════════════════════════════════════════════
- * WHOLE-FILE SPANS (NEXT-STEPS §2.2 lever 3)
+ * WHOLE-FILE SPANS
  * ═════════════════════════════════════════════════════════════════════════
  *
  * The extractor emits one `Module` node per file whose span is line 1 to EOF
@@ -272,7 +272,13 @@ char *hyp_ask_read_span_lines(const char *abs_path, int start, int end, int *out
 bool hyp_ask_span_is_whole_file(int start, int end, int file_lines);
 
 /* sha256 of `text`, truncated to HYP_ASK_VEC_HASH_LEN hex chars. `out` must
- * hold HYP_ASK_VEC_HASH_LEN + 1 bytes. */
+ * hold HYP_ASK_VEC_HASH_LEN + 1 bytes.
+ *
+ * This lane's name for hyp_addr_span_hash (foundation/identity.h). One
+ * implementation, forwarded — the identity contract's address anchors
+ * decisions on exactly
+ * this hash, and two implementations that agree today are two that can stop
+ * agreeing. The widths are asserted equal at compile time in ask_embed.c. */
 void hyp_ask_content_hash(const char *text, char *out);
 
 #endif /* HYP_ASK_EMBED_PASS_H */

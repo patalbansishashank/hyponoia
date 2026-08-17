@@ -23,6 +23,12 @@ typedef struct hyp_store hyp_store_t;
 #define HYP_STORE_OK 0
 #define HYP_STORE_ERR (-1)
 #define HYP_STORE_NOT_FOUND (-2)
+/* More than one row answers a lookup that addresses exactly one thing. The
+ * caller gets no row: an address that names two entities names neither, and
+ * handing back whichever one the b-tree stepped first is the plausible wrong
+ * answer this store refuses everywhere else. Distinct from NOT_FOUND, which
+ * says "nothing is here" — the two are never the same claim. */
+#define HYP_STORE_AMBIGUOUS (-3)
 
 /* ── Data structures ────────────────────────────────────────────── */
 
@@ -362,6 +368,59 @@ int hyp_store_upsert_project(hyp_store_t *s, const char *name, const char *root_
 int hyp_store_get_project(hyp_store_t *s, const char *name, hyp_project_t *out);
 int hyp_store_list_projects(hyp_store_t *s, hyp_project_t **out, int *count);
 int hyp_store_delete_project(hyp_store_t *s, const char *name);
+
+/* ── Workspace registry ─────────────────────────────────────────
+ *
+ * One workspace per database file, described IN the file: workspace_meta holds
+ * the workspace's own id (one row), workspace_repos binds the member repos —
+ * slug, root, role — under it. This is a REGISTRY inside the one existing
+ * layout, not a second layout: a workspace of one lives in the byte-identical
+ * <cache>/<slug>.db its per-repo index always did, and "migrating" an existing
+ * per-repo database is exactly one bind call, which writes these rows and
+ * touches nothing else — the identity function on every existing address.
+ *
+ * A store with NO registry rows is a pre-A1 per-repo store: ABSENT means
+ * "derive: a workspace of one named by its single project", never "no
+ * workspace". Reading it is fine; opening it through hyp_wsr_store_open()
+ * (workspace_resolve.h) is what stamps the registry.
+ *
+ * The store treats `role` as opaque TEXT (NULL = not yet derived, A2-A5); the
+ * vocabulary and its validation live with the resolver, which is the only
+ * writer on this path. */
+
+typedef struct {
+    const char *slug;      /* project slug of the member repo */
+    const char *root_path; /* canonical absolute root */
+    const char *role;      /* NULL = not yet derived; never "" */
+} hyp_workspace_repo_t;
+
+/* Bind ws_id and its member repos into the registry, transactionally.
+ *
+ * Fail-closed rules, each refusing with HYP_STORE_ERR and a message in err
+ * (when provided):
+ *   - the store is already bound to a DIFFERENT id — a resolver that disagrees
+ *     with the file it opened must not stamp over it;
+ *   - two input repos share a slug (e.g. /a/b and /a-b) — the collision gate
+ *     A1's migration inherits from A6; the message names BOTH paths;
+ *   - an input slug already registered with a DIFFERENT root — the same
+ *     collision, separated in time.
+ *
+ * Binding is additive and idempotent: existing members are verified, new ones
+ * inserted, and a NULL incoming role never clobbers a derived one. It never
+ * deletes members — removal is a distinct, visible operation (A7 reports the
+ * contradiction in the meantime). */
+int hyp_store_workspace_bind(hyp_store_t *s, const char *ws_id, const hyp_workspace_repo_t *repos,
+                             int count, char *err, size_t err_sz);
+
+/* The bound workspace id. HYP_STORE_OK with the id in out; HYP_STORE_NOT_FOUND
+ * when the registry is absent (a pre-A1 store — see above); HYP_STORE_ERR on
+ * failure. */
+int hyp_store_workspace_id(hyp_store_t *s, char *out, size_t out_sz);
+
+/* Member repos, ordered by slug. HYP_STORE_NOT_FOUND when the registry is
+ * absent. Caller frees with hyp_store_free_workspace_repos. */
+int hyp_store_workspace_repos(hyp_store_t *s, hyp_workspace_repo_t **out, int *count);
+void hyp_store_free_workspace_repos(hyp_workspace_repo_t *rows, int count);
 
 /* ── Node CRUD ──────────────────────────────────────────────────── */
 
@@ -750,8 +809,23 @@ typedef struct {
 } hyp_adr_t;
 
 int hyp_store_adr_store(hyp_store_t *s, const char *project, const char *content);
+/* Same write, with the instant supplied instead of captured. The append-only
+ * record a decision write produces commits to its timestamp, so the row and the
+ * record must denote ONE instant; two clock reads a microsecond apart can
+ * straddle a second boundary and leave the projection dated differently from
+ * the record it projects. `updated_at` NULL falls back to the wall clock, which
+ * is exactly what hyp_store_adr_store does. */
+int hyp_store_adr_store_at(hyp_store_t *s, const char *project, const char *content,
+                           const char *updated_at);
 int hyp_store_adr_get(hyp_store_t *s, const char *project, hyp_adr_t *out);
 int hyp_store_adr_delete(hyp_store_t *s, const char *project);
+/* Every project the ADR table holds a document for, ascending by name. Read
+ * from project_summaries ITSELF and never from the projects table: deleting a
+ * project leaves its ADR row standing, so enumerating projects would skip
+ * documents that are still on disk, and a decision skipped by a fold is a
+ * decision lost. Caller frees with hyp_store_adr_free_project_list(). */
+int hyp_store_adr_list_projects(hyp_store_t *s, char ***out, int *count);
+void hyp_store_adr_free_project_list(char **list, int count);
 int hyp_store_adr_update_sections(hyp_store_t *s, const char *project, const char **keys,
                                   const char **values, int count, hyp_adr_t *out);
 void hyp_store_adr_free(hyp_adr_t *adr);

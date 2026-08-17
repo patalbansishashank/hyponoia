@@ -61,8 +61,23 @@ print_env "lint.sh"
 echo "=== no-skips policy (tests pass or fail) ==="
 bash "$ROOT/scripts/check-no-test-skips.sh"
 
+# The comment lint is forward-only: it needs the branch this change is aimed
+# at, not a guess. On a pull request the target is GITHUB_BASE_REF, and naming
+# it HERE rather than in the workflow keeps this script the only place that
+# knows how CI invokes a gate. An unresolvable ref is deliberately NOT papered
+# over — lint-comments refuses when it cannot verify, and that refusal is the
+# signal that the checkout is too shallow (fetch-depth: 0 in _lint.yml).
+if [ -z "${BASE:-}" ] && [ -n "${GITHUB_BASE_REF:-}" ]; then
+    for arg in ${MAKE_ARGS[@]+"${MAKE_ARGS[@]}"}; do
+        case "$arg" in BASE=*) GITHUB_BASE_REF="" ;; esac
+    done
+    if [ -n "${GITHUB_BASE_REF:-}" ]; then
+        MAKE_ARGS+=("BASE=origin/$GITHUB_BASE_REF")
+    fi
+fi
+
 if $CI_ONLY; then
-    echo "=== CI mode: cppcheck + clang-format ==="
+    echo "=== CI mode: cppcheck + clang-format + comment lint ==="
     make -j2 -f Makefile.hyp lint-ci "${MAKE_ARGS[@]+"${MAKE_ARGS[@]}"}"
     echo "=== CI linters passed ==="
 else

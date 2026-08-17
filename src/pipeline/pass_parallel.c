@@ -70,6 +70,7 @@ enum { PP_CSHARP_M_PREFIX_LEN = 2 };
 #include "pipeline/pipeline_internal.h"
 #include "pipeline/pass_lsp_cross.h" /* hyp_pxc_* helpers for fused cross-file LSP */
 #include "pipeline/lsp_resolve.h"
+#include "pipeline/pass_workspace_calls.h"
 #include "helpers.h" /* hyp_kind_in_set_free_cache — per-worker-thread cache teardown */
 #include "pipeline/worker_pool.h"
 #include "foundation/compat.h"
@@ -653,6 +654,7 @@ typedef struct {
      * path lock). Merged into the pipeline in the sequential merge loop. */
     pp_err_list_t *err_lists;
     _Atomic int oversized_warned; /* throttle for the index.file_oversized WARN */
+    _Atomic int extract_warned;   /* throttle for the index.file_extract_skipped WARN */
 
     /* Back-pressure futility latch: set when a full collect+nap cycle ended
      * still over budget — the resident floor (graph + retained sources), not
@@ -668,6 +670,7 @@ typedef struct {
 /* Cap on the number of index.file_oversized WARN lines (the full list still goes
  * to the response/logfile — this only throttles the stderr noise). */
 enum { PP_OVERSIZED_WARN_MAX = 32 };
+enum { PP_EXTRACT_WARN_MAX = 32 };
 
 /* Insert one definition node (and its route if present) into the local gbuf. */
 static void insert_def_into_gbuf(extract_worker_state_t *ws, const hyp_file_info_t *fi,
@@ -844,8 +847,8 @@ static void extract_worker(int worker_id, void *ctx_ptr) {
                                                            fi->rel_path, ec->macro_table,
                                                            ec->return_type_table)
                 : hyp_extract_file_ex(source, source_len, fi->language, ec->project_name,
-                                      fi->rel_path, HYP_EXTRACT_BUDGET, NULL, NULL, ec->macro_table,
-                                      ec->return_type_table);
+                                      fi->rel_path, HYP_PARSE_TIMEOUT_US, NULL, NULL,
+                                      ec->macro_table, ec->return_type_table);
 
         uint64_t file_elapsed_ms = (extract_now_ns() - file_t0) / PP_USEC_PER_MS;
 
@@ -863,8 +866,18 @@ static void extract_worker(int worker_id, void *ctx_ptr) {
          * reported (phase "extract", reason = the extractor's message). The empty
          * result flows through unchanged below (the defs loop is a no-op). */
         if (result->has_error) {
-            pp_err_add(errs, fi->rel_path, result->error_msg ? result->error_msg : "extract failed",
-                       "extract");
+            const char *why = result->error_msg ? result->error_msg : "extract failed";
+            pp_err_add(errs, fi->rel_path, why, "extract");
+            /* Disclosed, not merely recorded — the same treatment, and the same
+             * throttle, the oversized skip above gets. Every definition in this
+             * file is absent from the graph while the run reports success, so a
+             * record the caller has to know to ask for is the difference
+             * between an incomplete index a user can see and one they cannot. */
+            if (atomic_fetch_add_explicit(&ec->extract_warned, SKIP_ONE, memory_order_relaxed) <
+                PP_EXTRACT_WARN_MAX) {
+                hyp_log_warn("index.file_extract_skipped", "path", fi->rel_path, "reason", why,
+                             "phase", "extract");
+            }
             ws->errors++;
         } else if (result->parse_incomplete) {
             /* Best-effort parse-coverage signal (#963): the file WAS indexed,
@@ -1107,6 +1120,7 @@ int hyp_parallel_extract_ex(hyp_pipeline_ctx_t *ctx, const hyp_file_info_t *file
     atomic_init(&ec.retained_bytes, 0);
     atomic_init(&ec.retain_cap_warned, 0);
     atomic_init(&ec.oversized_warned, 0);
+    atomic_init(&ec.extract_warned, 0);
     atomic_init(&ec.bp_futile, 0);
 
     /* Sub-phase: Dispatch workers (parse + extract per file, PARALLEL) */
@@ -1232,6 +1246,11 @@ static int create_imports_edges(hyp_pipeline_ctx_t *ctx, const HYPFileResult *re
             snprintf(imp_props, sizeof(imp_props), "{\"local_name\":\"%s\"}", esc_ln);
             hyp_gbuf_insert_edge(ctx->gbuf, source_node->id, target->id, "IMPORTS", imp_props);
             count++;
+        } else if (!target && hyp_pipeline_ctx_records_workspace_evidence(ctx)) {
+            /* Mirrors pass_definitions.c create_import_edges_for_file exactly.
+             * This function runs on the single-threaded side and writes
+             * ctx->gbuf directly, so no per-worker buffer is involved. */
+            hyp_pipeline_record_unresolved_import(ctx->gbuf, source_node->id, imp->module_path);
         }
     }
     free(file_qn);
@@ -1424,6 +1443,13 @@ typedef struct {
     _Atomic uint64_t time_ns_rc_target;     /* gbuf_find_by_qn for target */
     _Atomic uint64_t time_ns_rc_emit;       /* emit_service_edge */
     _Atomic uint64_t time_ns_rc_source;     /* find_source_node */
+
+    /* The workspace-evidence gate, evaluated ONCE on the single-threaded side
+     * so a worker
+     * reads a bool instead of chasing a pipeline pointer across threads.
+     * hyp_pipeline_ctx_records_workspace_evidence is the only thing that
+     * decides it, here and in the sequential path. */
+    bool record_workspace_evidence;
 } resolve_ctx_t;
 
 /* Minimum buffer space needed per arg JSON object */
@@ -2499,6 +2525,16 @@ static void resolve_file_calls(resolve_ctx_t *rc, resolve_worker_state_t *ws, HY
                                                  HYP_SVC_HTTP, u);
                 }
             }
+            /* At the SAME condition and through the SAME writer as the
+             * sequential path (pass_calls.c resolve_single_call): a callee this
+             * member's registry cannot name at all is what a call into a
+             * sibling member looks like from here. The node lands in the
+             * per-worker buffer and the sequential merge dedupes it by QN,
+             * exactly as the synthetic Decorator nodes below do. */
+            if (rc->record_workspace_evidence) {
+                hyp_pipeline_record_unresolved_call(ws->local_edge_buf, source_node->id,
+                                                    call->callee_name);
+            }
             continue;
         }
         /* Reuse lsp_target as target_node when LSP resolved — avoids a
@@ -3192,6 +3228,7 @@ int hyp_parallel_resolve(hyp_pipeline_ctx_t *ctx, const hyp_file_info_t *files, 
         .def_modules = def_modules,
         .module_def_index = module_def_index,
         .cross_registries = cross_registries,
+        .record_workspace_evidence = hyp_pipeline_ctx_records_workspace_evidence(ctx),
     };
     atomic_init(&rc.next_file_idx, 0);
     atomic_init(&rc.lsp_cross_processed, 0);

@@ -6,10 +6,8 @@ name: CodeQL SAST
 # the one thing it exists for, so it comes back unchanged rather than rewritten.
 
 on:
-  push:
-    branches: [main]
-  pull_request:
-    branches: [main]
+  # No automatic trigger -- same instruction as ci.yml. Runnable by hand.
+  workflow_dispatch: {}
 
 permissions:
   contents: read

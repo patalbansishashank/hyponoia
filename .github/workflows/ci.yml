@@ -29,11 +29,11 @@ name: CI
 # prefix you happen to be using fixes today's branch and leaves the next one
 # uncovered; all three are listed now.
 on:
-  push:
-    branches: [main, dev, 'feat/**', 'fix/**', 'chore/**']
-  pull_request:
-    branches: [main, dev, 'feat/**', 'fix/**', 'chore/**']
-  workflow_dispatch:
+  # No automatic trigger. This ran on every push and pull_request until
+  # tonight; the owner's instruction was explicit -- no CI running without
+  # being asked, verification happens locally instead. workflow_dispatch
+  # keeps the pipeline runnable by hand if it's ever wanted again.
+  workflow_dispatch: {}
 
 permissions:
   contents: read

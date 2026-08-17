@@ -19,6 +19,7 @@ enum { PD_JSON_FIELD_OVERHEAD = 6 };
 #include "pipeline/pipeline.h"
 #include <stdint.h>
 #include "pipeline/pipeline_internal.h"
+#include "pipeline/pass_workspace_calls.h"
 #include "graph_buffer/graph_buffer.h"
 #include "foundation/log.h"
 #include "foundation/compat.h"
@@ -475,6 +476,13 @@ static int create_import_edges_for_file(hyp_pipeline_ctx_t *ctx, const HYPFileRe
                      imp->local_name ? imp->local_name : "");
             hyp_gbuf_insert_edge(ctx->gbuf, source_node->id, target->id, "IMPORTS", imp_props);
             count++;
+        } else if (!target && hyp_pipeline_ctx_records_workspace_evidence(ctx)) {
+            /* The specifier names no file in THIS member, which is what
+             * an include of a sibling member's header looks like from here.
+             * Recorded rather than dropped; the parallel path
+             * (create_imports_edges) records the same fact at the same
+             * condition through the same writer. */
+            hyp_pipeline_record_unresolved_import(ctx->gbuf, source_node->id, imp->module_path);
         }
     }
     free(file_qn);
@@ -609,7 +617,7 @@ HYPFileResult *hyp_pipeline_extract_objectscript_export(
     for (int ci = 0; ci < class_count; ci++) {
         HYPFileResult *part = hyp_extract_file_ex(
             udl_strings[ci], (int)strlen(udl_strings[ci]), HYP_LANG_OBJECTSCRIPT_UDL, project_name,
-            rel_path, HYP_EXTRACT_BUDGET, NULL, NULL, macro_table, return_type_table);
+            rel_path, HYP_PARSE_TIMEOUT_US, NULL, NULL, macro_table, return_type_table);
         if (!part) {
             continue;
         }
@@ -767,7 +775,7 @@ int hyp_pipeline_pass_definitions(hyp_pipeline_ctx_t *ctx, const hyp_file_info_t
                 ? hyp_pipeline_extract_objectscript_export(source, source_len, ctx->project_name,
                                                            rel, ctx->macro_table, NULL)
                 : hyp_extract_file_ex(
-                      source, source_len, lang, ctx->project_name, rel, HYP_EXTRACT_BUDGET, NULL,
+                      source, source_len, lang, ctx->project_name, rel, HYP_PARSE_TIMEOUT_US, NULL,
                       NULL /* no extra defines or include paths */, ctx->macro_table, NULL);
         free(source);
 
@@ -781,9 +789,16 @@ int hyp_pipeline_pass_definitions(hyp_pipeline_ctx_t *ctx, const hyp_file_info_t
          * still be reported (phase "extract", reason = the extractor's message).
          * The empty result flows through unchanged (the defs loop is a no-op). */
         if (result->has_error) {
-            hyp_pipeline_add_file_error(ctx->pipeline, rel,
-                                        result->error_msg ? result->error_msg : "extract failed",
-                                        "extract");
+            const char *why = result->error_msg ? result->error_msg : "extract failed";
+            hyp_pipeline_add_file_error(ctx->pipeline, rel, why, "extract");
+            /* Disclosed, not merely recorded — the same treatment the oversized
+             * skip above gets, for the same reason. Every definition in this
+             * file is absent from the graph and the run still reports success,
+             * so a record in a structure the caller has to know to ask for is
+             * the difference between an incomplete index a user can see and one
+             * they cannot. */
+            hyp_log_warn("index.file_extract_skipped", "path", rel, "reason", why, "phase",
+                         "extract");
             errors++;
         } else if (result->parse_incomplete) {
             /* Best-effort parse-coverage signal (#963): indexed, but with

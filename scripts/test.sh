@@ -266,6 +266,44 @@ bash "$ROOT/tests/test_release_gate_chain_contract.sh"
 echo "=== Step 0t: script exec-bit contract ==="
 bash "$ROOT/tests/test_script_exec_bit_contract.sh"
 
+echo "=== Step 0u: append-only record contract (C2) ==="
+bash "$ROOT/tests/test_record_contract.sh"
+
+echo "=== Step 0v: comment lint contract (E1: comments only, forward only) ==="
+bash "$ROOT/tests/test_comment_lint_contract.sh"
+echo "=== Step 0w: feed boundary contract (D3/D4) ==="
+bash "$ROOT/tests/test_feed_contract.sh"
+echo "=== Step 0x: one definition per Makefile variable ==="
+bash "$ROOT/tests/test_makefile_single_definition_contract.sh"
+echo "=== Step 0w: transcript ingest contract (D1: the scrub gate is structural) ==="
+bash "$ROOT/tests/test_transcript_contract.sh"
+
+# The differential over the two FQN derivations only reported drift when
+# someone chose to look. It is a suite, so it runs with the others — but the
+# properties that make it MEAN anything are properties of the source: that both
+# entry points still delegate to one core, that its ledger and its pinned rows
+# agree, and that the suite is wired into the build and the runner at all. None
+# of those can be asserted from inside C, and every one of them fails silently.
+echo "=== Step 0w: one FQN derivation, and its differential is wired (A11) ==="
+bash "$ROOT/tests/test_fqn_contract.sh"
+
+# G6. Ratcheted: the current count is pinned, a NEW unwired module or a new
+# command enumeration fails the build naming it, and the header states the exit
+# condition. Runs here, before the compiler, because both of its checks are
+# static — the third check (schema arguments) is a C test in the tool_surface
+# suite, and the help half of check B needs a binary, so it runs again at Step
+# 5f with one.
+echo "=== Step 0y: nothing ships unwired — modules and commands (G6) ==="
+bash "$ROOT/tests/test_wired_contract.sh"
+
+# A fixture that names a commit names one a clone of the remote can resolve.
+# Static, so it runs before the compiler: it walks tests/fixtures and asks git,
+# and it belongs here rather than inside a suite because more than one corpus
+# cites history and only one of them replays it — the one that does not
+# dereference its citations is exactly where an unresolvable commit survives.
+echo "=== Step 0z: fixture history is history a clone can resolve ==="
+bash "$ROOT/tests/test_fixture_lineage.sh"
+
 # Verify compiler supports target arch
 verify_compiler "$CC"
 
@@ -354,6 +392,14 @@ if [ "${OS:-}" = "windows" ]; then
     HYP_READINESS_BIN="$HYP_READINESS_BIN.exe"
 fi
 python3 "$ROOT/tests/test_daemon_open_readiness.py" "$HYP_READINESS_BIN"
+
+# Step 5f: the help half of G6's command check, against the binary a user runs.
+# `allow-root` and `daemon` were reachable and in no help output for as long as
+# print_help was a third enumeration of the commands, and no test could see it
+# because every test read the table. This reads stdout. Reuses the prod binary
+# built in Step 5, so it costs one exec.
+echo "=== Step 5f: every documented command appears in the binary's own --help (G6) ==="
+HYP_TEST_BINARY="$WATCHDOG_BINARY" bash "$ROOT/tests/test_wired_contract.sh"
 
 # Step 6: security-strings URL allow-list regression. The MSYS2 CLANG64 toolchain
 # bakes its package-tracker URL into the static Windows .exe; the binary string

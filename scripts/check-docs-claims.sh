@@ -59,7 +59,7 @@ done
 
 # ── The restricted profiles' tool counts ──────────────────────────
 # `--tool-profile scout|analysis` advertise subsets rendered from one table
-# (src/mcp/tool_tiers.h). AGENTS.md and llms.txt state the two sizes and that
+# (src/mcp/tool_surface.h). AGENTS.md and llms.txt state the two sizes and that
 # `ask` sits on analysis only; ask the binary rather than trust the prose.
 profile_tools() {
   printf '%s\n' \

@@ -246,6 +246,7 @@ FOUNDATION_SRCS = \
     src/foundation/str_intern.c \
     src/foundation/log.c \
     src/foundation/str_util.c \
+    src/foundation/identity.c \
     src/foundation/workspace.c \
     src/foundation/platform.c \
     src/foundation/system_info.c \
@@ -262,10 +263,20 @@ FOUNDATION_SRCS = \
     src/foundation/limits.c \
     src/foundation/subprocess.c \
     src/foundation/sha256.c \
+    src/foundation/record.c \
+    src/foundation/record_clock.c \
+    src/foundation/scrub.c \
     src/foundation/secure_random.c \
     src/foundation/macos_acl.c \
     src/foundation/private_file_lock.c \
     src/foundation/lock_registry.c
+
+# Feed layer: the pull-source boundary (src/feed/feed.c) and the adapters behind
+# it. Deliberately NOT in FOUNDATION_SRCS — the foundation-only link carries no
+# yyjson, and multica_adapter.c needs it to shape-pin a jsonb column.
+FEED_SRCS = \
+    src/feed/feed.c \
+    src/feed/multica_adapter.c
 
 # Existing extraction C code (compiled from current location)
 EXTRACTION_SRCS = \
@@ -330,7 +341,9 @@ SQLITE_WRITER_SRC = $(HYP_DIR)/sqlite_writer.c
 # Store module (new)
 # ask_index.c is the READ half of the `ask` lane's opt-in vector store
 # (NEXT-STEPS.md §2.1). It shares no code with the static token vectors.
-STORE_SRCS = src/store/store.c src/store/ask_index.c
+# record_store.c is the durable id-keyed set under the C2 record contract
+# (§4 C1u/C2u) — not a log; see src/store/record_store.h.
+STORE_SRCS = src/store/store.c src/store/workspace_resolve.c src/store/ask_index.c src/store/record_store.c src/store/generation_carry.c
 
 # Cypher module (new)
 CYPHER_SRCS = src/cypher/cypher.c
@@ -356,6 +369,7 @@ DISCOVER_SRCS = \
     src/discover/language.c \
     src/discover/userconfig.c \
     src/discover/gitignore.c \
+    src/discover/role.c \
     src/discover/discover.c
 
 # Graph buffer module (new)
@@ -392,8 +406,14 @@ PIPELINE_SRCS = \
     src/pipeline/pass_semantic_edges.c \
     src/pipeline/pass_complexity.c \
     src/pipeline/pass_cross_repo.c \
+    src/pipeline/pass_workspace_calls.c \
     src/pipeline/artifact.c \
     src/pipeline/pass_pkgmap.c
+
+# Memory module (§4 Track C/E): anchor resolution against the live index, and
+# the comment-prose migration that relocates history-shaped comments into the
+# decision store instead of deleting them.
+MEMORY_SRCS = src/memory/anchor.c src/memory/comment_migrate.c src/memory/sync.c src/memory/sync_cmd.c src/memory/adr_records.c src/memory/orphan.c
 
 # SimHash / MinHash module
 SIMHASH_SRCS = src/simhash/minhash.c
@@ -411,7 +431,7 @@ SEMANTIC_SRCS = src/semantic/semantic.c src/semantic/ast_profile.c src/semantic/
 # the structural index keeps exactly the speed it has.
 ASK_SRCS = src/ask/ask_batch.c src/ask/ask_encoder.c src/ask/ask_vectors.c \
            src/ask/ask_embed.c src/ask/ask_cmd.c src/ask/ask_llama.c \
-           src/ask/ask_provider.c src/ask/ask_view.c
+           src/ask/ask_provider.c src/ask/ask_view.c src/ask/record_vectors.c
 
 # nomic-embed-code pretrained vectors (assembler blob)
 UNIXCODER_BLOB_SRC = vendored/nomic/code_vectors_blob.S
@@ -422,6 +442,12 @@ TRACES_SRCS = src/traces/traces.c
 # Watcher module (new)
 WATCHER_SRCS = src/watcher/watcher.c
 
+# Ingest layer (§4 track D): feed adapters, which translate INTO the record
+# contract, and the transcript path, which drives a pull source through the
+# secret scrub into the durable record store. Nothing in src/foundation may
+# depend on anything here.
+INGEST_SRCS = src/ingest/watched_ingest.c src/ingest/transcript_ingest.c
+
 # Git context module (new)
 GIT_SRCS = src/git/git_context.c
 
@@ -429,7 +455,8 @@ GIT_SRCS = src/git/git_context.c
 CLI_SRCS = src/cli/cli.c src/cli/progress_sink.c src/cli/hook_augment.c src/cli/client_adapter.c \
 	src/cli/agent_clients.c src/cli/agent_profiles.c src/cli/integration_assets.c \
 	src/cli/config_json_like.c src/cli/config_toml_edit.c src/cli/config_yaml_edit.c \
-	src/cli/config_text_edit.c src/cli/activation_transaction.c src/cli/model_fetch.c
+	src/cli/config_text_edit.c src/cli/activation_transaction.c src/cli/model_fetch.c \
+	src/cli/onboard.c
 
 # UI module (graph visualization). Production-standard builds deliberately link
 # only the no-I/O pack stub. Test binaries substitute the real parser plus the
@@ -687,7 +714,7 @@ LLAMA_OBJS = $(patsubst $(LLAMA_DIR)/%,$(LLAMA_OBJ_DIR)/%.o,$(LLAMA_ALL_SRCS))
 
 
 # All production sources
-PROD_SRCS = $(FOUNDATION_SRCS) $(STORE_SRCS) $(CYPHER_SRCS) $(MCP_SRCS) $(DAEMON_SRCS) $(DISCOVER_SRCS) $(GRAPH_BUFFER_SRCS) $(PIPELINE_SRCS) $(SIMHASH_SRCS) $(SEMANTIC_SRCS) $(ASK_SRCS) $(TRACES_SRCS) $(WATCHER_SRCS) $(GIT_SRCS) $(CLI_SRCS) $(UI_SRCS) $(YYJSON_SRC)
+PROD_SRCS =$(FOUNDATION_SRCS) $(STORE_SRCS) $(CYPHER_SRCS) $(MCP_SRCS) $(DAEMON_SRCS) $(DISCOVER_SRCS) $(GRAPH_BUFFER_SRCS) $(PIPELINE_SRCS) $(MEMORY_SRCS) $(INGEST_SRCS) $(SIMHASH_SRCS) $(SEMANTIC_SRCS) $(ASK_SRCS) $(TRACES_SRCS) $(WATCHER_SRCS) $(GIT_SRCS) $(CLI_SRCS) $(UI_SRCS) $(YYJSON_SRC) $(FEED_SRCS)
 TEST_PROD_SRCS = $(subst src/ui/asset_pack_stub.c,src/ui/asset_pack.c src/ui/asset_manifest_stub.c,$(PROD_SRCS))
 EXISTING_C_SRCS = $(EXTRACTION_SRCS) $(LSP_SRCS) $(TS_RUNTIME_SRC) \
                   $(GRAMMAR_SRCS) $(AC_LZ4_SRCS) $(ZSTD_SRCS) $(SQLITE_WRITER_SRC)
@@ -729,6 +756,8 @@ TEST_FOUNDATION_SUITE_SRCS = \
     tests/test_hash_table.c \
     tests/test_dyn_array.c \
     tests/test_str_intern.c \
+    tests/test_record.c \
+    tests/test_scrub.c \
     tests/test_log.c \
     tests/test_str_util.c \
     tests/test_workspace.c \
@@ -740,6 +769,11 @@ TEST_FOUNDATION_SUITE_SRCS = \
     tests/test_lock_registry.c
 
 TEST_FOUNDATION_SRCS = tests/test_main.c $(TEST_FOUNDATION_SUITE_SRCS)
+
+# The feed boundary and the completeness audit. Kept out of the foundation-only
+# suite list for the same reason FEED_SRCS is kept out of FOUNDATION_SRCS: that
+# link has no yyjson.
+TEST_FEED_SRCS = tests/test_feed.c
 
 TEST_FOUNDATION_ONLY_SRCS = tests/test_foundation_main.c $(TEST_FOUNDATION_SUITE_SRCS)
 
@@ -754,6 +788,8 @@ TEST_EXTRACTION_SRCS = \
     tests/test_ac.c
 
 TEST_STORE_SRCS = \
+    tests/test_workspace_resolve.c \
+    tests/test_generation_carry.c \
     tests/test_store_nodes.c \
     tests/test_store_edges.c \
     tests/test_store_search.c \
@@ -761,6 +797,7 @@ TEST_STORE_SRCS = \
     tests/test_store_bulk.c \
     tests/test_store_pragmas.c \
     tests/test_store_checkpoint.c \
+    tests/test_record_store.c \
     tests/test_dump_verify_io.c
 
 TEST_CYPHER_SRCS = \
@@ -786,13 +823,20 @@ TEST_DISCOVER_SRCS = \
     tests/test_userconfig.c \
     tests/test_gitignore.c \
     tests/test_git_context.c \
+    tests/test_roles.c \
     tests/test_discover.c
 
 TEST_GRAPH_BUFFER_SRCS = tests/test_graph_buffer.c
 
-TEST_PIPELINE_SRCS = tests/test_registry.c tests/test_pipeline.c tests/test_cross_repo.c tests/test_fqn.c tests/test_route_canon.c tests/test_path_alias.c tests/test_configlink.c tests/test_infrascan.c tests/test_worker_pool.c tests/test_parallel.c tests/test_index_resilience.c tests/test_call_reference_contract.c tests/repro/repro_call_scope_usages.c tests/repro/repro_call_argument_usages.c tests/repro/repro_reference_precision.c tests/repro/repro_lexical_binding_precision.c tests/repro/repro_call_argument_matrix_a.c tests/repro/repro_call_argument_matrix_b.c tests/repro/repro_call_node_behaviors.c tests/repro/repro_language_registry.c tests/repro/repro_call_node_manifest.c tests/repro/repro_lsp_ordered_signatures.c tests/repro/repro_lsp_ordered_local.c tests/repro/repro_ts_overload_return_chains.c tests/repro/repro_harness_cleanup.c tests/repro/repro_runner_filter.c
+TEST_PIPELINE_SRCS = tests/test_registry.c tests/test_pipeline.c tests/test_cross_repo.c tests/test_fqn.c tests/test_identity.c tests/test_route_canon.c tests/test_path_alias.c tests/test_configlink.c tests/test_infrascan.c tests/test_worker_pool.c tests/test_parallel.c tests/test_index_resilience.c tests/test_call_reference_contract.c tests/repro/repro_call_scope_usages.c tests/repro/repro_call_argument_usages.c tests/repro/repro_reference_precision.c tests/repro/repro_lexical_binding_precision.c tests/repro/repro_call_argument_matrix_a.c tests/repro/repro_call_argument_matrix_b.c tests/repro/repro_call_node_behaviors.c tests/repro/repro_language_registry.c tests/repro/repro_call_node_manifest.c tests/repro/repro_lsp_ordered_signatures.c tests/repro/repro_lsp_ordered_local.c tests/repro/repro_ts_overload_return_chains.c tests/repro/repro_harness_cleanup.c tests/repro/repro_runner_filter.c tests/test_workspace_calls.c
+
+TEST_MEMORY_SRCS = tests/test_anchor.c tests/test_comment_migrate.c tests/test_sync.c tests/test_adr_records.c tests/test_anchor_reindex.c tests/test_orphan.c tests/test_orphan_corpus.c tests/test_g1_replay.c tests/test_g2_retrieval.c
+TEST_PIPELINE_SRCS += tests/test_fqn_differential.c
+TEST_MEMORY_SRCS += tests/test_g3_controls.c tests/test_g4_cross.c
 
 TEST_WATCHER_SRCS = tests/test_watcher.c
+
+TEST_INGEST_SRCS = tests/test_watched_ingest.c tests/test_transcript.c
 
 TEST_LZ4_SRCS = tests/test_lz4.c
 TEST_ZSTD_SRCS = tests/test_zstd.c
@@ -835,9 +879,11 @@ TEST_TRACES_SRCS = tests/test_traces.c
 
 
 TEST_CLI_SRCS = tests/test_cli.c tests/test_agent_clients.c tests/test_agent_profiles.c \
+	tests/test_tool_surface.c \
 	tests/test_config_json_like.c \
 	tests/test_config_toml_edit.c tests/test_config_yaml_edit.c tests/test_config_text_edit.c \
-	tests/test_activation_transaction.c tests/test_model_fetch.c
+	tests/test_activation_transaction.c tests/test_model_fetch.c tests/test_onboard.c \
+	tests/test_g5_zero_config.c
 
 TEST_MEM_SRCS = tests/test_mem.c
 
@@ -855,7 +901,8 @@ TEST_SEMANTIC_SRCS = tests/test_semantic.c
 # Kept OUT of TEST_FOUNDATION_SUITE_SRCS on purpose: the foundation target is
 # the seconds-long loop for src/foundation and links no store.
 TEST_ASK_SRCS = tests/test_ask.c tests/test_ask_batch.c \
-                tests/test_ask_vectors.c tests/test_ask_embed.c tests/test_ask_provider.c
+                tests/test_ask_vectors.c tests/test_record_vectors.c \
+                tests/test_ask_embed.c tests/test_ask_provider.c
 
 TEST_AST_PROFILE_SRCS = tests/test_ast_profile.c
 TEST_SLAB_ALLOC_SRCS = tests/test_slab_alloc.c
@@ -941,7 +988,7 @@ TEST_REPRO_SRCS = \
     tests/repro/repro_lsp_java_cs.c \
     tests/repro/repro_lsp_kt_php_rust.c
 
-ALL_TEST_SRCS =$(TEST_FOUNDATION_SRCS) $(TEST_EXTRACTION_SRCS) $(TEST_STORE_SRCS) $(TEST_CYPHER_SRCS) $(TEST_MCP_SRCS) $(TEST_DAEMON_SRCS) $(TEST_DISCOVER_SRCS) $(TEST_GRAPH_BUFFER_SRCS) $(TEST_PIPELINE_SRCS) $(TEST_WATCHER_SRCS) $(TEST_LZ4_SRCS) $(TEST_ZSTD_SRCS) $(TEST_ARTIFACT_SRCS) $(TEST_SQLITE_WRITER_SRCS) $(TEST_GO_LSP_SRCS) $(TEST_C_LSP_SRCS) $(TEST_PHP_LSP_SRCS) $(TEST_CS_LSP_SRCS) $(TEST_CS_LSP_BENCH_SRCS) $(TEST_PERL_LSP_SRCS) $(TEST_SCOPE_SRCS) $(TEST_TYPE_REP_SRCS) $(TEST_PY_LSP_SRCS) $(TEST_PY_LSP_BENCH_SRCS) $(TEST_PY_LSP_STRESS_SRCS) $(TEST_PY_LSP_SCALE_SRCS) $(TEST_TS_LSP_SRCS) $(TEST_JAVA_LSP_SRCS) $(TEST_KOTLIN_LSP_SRCS) $(TEST_RUST_LSP_SRCS) $(TEST_TRACES_SRCS) $(TEST_CLI_SRCS) $(TEST_MEM_SRCS) $(TEST_UI_SRCS) $(TEST_HTTPD_SRCS) $(TEST_SECURITY_SRCS) $(TEST_YAML_SRCS) $(TEST_SEMANTIC_SRCS) $(TEST_ASK_SRCS) $(TEST_AST_PROFILE_SRCS) $(TEST_SLAB_ALLOC_SRCS) $(TEST_SIMHASH_SRCS) $(TEST_STACK_OVERFLOW_SRCS) $(TEST_INTEGRATION_SRCS)
+ALL_TEST_SRCS =$(TEST_FOUNDATION_SRCS) $(TEST_EXTRACTION_SRCS) $(TEST_STORE_SRCS) $(TEST_CYPHER_SRCS) $(TEST_MCP_SRCS) $(TEST_DAEMON_SRCS) $(TEST_DISCOVER_SRCS) $(TEST_GRAPH_BUFFER_SRCS) $(TEST_PIPELINE_SRCS) $(TEST_MEMORY_SRCS) $(TEST_INGEST_SRCS) $(TEST_WATCHER_SRCS) $(TEST_LZ4_SRCS) $(TEST_ZSTD_SRCS) $(TEST_ARTIFACT_SRCS) $(TEST_SQLITE_WRITER_SRCS) $(TEST_GO_LSP_SRCS) $(TEST_C_LSP_SRCS) $(TEST_PHP_LSP_SRCS) $(TEST_CS_LSP_SRCS) $(TEST_CS_LSP_BENCH_SRCS) $(TEST_PERL_LSP_SRCS) $(TEST_SCOPE_SRCS) $(TEST_TYPE_REP_SRCS) $(TEST_PY_LSP_SRCS) $(TEST_PY_LSP_BENCH_SRCS) $(TEST_PY_LSP_STRESS_SRCS) $(TEST_PY_LSP_SCALE_SRCS) $(TEST_TS_LSP_SRCS) $(TEST_JAVA_LSP_SRCS) $(TEST_KOTLIN_LSP_SRCS) $(TEST_RUST_LSP_SRCS) $(TEST_TRACES_SRCS) $(TEST_CLI_SRCS) $(TEST_MEM_SRCS) $(TEST_UI_SRCS) $(TEST_HTTPD_SRCS) $(TEST_SECURITY_SRCS) $(TEST_YAML_SRCS) $(TEST_SEMANTIC_SRCS) $(TEST_ASK_SRCS) $(TEST_AST_PROFILE_SRCS) $(TEST_SLAB_ALLOC_SRCS) $(TEST_SIMHASH_SRCS) $(TEST_STACK_OVERFLOW_SRCS) $(TEST_INTEGRATION_SRCS) $(TEST_FEED_SRCS)
 
 
 # ── Build directories ────────────────────────────────────────────
@@ -974,7 +1021,7 @@ PP_OBJ_TSAN = $(BUILD_DIR)/tsan_preprocessor.o
 
 # ── Targets ──────────────────────────────────────────────────────
 
-.PHONY: test test-par test-repro test-foundation test-tsan test-daemon-smoke test-ask-batching hyp hyp-with-ui frontend ui-pack clean-c lint lint-tidy lint-cppcheck lint-format security
+.PHONY: test test-par test-repro test-foundation test-tsan test-daemon-smoke test-ask-batching hyp hyp-with-ui frontend ui-pack clean-c lint lint-tidy lint-cppcheck lint-format format security lint-comments lint-comments-report
 
 $(BUILD_DIR):
 	mkdir -p $(BUILD_DIR)
@@ -1433,9 +1480,9 @@ SYSROOT = $(shell xcrun --show-sdk-path 2>/dev/null)
 SYSROOT_FLAG = $(if $(SYSROOT),-isysroot $(SYSROOT),)
 
 # Our source files (excluding vendored, grammars, tree-sitter runtime)
-LINT_SRCS = $(FOUNDATION_SRCS) $(STORE_SRCS) $(CYPHER_SRCS) $(MCP_SRCS) $(DAEMON_SRCS) \
-            $(DISCOVER_SRCS) $(GRAPH_BUFFER_SRCS) $(PIPELINE_SRCS) $(SIMHASH_SRCS) $(SEMANTIC_SRCS) \
-            $(TRACES_SRCS) $(WATCHER_SRCS) $(CLI_SRCS) $(EXTRACTION_SRCS) $(AC_LZ4_SRCS) \
+LINT_SRCS = $(FOUNDATION_SRCS) $(FEED_SRCS) $(STORE_SRCS) $(CYPHER_SRCS) $(MCP_SRCS) $(DAEMON_SRCS) \
+            $(DISCOVER_SRCS) $(GRAPH_BUFFER_SRCS) $(PIPELINE_SRCS) $(MEMORY_SRCS) $(SIMHASH_SRCS) $(SEMANTIC_SRCS) \
+            $(TRACES_SRCS) $(WATCHER_SRCS) $(INGEST_SRCS) $(CLI_SRCS) $(EXTRACTION_SRCS) $(AC_LZ4_SRCS) \
             $(ZSTD_SRCS) $(SQLITE_WRITER_SRC) $(MAIN_SRC)
 LINT_HDRS = $(wildcard src/**/*.h src/*.h $(HYP_DIR)/*.h)
 LINT_TEST_SRCS = $(ALL_TEST_SRCS)
@@ -1470,6 +1517,16 @@ lint-format:
 	@echo "=== clang-format ==="
 	@$(CLANG_FORMAT) --dry-run --Werror $(LINT_SRCS) $(LINT_HDRS)
 
+# The in-place counterpart, and the reason it needs to exist: without a supported
+# way to reformat with the PINNED clang-format, the reflex is to run whatever
+# `clang-format` is on $$PATH — which on a current workstation is a newer major
+# that rewrites code CI accepts, producing a red lint job an hour later. That is
+# commit 21e1e20e. Same file list and same $(CLANG_FORMAT) as the gate above, so
+# the fix and the check cannot disagree.
+format:
+	@echo "=== clang-format -i ==="
+	@$(CLANG_FORMAT) -i $(LINT_SRCS) $(LINT_HDRS)
+
 # Ban ALL NOLINT variants EXCEPT whitelisted NOLINT(misc-no-recursion).
 # The whitelist is in src/foundation/recursion_whitelist.h with documented reasoning.
 # Rule: NOLINT(misc-no-recursion) is allowed ONLY on function definitions that are
@@ -1488,12 +1545,38 @@ lint-no-suppress:
 	@echo "  Checking NOLINT(misc-no-recursion) against whitelist..."
 	@scripts/check-nolint-whitelist.sh
 
+# Comment lint (plan Track E, unit E1): reject history-shaped prose — dates,
+# commit SHAs, plan-section references, changelog phrasing — in NEW C comments.
+# FORWARD-ONLY: it gates only lines added relative to BASE (default origin/dev,
+# then dev); the existing corpus never fails it and is inventoried by the
+# report target below for E2's relocation into the decision store. The matcher
+# tokenizes C, so string literals are structurally invisible to it.
+#
+# WIRED INTO `lint-ci` below, which is what scripts/lint.sh --ci drives and what
+# CI's lint job runs. It could not be wired before the contract headers were
+# migrated: a gate the tree's own frozen contract fails is a gate that gets
+# turned off rather than obeyed. Pass BASE=origin/$GITHUB_BASE_REF on a pull
+# request so the diff is against the target branch rather than the default base.
+#
+# Being forward-only is what makes this safe to switch on with the corpus only
+# partly drained: it fails a branch for the comments that branch ADDS, never for
+# the ones it inherited.
+lint-comments:
+	@echo "=== comment lint (new comments vs base) ==="
+	@python3 scripts/lint-comments.py $(if $(BASE),--base $(BASE))
+
+# The whole-tree inventory. Informational, always exits 0 — a report that can
+# fail a gate is a gate, and bulk-cleaning the corpus is exactly what E1 must
+# never cause.
+lint-comments-report:
+	@python3 scripts/lint-comments.py --all
+
 # All linters (run with make -j3 lint for parallel execution)
 lint: lint-tidy lint-cppcheck lint-format lint-no-suppress
 	@echo "=== All linters passed ==="
 
 # CI linters (no clang-tidy — platform-dependent, enforced locally via pre-commit)
-lint-ci: lint-cppcheck lint-format lint-no-suppress
+lint-ci: lint-cppcheck lint-format lint-no-suppress lint-comments
 	@echo "=== CI linters passed ==="
 
 # ── Local memory-diagnostic lanes (not PR-CI gates by decision: the diag

@@ -19,8 +19,9 @@
 #include <stdint.h>
 #include <stdatomic.h>
 
-#include "discover/discover.h"    /* hyp_ignored_file_t (#963) */
-#include "foundation/constants.h" /* HYP_SZ_512 */
+#include "discover/discover.h"       /* hyp_ignored_file_t (#963) */
+#include "foundation/constants.h"    /* HYP_SZ_512 */
+#include "store/workspace_resolve.h" /* hyp_wsr_resolved_t */
 
 /* Forward declarations */
 typedef struct hyp_store hyp_store_t;
@@ -68,6 +69,47 @@ void hyp_pipeline_free(hyp_pipeline_t *p);
  * stages that raise them. */
 int hyp_pipeline_run(hyp_pipeline_t *p);
 
+/*
+ * Index every member of a resolved workspace into the workspace's ONE store.
+ *
+ * This is the assembly half of a workspace: the resolver says which repos
+ * belong together and the store holds them, but nothing joined the two, so
+ * "all members share one database" described no code path. Each member runs
+ * the ordinary pipeline against the SAME database file — there is no second
+ * mode and no second addressing scheme. A workspace of one is this function
+ * with one member, over the byte-identical file that repo's index already
+ * used.
+ *
+ * Opening the workspace store binds the registry first, so a member indexed
+ * afterwards finds itself already registered; publication then carries that
+ * registry, and every previously indexed member, across its own generation
+ * boundary (generation_carry.h).
+ *
+ * Every member is indexed regardless of role. A role governs whether an agent
+ * may EDIT a repo, not whether its code is worth finding — a vendored
+ * dependency you must not touch is precisely one you need to be able to read.
+ *
+ * Returns 0 when every member published. On the first member that does not,
+ * stops and returns that member's pipeline code, naming the member in err.
+ * Members already published stay published: each publication is its own
+ * atomic generation, and rolling them back would mean deleting good data in
+ * order to report a failure. members_indexed (optional) receives how many
+ * completed, so a caller can say which half of the workspace is current.
+ *
+ * NO PRODUCTION CALLER YET — the seam from a resolved workspace to the CLI,
+ * the MCP server and the daemon belongs to the onboarding units, and this is
+ * the function they call. Stated rather than silent.
+ *
+ * THIS IS ALSO THE DRIVER THE CROSS-MEMBER CALL PASS IS WAITING FOR, and that
+ * pass says so in its own header: it needs the member count set on each
+ * member's pipeline before the run, and one match pass over the assembled
+ * store after the loop. Doing one without the other records crossings nobody
+ * resolves, or resolves crossings nobody recorded. Both ends are written down;
+ * whoever brings the two branches together owns wiring them here.
+ */
+int hyp_pipeline_index_workspace(const hyp_wsr_resolved_t *ws, hyp_index_mode_t mode,
+                                 int *members_indexed, char *err, size_t err_sz);
+
 /* Request cancellation of a running pipeline (thread-safe). */
 void hyp_pipeline_cancel(hyp_pipeline_t *p);
 
@@ -86,6 +128,35 @@ bool hyp_pipeline_set_project_name(hyp_pipeline_t *p, const char *name);
 
 /* Get the index mode (HYP_MODE_FULL, HYP_MODE_MODERATE, HYP_MODE_FAST). */
 int hyp_pipeline_get_mode(const hyp_pipeline_t *p);
+
+/* ── Workspace membership ───────────────────────────────────────────
+ *
+ * Declare that this run indexes ONE member of a workspace containing
+ * `member_count` repositories. THE CALLER SUPPLIES IT; the pipeline never reads
+ * the workspace registry itself, and the reason is not layering taste — it is a
+ * cycle. The registry lives in the destination database, and a full run
+ * publishes by renaming a freshly built staging database OVER that destination,
+ * so the pipeline would have to read the registry out of the file it is about
+ * to replace. The caller has already run hyp_wsr_resolve() and therefore holds
+ * the member list; it passes the count in.
+ *
+ * THE CONTRACT, for whoever builds the multi-member index driver:
+ *   - Derive `member_count` from hyp_store_workspace_repos() (or the resolved
+ *     hyp_wsr_resolved_t.member_count), never from a hand-written list.
+ *   - Count the WHOLE workspace, including this member. A workspace of one
+ *     passes 1, which is the same as never calling this at all.
+ *   - Call it before hyp_pipeline_run().
+ *
+ * WHAT IT CHANGES: with a count above 1, the resolution passes record the two
+ * facts they otherwise drop on the floor — a callee that resolved to nothing in
+ * this member, and an import specifier that named no file in it — as
+ * workspace-scoped rendezvous nodes for hyp_workspace_calls_match() to resolve
+ * once every member is in one store. With 0 or 1 they record nothing, and the
+ * graph of a lone repository is unchanged by any of this — which is the point:
+ * otherwise every printf() in every repository would mint a node.
+ *
+ * Values below 1 are stored as 0. */
+void hyp_pipeline_set_workspace_member_count(hyp_pipeline_t *p, int member_count);
 
 /* Get the list of directory subtrees skipped during discovery (#411).
  * *out receives a borrowed array of rel-path strings (owned by the pipeline,

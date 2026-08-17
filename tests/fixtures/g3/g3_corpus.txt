@@ -1,0 +1,874 @@
+# Track G3 negative-control corpus: span text, derived from git.
+# DO NOT EDIT. Regenerate with the builder named in tests/test_g3_controls.c.
+# Format: SPAN <key> <span-hash> <line-count>, then exactly that many
+# verbatim lines. The hash is hyp_addr_span_hash over those lines joined
+# by '\n' with no trailing newline, and the suite recomputes it.
+SPAN g1r001_after/cbm_node_free_fields e79d00a0a40229cdda86d51a83037817 8
+void cbm_node_free_fields(cbm_node_t *n) {
+    free((void *)n->project);
+    free((void *)n->label);
+    free((void *)n->name);
+    free((void *)n->qualified_name);
+    free((void *)n->file_path);
+    free((void *)n->properties_json);
+}
+SPAN g1r002_after/cbm_pxc_collect_all_defs bb8e5bcd5f6db597b09c9d4fd8391e21 35
+CBMLSPDef *cbm_pxc_collect_all_defs(CBMFileResult **cache,
+                                       const cbm_file_info_t *files, int file_count,
+                                       const char *project_name,
+                                       char **def_modules, int *out_count) {
+    int total = 0;
+    for (int i = 0; i < file_count; i++) {
+        if (cache[i]) total += cache[i]->defs.count;
+    }
+    if (total == 0) {
+        *out_count = 0;
+        return NULL;
+    }
+    CBMLSPDef *defs = (CBMLSPDef *)calloc((size_t)total, sizeof(CBMLSPDef));
+    if (!defs) {
+        *out_count = 0;
+        return NULL;
+    }
+    int idx = 0;
+    for (int fi = 0; fi < file_count; fi++) {
+        if (!cache[fi]) continue;
+        if (!def_modules[fi]) {
+            def_modules[fi] = cbm_pipeline_fqn_module(project_name, files[fi].rel_path);
+        }
+        for (int di = 0; di < cache[fi]->defs.count; di++) {
+            if (pxc_build_lsp_def(&cache[fi]->arena,
+                                   &cache[fi]->defs.items[di],
+                                   def_modules[fi],
+                                   &defs[idx]) == 0) {
+                idx++;
+            }
+        }
+    }
+    *out_count = idx;
+    return defs;
+}
+SPAN g1r003_after/cbm_resolve_func_name f39b0ff6e4c855f0bbaf2af192d8d4b3 345
+TSNode cbm_resolve_func_name(TSNode node, CBMLanguage lang) {
+    enum { MAX_TEMPLATE_DEPTH = 2 };
+    for (int tmpl_depth = 0; tmpl_depth < MAX_TEMPLATE_DEPTH; tmpl_depth++) {
+        const char *kind = ts_node_type(node);
+
+        if (lang == CBM_LANG_HASKELL && strcmp(kind, "signature") == 0) {
+            TSNode null_node = {0};
+            return null_node;
+        }
+
+        TSNode name = func_name_node(node);
+
+        if (lang == CBM_LANG_R && strcmp(kind, "function_definition") == 0) {
+            return resolve_r_func_name(node);
+        }
+
+        if (!ts_node_is_null(name)) {
+            return name;
+        }
+
+        /* Swift and newer tree-sitter-kotlin: function_declaration has no `name`
+         * field; the function name is a `simple_identifier` child. */
+        if ((lang == CBM_LANG_SWIFT || lang == CBM_LANG_KOTLIN) &&
+            strcmp(kind, "function_declaration") == 0) {
+            TSNode si = cbm_find_child_by_kind(node, "simple_identifier");
+            if (!ts_node_is_null(si)) {
+                return si;
+            }
+        }
+
+        // PowerShell function_statement has no `name` field; the name is a
+        // `function_name` child node (#35).
+        if (lang == CBM_LANG_POWERSHELL && strcmp(kind, "function_statement") == 0) {
+            TSNode fn = cbm_find_child_by_kind(node, "function_name");
+            if (!ts_node_is_null(fn)) {
+                return fn;
+            }
+        }
+
+        /* Cairo / D / Odin / Squirrel: the def node has no `name` field; the name
+         * is a plain `identifier` child (same shape as the Swift/Kotlin case). */
+        if ((lang == CBM_LANG_CAIRO || lang == CBM_LANG_DLANG || lang == CBM_LANG_ODIN ||
+             lang == CBM_LANG_SQUIRREL) &&
+            (strcmp(kind, "function_definition") == 0 || strcmp(kind, "function_signature") == 0 ||
+             strcmp(kind, "function_declaration") == 0 ||
+             strcmp(kind, "procedure_declaration") == 0)) {
+            TSNode id = cbm_find_child_by_kind(node, "identifier");
+            if (!ts_node_is_null(id)) {
+                return id;
+            }
+        }
+
+        /* Ada: subprogram_body/_declaration carry the `name` field on a nested
+         * procedure_specification/function_specification child, not on themselves. */
+        if (lang == CBM_LANG_ADA &&
+            (strcmp(kind, "subprogram_body") == 0 || strcmp(kind, "subprogram_declaration") == 0)) {
+            TSNode spec = cbm_find_child_by_kind(node, "procedure_specification");
+            if (ts_node_is_null(spec)) {
+                spec = cbm_find_child_by_kind(node, "function_specification");
+            }
+            if (!ts_node_is_null(spec)) {
+                TSNode nm = ts_node_child_by_field_name(spec, TS_FIELD("name"));
+                if (!ts_node_is_null(nm)) {
+                    return nm;
+                }
+            }
+        }
+
+        /* Pascal: defProc carries the `name` field on its `header` (declProc) child. */
+        if (lang == CBM_LANG_PASCAL && strcmp(kind, "defProc") == 0) {
+            TSNode hdr = ts_node_child_by_field_name(node, TS_FIELD("header"));
+            if (!ts_node_is_null(hdr)) {
+                TSNode nm = ts_node_child_by_field_name(hdr, TS_FIELD("name"));
+                if (!ts_node_is_null(nm)) {
+                    return nm;
+                }
+            }
+        }
+
+        /* Just: a `recipe` carries its name on the nested `recipe_header`'s
+         * `name` field (an identifier), not on the recipe node itself. */
+        if (lang == CBM_LANG_JUST && strcmp(kind, "recipe") == 0) {
+            TSNode hdr = cbm_find_child_by_kind(node, "recipe_header");
+            if (!ts_node_is_null(hdr)) {
+                TSNode nm = ts_node_child_by_field_name(hdr, TS_FIELD("name"));
+                if (!ts_node_is_null(nm)) {
+                    return nm;
+                }
+            }
+        }
+
+        /* ReScript: the `function` (arrow) node — already in func_types — has no
+         * name; the binding name is on the enclosing let_binding's `pattern` field.
+         * Resolving via the parent keeps plain value let-bindings out of func_types. */
+        if (lang == CBM_LANG_RESCRIPT && strcmp(kind, "function") == 0) {
+            TSNode parent = ts_node_parent(node);
+            if (!ts_node_is_null(parent) && strcmp(ts_node_type(parent), "let_binding") == 0) {
+                TSNode pat = ts_node_child_by_field_name(parent, TS_FIELD("pattern"));
+                if (!ts_node_is_null(pat)) {
+                    return pat;
+                }
+            }
+        }
+
+        /* Fortran: subroutine/function wrap an inner *_statement that carries the
+         * `name` field; the outer node walk_defs matched has no name itself. */
+        if (lang == CBM_LANG_FORTRAN &&
+            (strcmp(kind, "subroutine") == 0 || strcmp(kind, "function") == 0)) {
+            TSNode stmt = cbm_find_child_by_kind(node, "subroutine_statement");
+            if (ts_node_is_null(stmt)) {
+                stmt = cbm_find_child_by_kind(node, "function_statement");
+            }
+            if (!ts_node_is_null(stmt)) {
+                TSNode nm = ts_node_child_by_field_name(stmt, TS_FIELD("name"));
+                if (!ts_node_is_null(nm)) {
+                    return nm;
+                }
+            }
+        }
+
+        /* F#: function_or_value_defn's name is on a function_declaration_left /
+         * value_declaration_left child (a bare identifier, no `name` field). */
+        if (lang == CBM_LANG_FSHARP && strcmp(kind, "function_or_value_defn") == 0) {
+            TSNode lhs = cbm_find_child_by_kind(node, "function_declaration_left");
+            if (ts_node_is_null(lhs)) {
+                lhs = cbm_find_child_by_kind(node, "value_declaration_left");
+            }
+            if (!ts_node_is_null(lhs)) {
+                TSNode nm = cbm_find_child_by_kind(lhs, "identifier");
+                if (ts_node_is_null(nm)) {
+                    nm = cbm_find_child_by_kind(lhs, "long_identifier");
+                }
+                if (!ts_node_is_null(nm)) {
+                    return nm;
+                }
+            }
+        }
+
+        /* Groovy: top-level function_definition carries the name on the `function`
+         * field (not `name`); fall back to the first `identifier` child. */
+        if (lang == CBM_LANG_GROOVY && strcmp(kind, "function_definition") == 0) {
+            TSNode fn = ts_node_child_by_field_name(node, TS_FIELD("function"));
+            if (ts_node_is_null(fn)) {
+                fn = cbm_find_child_by_kind(node, "identifier");
+            }
+            if (!ts_node_is_null(fn)) {
+                return fn;
+            }
+        }
+
+        /* Agda (FIELD_COUNT 0): the only `function` carrying the name is the type
+         * signature line, whose lhs holds a `function_name` alias child. The body
+         * line's lhs has no function_name child -> resolves null and is skipped. */
+        if (lang == CBM_LANG_AGDA && strcmp(kind, "function") == 0) {
+            TSNode lhs = cbm_find_child_by_kind(node, "lhs");
+            if (!ts_node_is_null(lhs)) {
+                TSNode fn = cbm_find_child_by_kind(lhs, "function_name");
+                if (!ts_node_is_null(fn)) {
+                    return fn;
+                }
+            }
+        }
+
+        /* Pony: def nodes have no `name` field; the name is the first plain
+         * `identifier` child after the keyword/annotation/capability. */
+        if (lang == CBM_LANG_PONY &&
+            (strcmp(kind, "method") == 0 || strcmp(kind, "constructor") == 0 ||
+             strcmp(kind, "ffi_method") == 0)) {
+            TSNode id = cbm_find_child_by_kind(node, "identifier");
+            if (!ts_node_is_null(id)) {
+                return id;
+            }
+        }
+
+        /* COBOL: program_definition has no `name` field; the program name is
+         * identification_division > program_name (a leaf holding the clean name). */
+        if (lang == CBM_LANG_COBOL && strcmp(kind, "program_definition") == 0) {
+            TSNode iddiv = cbm_find_child_by_kind(node, "identification_division");
+            if (!ts_node_is_null(iddiv)) {
+                TSNode pname = cbm_find_child_by_kind(iddiv, "program_name");
+                if (!ts_node_is_null(pname)) {
+                    return pname;
+                }
+            }
+        }
+
+        /* Pine Script: function_declaration_statement carries the name on the
+         * `function` field (or `method` field for the method form), not `name`. */
+        if (lang == CBM_LANG_PINE && strcmp(kind, "function_declaration_statement") == 0) {
+            TSNode nm = ts_node_child_by_field_name(node, TS_FIELD("function"));
+            if (ts_node_is_null(nm)) {
+                nm = ts_node_child_by_field_name(node, TS_FIELD("method"));
+            }
+            if (!ts_node_is_null(nm)) {
+                return nm;
+            }
+        }
+
+        /* Smali (no `name` field): method_definition > method_signature >
+         * method_identifier holds the method name. */
+        if (lang == CBM_LANG_SMALI && strcmp(kind, "method_definition") == 0) {
+            TSNode sig = cbm_find_child_by_kind(node, "method_signature");
+            if (!ts_node_is_null(sig)) {
+                TSNode mid = cbm_find_child_by_kind(sig, "method_identifier");
+                if (!ts_node_is_null(mid)) {
+                    return mid;
+                }
+            }
+        }
+
+        /* Verilog/SystemVerilog (FIELD_COUNT 0): function/task names live on a
+         * nested *_identifier wrapper; the function name is the first
+         * simple_identifier descendant (params/returns come after the name). */
+        if ((lang == CBM_LANG_VERILOG || lang == CBM_LANG_SYSTEMVERILOG) &&
+            (strcmp(kind, "function_declaration") == 0 || strcmp(kind, "task_declaration") == 0)) {
+            TSNode si =
+                find_first_descendant_by_kind(node, "simple_identifier", CBM_DESCENDANT_MAX_DEPTH);
+            if (!ts_node_is_null(si)) {
+                return si;
+            }
+        }
+
+        /* VHDL: subprogram_declaration/_definition carry the name on a nested
+         * function_specification/procedure_specification child, via the
+         * `function`/`procedure` field. */
+        if (lang == CBM_LANG_VHDL && (strcmp(kind, "subprogram_declaration") == 0 ||
+                                      strcmp(kind, "subprogram_definition") == 0)) {
+            TSNode spec = cbm_find_child_by_kind(node, "function_specification");
+            if (ts_node_is_null(spec)) {
+                spec = cbm_find_child_by_kind(node, "procedure_specification");
+            }
+            if (!ts_node_is_null(spec)) {
+                TSNode nm = ts_node_child_by_field_name(spec, TS_FIELD("function"));
+                if (ts_node_is_null(nm)) {
+                    nm = ts_node_child_by_field_name(spec, TS_FIELD("procedure"));
+                }
+                if (!ts_node_is_null(nm)) {
+                    return nm;
+                }
+            }
+        }
+
+        /* Thrift / Cap'n Proto / Smithy (no `name` field): the def name is a
+         * plain visible `identifier` child of the statement/definition node. */
+        if (lang == CBM_LANG_THRIFT || lang == CBM_LANG_SMITHY) {
+            TSNode id = cbm_find_child_by_kind(node, "identifier");
+            if (!ts_node_is_null(id)) {
+                return id;
+            }
+        }
+
+        /* Cap'n Proto (FIELD_COUNT 0): name is an aliased *_identifier child. */
+        if (lang == CBM_LANG_CAPNP) {
+            const char *name_kind = NULL;
+            if (strcmp(kind, "struct") == 0 || strcmp(kind, "interface") == 0) {
+                name_kind = "type_identifier";
+            } else if (strcmp(kind, "enum") == 0) {
+                name_kind = "enum_identifier";
+            } else if (strcmp(kind, "method") == 0) {
+                name_kind = "method_identifier";
+            }
+            if (name_kind) {
+                TSNode id = cbm_find_child_by_kind(node, name_kind);
+                if (!ts_node_is_null(id)) {
+                    return id;
+                }
+            }
+        }
+
+        /* CMake (FIELD_COUNT 0): function(foo)/macro(foo) — the name is nested as
+         * *_command > argument_list > argument > unquoted_argument. */
+        if (lang == CBM_LANG_CMAKE &&
+            (strcmp(kind, "function_def") == 0 || strcmp(kind, "macro_def") == 0)) {
+            const char *cmd_kind =
+                strcmp(kind, "function_def") == 0 ? "function_command" : "macro_command";
+            TSNode cmd = cbm_find_child_by_kind(node, cmd_kind);
+            if (!ts_node_is_null(cmd)) {
+                TSNode alist = cbm_find_child_by_kind(cmd, "argument_list");
+                if (!ts_node_is_null(alist)) {
+                    TSNode arg = cbm_find_child_by_kind(alist, "argument");
+                    if (!ts_node_is_null(arg)) {
+                        TSNode uq = cbm_find_child_by_kind(arg, "unquoted_argument");
+                        return ts_node_is_null(uq) ? arg : uq;
+                    }
+                }
+            }
+        }
+
+        /* Puppet: function_declaration name is a plain identifier/class_identifier
+         * child (no `name` field). */
+        if (lang == CBM_LANG_PUPPET &&
+            (strcmp(kind, "function_declaration") == 0 || strcmp(kind, "lambda") == 0)) {
+            TSNode id = cbm_find_child_by_kind(node, "identifier");
+            if (ts_node_is_null(id)) {
+                id = cbm_find_child_by_kind(node, "class_identifier");
+            }
+            if (!ts_node_is_null(id)) {
+                return id;
+            }
+        }
+
+        /* Assembly (GAS): a bare `label` (`foo:`) reduces with no `name` field;
+         * its name child is aliased to `ident`. */
+        if (lang == CBM_LANG_ASSEMBLY && strcmp(kind, "label") == 0) {
+            TSNode id = cbm_find_child_by_kind(node, "ident");
+            if (!ts_node_is_null(id)) {
+                return id;
+            }
+        }
+
+        {
+            TSNode r = resolve_toplevel_arrow_name(node, kind);
+            if (!ts_node_is_null(r)) {
+                return r;
+            }
+        }
+        {
+            TSNode r = resolve_func_name_scripting(node, lang, kind);
+            if (!ts_node_is_null(r)) {
+                return r;
+            }
+        }
+        {
+            TSNode r = resolve_func_name_fp(node, lang, kind, name);
+            if (!ts_node_is_null(r)) {
+                return r;
+            }
+        }
+
+        {
+            TSNode prev = node;
+            TSNode r = resolve_func_name_c_family(&node, lang, kind);
+            if (!ts_node_is_null(r)) {
+                return r;
+            }
+            if (!ts_node_eq(prev, node)) {
+                continue; /* template unwrapped — retry */
+            }
+        }
+
+        break;
+    } /* end template depth loop */
+    TSNode null_node = {0};
+    return null_node;
+}
+SPAN g1r004_after/cbm_cpp_out_of_line_parent_class a620c219a40e359f6e8ad72270d690ba 43
+char *cbm_cpp_out_of_line_parent_class(CBMArena *a, TSNode node, const char *source) {
+    // Descend the declarator chain to its qualified_identifier, if any.
+    TSNode qid = {0};
+    TSNode decl = ts_node_child_by_field_name(node, TS_FIELD("declarator"));
+    for (int depth = 0; depth < DECLARATOR_DEPTH_LIMIT && !ts_node_is_null(decl); depth++) {
+        const char *dk = ts_node_type(decl);
+        if (strcmp(dk, "qualified_identifier") == 0 || strcmp(dk, "scoped_identifier") == 0) {
+            qid = decl;
+            break;
+        }
+        TSNode inner = ts_node_child_by_field_name(decl, TS_FIELD("declarator"));
+        if (ts_node_is_null(inner) && ts_node_named_child_count(decl) > 0) {
+            inner = ts_node_named_child(decl, 0);
+        }
+        if (ts_node_is_null(inner)) {
+            break;
+        }
+        decl = inner;
+    }
+    if (ts_node_is_null(qid)) {
+        return NULL;
+    }
+    // The qualified_identifier's `scope` is the parent. For a nested scope
+    // (`ns::Foo`) descend through its `name` field to the innermost segment so
+    // the direct parent ("Foo") is returned, not the outer namespace.
+    TSNode scope = ts_node_child_by_field_name(qid, TS_FIELD("scope"));
+    if (ts_node_is_null(scope)) {
+        return NULL;
+    }
+    for (int depth = 0; depth < DECLARATOR_DEPTH_LIMIT; depth++) {
+        const char *sk = ts_node_type(scope);
+        if (strcmp(sk, "qualified_identifier") != 0 && strcmp(sk, "scoped_identifier") != 0) {
+            break;
+        }
+        TSNode name = ts_node_child_by_field_name(scope, TS_FIELD("name"));
+        if (ts_node_is_null(name)) {
+            break;
+        }
+        scope = name;
+    }
+    char *text = cbm_node_text(a, scope, source);
+    return (text && text[0]) ? text : NULL;
+}
+SPAN g1r005_after/cbm_hook_augment_read_stdin cb2a5f92a64f1467032591f071ddf683 13
+char *cbm_hook_augment_read_stdin(void) {
+    char *buf = malloc(HA_STDIN_CAP + 1);
+    if (!buf) {
+        return NULL;
+    }
+    size_t total = 0;
+    size_t n;
+    while (total < HA_STDIN_CAP && (n = fread(buf + total, 1, HA_STDIN_CAP - total, stdin)) > 0) {
+        total += n;
+    }
+    buf[total] = '\0';
+    return buf;
+}
+SPAN g1r005_after/cbm_hook_augment_process_for 2a481dc9ae94191dae0dfc04619d6b59 13
+char *cbm_hook_augment_process_for(cbm_mcp_server_t *srv,
+                                   const char *input_json,
+                                   const char *forced_event,
+                                   const char *dialect_name) {
+    ha_lifecycle_dialect_t dialect = HA_DIALECT_EVENT;
+    if (!srv || !input_json ||
+        (dialect_name && dialect_name[0] &&
+         !ha_dialect_from_name(dialect_name, &dialect)) ||
+        !ha_invocation_supported(dialect, forced_event)) {
+        return NULL;
+    }
+    return ha_process(srv, input_json, forced_event, dialect);
+}
+SPAN g1r006_after/cbm_tree_scalar_str 03307df26d207617044ccbcfb7b66884 6
+void cbm_tree_scalar_str(cbm_sb_t *sb, const char *key, const char *val) {
+    cbm_sb_append(sb, key);
+    cbm_sb_append_n(sb, ": ", 2);
+    append_value(sb, val);
+    cbm_sb_append_n(sb, "\n", 1);
+}
+SPAN g1r006_after/cbm_tree_scalar_bool 98b5bf1199969f5bf324dd6167e08c58 6
+void cbm_tree_scalar_bool(cbm_sb_t *sb, const char *key, bool v) {
+    cbm_sb_append(sb, key);
+    cbm_sb_append_n(sb, ": ", 2);
+    cbm_sb_append(sb, v ? "true" : "false");
+    cbm_sb_append_n(sb, "\n", 1);
+}
+SPAN g1r006_after/cbm_tree_cell_str a81c6031ae37c13a5347914c176f1a7f 6
+void cbm_tree_cell_str(cbm_sb_t *sb, const char *val, bool first) {
+    if (!first) {
+        cbm_sb_append_n(sb, " ", 1);
+    }
+    append_value(sb, val ? val : "");
+}
+SPAN g1r006_after/cbm_tree_cell_bool 7691f3878020d43d7be97ec342e769ac 6
+void cbm_tree_cell_bool(cbm_sb_t *sb, bool v, bool first) {
+    if (!first) {
+        cbm_sb_append_n(sb, " ", 1);
+    }
+    cbm_sb_append(sb, v ? "true" : "false");
+}
+SPAN g1r007_after/hyp_activation_transaction_refusal_note 58cb9c72d2994100cfc8b30108a5e513 3
+const char *hyp_activation_transaction_refusal_note(void) {
+    return g_activation_refusal_note;
+}
+SPAN g1r008_after/lg_free bb39073094b17ec0edfbe0914424e698 10
+static void lg_free(cbm_lg_t *g) {
+    free(g->off);
+    free(g->nbr);
+    free(g->w);
+    free(g->k);
+    g->off = NULL;
+    g->nbr = NULL;
+    g->w = NULL;
+    g->k = NULL;
+}
+SPAN g1r008_after/want_aspect d69d5c4047f0605aebd630996b22dd22 14
+static bool want_aspect(const char **aspects, int aspect_count, const char *name) {
+    if (!aspects || aspect_count == 0) {
+        return true;
+    }
+    for (int i = 0; i < aspect_count; i++) {
+        if (strcmp(aspects[i], "all") == 0) {
+            return true;
+        }
+        if (strcmp(aspects[i], name) == 0) {
+            return true;
+        }
+    }
+    return false;
+}
+SPAN forkA/ha_sanitize_metadata a2f88571a47f75066615070647fe3ccc 42
+static void ha_sanitize_metadata(const char *input, char *output, size_t output_size) {
+    if (!output || output_size == 0U) {
+        return;
+    }
+    output[0] = '\0';
+    if (!input) {
+        return;
+    }
+    size_t used = 0U;
+    bool previous_space = false;
+    size_t input_length = strlen(input);
+    for (size_t pos = 0U; pos < input_length && used + 1U < output_size;) {
+        unsigned char ch = (unsigned char)input[pos];
+        if (ch < 0x20U || ch == 0x7fU) {
+            if (!previous_space && used > 0U) {
+                output[used++] = ' ';
+                previous_space = true;
+            }
+            pos++;
+            continue;
+        }
+        size_t sequence =
+            ha_utf8_sequence_length((const unsigned char *)input + pos, input_length - pos);
+        if (sequence == 0U) {
+            output[used++] = '?';
+            previous_space = false;
+            pos++;
+            continue;
+        }
+        if (used + sequence >= output_size) {
+            break;
+        }
+        memcpy(output + used, input + pos, sequence);
+        used += sequence;
+        pos += sequence;
+        previous_space = ch == ' ';
+    }
+    while (used > 0U && output[used - 1U] == ' ') {
+        used--;
+    }
+    output[used] = '\0';
+}
+SPAN forkB/ha_sanitize_metadata a2f88571a47f75066615070647fe3ccc 42
+static void ha_sanitize_metadata(const char *input, char *output, size_t output_size) {
+    if (!output || output_size == 0U) {
+        return;
+    }
+    output[0] = '\0';
+    if (!input) {
+        return;
+    }
+    size_t used = 0U;
+    bool previous_space = false;
+    size_t input_length = strlen(input);
+    for (size_t pos = 0U; pos < input_length && used + 1U < output_size;) {
+        unsigned char ch = (unsigned char)input[pos];
+        if (ch < 0x20U || ch == 0x7fU) {
+            if (!previous_space && used > 0U) {
+                output[used++] = ' ';
+                previous_space = true;
+            }
+            pos++;
+            continue;
+        }
+        size_t sequence =
+            ha_utf8_sequence_length((const unsigned char *)input + pos, input_length - pos);
+        if (sequence == 0U) {
+            output[used++] = '?';
+            previous_space = false;
+            pos++;
+            continue;
+        }
+        if (used + sequence >= output_size) {
+            break;
+        }
+        memcpy(output + used, input + pos, sequence);
+        used += sequence;
+        pos += sequence;
+        previous_space = ch == ' ';
+    }
+    while (used > 0U && output[used - 1U] == ' ') {
+        used--;
+    }
+    output[used] = '\0';
+}
+SPAN forkA/ws_volume_prefix_len b95846577075797f5834e719407c7a1d 28
+static size_t ws_volume_prefix_len(const char *path) {
+    if (!path || !path[0]) {
+        return 0;
+    }
+    /* UNC: two separators, a host, then a share. */
+    if (ws_is_sep(path[0]) && ws_is_sep(path[1])) {
+        size_t i = 2;
+        while (path[i] && !ws_is_sep(path[i])) { /* host */
+            i++;
+        }
+        while (ws_is_sep(path[i])) {
+            i++;
+        }
+        while (path[i] && !ws_is_sep(path[i])) { /* share */
+            i++;
+        }
+        return i;
+    }
+    if (ws_is_sep(path[0])) {
+        return 1;
+    }
+    /* Drive-letter root, with or without a trailing separator. */
+    if (path[1] == ':' &&
+        ((path[0] >= 'A' && path[0] <= 'Z') || (path[0] >= 'a' && path[0] <= 'z'))) {
+        return ws_is_sep(path[2]) ? 3 : 2;
+    }
+    return 0;
+}
+SPAN forkB/ws_volume_prefix_len b95846577075797f5834e719407c7a1d 28
+static size_t ws_volume_prefix_len(const char *path) {
+    if (!path || !path[0]) {
+        return 0;
+    }
+    /* UNC: two separators, a host, then a share. */
+    if (ws_is_sep(path[0]) && ws_is_sep(path[1])) {
+        size_t i = 2;
+        while (path[i] && !ws_is_sep(path[i])) { /* host */
+            i++;
+        }
+        while (ws_is_sep(path[i])) {
+            i++;
+        }
+        while (path[i] && !ws_is_sep(path[i])) { /* share */
+            i++;
+        }
+        return i;
+    }
+    if (ws_is_sep(path[0])) {
+        return 1;
+    }
+    /* Drive-letter root, with or without a trailing separator. */
+    if (path[1] == ':' &&
+        ((path[0] >= 'A' && path[0] <= 'Z') || (path[0] >= 'a' && path[0] <= 'z'))) {
+        return ws_is_sep(path[2]) ? 3 : 2;
+    }
+    return 0;
+}
+SPAN forkA/parse_comparison_op e9af53257e22702c2458eff52849d523 38
+static char *parse_comparison_op(parser_t *p) {
+    if (match(p, TOK_EQ)) {
+        return heap_strdup("=");
+    }
+    if (match(p, TOK_NEQ)) {
+        return heap_strdup("<>");
+    }
+    if (match(p, TOK_EQTILDE)) {
+        return heap_strdup("=~");
+    }
+    if (match(p, TOK_GTE)) {
+        return heap_strdup(">=");
+    }
+    if (match(p, TOK_LTE)) {
+        return heap_strdup("<=");
+    }
+    if (match(p, TOK_GT)) {
+        return heap_strdup(">");
+    }
+    if (match(p, TOK_LT)) {
+        return heap_strdup("<");
+    }
+    if (check(p, TOK_CONTAINS)) {
+        advance(p);
+        return heap_strdup("CONTAINS");
+    }
+    if (check(p, TOK_STARTS)) {
+        advance(p);
+        expect(p, TOK_WITH);
+        return heap_strdup("STARTS WITH");
+    }
+    if (check(p, TOK_ENDS)) {
+        advance(p);
+        expect(p, TOK_WITH);
+        return heap_strdup("ENDS WITH");
+    }
+    return NULL;
+}
+SPAN forkB/parse_comparison_op e9af53257e22702c2458eff52849d523 38
+static char *parse_comparison_op(parser_t *p) {
+    if (match(p, TOK_EQ)) {
+        return heap_strdup("=");
+    }
+    if (match(p, TOK_NEQ)) {
+        return heap_strdup("<>");
+    }
+    if (match(p, TOK_EQTILDE)) {
+        return heap_strdup("=~");
+    }
+    if (match(p, TOK_GTE)) {
+        return heap_strdup(">=");
+    }
+    if (match(p, TOK_LTE)) {
+        return heap_strdup("<=");
+    }
+    if (match(p, TOK_GT)) {
+        return heap_strdup(">");
+    }
+    if (match(p, TOK_LT)) {
+        return heap_strdup("<");
+    }
+    if (check(p, TOK_CONTAINS)) {
+        advance(p);
+        return heap_strdup("CONTAINS");
+    }
+    if (check(p, TOK_STARTS)) {
+        advance(p);
+        expect(p, TOK_WITH);
+        return heap_strdup("STARTS WITH");
+    }
+    if (check(p, TOK_ENDS)) {
+        advance(p);
+        expect(p, TOK_WITH);
+        return heap_strdup("ENDS WITH");
+    }
+    return NULL;
+}
+SPAN forkA/slab_map_set ea4fc72c23a3ba6e2da077bcf5ddbce6 36
+static bool slab_map_set(uintptr_t base, slab_page_t *val) {
+    size_t i1, i2, i3;
+    if (!slab_map_indices(base, &i1, &i2, &i3)) {
+        return false;
+    }
+    slab_map_lock();
+    slab_map_l2_t *l2 = atomic_load_explicit(&g_slab_map_root[i1], memory_order_relaxed);
+    if (!l2) {
+        if (!val) {
+            slab_map_unlock();
+            return true; /* nothing to unregister */
+        }
+        l2 = (slab_map_l2_t *)calloc(1, sizeof(*l2));
+        if (!l2) {
+            slab_map_unlock();
+            return false;
+        }
+        atomic_store_explicit(&g_slab_map_root[i1], l2, memory_order_release);
+    }
+    slab_map_l3_t *l3 = atomic_load_explicit(&l2->e[i2], memory_order_relaxed);
+    if (!l3) {
+        if (!val) {
+            slab_map_unlock();
+            return true;
+        }
+        l3 = (slab_map_l3_t *)calloc(1, sizeof(*l3));
+        if (!l3) {
+            slab_map_unlock();
+            return false;
+        }
+        atomic_store_explicit(&l2->e[i2], l3, memory_order_release);
+    }
+    atomic_store_explicit(&l3->e[i3], val, memory_order_release);
+    slab_map_unlock();
+    return true;
+}
+SPAN forkB/slab_map_set ea4fc72c23a3ba6e2da077bcf5ddbce6 36
+static bool slab_map_set(uintptr_t base, slab_page_t *val) {
+    size_t i1, i2, i3;
+    if (!slab_map_indices(base, &i1, &i2, &i3)) {
+        return false;
+    }
+    slab_map_lock();
+    slab_map_l2_t *l2 = atomic_load_explicit(&g_slab_map_root[i1], memory_order_relaxed);
+    if (!l2) {
+        if (!val) {
+            slab_map_unlock();
+            return true; /* nothing to unregister */
+        }
+        l2 = (slab_map_l2_t *)calloc(1, sizeof(*l2));
+        if (!l2) {
+            slab_map_unlock();
+            return false;
+        }
+        atomic_store_explicit(&g_slab_map_root[i1], l2, memory_order_release);
+    }
+    slab_map_l3_t *l3 = atomic_load_explicit(&l2->e[i2], memory_order_relaxed);
+    if (!l3) {
+        if (!val) {
+            slab_map_unlock();
+            return true;
+        }
+        l3 = (slab_map_l3_t *)calloc(1, sizeof(*l3));
+        if (!l3) {
+            slab_map_unlock();
+            return false;
+        }
+        atomic_store_explicit(&l2->e[i2], l3, memory_order_release);
+    }
+    atomic_store_explicit(&l3->e[i3], val, memory_order_release);
+    slab_map_unlock();
+    return true;
+}
+SPAN unrecorded/run_closure_delta 7c66cf7994c3d20d9f5845eba080b5a8 1
+static int run_closure_delta(hyp_pipeline_t *p, const char *db_path, const char *project,
+SPAN unrecorded/hyp_layout_compute b9e945a21fe24c9f3298b5aaa4b4cb4b 1
+hyp_layout_result_t *hyp_layout_compute(hyp_store_t *store, const char *project,
+SPAN unrecorded/kt_repair_bodyless_interface_methods 51286fd4e25c8b1bde40d3f0451fdd19 1
+static char *kt_repair_bodyless_interface_methods(HYPArena *arena, const char *src, int src_len,
+SPAN unrecorded/process_class_for_fields 8481766d326531752d60beb6c922524f 1
+static void process_class_for_fields(PHPLSPContext *ctx, HYPTypeRegistry *reg, TSNode class_node,
+SPAN unrecorded/rust_eval_expr_type 120c38174a985780a60721048a68a49a 1
+const HYPType *rust_eval_expr_type(RustLSPContext *ctx, TSNode node) {
+SPAN unrecorded/c_neg_memo_insert 17d5dbfaae8a24d7bfaa60165cf77eb4 41
+static void c_neg_memo_insert(CLSPContext *ctx, uint64_t h) {
+    // Lazy alloc / grow-by-rehash at 70% load. On OOM, silently disable the memo
+    // (correctness is unaffected — the full cascade still runs).
+    if (ctx->neg_memo == NULL) {
+        uint64_t *nm = (uint64_t *)calloc(1024, sizeof(uint64_t));
+        if (!nm)
+            return;
+        ctx->neg_memo = nm;
+        ctx->neg_memo_cap = 1024;
+        ctx->neg_memo_count = 0;
+    } else if ((ctx->neg_memo_count + 1) * 10 >= ctx->neg_memo_cap * 7) {
+        int new_cap = ctx->neg_memo_cap * 2;
+        uint64_t *nm = (uint64_t *)calloc((size_t)new_cap, sizeof(uint64_t));
+        if (nm) {
+            uint64_t nmask = (uint64_t)new_cap - 1;
+            for (int j = 0; j < ctx->neg_memo_cap; j++) {
+                uint64_t v = ctx->neg_memo[j];
+                if (v == 0)
+                    continue;
+                uint64_t k = v & nmask;
+                while (nm[k] != 0)
+                    k = (k + 1) & nmask;
+                nm[k] = v;
+            }
+            free(ctx->neg_memo);
+            ctx->neg_memo = nm;
+            ctx->neg_memo_cap = new_cap;
+        }
+        // if calloc failed: keep the existing table (load may exceed 70%, still correct)
+    }
+    uint64_t mask = (uint64_t)ctx->neg_memo_cap - 1;
+    for (uint64_t i = h & mask;; i = (i + 1) & mask) {
+        if (ctx->neg_memo[i] == 0) {
+            ctx->neg_memo[i] = h;
+            ctx->neg_memo_count++;
+            return;
+        }
+        if (ctx->neg_memo[i] == h)
+            return; // already recorded
+    }
+}

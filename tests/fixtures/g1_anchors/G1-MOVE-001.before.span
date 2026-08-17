@@ -1,0 +1,130 @@
+static char *handle_query_graph(hyp_mcp_server_t *srv, const char *args) {
+    char *query = hyp_mcp_get_string_arg(args, "query");
+    char *project = get_project_arg(args);
+    hyp_store_t *store = resolve_store(srv, project);
+    int max_rows = hyp_mcp_get_int_arg(args, "max_rows", 0);
+
+    /* graph="missed" (#963): run the SAME cypher against the derived
+     * miss-graph view (shadow project "<project>::missed") instead of the
+     * code graph — file structure of not-fully-indexed files only. */
+    char *graph_arg = hyp_mcp_get_string_arg(args, "graph");
+    bool missed_graph = graph_arg && strcmp(graph_arg, "missed") == 0;
+    free(graph_arg);
+
+    if (!query) {
+        free(project);
+        return hyp_mcp_text_result("query is required", true);
+    }
+    if (missed_graph && !project) {
+        free(query);
+        return hyp_mcp_text_result("project is required when graph=\"missed\"", true);
+    }
+    if (!store) {
+        char *_err = build_project_list_error("project not found or not indexed");
+        char *_res = hyp_mcp_text_result(_err, true);
+        free(_err);
+        free(project);
+        free(query);
+        return _res;
+    }
+
+    char *not_indexed = verify_project_indexed(store, project);
+    if (not_indexed) {
+        free(project);
+        free(query);
+        return not_indexed;
+    }
+
+    char covproj[HYP_SZ_512];
+    const char *cypher_project = project;
+    if (missed_graph) {
+        hyp_store_coverage_shadow_project(covproj, sizeof(covproj), project);
+        cypher_project = covproj;
+    }
+
+    hyp_cypher_result_t result = {0};
+    int rc = hyp_cypher_execute(store, query, cypher_project, max_rows, &result);
+
+    if (rc < 0) {
+        char *err_msg = result.error ? result.error : "query execution failed";
+        char *resp = hyp_mcp_text_result(err_msg, true);
+        hyp_cypher_result_free(&result);
+        free(query);
+        free(project);
+        return resp;
+    }
+
+    /* Response encoding: TOON table by default (the columns double as the
+     * table header); format:"json" restores the legacy columns/rows arrays. */
+    char *qg_format = hyp_mcp_get_string_arg(args, "format");
+    bool qg_legacy_json = qg_format && strcmp(qg_format, "json") == 0;
+    free(qg_format);
+
+    char *json = NULL;
+    if (!qg_legacy_json) {
+        hyp_sb_t sb;
+        hyp_sb_init(&sb);
+        hyp_tree_table_header(&sb, "rows", result.row_count, (const char *const *)result.columns,
+                              result.col_count);
+        for (int r = 0; r < result.row_count; r++) {
+            hyp_tree_row_begin(&sb);
+            for (int c = 0; c < result.col_count; c++) {
+                hyp_tree_cell_str(&sb, result.rows[r][c], c == 0);
+            }
+            hyp_tree_row_end(&sb);
+        }
+        hyp_tree_scalar_int(&sb, "total", result.row_count);
+        if (result.warning) {
+            hyp_tree_scalar_str(&sb, "warning", result.warning);
+        }
+        if (result.row_count == 0) {
+            hyp_tree_scalar_str(&sb, "hint",
+                                "Query returned no results. Use get_graph_schema() to see "
+                                "available labels and edge types.");
+        }
+        json = hyp_sb_finish(&sb);
+    } else {
+        yyjson_mut_doc *doc = yyjson_mut_doc_new(NULL);
+        yyjson_mut_val *root = yyjson_mut_obj(doc);
+        yyjson_mut_doc_set_root(doc, root);
+
+        /* columns */
+        yyjson_mut_val *cols = yyjson_mut_arr(doc);
+        for (int i = 0; i < result.col_count; i++) {
+            yyjson_mut_arr_add_str(doc, cols, result.columns[i]);
+        }
+        yyjson_mut_obj_add_val(doc, root, "columns", cols);
+
+        /* rows */
+        yyjson_mut_val *rows = yyjson_mut_arr(doc);
+        for (int r = 0; r < result.row_count; r++) {
+            yyjson_mut_val *row = yyjson_mut_arr(doc);
+            for (int c = 0; c < result.col_count; c++) {
+                yyjson_mut_arr_add_str(doc, row, result.rows[r][c]);
+            }
+            yyjson_mut_arr_add_val(rows, row);
+        }
+        yyjson_mut_obj_add_val(doc, root, "rows", rows);
+        yyjson_mut_obj_add_int(doc, root, "total", result.row_count);
+        if (result.warning) {
+            yyjson_mut_obj_add_str(doc, root, "warning", result.warning);
+        }
+
+        if (result.row_count == 0) {
+            yyjson_mut_obj_add_str(
+                doc, root, "hint",
+                "Query returned no results. Use get_graph_schema() to see available labels and "
+                "edge types.");
+        }
+
+        json = yy_doc_to_str(doc);
+        yyjson_mut_doc_free(doc);
+    }
+    hyp_cypher_result_free(&result);
+    free(query);
+    free(project);
+
+    char *res = hyp_mcp_text_result(json ? json : "out of memory", json == NULL);
+    free(json);
+    return res;
+}

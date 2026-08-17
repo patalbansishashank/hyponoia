@@ -601,6 +601,11 @@ extern void suite_arena(void);
 extern void suite_hash_table(void);
 extern void suite_dyn_array(void);
 extern void suite_str_intern(void);
+extern void suite_record(void);
+extern void suite_scrub(void);
+extern void suite_watched_ingest(void);
+extern void suite_transcript(void);
+extern void suite_feed(void);
 extern void suite_log(void);
 extern void suite_str_util(void);
 extern void suite_workspace(void);
@@ -620,6 +625,7 @@ extern void suite_ac(void);
 extern void suite_store_nodes(void);
 extern void suite_store_edges(void);
 extern void suite_store_search(void);
+extern void suite_record_store(void);
 extern void suite_cypher(void);
 extern void suite_mcp(void);
 extern void suite_mcp_mutation_guard(void);
@@ -637,6 +643,7 @@ extern void suite_language(void);
 extern void suite_userconfig(void);
 extern void suite_gitignore(void);
 extern void suite_git_context(void);
+extern void suite_roles(void);
 extern void suite_discover(void);
 extern void suite_graph_buffer(void);
 extern void suite_registry(void);
@@ -645,6 +652,21 @@ extern void suite_pipeline_semantic_manifest_repro(void);
 extern void suite_cross_repo(void);
 extern void suite_index_resilience(void);
 extern void suite_fqn(void);
+extern void suite_fqn_differential(void);
+extern void suite_identity(void);
+extern void suite_anchor(void);
+extern void suite_anchor_reindex(void);
+extern void suite_orphan(void);
+extern void suite_g1_replay(void);
+extern void suite_g3_controls(void);
+extern void suite_g4_cross(void);
+extern void suite_comment_migrate(void);
+extern void suite_g2_retrieval(void);
+extern void suite_sync(void);
+extern void suite_adr_records(void);
+extern void suite_workspace_resolve(void);
+extern void suite_workspace_calls(void);
+extern void suite_generation_carry(void);
 extern void suite_route_canon(void);
 extern void suite_path_alias(void);
 extern void suite_watcher(void);
@@ -679,7 +701,10 @@ extern void suite_infrascan(void);
 extern void suite_cli(void);
 extern void suite_agent_clients(void);
 extern void suite_agent_profiles(void);
+extern void suite_tool_surface(void);
 extern void suite_config_json_like(void);
+extern void suite_onboard(void);
+extern void suite_g5_zero_config(void);
 extern void suite_config_toml_edit(void);
 extern void suite_config_yaml_edit(void);
 extern void suite_config_text_edit(void);
@@ -731,6 +756,7 @@ extern void suite_semantic(void);
 extern void suite_ask(void);
 extern void suite_ask_batch(void);
 extern void suite_ask_vectors(void);
+extern void suite_record_vectors(void);
 extern void suite_ask_provider(void);
 extern void suite_ask_embed(void);
 extern void suite_ast_profile(void);
@@ -853,6 +879,9 @@ int main(int argc, char **argv) {
     RUN_SELECTED_SUITE(hash_table);
     RUN_SELECTED_SUITE(dyn_array);
     RUN_SELECTED_SUITE(str_intern);
+    RUN_SELECTED_SUITE(record);
+    RUN_SELECTED_SUITE(scrub);
+    RUN_SELECTED_SUITE(feed);
     RUN_SELECTED_SUITE(log);
     RUN_SELECTED_SUITE(str_util);
     RUN_SELECTED_SUITE(workspace);
@@ -862,6 +891,10 @@ int main(int argc, char **argv) {
     RUN_SELECTED_SUITE(private_file_lock);
     RUN_SELECTED_SUITE(lock_registry);
     RUN_SELECTED_SUITE(dump_verify);
+
+    /* Feed adapters */
+    RUN_SELECTED_SUITE(watched_ingest);
+    RUN_SELECTED_SUITE(transcript);
 
     /* Existing C code regression tests */
     RUN_SELECTED_SUITE(ac);
@@ -880,6 +913,7 @@ int main(int argc, char **argv) {
     RUN_SELECTED_SUITE(store_bulk);
     RUN_SELECTED_SUITE(store_pragmas);
     RUN_SELECTED_SUITE(store_checkpoint);
+    RUN_SELECTED_SUITE(record_store);
     RUN_SELECTED_SUITE(dump_verify_io);
 
     /* Cypher (M6) */
@@ -906,6 +940,7 @@ int main(int argc, char **argv) {
     RUN_SELECTED_SUITE(userconfig);
     RUN_SELECTED_SUITE(gitignore);
     RUN_SELECTED_SUITE(git_context);
+    RUN_SELECTED_SUITE(roles);
     RUN_SELECTED_SUITE(discover);
 
     /* Graph Buffer (M7) */
@@ -933,6 +968,21 @@ int main(int argc, char **argv) {
     RUN_SELECTED_SUITE(cross_repo);
     RUN_SELECTED_SUITE(index_resilience);
     RUN_SELECTED_SUITE(fqn);
+    RUN_SELECTED_SUITE(fqn_differential);
+    RUN_SELECTED_SUITE(identity);
+    RUN_SELECTED_SUITE(anchor);
+    RUN_SELECTED_SUITE(anchor_reindex);
+    RUN_SELECTED_SUITE(orphan);
+    RUN_SELECTED_SUITE(g1_replay);
+    RUN_SELECTED_SUITE(g3_controls);
+    RUN_SELECTED_SUITE(g4_cross);
+    RUN_SELECTED_SUITE(comment_migrate);
+    RUN_SELECTED_SUITE(g2_retrieval);
+    RUN_SELECTED_SUITE(sync);
+    RUN_SELECTED_SUITE(adr_records);
+    RUN_SELECTED_SUITE(workspace_resolve);
+    RUN_SELECTED_SUITE(workspace_calls);
+    RUN_SELECTED_SUITE(generation_carry);
     RUN_SELECTED_SUITE(route_canon);
     RUN_SELECTED_SUITE(path_alias);
 
@@ -984,12 +1034,15 @@ int main(int argc, char **argv) {
     RUN_SELECTED_SUITE(cli);
     RUN_SELECTED_SUITE(agent_clients);
     RUN_SELECTED_SUITE(agent_profiles);
+    RUN_SELECTED_SUITE(tool_surface);
     RUN_SELECTED_SUITE(config_json_like);
     RUN_SELECTED_SUITE(config_toml_edit);
     RUN_SELECTED_SUITE(config_yaml_edit);
     RUN_SELECTED_SUITE(config_text_edit);
     RUN_SELECTED_SUITE(activation_transaction);
     RUN_SELECTED_SUITE(model_fetch);
+    RUN_SELECTED_SUITE(onboard);
+    RUN_SELECTED_SUITE(g5_zero_config);
 
     /* System info + worker pool (parallelism) */
     RUN_SELECTED_SUITE(system_info);
@@ -1025,6 +1078,8 @@ int main(int argc, char **argv) {
     /* `ask` lane: the batch rule, the vector store, the opt-in embed pass */
     RUN_SELECTED_SUITE(ask_batch);
     RUN_SELECTED_SUITE(ask_vectors);
+    /* Record-content vectors, content-hash keyed, shippable */
+    RUN_SELECTED_SUITE(record_vectors);
     RUN_SELECTED_SUITE(ask_provider);
     RUN_SELECTED_SUITE(ask_embed);
     RUN_SELECTED_SUITE(simhash);

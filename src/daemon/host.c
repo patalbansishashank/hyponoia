@@ -19,6 +19,7 @@
 #include "foundation/secure_random.h"
 #include "foundation/sha256.h"
 #include "mcp/index_supervisor.h"
+#include "memory/sync.h"
 #include "store/store.h"
 #include "ui/config.h"
 #include "ui/asset_pack.h"
@@ -634,6 +635,10 @@ static bool host_state_prepare(host_state_t *host, const hyp_daemon_ipc_endpoint
     host->watch_store = hyp_store_open_memory();
     host->project_locks = hyp_project_lock_manager_new(endpoint);
     host->watcher = hyp_watcher_new(host->watch_store, host_watcher_index, host);
+    /* The one production installation of the memory pull. The watcher that
+     * re-indexes a changed repository fires it in the same pass, which is why
+     * there is no agent-callable sync and no timer anywhere. */
+    hyp_sync_install_watcher_trigger(host->watcher);
     hyp_daemon_application_config_t application_config = {
         .watcher = host->watcher,
         .config = host->runtime_config,

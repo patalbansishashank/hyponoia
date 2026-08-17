@@ -1,0 +1,26 @@
+static void adr_list_sections_from_content(yyjson_mut_doc *doc, yyjson_mut_val *root_obj,
+                                           const char *content) {
+    yyjson_mut_val *sections = yyjson_mut_arr(doc);
+    const char *p = content;
+    while (p && *p) {
+        const char *eol = strchr(p, '\n');
+        size_t linelen = eol ? (size_t)(eol - p) : strlen(p);
+        while (linelen > 0 && p[linelen - SKIP_ONE] == '\r') {
+            linelen--;
+        }
+        if (linelen > 0 && p[0] == '#') {
+            char hdr[CBM_SZ_1K];
+            if (linelen >= sizeof(hdr)) {
+                linelen = sizeof(hdr) - SKIP_ONE;
+            }
+            memcpy(hdr, p, linelen);
+            hdr[linelen] = '\0';
+            yyjson_mut_arr_add_strcpy(doc, sections, hdr);
+        }
+        if (!eol) {
+            break;
+        }
+        p = eol + SKIP_ONE;
+    }
+    yyjson_mut_obj_add_val(doc, root_obj, "sections", sections);
+}

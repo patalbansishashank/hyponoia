@@ -2,16 +2,38 @@
 # commit-msg hook — STRICT DCO enforcement at commit time.
 # Every commit must carry a Signed-off-by trailer (git commit -s).
 # Install with: scripts/install-git-hooks.sh
+#
+# The decision is delegated to scripts/dco-signed.sh, which is also what
+# scripts/check-dco.sh calls. One implementation, so commit time and merge time
+# cannot disagree about what "signed" means — they did, and a blank line before
+# the Co-Authored-By trailers was enough to make a commit pass here and fail
+# there.
 
-if grep -qE '^Signed-off-by: .+ <.+@.+>' "$1"; then
+ROOT=$(git rev-parse --show-toplevel 2>/dev/null) || exit 0
+SIGNED="$ROOT/scripts/dco-signed.sh"
+AUTHOR_EMAIL=$(git var GIT_AUTHOR_IDENT | sed -n 's/.*<\(.*\)>.*/\1/p')
+
+if [ ! -x "$SIGNED" ]; then
+    echo "COMMIT REJECTED: $SIGNED is missing or not executable." >&2
+    echo "The DCO gate refuses when it cannot verify." >&2
+    exit 1
+fi
+
+if "$SIGNED" "$AUTHOR_EMAIL" "$1"; then
     exit 0
 fi
 
 echo "" >&2
 echo "COMMIT REJECTED: missing Signed-off-by trailer (Developer Certificate of Origin)." >&2
+echo "  author: $AUTHOR_EMAIL" >&2
 echo "" >&2
 echo "  Sign your commit:        git commit -s" >&2
 echo "  Fix the last commit:     git commit --amend -s" >&2
+echo "" >&2
+echo "COMMIT-TRAILERS: keep Signed-off-by in the SAME block as any" >&2
+echo "Co-Authored-By / Claude-Session lines — no blank line between them, or" >&2
+echo "git's trailer parser drops Signed-off-by out of the trailer block and" >&2
+echo "ecosystem DCO tooling will not see it." >&2
 echo "" >&2
 echo "The sign-off certifies you have the right to submit this code under the" >&2
 echo "project's MIT license — see the DCO file and CONTRIBUTING.md." >&2

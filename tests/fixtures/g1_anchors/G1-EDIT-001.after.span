@@ -1,0 +1,115 @@
+static void write_diagnostics(void) {
+#ifdef HYP_DIAGNOSTICS_ENABLE_TEST_API
+    diag_test_pause_writer();
+#endif
+    if (atomic_load_explicit(&g_diag_stop, memory_order_acquire)) {
+        return;
+    }
+
+    size_t elapsed_ms = 0;
+    size_t user_ms = 0;
+    size_t sys_ms = 0;
+    size_t current_rss = 0;
+    size_t peak_rss = 0;
+    size_t current_commit = 0;
+    size_t peak_commit = 0;
+    size_t page_faults = 0;
+    mi_process_info(&elapsed_ms, &user_ms, &sys_ms, &current_rss, &peak_rss, &current_commit,
+                    &peak_commit, &page_faults);
+    /* NEVER report mimalloc's current_rss. On Linux it is not RSS at all — it
+     * is aliased to mimalloc's own committed-page counter, an int64 the vendored
+     * stats.c casts to size_t (vendored/mimalloc/src/stats.c). Under this
+     * project's tuning (arena_eager_commit=0, purge_decommits=1, purge_delay=0)
+     * that counter goes NEGATIVE, and the cast wraps it to ~2^64. The soak
+     * harness then faithfully divided 18446744073580445696 by 1 MB and reported
+     * a 17-trillion-MB leak while real RSS was 7 MB — both Linux legs of dry run
+     * 31852463409, while the Windows leg passed because it gets a real number
+     * from GetProcessMemoryInfo.
+     *
+     * The `== 0` guard could not catch it: a wrapped value is enormous, not
+     * zero. hyp_mem_rss() exists precisely for this and reads /proc/self/statm
+     * on Linux; its own comment names this trap and warns that a nonzero-but-
+     * wrong current_rss defeats exactly this shape of guard. Use it
+     * unconditionally rather than as a fallback. */
+    current_rss = hyp_mem_rss();
+
+    int fds = count_open_fds();
+    time_t now = time(NULL);
+    long uptime = (long)(now - g_start_time);
+    int qcount = atomic_load(&g_query_stats.count);
+    int qerrors = atomic_load(&g_query_stats.errors);
+    long long qtime = atomic_load(&g_query_stats.time_us);
+    long long qmax = atomic_load(&g_query_stats.max_us);
+    long long qavg = qcount > 0 ? qtime / qcount : 0;
+
+    /* Memory map: live allocator bytes on this thread's heap, a size-class
+     * histogram, and the residual the walk does NOT account for. The residual
+     * is what keeps this honest — see mem.h. */
+    diag_write_allocator_stats();
+
+    hyp_mem_map_t map;
+    (void)hyp_mem_map_collect_os(&map);
+    size_t residual =
+        map.os_committed_bytes > map.live_bytes ? map.os_committed_bytes - map.live_bytes : 0;
+    char buckets[HYP_SZ_512];
+    int bucket_length = 0;
+    for (int i = 0;
+         i < HYP_MEM_MAP_BUCKETS && bucket_length >= 0 && (size_t)bucket_length < sizeof(buckets);
+         i++) {
+        int written =
+            snprintf(buckets + bucket_length, sizeof(buckets) - (size_t)bucket_length,
+                     "%s{\"limit\": %zu, \"bytes\": %zu, \"blocks\": %zu}", i == 0 ? "" : ", ",
+                     hyp_mem_map_bucket_limit(i), map.bucket_bytes[i], map.bucket_blocks[i]);
+        if (written < 0) {
+            break;
+        }
+        bucket_length += written;
+    }
+
+    /* Phase attribution: which bracketed code path the committed bytes stayed
+     * in. Empty unless HYP_MEM_PHASES=1. */
+    char phases[HYP_SZ_1K];
+    if (hyp_mem_phase_report_json(phases, sizeof(phases)) <= 0) {
+        phases[0] = '\0';
+    }
+
+    char snapshot[HYP_SZ_4K];
+    int length =
+        snprintf(snapshot, sizeof(snapshot),
+                 "{\n"
+                 "  \"uptime_s\": %ld,\n"
+                 "  \"rss_bytes\": %zu,\n"
+                 "  \"peak_rss_bytes\": %zu,\n"
+                 "  \"heap_committed_bytes\": %zu,\n"
+                 "  \"peak_committed_bytes\": %zu,\n"
+                 "  \"page_faults\": %zu,\n"
+                 "  \"fd_count\": %d,\n"
+                 "  \"query_count\": %d,\n"
+                 "  \"query_errors\": %d,\n"
+                 "  \"query_total_us\": %lld,\n"
+                 "  \"query_avg_us\": %lld,\n"
+                 "  \"query_max_us\": %lld,\n"
+                 "  \"mem_malloc_owned\": %s,\n"
+                 "  \"mem_live_bytes\": %zu,\n"
+                 "  \"mem_live_blocks\": %zu,\n"
+                 "  \"mem_area_committed_bytes\": %zu,\n"
+                 "  \"mem_residual_bytes\": %zu,\n"
+                 "  \"mem_buckets\": [%s],\n"
+                 "  \"mem_phases\": [%s],\n"
+                 "  \"pid\": %d\n"
+                 "}\n",
+                 uptime, current_rss, peak_rss, current_commit, peak_commit, page_faults, fds,
+                 qcount, qerrors, qtime, qavg, qmax,
+                 map.malloc_is_allocator_owned ? "true" : "false", map.live_bytes, map.live_blocks,
+                 map.area_committed_bytes, residual, buckets, phases, (int)getpid());
+    if (length <= 0 || (size_t)length >= sizeof(snapshot) ||
+        !diag_write_file(DIAG_SNAPSHOT_TMP_NAME, snapshot, (size_t)length, false) ||
+        !diag_native_rename(DIAG_SNAPSHOT_TMP_NAME, DIAG_SNAPSHOT_NAME)) {
+        diag_native_unlink(DIAG_SNAPSHOT_TMP_NAME);
+        return;
+    }
+    if (!atomic_load_explicit(&g_diag_stop, memory_order_acquire)) {
+        append_trajectory(uptime, current_rss, peak_rss, current_commit, peak_commit, page_faults,
+                          fds, qcount);
+    }
+}

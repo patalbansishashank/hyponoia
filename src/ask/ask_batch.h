@@ -1,6 +1,6 @@
 /*
  * ask_batch.h — how documents are grouped into forward passes for the `ask`
- * embed pass (NEXT-STEPS §2.1, track 6).
+ * embed pass.
  *
  * Weight-free and store-free ON PURPOSE. This is the arithmetic that decides
  * whether the embed pass survives a real corpus, and it should be checkable by
@@ -46,24 +46,23 @@ enum {
      * 24.09 at eight, and 16.37 at sixteen. Sixteen is slower than one. The
      * arithmetic and the reason are in ask_batch.c and are worth reading before
      * anyone "optimises" this number. */
-    /* RE-MEASURED FOR voyage-4-nano, 2026-08-12. The 8 above it was
-     * Qwen3-Embedding-0.6B's peak and the note said so — "a corpus-shaped
-     * number rather than a law ... re-measuring is the only way to move it".
-     * The model moved, so it was re-measured, on the same 4,072 declarations of
-     * lld/ELF and the same card:
+    /* The number is a property of the MODEL, not of this lane, so it is
+     * re-measured whenever the model changes — a corpus-shaped number rather
+     * than a law, and re-measuring is the only way to move it. Under
+     * voyage-4-nano, on 4,072 declarations of lld/ELF:
      *
      *     max_docs   docs/s   forward passes
      *            8     29.3              520
      *           16     36.7              275     <- +25%
      *           24        —   ggml_can_mul_mat assert
      *
-     * Qwen3's optimum was 8 because 16 cost it throughput (24.09 -> 16.37).
-     * nano is 12 layers against 28 and half the KV per token, so a wider batch
-     * fits where it did not before.
+     * The Qwen3 optimum of 8 held because 16 cost it throughput (24.09 ->
+     * 16.37). nano is 12 layers against 28 and half the KV per token, so a
+     * wider batch fits where it does not for the larger model.
      *
-     * THE "24 -> assert" ROW WAS MISREAD, and the misreading cost a week. It
-     * was called the ragged non-causal assert and treated as a ceiling on
-     * this constant. It was neither. It was n_batch (then a fixed 8,192) not
+     * THE "24 -> assert" ROW IS EASY TO MISREAD, and misreading it as a
+     * ragged non-causal assert makes it look like a ceiling on this constant.
+     * It is neither. It is n_batch (when fixed at 8,192) not
      * dividing by n_seq: 8192 % 16 = 0 runs, 8192 % 24 = 8 aborts, inside
      * llama.cpp's graph_reserve, before a single token — and it aborted just
      * the same at n_seq = 3 with three 2,408-token rows, which no value of
@@ -90,7 +89,7 @@ enum {
      * So the weights support 32,768 and this lane can spend 8,192, and the
      * difference is DISCLOSED rather than hidden: model_window is clamped to
      * this, and the truncation counter is denominated in model_window. It is
-     * also the window §2.9 measured nano at, so the shipped ceiling and the
+     * also the window nano was measured at, so the shipped ceiling and the
      * measured one are the same number rather than two that happen to be
      * close. */
     HYP_ASK_NONCAUSAL_MAX_SEQ = 8192,

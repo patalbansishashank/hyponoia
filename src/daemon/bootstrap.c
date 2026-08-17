@@ -3,6 +3,7 @@
  */
 #include "daemon/bootstrap.h"
 
+#include "cli/command_surface.h"
 #include "daemon/ipc.h"
 #include "daemon/service.h"
 #include "foundation/compat.h"
@@ -140,6 +141,51 @@ static bool bootstrap_worker_argv_exact(int argc, char *const argv[]) {
     return next == argc;
 }
 
+/* One row of the shared command table, as the classifier reads it. `help`
+ * folds at compile time, so a HYP_CLI_HELP_PLAIN row costs nothing. */
+#define BOOTSTRAP_CLASSIFY_ROW(id, token, role, help, dispatch, usage) \
+    if (bootstrap_arg_is(argv[arg], token)) {                          \
+        return ((help) == HYP_CLI_HELP_DOWNGRADES &&                   \
+                bootstrap_has_help_after(argc, argv, arg + 1))         \
+                   ? HYP_DAEMON_PROCESS_STATELESS                      \
+                   : (role);                                           \
+    }
+
+static bool bootstrap_client_arg_matches(const char *value, const char *text,
+                                         hyp_cli_argument_kind_t kind) {
+    if (!value || !text) {
+        return false;
+    }
+    if (kind == HYP_CLI_ARG_PREFIX) {
+        return strncmp(value, text, strlen(text)) == 0;
+    }
+    return strcmp(value, text) == 0;
+}
+
+/* One row of the client-argument table. A VALUE row consumes the argument
+ * that follows it, so a legitimate `--tool-profile analysis` cannot have its
+ * value mistaken for an unknown command. */
+#define BOOTSTRAP_CLIENT_ARG_ROW(text, kind)                                \
+    if (!accepted && bootstrap_client_arg_matches(argv[arg], text, kind)) { \
+        accepted = true;                                                    \
+        if ((kind) == HYP_CLI_ARG_VALUE) {                                  \
+            arg++;                                                          \
+        }                                                                   \
+    }
+
+/* The first argument that is neither a command nor something an MCP client
+ * carries, or NULL when every argument is accounted for. Borrowed from argv. */
+static const char *bootstrap_first_unknown_argument(int argc, char *const argv[]) {
+    for (int arg = 1; argv && arg < argc; arg++) {
+        bool accepted = false;
+        HYP_CLI_CLIENT_ARGUMENTS(BOOTSTRAP_CLIENT_ARG_ROW)
+        if (!accepted) {
+            return argv[arg];
+        }
+    }
+    return NULL;
+}
+
 hyp_daemon_process_role_t hyp_daemon_process_role(int argc, char *const argv[]) {
     if (argc <= 0 || !argv || !argv[0] || argv[0][0] == '\0') {
         return HYP_DAEMON_PROCESS_INVALID;
@@ -166,70 +212,30 @@ hyp_daemon_process_role_t hyp_daemon_process_role(int argc, char *const argv[]) 
                                                        : HYP_DAEMON_PROCESS_INVALID;
     }
 
-    static const char *const stateless_commands[] = {
-        "--verify-runtime-assets",
-        "install",
-        "uninstall",
-        "update",
-        /* allow-root writes one line of user-level config and reads nothing from a
-         * project, so it needs no daemon. Listed here rather than routed through
-         * the daemon so enrolling a root cannot depend on daemon state. */
-        "allow-root",
-        /* fetch-model writes ONE file into the user's cache and reads no
-         * project, no index and no store. Omitting it here does not merely
-         * cost a daemon: an unlisted top-level command falls through to
-         * MCP_CLIENT, so `hyponoia fetch-model --path` would attach to a
-         * daemon and then block serving MCP on stdin — a hang, not an error.
-         * It also has to work when the daemon cannot start, which is exactly
-         * when someone is trying to get the `ask` lane running. */
-        "fetch-model",
-    };
-    /* Stop at the first top-level mode token. Tool names, flag values, and JSON
-     * following `cli` are opaque user input: a search query named "install"
-     * or containing "--version" must never bypass the mandatory daemon. */
+    /* Stop at the FIRST argument that matches any row. Tool names, flag values
+     * and JSON following `cli` are opaque user input: `cli` matches at a lower
+     * index and returns, so a search query named "install" or containing
+     * "--version" can never bypass the mandatory daemon. Rows are tried in
+     * table order within one argument, which is immaterial — tokens are
+     * pairwise distinct, so at most one row can match. */
     for (int arg = 1; arg < argc; arg++) {
-        if (bootstrap_arg_is(argv[arg], "cli")) {
-            if (bootstrap_has_help_after(argc, argv, arg + 1)) {
-                return HYP_DAEMON_PROCESS_STATELESS;
-            }
-            return HYP_DAEMON_PROCESS_LOCAL_CLI;
-        }
-        if (bootstrap_arg_is(argv[arg], "hook-augment")) {
-            return HYP_DAEMON_PROCESS_HOOK_CLIENT;
-        }
-        if (bootstrap_arg_is(argv[arg], "config")) {
-            return bootstrap_has_help_after(argc, argv, arg + 1) ? HYP_DAEMON_PROCESS_STATELESS
-                                                                 : HYP_DAEMON_PROCESS_LOCAL_CLI;
-        }
-        /* `embed` builds the `ask` lane's vectors. It reads the graph database
-         * READ-ONLY through its own connection and writes only to
-         * <cache>/vectors/<project>.db, so it needs neither a daemon nor a
-         * project mutation lease — it cannot mutate the graph at all. Stateless
-         * for the same reason `allow-root` is: routing it through the daemon
-         * would make an opt-in second pass depend on daemon state it never
-         * touches. Placed after the `cli` check so an opaque tool argument
-         * spelled "embed" cannot bypass the mandatory daemon. */
-        if (bootstrap_arg_is(argv[arg], "embed")) {
-            return HYP_DAEMON_PROCESS_STATELESS;
-        }
-        /* Placed after the `cli` check on purpose: `hyp cli search "daemon
-         * start"` is opaque tool input and must stay LOCAL_CLI. */
-        if (bootstrap_arg_is(argv[arg], "daemon")) {
-            return bootstrap_has_help_after(argc, argv, arg + 1) ? HYP_DAEMON_PROCESS_STATELESS
-                                                                 : HYP_DAEMON_PROCESS_DAEMON_CTL;
-        }
-        if (bootstrap_arg_is(argv[arg], "--version") || bootstrap_arg_is(argv[arg], "--help") ||
-            bootstrap_arg_is(argv[arg], "-h")) {
-            return HYP_DAEMON_PROCESS_STATELESS;
-        }
-        for (size_t command = 0;
-             command < sizeof(stateless_commands) / sizeof(stateless_commands[0]); command++) {
-            if (bootstrap_arg_is(argv[arg], stateless_commands[command])) {
-                return HYP_DAEMON_PROCESS_STATELESS;
-            }
-        }
+        HYP_CLI_COMMAND_SURFACE(BOOTSTRAP_CLASSIFY_ROW)
     }
-    return HYP_DAEMON_PROCESS_MCP_CLIENT;
+
+    /* Fall closed. Reaching here means no argument named a command, so this is
+     * an MCP client only if every argument is one an MCP client carries.
+     * Anything else attached to a daemon and served the protocol on stdin,
+     * which with stdin closed is exit 0 and no output — a command that looks
+     * like it succeeded. */
+    return bootstrap_first_unknown_argument(argc, argv) ? HYP_DAEMON_PROCESS_UNKNOWN_COMMAND
+                                                        : HYP_DAEMON_PROCESS_MCP_CLIENT;
+}
+
+const char *hyp_daemon_process_unknown_command(int argc, char *const argv[]) {
+    if (hyp_daemon_process_role(argc, argv) != HYP_DAEMON_PROCESS_UNKNOWN_COMMAND) {
+        return NULL;
+    }
+    return bootstrap_first_unknown_argument(argc, argv);
 }
 
 bool hyp_daemon_process_role_requires_client(hyp_daemon_process_role_t role) {

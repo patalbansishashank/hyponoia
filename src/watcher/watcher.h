@@ -31,6 +31,20 @@ typedef struct hyp_watcher hyp_watcher_t;
  * root_path: absolute path to the repository root */
 typedef int (*hyp_index_fn)(const char *project_name, const char *root_path, void *user_data);
 
+/* ── Memory sync trigger ────────────────────────────────────────── */
+
+/* Called in the SAME poll pass that detected a local change, before the
+ * reindex callback. The trigger for pulling shared memory is the code index,
+ * not an agent and not a clock: a changed tree is exactly the moment an agent
+ * asks "what happened here", so the records about that work have to be present
+ * already. The watcher stays free of record vocabulary — it reports the
+ * change, and whoever installed this decides what a pull means.
+ *
+ * It must not affect the reindex: its return value is not consulted, and a
+ * failure here neither skips a reindex nor commits a change baseline. */
+typedef void (*hyp_watcher_memory_sync_fn)(const char *project_name, const char *root_path,
+                                           void *context);
+
 /* Optional daemon coordination for destructive stale-root pruning. begin is
  * non-blocking: a false result preserves the watch and retries on a later
  * poll. A successful begin is paired with end. pruned is called after the
@@ -58,6 +72,10 @@ void hyp_watcher_set_project_mutation_guard(hyp_watcher_t *w,
                                             hyp_watcher_project_mutation_begin_fn begin,
                                             hyp_watcher_project_mutation_end_fn end,
                                             hyp_watcher_project_pruned_fn pruned, void *context);
+
+/* Install or clear the memory sync trigger. Passing NULL for fn clears it.
+ * Safe to call while the poll loop runs. */
+void hyp_watcher_set_memory_sync(hyp_watcher_t *w, hyp_watcher_memory_sync_fn fn, void *context);
 
 /* ── Watch list management ──────────────────────────────────────── */
 

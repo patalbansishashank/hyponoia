@@ -2,14 +2,14 @@
  * agent_profiles.c — Canonical Scout/Verify/Audit profile renderer.
  *
  * Tier behavior lives here once; the read-only tool set each tier requests is
- * mcp/tool_tiers.h, shared with the MCP server that enforces it. Dialect
+ * mcp/tool_surface.h, shared with the MCP server that enforces it. Dialect
  * renderers translate both to documented client syntax without granting any
  * graph mutation capability.
  */
 #include "cli/agent_profiles.h"
 
 #include "cli/config_toml_edit.h"
-#include "mcp/tool_tiers.h"
+#include "mcp/tool_surface.h"
 #include "yyjson/yyjson.h"
 
 #include <stdbool.h>
@@ -25,22 +25,26 @@ typedef struct {
     bool failed;
 } profile_buffer_t;
 
-/* The tool set each tier requests is mcp/tool_tiers.h — the table the MCP
+/* The tool set each tier requests is mcp/tool_surface.h — the table the MCP
  * server enforces for `--tool-profile analysis|scout`. Rendering from the same
  * rows the server allows is what keeps a profile from asking for a tool the
- * server refuses, or (as `ask` was) never asking for one it offers. */
+ * server refuses, or (as `ask` was) never asking for one it offers. This end
+ * reads three of the seven columns and ignores the rest; that is what makes it
+ * one table rather than a table per consumer. */
 typedef struct {
     const char *name;
     bool analysis;
     bool scout;
     unsigned generation;
+    hyp_tool_status_t status;
 } profile_tool_t;
 
 static const profile_tool_t profile_tools[] = {
-#define HYP_TOOL_TIER_ROW(name, analysis, scout, generation) \
-    {name, (analysis) != 0, (scout) != 0, generation},
-    HYP_TOOL_TIERS(HYP_TOOL_TIER_ROW)
-#undef HYP_TOOL_TIER_ROW
+#define HYP_TOOL_SURFACE_PROFILE_ROW(name, alias, analysis, scout, generation, status, \
+                                     output_schema, annotations)                       \
+    {name, (analysis) != 0, (scout) != 0, generation, status},
+    HYP_TOOL_SURFACE(HYP_TOOL_SURFACE_PROFILE_ROW)
+#undef HYP_TOOL_SURFACE_PROFILE_ROW
 };
 
 #define PROFILE_TOOL_COUNT (sizeof(profile_tools) / sizeof(profile_tools[0]))
@@ -48,9 +52,18 @@ static const profile_tool_t profile_tools[] = {
 /* Scout is the small surface; every other tier requests the analysis set. A
  * row newer than `generation` is left out — as are prompt words newer than
  * it, in hyp_render_graph_prompt_generation — so an earlier generation's
- * profile still renders byte-for-byte for the installer to recognise. */
+ * profile still renders byte-for-byte for the installer to recognise.
+ *
+ * A RESERVED row renders nowhere at any generation: its signature is published
+ * and its tool does not exist, so asking a client to request it would advertise
+ * a tool the server refuses. That is the same gate the server applies to
+ * tools/list, read from the same column — the two ends cannot disagree about
+ * which tools are real. */
 static bool tier_includes_tool(hyp_graph_tier_t tier, const profile_tool_t *tool,
                                unsigned generation) {
+    if (tool->status == HYP_TOOL_RESERVED) {
+        return false;
+    }
     if (tool->generation > generation) {
         return false;
     }
@@ -226,6 +239,24 @@ static const char PROMPT_ASK_GUIDANCE_GEN3[] =
     "project only to override that, and call list_projects only when an answer says it could "
     "not choose. ";
 
+/* Generation 4 ADDS one sentence, and adds nothing else. `search_memory` joins
+ * the analysis tool list in the same generation, and a tool in the list is not
+ * a tool the agent uses: the same surface shipped once with `ask` merely listed
+ * and it was called in 4 runs of 60, against 60 of 60 once one sentence in the
+ * body said WHEN. So the tool and the sentence ship together or neither ships.
+ *
+ * What the sentence must NOT do is describe the tool. The description is on the
+ * tool, the server sends it with every tools/list, and repeating it here is
+ * weight every run pays for a second copy of something it already has —
+ * generation 3 deleted exactly that. The one thing the server cannot say from
+ * inside a tool description is when to prefer this tool over the ones beside
+ * it, so that is the whole sentence.
+ *
+ * Scout never gets it: scout's promise is a small surface of fast positive
+ * discovery, and search_memory is not on it. */
+static const char PROMPT_MEMORY_GUIDANCE_GEN4[] =
+    "For why the code is the way it is — not what it does — call search_memory. ";
+
 char *hyp_render_graph_prompt_generation(hyp_graph_tier_t tier, hyp_graph_access_t access,
                                          unsigned generation) {
     if (!tier_valid(tier) || !access_valid(access) || generation > HYP_PROFILE_GENERATION) {
@@ -269,6 +300,9 @@ char *hyp_render_graph_prompt_generation(hyp_graph_tier_t tier, hyp_graph_access
             profile_buffer_append(&buffer, generation >= HYP_PROFILE_GENERATION_PROJECT_DEFAULT
                                                ? PROMPT_ASK_GUIDANCE_GEN3
                                                : PROMPT_ASK_GUIDANCE_GEN2);
+        }
+        if (tier != HYP_GRAPH_TIER_SCOUT && generation >= HYP_PROFILE_GENERATION_WORKSPACE_MEMORY) {
+            profile_buffer_append(&buffer, PROMPT_MEMORY_GUIDANCE_GEN4);
         }
         profile_buffer_append(
             &buffer,

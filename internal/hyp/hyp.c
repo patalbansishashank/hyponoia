@@ -1210,7 +1210,7 @@ HYPFileResult *hyp_extract_file_ex(const char *source, int source_len, HYPLangua
     };
 
     TSParseOptions opts = {0};
-    uint64_t deadline_ns = 0; // cppcheck-suppress unreadVariable
+    uint64_t deadline_ns = 0;
     if (timeout_micros > 0) {
         deadline_ns = t0 + ((uint64_t)timeout_micros * USEC_TO_NSEC);
         opts.payload = &deadline_ns;
@@ -1221,9 +1221,16 @@ HYPFileResult *hyp_extract_file_ex(const char *source, int source_len, HYPLangua
     uint64_t t1 = now_ns();
 
     if (!tree) {
+        /* Name the cause, do not infer it from the configuration. A NULL tree
+         * means the deadline fired, OR the parser had no language, OR the
+         * input had no read callback, OR an external scanner failed -- the
+         * last of which is a live failure mode for several grammars. Reading
+         * "timeout was armed" as "the timeout fired" puts a cause the caller
+         * cannot check into the skip list, which is the only place this
+         * failure is visible at all. Compare against the deadline instead. */
+        bool deadline_fired = timeout_micros > 0 && t1 >= deadline_ns;
         result->has_error = true;
-        result->error_msg =
-            hyp_arena_strdup(a, timeout_micros > 0 ? "parse timeout" : "parse failed");
+        result->error_msg = hyp_arena_strdup(a, deadline_fired ? "parse timeout" : "parse failed");
         hyp_index_mark_done(rel_path);
         return result;
     }

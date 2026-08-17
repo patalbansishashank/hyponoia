@@ -1,0 +1,24 @@
+cbm_daemon_runtime_application_status_t cbm_daemon_runtime_client_application_request(
+    cbm_daemon_runtime_client_t *client, const void *request, uint32_t request_length,
+    uint8_t **response_out, uint32_t *response_length_out, uint32_t timeout_ms) {
+    if (response_out) {
+        *response_out = NULL;
+    }
+    if (response_length_out) {
+        *response_length_out = 0;
+    }
+    if (!client || !response_out || !response_length_out ||
+        timeout_ms == CBM_DAEMON_IPC_WAIT_FOREVER ||
+        request_length > CBM_DAEMON_RUNTIME_APPLICATION_PAYLOAD_MAX ||
+        (request_length > 0 && !request)) {
+        return CBM_DAEMON_RUNTIME_APPLICATION_TRANSPORT_ERROR;
+    }
+    cbm_daemon_runtime_application_token_t request_token =
+        CBM_DAEMON_RUNTIME_APPLICATION_TOKEN_INVALID;
+    if (!cbm_daemon_runtime_client_application_token_reserve(client, &request_token)) {
+        return CBM_DAEMON_RUNTIME_APPLICATION_TRANSPORT_ERROR;
+    }
+    return cbm_daemon_runtime_client_application_request_tagged(client, request_token, request,
+                                                                request_length, response_out,
+                                                                response_length_out, timeout_ms);
+}

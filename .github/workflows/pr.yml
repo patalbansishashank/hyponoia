@@ -9,8 +9,8 @@
 name: PR
 
 on:
-  pull_request:
-    branches: [main]
+  # No automatic trigger -- same instruction as ci.yml. Runnable by hand.
+  workflow_dispatch: {}
 
 permissions:
   contents: read

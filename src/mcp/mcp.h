@@ -64,13 +64,44 @@ bool hyp_mcp_cancel_request_matches(const char *params_json, int64_t active_id,
 char *hyp_mcp_tools_list(void);
 
 /* Return a tool's JSON input_schema string by name (static; do not free), or
- * NULL if the tool is unknown. Backs the CLI flag parser + per-tool --help. */
+ * NULL if the tool is unknown OR RESERVED. Backs the CLI flag parser +
+ * per-tool --help, neither of which may offer a tool the server refuses. */
 const char *hyp_mcp_tool_input_schema(const char *tool_name);
 
-/* Registry accessors: the number of tools tools/list advertises, and the name
- * of tool `index` (static, do not free; NULL when out of range). */
+/* THE LIVE SURFACE: the number of tools tools/list advertises, and the name of
+ * live tool `index` (static, do not free; NULL when out of range). Reserved
+ * rows — signatures published ahead of their implementation — are excluded. */
 int hyp_mcp_tool_count(void);
 const char *hyp_mcp_tool_name(int index);
+
+/* THE WHOLE TABLE, live and reserved: mcp/tool_surface.h, the one source both
+ * the server and the generated agent profiles read. A _Static_assert already
+ * pairs its row count against the registry's; these let a test pair the SETS,
+ * which is the case a count cannot catch, and check the status and output
+ * promise of any row. `status` returns hyp_tool_status_t, or -1 if unknown. */
+int hyp_mcp_tool_registry_count(void);
+const char *hyp_mcp_tool_registry_name(int index);
+int hyp_mcp_tool_surface_count(void);
+const char *hyp_mcp_tool_surface_name(int index);
+/* The legacy name dispatch also answers to for row `index`, or NULL. An alias
+ * is never advertised and never on a restricted profile. */
+const char *hyp_mcp_tool_surface_alias(int index);
+int hyp_mcp_tool_surface_status(const char *tool_name);
+
+/* The outputSchema a tool advertises, or NULL when it promises no shape.
+ * Declaring one is a promise that every `required` field is present in what a
+ * CLIENT reads — assert it by reading a response, never by inspecting this. */
+const char *hyp_mcp_tool_declared_output_schema(const char *tool_name);
+
+/* Whether a tool may be probed with no arguments: it neither writes nor leaves
+ * this machine. Derived from the row's annotation profile so a writer added
+ * later excludes itself. */
+bool hyp_mcp_tool_is_probe_safe(const char *tool_name);
+
+/* Whether an agent may author a record of this kind. Transcript kinds are
+ * refused: transcripts enter only through a feed, and a forgeable transcript
+ * writer would make the ingest completeness audit meaningless. */
+bool hyp_mcp_memory_kind_is_authorable(const char *kind);
 
 /* Render the top-level --help "Tools:" block from the registry so the help
  * text cannot drift from tools/list (#1361). Heap-allocated; caller frees. */
@@ -120,7 +151,7 @@ int hyp_mcp_parse_tool_profile_args(int argc, const char *const argv[const],
 bool hyp_mcp_tool_profile_allows_http(hyp_mcp_tool_profile_t profile);
 
 /* Whether `name` is advertised and callable under `profile`. ALL admits every
- * registered tool; ANALYSIS and SCOUT admit exactly the rows mcp/tool_tiers.h
+ * registered tool; ANALYSIS and SCOUT admit exactly the rows mcp/tool_surface.h
  * marks for them — the same table the generated agent profiles request their
  * tools from, so a test can hold both ends to one answer. */
 bool hyp_mcp_tool_profile_allows(hyp_mcp_tool_profile_t profile, const char *name);
@@ -211,19 +242,70 @@ int hyp_mcp_server_run(hyp_mcp_server_t *srv, FILE *in, FILE *out);
  * Returns heap-allocated JSON response string, or NULL for notifications. */
 char *hyp_mcp_server_handle(hyp_mcp_server_t *srv, const char *line);
 
+/* ── Memory freshness, the seam ────────────────────────────────────
+ *
+ * index_status reports TWO freshnesses, separately and never merged: `code`
+ * (this machine's index of the working tree) and `memory` (the append-only
+ * record set). They are independent axes — a record count moves for reasons
+ * the code index never sees — so neither is derived from the other.
+ *
+ * The comparison is a SET comparison, never a lag: the record store is an
+ * id-keyed set whose order is deliberately non-semantic (C2), so "N behind"
+ * is a number nothing can produce. What is computable is `missing` — records
+ * the upstream set holds that the local set does not: a set-digest compare
+ * for the free yes/no, then an id walk for the count plus the names.
+ *
+ * Wiring, and what absence means at every stage:
+ *
+ *   no local set configured          -> `memory` ABSENT from the answer
+ *                                       entirely. Look elsewhere — NOT "you
+ *                                       are up to date".
+ *   local set, no upstream provider  -> memory.status "unknown", `missing`
+ *                                       and `records_upstream` ABSENT. This
+ *                                       is the shipped state until C6u lands
+ *                                       a provider.
+ *   provider configured, read fails  -> same "unknown" answer. The provider
+ *                                       returns NULL for "could not read",
+ *                                       and the tool never converts that
+ *                                       into a number.
+ *   provider returns a set           -> `missing` is emitted, 0 included:
+ *                                       0 means CHECKED AND COMPLETE, which
+ *                                       is a different sentence from absent.
+ *
+ * The local set is BORROWED, not owned: C1u's store owns its records and its
+ * lifetime; this server only reads counts, digests and ids from it during an
+ * index_status call. The provider likewise returns a set borrowed until the
+ * next call or NULL when the upstream cannot be read — it must never fake an
+ * empty set for "unreachable", because empty means "upstream has nothing"
+ * and would report every local record as excess instead of unknown. */
+typedef struct hyp_record_set hyp_record_set_t; /* from foundation/record.h */
+
+typedef const hyp_record_set_t *(*hyp_mcp_memory_upstream_fn)(void *context);
+
+/* Attach the local record set (borrowed; NULL detaches). While detached,
+ * index_status omits the `memory` block entirely. */
+void hyp_mcp_server_set_memory_store(hyp_mcp_server_t *srv, const hyp_record_set_t *local);
+
+/* Configure the upstream comparison-set provider (C6u's sync will be the real
+ * one; tests pass a second in-memory set). `feed` names the adapter in the
+ * answer and is copied; read_upstream NULL detaches the provider, returning
+ * memory.status to "unknown". */
+void hyp_mcp_server_set_memory_upstream(hyp_mcp_server_t *srv, const char *feed,
+                                        hyp_mcp_memory_upstream_fn read_upstream, void *context);
+
 /* ── Tool handler dispatch (for testing) ──────────────────────── */
 
 /* Handle a tools/call request. Returns MCP tool result JSON. */
 char *hyp_mcp_handle_tool(hyp_mcp_server_t *srv, const char *tool_name, const char *args_json);
 
-/* The `key_custody` disclosure an escalated answer carries (NEXT-STEPS §3.2
- * step 5), exposed because the escalated success path cannot be reached in a
+/* The `key_custody` disclosure an escalated answer carries,
+ * exposed because the escalated success path cannot be reached in a
  * test without a live, paid provider call — and the property that most needs
  * a test is that this sentence can never contain a key. `key_env` is a
  * variable NAME; it is echoed, so never pass a value. */
 void hyp_mcp_ask_key_custody_text_for_test(const char *key_env, char *out, size_t outlen);
 
-/* ── The 3-D view of the `ask` lane (NEXT-STEPS §3.1 step 5) ───────
+/* ── The 3-D view of the `ask` lane ────────────────────────────────
  *
  * Both return heap JSON (caller frees) or NULL on bad arguments. Neither is an
  * MCP tool: they are what the graph UI's /api/embed-view routes serve.

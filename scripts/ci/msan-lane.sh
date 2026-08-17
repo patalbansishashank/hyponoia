@@ -46,7 +46,16 @@ run_suite() {
     # closed and the venues share one list. scripts/msan.sh still warns loudly
     # that the lane is partial, which is the honest signal to keep.
     echo "=== MSan suite (exclusions per scripts/msan.sh) ==="
-    docker run --rm -v "$PWD:/src" -w /src "$IMAGE"
+    # --user matters for a second reason beyond the usual root-owned-files one:
+    # Dockerfile.msan has no USER directive, so the container runs as root
+    # against a checkout owned by the runner's UID. git's ownership check then
+    # refuses "git -C . rev-parse --is-inside-work-tree" as run by G1's replay
+    # (see tests/test_g1_replay.c), which reports it as "no git work tree" —
+    # dubious ownership dressed as a missing history, exactly the class this
+    # phase has been finding elsewhere. Matching the host UID makes the
+    # container's view of the checkout agree with git's, the same fix already
+    # used for the lint container.
+    docker run --rm --user "$(id -u):$(id -g)" -v "$PWD:/src" -w /src "$IMAGE"
 }
 
 case "$MODE" in

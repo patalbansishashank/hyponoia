@@ -39,14 +39,23 @@ enum {
     MCP_TOOLS_PAGE_SIZE = 8,
     MCP_HELP_TOOLS_WRAP_COL = 74, /* --help tool list stays readable on 80-col terminals */
     MCP_MAX_CROSS_REPO_TARGETS = 4096,
+    /* index_status names the missing memory records. The names are the
+     * point — "40 missing" with no ids is a number nobody can act on — but a
+     * status answer must not become a context bomb, so the list is capped and
+     * the withheld remainder is DISCLOSED: a truncated answer says what was
+     * withheld, and it says nothing when nothing was. */
+    MCP_MEMORY_MISSING_IDS_MAX = 64,
 };
 #define MCP_MS_TO_US 1000LL
 #define MCP_S_TO_US 1000000LL
 
 #define SLEN(s) (sizeof(s) - 1)
+#include "foundation/record.h"
 #include "mcp/mcp.h"
 #include "mcp/mcp_internal.h"
-#include "mcp/tool_tiers.h"
+#include "mcp/tool_surface.h"
+#include "store/record_store.h"
+#include "memory/adr_records.h"
 #include "store/store.h"
 #include <sqlite3.h>
 #include "cypher/cypher.h"
@@ -474,7 +483,10 @@ static const tool_def_t TOOLS[] = {
      "is ignored.\"},"
      "\"label\":{\"type\":\"string\"},\"name_pattern\":{\"type\":\"string\"},\"qn_pattern\":{"
      "\"type\":\"string\"},\"file_pattern\":{\"type\":\"string\"},"
-     "\"relationship\":{\"type\":\"string\"},\"min_degree\":{\"type\":\"integer\"},"
+     "\"relationship\":{\"type\":\"string\",\"description\":\"One edge type, uppercase letters "
+     "and underscores only — anything else is refused rather than ignored. get_graph_schema "
+     "lists the edge types this graph actually holds; absent selects the default set described "
+     "under RESPONSE.\"},\"min_degree\":{\"type\":\"integer\"},"
      "\"max_degree\":{\"type\":\"integer\"},\"exclude_entry_points\":{\"type\":\"boolean\"},"
      "\"include_connected\":{\"type\":\"boolean\"},\"semantic_query\":{"
      "\"type\":\"array\",\"items\":{\"type\":\"string\"},\"description\":\"MUST be an ARRAY of "
@@ -822,59 +834,291 @@ static const tool_def_t TOOLS[] = {
      "\"object\",\"properties\":{\"caller\":{\"type\":\"string\"},\"callee\":{\"type\":\"string\"},"
      "\"count\":{\"type\":\"integer\"}},\"additionalProperties\":false}}," TOOL_PROJECT_ARG
      "},\"required\":[\"traces\"]}"},
+
+    /* ── RESERVED signatures ───────────────────────────────────────────
+     *
+     * These four rows carry a published, frozen signature for a tool that does
+     * not exist yet. mcp/tool_surface.h marks them HYP_TOOL_RESERVED, so they
+     * are advertised nowhere, dispatched nowhere, and rendered into no agent
+     * profile; the contract they implement — output shapes, failure modes, and
+     * why each argument is shaped the way it is — is in that header beside its
+     * row. Going live is one token in one row, and the row is already complete,
+     * which is the entire point of publishing before implementing.
+     *
+     * They live HERE, in the registry, and not in some separate proposals file,
+     * because a signature kept somewhere else is a signature someone has to
+     * remember to move. */
+
+    /* NO `anchor` PROPERTY BELOW, and no prose about resolution or ambiguity.
+     * Same defect as search_memory's, and the worse half of it: a declared
+     * default the handler refuses at least fails as a refusal, but the anchor
+     * prose here described an ALGORITHM — supplied-and-unresolvable is an
+     * error, supplied-and-ambiguous lists the candidates — and no resolver
+     * exists to produce an unresolvable, an ambiguous or a candidate list. An
+     * agent reading it builds calls around a tri-state nothing has ever
+     * computed. handle_record_memory refuses every non-empty anchor instead,
+     * which is right and stays: a record is never created already-orphaned and
+     * never attached to the nearest plausible symbol, and storing one
+     * unverified is how it would become both. Absent already means repo-scoped,
+     * so nothing a caller can do today is lost by not offering the argument.
+     *
+     * Both memory tools lose their anchor surface in one commit on purpose:
+     * they are one feature, and letting them drift apart is the failure this
+     * closes. Both regain it in the commit that wires src/memory/orphan.c —
+     * C8u's remaining work — with the full contract in tool_surface.h. */
+    {"record_memory", "Record memory",
+     "Append one record to the workspace memory store: a decision, a verdict, a summary or a "
+     "signal. APPEND-ONLY — there is no mode that edits or deletes, because merging two stores "
+     "must be a union with no conflict resolution. To supersede an earlier record, write a new "
+     "one naming it in 'supersedes'; the earlier record is never mutated. The 'kind' must be one "
+     "the tool accepts (transcript kinds are refused: transcripts enter only through a feed, and "
+     "a forgeable transcript writer would make the ingest completeness audit meaningless) — a "
+     "refusal names the accepted set. Records are repo-scoped; there is no way to attach one to "
+     "a particular span. There is no author argument; the server derives provenance.",
+     "{\"type\":\"object\",\"properties\":{" TOOL_PROJECT_ARG ","
+     "\"kind\":{\"type\":\"string\",\"description\":\"The record kind. Must be one of the "
+     "agent-authorable kinds; a refusal names them. Transcript kinds are refused.\"},"
+     "\"title\":{\"type\":\"string\"},"
+     "\"body\":{\"type\":\"string\"},"
+     "\"supersedes\":{\"type\":\"string\",\"description\":\"OPTIONAL record id this one "
+     "replaces. The named record is not modified.\"},"
+     "\"tags\":{\"type\":\"array\",\"items\":{\"type\":\"string\"}}},"
+     "\"required\":[\"kind\",\"title\",\"body\"]}"},
+
+    /* THE PROPERTIES BELOW CARRY NO `anchor` AND NO `status`, and the RESPONSE
+     * prose teaches no `anchor_status=resolved|orphaned|ambiguous` tri-state.
+     * Both absences are deliberate, and this is where the reason lives.
+     *
+     * WHY. This build has no anchor resolver, so handle_search_memory refuses
+     * a non-empty `anchor` and refuses every `status` but "any". Those refusals
+     * are RIGHT and they stay: filtering on an anchor whose state cannot be
+     * reported returns a superset that reads exactly like a match, which is the
+     * silent wrong answer this surface exists to refuse. The SIGNATURE is the
+     * half that must agree with them. Advertise an argument the handler
+     * refuses, and a client generated from the schema sends it — sends the
+     * declared default, even — and is refused for obeying the contract it was
+     * handed, while the prose teaches an agent to reach for precisely the
+     * arguments that fail. An unimplemented surface is advertised nowhere (C3).
+     *
+     * The refusals are deliberately NOT deleted: a caller who sends `anchor`
+     * or `status` anyway — from an older cached tool list, or by hand — still
+     * gets a named error rather than a silent superset. Fail closed at both
+     * ends, advertise at neither.
+     *
+     * RESTORING THEM. `anchor` and `status` come back in the SAME COMMIT that
+     * wires an anchor resolver behind them — src/memory/orphan.c exists and is
+     * unwired, and that is C8u's remaining work — and record_memory's `anchor`
+     * comes back in that commit too, because one resolver is what both tools
+     * are waiting on and a half-restored pair is this defect with one fewer
+     * tool. The contract they must implement is unchanged and still written
+     * down in tool_surface.h under "search_memory": anchor_status "resolved" +
+     * records:[] means resolved and nothing attached, "orphaned" means records
+     * ABSENT, "ambiguous" returns candidates and never a neighbour. Restore
+     * schema, prose and resolver together or not at all; two of the three is
+     * this defect again.
+     *
+     * Pinned from both directions, by
+     * the_published_signature_offers_nothing_this_build_refuses in
+     * tests/test_g2_retrieval.c and by
+     * tool_surface_every_advertised_property_is_one_the_handler_accepts in
+     * tests/test_tool_surface.c. */
+    {"search_memory", "Search memory",
+     "Read the workspace memory store: decisions, verdicts, summaries, signals and ingested "
+     "transcript messages, across every repository in the workspace. Use it to answer WHY code "
+     "is the way it is — get_code_snippet returns the code, this returns the reasoning. "
+     "RESPONSE: 'records' ABSENT means there is nowhere on this machine a record could have been "
+     "kept — look elsewhere; an EMPTY 'records' list means the store was read and nothing "
+     "matched. Truncated answers state what was withheld and how to get it, and say nothing when "
+     "nothing was withheld.",
+     "{\"type\":\"object\",\"properties\":{" TOOL_PROJECT_ARG ","
+     "\"kind\":{\"type\":\"string\",\"description\":\"OPTIONAL. Absent means every kind — it "
+     "does not mean none.\"},"
+     "\"query\":{\"type\":\"string\",\"description\":\"OPTIONAL free-text search over record "
+     "text.\"},"
+     "\"since\":{\"type\":\"string\"},\"until\":{\"type\":\"string\"},"
+     "\"limit\":{\"type\":\"integer\",\"default\":50,\"minimum\":1,\"maximum\":500},"
+     "\"offset\":{\"type\":\"integer\",\"default\":0,\"minimum\":0},"
+     "\"format\":{\"type\":\"string\",\"enum\":[\"tree\",\"json\"],\"default\":\"tree\"}},"
+     "\"required\":[]}"},
+
+    {"workspace_status", "Workspace status",
+     "The workspace this server is serving: which repositories belong to it, what ROLE each one "
+     "has (member, vendored, generated, upstream, reference), and WHERE each role came from. "
+     "Check the role before editing: a repository whose role is vendored, generated, upstream or "
+     "reference is not yours to modify. Every role is reported with its 'role_source' — the "
+     "derivation that produced it — and the resolver's 'precedence' is reported with it, so a "
+     "role can be argued with rather than merely believed. 'contradictions' ABSENT means the "
+     "role audit did not run; an empty list means it ran and found none. Those are different "
+     "answers.",
+     "{\"type\":\"object\",\"properties\":{"
+     "\"workspace\":{\"type\":\"string\",\"description\":\"OPTIONAL. Omit it and the server "
+     "uses the workspace of its own working directory, or the only workspace when exactly one "
+     "exists. Never chosen among several. The answer reports workspace_source.\"},"
+     "\"verbose\":{\"type\":\"boolean\",\"default\":false,\"description\":\"Include per-repo "
+     "index detail and the full derivation trail for each role.\"}},"
+     "\"required\":[]}"},
+
+    {"sync_memory", "Sync memory",
+     "Push or pull memory records as a UNION of append-only records — no conflict resolution, no "
+     "last-writer-wins, no merge UI. 'direction' is required: an operation that moves records "
+     "between machines does not infer which way. RESPONSE carries the completeness audit: "
+     "'local_total' against the feed's own 'upstream_total', and 'complete'. When the upstream "
+     "count cannot be read, 'upstream_total' and 'complete' are ABSENT rather than zero or false "
+     "— a count that was never taken must not be reported as a count of zero.",
+     "{\"type\":\"object\",\"properties\":{"
+     "\"direction\":{\"type\":\"string\",\"enum\":[\"pull\",\"push\",\"both\"],"
+     "\"description\":\"REQUIRED. Not inferred.\"},"
+     "\"feed\":{\"type\":\"string\",\"description\":\"OPTIONAL adapter name. Absent means every "
+     "configured feed.\"},"
+     "\"dry_run\":{\"type\":\"boolean\",\"default\":false}},"
+     "\"required\":[\"direction\"]}"},
 };
 
+/* THE PAIRING THAT MAKES A MISSING ROW A BUILD ERROR.
+ *
+ * TOOLS[] carries a tool's prose — title, description, input schema — and
+ * mcp/tool_surface.h carries every fact both ends need about it. Neither can
+ * generate the other: descriptions are paragraphs, and row ORDER in the table
+ * is a shipped contract that TOOLS[]'s order is not. What CAN be enforced is
+ * that they describe the same number of tools, and this does it at compile
+ * time. Add a tool to one and forget the other and the build stops here, which
+ * is the strongest form of "impossible or loud" C has to offer.
+ *
+ * The set — not merely the count — is checked by tests/test_tool_surface.c,
+ * which catches the one case a count cannot: adding one tool while removing
+ * another. */
+_Static_assert(sizeof(TOOLS) / sizeof(TOOLS[0]) == (size_t)HYP_TOOL_SURFACE_ROW_COUNT,
+               "mcp.c TOOLS[] and mcp/tool_surface.h describe different numbers of tools. "
+               "Every tool has a row in BOTH, including tools on no tier and tools not yet live.");
+
+/* Rows in the registry, LIVE AND RESERVED. Every internal loop walks this and
+ * filters on status; nothing advertises or dispatches a reserved row. The
+ * public hyp_mcp_tool_count()/hyp_mcp_tool_name() pair below exposes the LIVE
+ * surface only, densely indexed, because every one of its callers — the CLI
+ * subcommand table, the client adapters, scripts/check-docs-claims.sh — is
+ * asking what this build actually offers. */
 static const int TOOL_COUNT = sizeof(TOOLS) / sizeof(TOOLS[0]);
 
-/* No outputSchema is advertised. It used to be
- * {"type":"object","additionalProperties":true} on every tool — a schema that
- * constrains nothing, so it told a client precisely one thing: "structuredContent
- * is the result of this call". Most tools answer in TOON, which is not a JSON
- * object, so structuredContent was empty and clients that honoured the
- * declaration read an empty result. A schema that conveys no shape is not free;
- * it is a promise, and this one could not be kept. Declare one again only
- * per-tool, and only for tools that genuinely return a JSON object. */
-
+/* ── The surface table, expanded ───────────────────────────────────────
+ *
+ * mcp/tool_surface.h is the one table. This end reads all seven columns: the
+ * two tier flags for the restricted profiles, the status for what is
+ * advertised and dispatchable, the output schema for what a client is promised,
+ * and the annotation profile for the four hints tools/list emits. The other
+ * end, cli/agent_profiles.c, reads three of the same columns from the same
+ * rows.
+ *
+ * WHAT THIS REPLACED, because it is worth being able to find again: a
+ * name-keyed TOOL_ANNOTATIONS[] with a SILENT FALLBACK — `def ? def->read_only
+ * : false` and, worse, `def ? def->destructive : true`. A tool present in
+ * TOOLS[] and missing from that list did not fail to build, did not fail a
+ * test, and shipped advertising destructiveHint=true and openWorldHint=true to
+ * every client. It was a fourth hand-written list of the same sixteen tools,
+ * beside the registry, the tier table and the dispatch chain. The fallback is
+ * gone: an annotation profile is a mandatory column, so a row without one does
+ * not compile, and there is nothing left to default to.
+ *
+ * The four booleans reaching the wire are byte-for-byte what they were. */
 typedef struct {
-    const char *name;
     bool read_only;
     bool destructive;
     bool idempotent;
     bool open_world;
 } tool_annotation_def_t;
 
-/* Tool annotations are deliberately explicit. All tools operate on the local
- * repository/index domain, so none cross an open-world trust boundary. */
-static const tool_annotation_def_t TOOL_ANNOTATIONS[] = {
-    {"index_repository", false, false, true, false},
-    {"search_graph", false, true, true, false},
-    /* read_only is false for the same reason search_graph's is: resolving a
-     * project can open (and, on a corrupt file, quarantine) a store. Nothing
-     * in the ask lane itself writes — it never CREATEs its own tables. */
-    {"ask", false, true, true, false},
-    {"query_graph", false, true, true, false},
-    {"trace_path", false, true, true, false},
-    {"get_code_snippet", false, true, true, false},
-    {"get_graph_schema", false, true, true, false},
-    {"get_architecture", false, true, true, false},
-    {"search_code", false, true, true, false},
-    {"list_projects", true, false, true, false},
-    {"delete_project", false, true, true, false},
-    {"index_status", false, true, true, false},
-    {"check_index_coverage", false, true, true, false},
-    {"detect_changes", false, true, true, false},
-    {"manage_adr", false, true, false, false},
-    {"ingest_traces", false, false, false, false},
+static const tool_annotation_def_t TOOL_ANNOTATION_PROFILES[] = {
+#define HYP_TOOL_ANN_PROFILE_ROW(profile, ro, destr, idem, open) {ro, destr, idem, open},
+    HYP_TOOL_ANNOTATION_PROFILES(HYP_TOOL_ANN_PROFILE_ROW)
+#undef HYP_TOOL_ANN_PROFILE_ROW
 };
 
-static const tool_annotation_def_t *mcp_tool_annotations(const char *name) {
-    size_t count = sizeof(TOOL_ANNOTATIONS) / sizeof(TOOL_ANNOTATIONS[0]);
-    for (size_t i = 0; i < count; i++) {
-        if (strcmp(TOOL_ANNOTATIONS[i].name, name) == 0) {
-            return &TOOL_ANNOTATIONS[i];
+_Static_assert(sizeof(TOOL_ANNOTATION_PROFILES) / sizeof(TOOL_ANNOTATION_PROFILES[0]) ==
+                   (size_t)HYP_TOOL_ANN_COUNT,
+               "annotation profile table and enum disagree");
+
+typedef struct {
+    const char *name;
+    const char *alias; /* NULL, or a legacy name dispatch also answers to */
+    bool analysis;
+    bool scout;
+    unsigned generation;
+    hyp_tool_status_t status;
+    const char *output_schema; /* NULL = no promise; the answer is in content */
+    hyp_tool_annotation_profile_t annotations;
+} tool_surface_row_t;
+
+static const tool_surface_row_t TOOL_SURFACE[] = {
+#define HYP_TOOL_SURFACE_SERVER_ROW(name, alias, analysis, scout, generation, status, \
+                                    output_schema, annotations)                       \
+    {name, alias, (analysis) != 0, (scout) != 0, generation, status, output_schema, annotations},
+    HYP_TOOL_SURFACE(HYP_TOOL_SURFACE_SERVER_ROW)
+#undef HYP_TOOL_SURFACE_SERVER_ROW
+};
+
+/* By wire name only. An alias is deliberately NOT resolved here: a row's
+ * status, annotations and output promise belong to the name tools/list
+ * advertises, and an alias is never advertised. */
+static const tool_surface_row_t *mcp_tool_row(const char *name) {
+    if (!name) {
+        return NULL;
+    }
+    for (size_t i = 0U; i < sizeof(TOOL_SURFACE) / sizeof(TOOL_SURFACE[0]); i++) {
+        if (strcmp(TOOL_SURFACE[i].name, name) == 0) {
+            return &TOOL_SURFACE[i];
         }
     }
     return NULL;
+}
+
+/* The row a legacy alias dispatches into, or NULL. `trace_call_path` is the
+ * only one, and until this table it was declared nowhere at all — dispatch
+ * answered to it, TOOLS[] did not contain it, tools/list never advertised it,
+ * and src/cli/cli.c tells users to prefer it. A name the server accepts and no
+ * end declares is the `ask` defect inverted. */
+static const tool_surface_row_t *mcp_tool_alias_row(const char *name) {
+    if (!name) {
+        return NULL;
+    }
+    for (size_t i = 0U; i < sizeof(TOOL_SURFACE) / sizeof(TOOL_SURFACE[0]); i++) {
+        if (TOOL_SURFACE[i].alias && strcmp(TOOL_SURFACE[i].alias, name) == 0) {
+            return &TOOL_SURFACE[i];
+        }
+    }
+    return NULL;
+}
+
+/* A reserved row is not advertised and not callable. A tool absent from the
+ * table entirely cannot exist — the _Static_assert above pairs the counts and
+ * test_tool_surface pairs the sets — but if one somehow did, it is treated as
+ * reserved rather than as live. Fail closed: an unknown tool is refused, never
+ * exposed with default hints. */
+static bool mcp_tool_is_advertised(const char *name) {
+    const tool_surface_row_t *row = mcp_tool_row(name);
+    return row && row->status != HYP_TOOL_RESERVED;
+}
+
+static const tool_annotation_def_t *mcp_tool_annotations(const char *name) {
+    const tool_surface_row_t *row = mcp_tool_row(name);
+    return row ? &TOOL_ANNOTATION_PROFILES[row->annotations] : NULL;
+}
+
+/* The outputSchema a tool declares, or NULL. A blanket
+ * {"type":"object","additionalProperties":true} on every tool is a schema that
+ * constrains nothing, so it tells a client precisely one thing:
+ * "structuredContent is the result of this call". Most tools answer in TOON,
+ * which is not a JSON object, so structuredContent was empty and clients that
+ * honoured the declaration read an empty result. A schema that conveys no
+ * shape is not free; it is a promise, and that one could not be kept.
+ *
+ * So a schema is declared per-tool, in the table, and only where the handler
+ * genuinely returns a JSON object on every path. Declaring one is a promise
+ * that every `required` field is present in what a CLIENT reads — checked by
+ * reading the response, in tests/test_tool_surface.c and in
+ * scripts/ci/mcp-client-view.py, never by inspecting the emitter. Four tests
+ * once asserted the broken output because all four asked what the server sent. */
+static const char *mcp_tool_output_schema(const char *name) {
+    const tool_surface_row_t *row = mcp_tool_row(name);
+    return row ? row->output_schema : NULL;
 }
 
 static void mcp_add_json_schema(yyjson_mut_doc *doc, yyjson_mut_val *obj, const char *key,
@@ -897,34 +1141,51 @@ static void mcp_add_tool_def(yyjson_mut_doc *doc, yyjson_mut_val *tools, int i) 
 
     mcp_add_json_schema(doc, tool, "inputSchema", TOOLS[i].input_schema);
 
+    /* Declared per-tool from the table, and only where the promise is keepable.
+     * See mcp_tool_output_schema. */
+    const char *output_schema = mcp_tool_output_schema(TOOLS[i].name);
+    if (output_schema) {
+        mcp_add_json_schema(doc, tool, "outputSchema", output_schema);
+    }
+
+    /* Never NULL: the annotation profile is a mandatory column of the one
+     * table, and the _Static_assert pairing that table with TOOLS[] means a
+     * registered tool always has a row. There is no default to fall back to,
+     * which is the point — a fallback here would ship
+     * destructiveHint=true on any tool somebody forgot to list. */
     const tool_annotation_def_t *def = mcp_tool_annotations(TOOLS[i].name);
     yyjson_mut_val *annotations = yyjson_mut_obj(doc);
-    yyjson_mut_obj_add_bool(doc, annotations, "readOnlyHint", def ? def->read_only : false);
-    yyjson_mut_obj_add_bool(doc, annotations, "destructiveHint", def ? def->destructive : true);
-    yyjson_mut_obj_add_bool(doc, annotations, "idempotentHint", def ? def->idempotent : false);
-    yyjson_mut_obj_add_bool(doc, annotations, "openWorldHint", def ? def->open_world : true);
+    yyjson_mut_obj_add_bool(doc, annotations, "readOnlyHint", def->read_only);
+    yyjson_mut_obj_add_bool(doc, annotations, "destructiveHint", def->destructive);
+    yyjson_mut_obj_add_bool(doc, annotations, "idempotentHint", def->idempotent);
+    yyjson_mut_obj_add_bool(doc, annotations, "openWorldHint", def->open_world);
     yyjson_mut_obj_add_val(doc, tool, "annotations", annotations);
 
     yyjson_mut_arr_add_val(tools, tool);
 }
 
-/* The restricted profiles' allowlists come from mcp/tool_tiers.h — the same
- * table agent_profiles.c renders into every generated agent definition. The
- * two ends used to keep separate lists; see that header for what it cost. */
-typedef struct {
-    const char *name;
-    bool analysis;
-    bool scout;
-} tool_tier_row_t;
-
-static const tool_tier_row_t TOOL_TIERS[] = {
-#define HYP_TOOL_TIER_ROW(name, analysis, scout, generation) {name, (analysis) != 0, (scout) != 0},
-    HYP_TOOL_TIERS(HYP_TOOL_TIER_ROW)
-#undef HYP_TOOL_TIER_ROW
-};
-
+/* Which tools a profile advertises and accepts, from mcp/tool_surface.h — the
+ * same rows agent_profiles.c renders into every generated agent definition.
+ * The two ends used to keep separate lists; see that header for what it cost,
+ * and for the three lists beside it that were not fixed at the same time.
+ *
+ * A RESERVED row is refused under EVERY profile including ALL: its signature is
+ * published and its tool does not exist. That is the same gate the profile
+ * renderer applies, read from the same column, so a reserved tool cannot be
+ * advertised at one end and hidden at the other. */
 static bool mcp_tool_allowed(hyp_mcp_tool_profile_t profile, const char *name) {
-    if (!name) {
+    const tool_surface_row_t *row = mcp_tool_row(name);
+    if (!row) {
+        /* A legacy alias stays callable on the full surface and is admitted by
+         * NO restricted profile — which is exactly what shipped before this
+         * table existed, and is the right rule stated rather than accidental: a
+         * compatibility shim for callers that already exist is not surface, so
+         * nothing new should learn it. */
+        const tool_surface_row_t *aliased = mcp_tool_alias_row(name);
+        return aliased && aliased->status != HYP_TOOL_RESERVED &&
+               profile == HYP_MCP_TOOL_PROFILE_ALL;
+    }
+    if (row->status == HYP_TOOL_RESERVED) {
         return false;
     }
     if (profile == HYP_MCP_TOOL_PROFILE_ALL) {
@@ -933,13 +1194,7 @@ static bool mcp_tool_allowed(hyp_mcp_tool_profile_t profile, const char *name) {
     if (profile != HYP_MCP_TOOL_PROFILE_ANALYSIS && profile != HYP_MCP_TOOL_PROFILE_SCOUT) {
         return false;
     }
-    for (size_t i = 0U; i < sizeof(TOOL_TIERS) / sizeof(TOOL_TIERS[0]); i++) {
-        if (strcmp(name, TOOL_TIERS[i].name) == 0) {
-            return profile == HYP_MCP_TOOL_PROFILE_ANALYSIS ? TOOL_TIERS[i].analysis
-                                                            : TOOL_TIERS[i].scout;
-        }
-    }
-    return false;
+    return profile == HYP_MCP_TOOL_PROFILE_ANALYSIS ? row->analysis : row->scout;
 }
 
 bool hyp_mcp_tool_profile_allows(hyp_mcp_tool_profile_t profile, const char *name) {
@@ -1055,11 +1310,13 @@ char *hyp_mcp_tools_list(void) {
     return hyp_mcp_tools_list_range(HYP_MCP_TOOL_PROFILE_ALL, 0, TOOL_COUNT, false);
 }
 
-/* Return the JSON input_schema string for a tool by name, or NULL if unknown.
- * Used by the CLI to build --flag arguments and per-tool --help from the same
- * source of truth the MCP tools/list advertises. Static lifetime; do not free. */
+/* Return the JSON input_schema string for a tool by name, or NULL if unknown
+ * OR RESERVED. Used by the CLI to build --flag arguments and per-tool --help
+ * from the same source of truth the MCP tools/list advertises — so a reserved
+ * tool must be invisible here too, or `hyp cli <reserved>` would offer flags
+ * for a tool the server refuses. Static lifetime; do not free. */
 const char *hyp_mcp_tool_input_schema(const char *tool_name) {
-    if (!tool_name) {
+    if (!tool_name || !mcp_tool_is_advertised(tool_name)) {
         return NULL;
     }
     for (int i = 0; i < TOOL_COUNT; i++) {
@@ -1070,15 +1327,102 @@ const char *hyp_mcp_tool_input_schema(const char *tool_name) {
     return NULL;
 }
 
+/* THE LIVE SURFACE, densely indexed. Every caller of this pair — the CLI
+ * subcommand table, the agent client adapters, the docs-claims check, the
+ * two-ends test — is asking what this build actually offers, so a reserved row
+ * must not appear. Reserved rows are appended to TOOLS[], but nothing here
+ * depends on that: both functions filter on status rather than on position. */
 int hyp_mcp_tool_count(void) {
-    return TOOL_COUNT;
+    int live = 0;
+    for (int i = 0; i < TOOL_COUNT; i++) {
+        if (mcp_tool_is_advertised(TOOLS[i].name)) {
+            live++;
+        }
+    }
+    return live;
 }
 
 const char *hyp_mcp_tool_name(int index) {
+    if (index < 0) {
+        return NULL;
+    }
+    int live = 0;
+    for (int i = 0; i < TOOL_COUNT; i++) {
+        if (!mcp_tool_is_advertised(TOOLS[i].name)) {
+            continue;
+        }
+        if (live == index) {
+            return TOOLS[i].name;
+        }
+        live++;
+    }
+    return NULL;
+}
+
+/* The whole registry and the whole table, live and reserved, so a test can hold
+ * the two to the same SET — the case a count-only _Static_assert cannot catch
+ * is adding one tool while removing another. */
+int hyp_mcp_tool_registry_count(void) {
+    return TOOL_COUNT;
+}
+
+const char *hyp_mcp_tool_registry_name(int index) {
     if (index < 0 || index >= TOOL_COUNT) {
         return NULL;
     }
     return TOOLS[index].name;
+}
+
+int hyp_mcp_tool_surface_count(void) {
+    return (int)(sizeof(TOOL_SURFACE) / sizeof(TOOL_SURFACE[0]));
+}
+
+const char *hyp_mcp_tool_surface_name(int index) {
+    if (index < 0 || index >= hyp_mcp_tool_surface_count()) {
+        return NULL;
+    }
+    return TOOL_SURFACE[index].name;
+}
+
+const char *hyp_mcp_tool_surface_alias(int index) {
+    if (index < 0 || index >= hyp_mcp_tool_surface_count()) {
+        return NULL;
+    }
+    return TOOL_SURFACE[index].alias;
+}
+
+int hyp_mcp_tool_surface_status(const char *tool_name) {
+    const tool_surface_row_t *row = mcp_tool_row(tool_name);
+    return row ? (int)row->status : -1;
+}
+
+const char *hyp_mcp_tool_declared_output_schema(const char *tool_name) {
+    return mcp_tool_output_schema(tool_name);
+}
+
+/* Whether a tool may be called with no arguments by a test probe: it neither
+ * writes nor leaves this machine. Derived from the row's annotation profile,
+ * so a writer added later is excluded by its own row and not by a skip list
+ * somebody has to remember to extend. */
+bool hyp_mcp_tool_is_probe_safe(const char *tool_name) {
+    const tool_surface_row_t *row = mcp_tool_row(tool_name);
+    return row && HYP_TOOL_ANN_IS_PROBE_SAFE(row->annotations);
+}
+
+/* The record kinds record_memory accepts, from the one kind table. The input
+ * schema deliberately does not restate them as a JSON enum: a second copy of
+ * the set is how the four tool lists drifted. */
+bool hyp_mcp_memory_kind_is_authorable(const char *kind) {
+    if (!kind) {
+        return false;
+    }
+#define HYP_MEMORY_KIND_CHECK(name, authorable) \
+    if (strcmp(kind, name) == 0) {              \
+        return (authorable);                    \
+    }
+    HYP_MEMORY_KINDS(HYP_MEMORY_KIND_CHECK)
+#undef HYP_MEMORY_KIND_CHECK
+    return false;
 }
 
 /* Render the top-level --help "Tools:" block from the registry tools/list
@@ -1112,9 +1456,14 @@ static size_t help_append(char *out, size_t cap, size_t len, const char *fmt, ..
 }
 
 char *hyp_mcp_tools_help_list(void) {
+    /* The LIVE surface: `--help` is read by a person deciding what to call, so
+     * a reserved row — a published signature with no tool behind it — must not
+     * appear here any more than it appears in tools/list. Both come from the
+     * same status column. */
+    const int live = hyp_mcp_tool_count();
     size_t cap = SLEN("Tools:") + 2; /* trailing newline + NUL */
-    for (int i = 0; i < TOOL_COUNT; i++) {
-        cap += strlen(TOOLS[i].name) + SLEN(" ,\n "); /* per-tool worst case incl. a wrap */
+    for (int i = 0; i < live; i++) {
+        cap += strlen(hyp_mcp_tool_name(i)) + SLEN(" ,\n "); /* worst case incl. a wrap */
     }
     char *out = malloc(cap);
     if (!out) {
@@ -1122,14 +1471,15 @@ char *hyp_mcp_tools_help_list(void) {
     }
     size_t len = help_append(out, cap, 0, "Tools:");
     size_t col = len;
-    for (int i = 0; i < TOOL_COUNT; i++) {
-        const char *sep = (i + 1 < TOOL_COUNT) ? "," : "";
-        size_t item = SLEN(" ") + strlen(TOOLS[i].name) + strlen(sep);
+    for (int i = 0; i < live; i++) {
+        const char *name = hyp_mcp_tool_name(i);
+        const char *sep = (i + 1 < live) ? "," : "";
+        size_t item = SLEN(" ") + strlen(name) + strlen(sep);
         if (i > 0 && col + item > MCP_HELP_TOOLS_WRAP_COL) {
             len += help_append(out, cap, len, "\n ");
             col = 1;
         }
-        size_t wrote = help_append(out, cap, len, " %s%s", TOOLS[i].name, sep);
+        size_t wrote = help_append(out, cap, len, " %s%s", name, sep);
         len += wrote;
         col += wrote;
     }
@@ -1374,6 +1724,29 @@ static const char *SUPPORTED_PROTOCOL_VERSIONS[] = {
 static const int SUPPORTED_VERSION_COUNT =
     (int)(sizeof(SUPPORTED_PROTOCOL_VERSIONS) / sizeof(SUPPORTED_PROTOCOL_VERSIONS[0]));
 
+/* Generation 4's words, and the ONLY place the writer is taught.
+ *
+ * record_memory sits on no tier — the tiered profiles state read-only in their
+ * own description, so admitting a writer to one would break that promise
+ * rather than widen the surface. The agent that can call it is therefore the
+ * one on the full server, which reads no generated profile: these instructions
+ * are the whole of what it is told, so this is where the words go and the only
+ * sessions that pay for them are the ones that can act on them.
+ *
+ * Both halves of the sentence are load-bearing, and the second one especially.
+ * A listed tool is not a used tool — a tool merely present in the list was
+ * called in 4 runs of 60, and one sentence saying WHEN took it to 60 of 60 —
+ * and a writer that fires on everything is worse than one that never fires, so
+ * the clause that says what NOT to record is not padding.
+ *
+ * Isolated as its own macro because the negative control for the measurement
+ * is exactly its removal: flip the tool live, delete these words, and see
+ * whether the rate survives. */
+#define MCP_MEMORY_GUIDANCE                                                                   \
+    " Call search_memory for why the code is the way it is; the graph answers what it does."  \
+    " When you settle a decision, reject an alternative, or reach a verdict a later session " \
+    "would need, call record_memory to write it down — not routine progress."
+
 static const char MCP_SERVER_INSTRUCTIONS[] =
     "Use graph tools first for structural code discovery: search_graph to find symbols, "
     "trace_path for callers and callees, get_code_snippet for exact source, query_graph for "
@@ -1386,7 +1759,7 @@ static const char MCP_SERVER_INSTRUCTIONS[] =
     "watched projects auto-refresh in the background; use index_status for project health and "
     "check_index_coverage for every cited path and for scopes behind negative or exhaustive "
     "claims. Coverage is best-effort, never proof of completeness. Check has_more or nextCursor "
-    "and paginate when present.";
+    "and paginate when present." MCP_MEMORY_GUIDANCE;
 
 static const char MCP_ANALYSIS_SERVER_INSTRUCTIONS[] =
     "This is the analysis tool profile; graph and index mutation tools are unavailable. Omit "
@@ -1733,6 +2106,27 @@ struct hyp_mcp_server {
     int64_t active_request_id;       /* JSON-RPC id of the in-progress tool call */
     char *active_request_id_str;     /* string JSON-RPC id of the in-progress tool call */
     hyp_mcp_tool_profile_t tool_profile;
+
+    /* The memory freshness seam (see mcp.h). All borrowed except the
+     * feed name; NULL local set means no record store is configured and the
+     * `memory` block is ABSENT from index_status entirely. */
+    const hyp_record_set_t *memory_local;
+    hyp_mcp_memory_upstream_fn memory_upstream;
+    void *memory_upstream_ctx;
+    char *memory_feed; /* heap; adapter name the answer discloses */
+
+    /* The durable store record_memory writes and search_memory reads. Opened
+     * on the FIRST memory tool call and never before: opening it creates the
+     * directory, and a build that has never been asked to remember anything
+     * must keep reporting `memory` ABSENT from index_status rather than
+     * reporting an empty store it invented. `memory_snapshot` is this
+     * server's own loaded copy, refreshed after every append, and it is what
+     * the freshness seam above borrows — so the tool that writes and the
+     * status that reports cannot disagree about what is on disk. */
+    hyp_record_store_t *memory_store;
+    hyp_record_set_t *memory_snapshot;
+    bool memory_open_failed;
+    char memory_open_error[HYP_SZ_256];
 };
 
 hyp_mcp_server_t *hyp_mcp_server_new(const char *store_path) {
@@ -1904,8 +2298,33 @@ void hyp_mcp_server_free(hyp_mcp_server_t *srv) {
     free(srv->current_project);
     free(srv->allowed_root);
     free(srv->active_request_id_str);
+    free(srv->memory_feed);
+    if (srv->memory_local == srv->memory_snapshot) {
+        srv->memory_local = NULL;
+    }
+    hyp_record_set_free(srv->memory_snapshot);
+    hyp_record_store_close(srv->memory_store);
     hyp_mutex_destroy(&srv->request_scope_mutex);
     free(srv);
+}
+
+/* ── The memory freshness seam (contract in mcp.h) ────────────── */
+
+void hyp_mcp_server_set_memory_store(hyp_mcp_server_t *srv, const hyp_record_set_t *local) {
+    if (srv) {
+        srv->memory_local = local;
+    }
+}
+
+void hyp_mcp_server_set_memory_upstream(hyp_mcp_server_t *srv, const char *feed,
+                                        hyp_mcp_memory_upstream_fn read_upstream, void *context) {
+    if (!srv) {
+        return;
+    }
+    free(srv->memory_feed);
+    srv->memory_feed = feed ? heap_strdup(feed) : NULL;
+    srv->memory_upstream = read_upstream;
+    srv->memory_upstream_ctx = read_upstream ? context : NULL;
 }
 
 /* ── Idle store eviction ──────────────────────────────────────── */
@@ -2559,7 +2978,7 @@ static bool project_has_adr(hyp_store_t *store, const char *project, const char 
  * MEASURED: 120 of 120 runs in the §3.1 token harness spent their FIRST tool
  * call on list_projects — after the analysis-tier profile body had been given
  * a sentence spelling out exactly how the name is derived from the repo path
- * (tool_tiers.h generation 2). Prose lost. Every session paid a round trip to
+ * (tool_surface.h generation 2). Prose lost. Every session paid a round trip to
  * learn something this process already knows.
  *
  * IT ALREADY KNOWS IT. The MCP server is spawned BY the client, so its own
@@ -6688,9 +7107,126 @@ static char *handle_check_index_coverage(hyp_mcp_server_t *srv, const char *args
     return result;
 }
 
+/* ── Two freshnesses, reported separately ─────────────────────────────
+ *
+ * index_status answers "your code is current" and "your memory is missing N
+ * records" as SIBLING objects, never merged into one verdict: they are
+ * independent axes, and a record count moves for reasons the code index never
+ * sees. The full shape and the absent-vs-zero rule live in tool_surface.h
+ * beside the outputSchema; the seam that feeds the memory half lives in mcp.h.
+ */
+
+static void iso8601_utc_now(char *buf, size_t sz) {
+    time_t t = time(NULL);
+    struct tm tm_utc;
+    if (!hyp_gmtime_r(&t, &tm_utc)) {
+        buf[0] = '\0';
+        return;
+    }
+    (void)strftime(buf, sz, "%Y-%m-%dT%H:%M:%SZ",
+                   &tm_utc); // cert-err33-c: only fails if the buffer is too small — the 21-byte
+                             // ISO timestamp always fits in caller-provided buffers
+}
+
+/* The `memory` sibling. Adds NOTHING when no record store is configured:
+ * absent means "look elsewhere", and emitting anything here — a 0, an empty
+ * object — would convert "could not check" into a confident answer. The
+ * comparison is a set difference, never a lag: the store is an id-keyed set
+ * with no order to be "behind" in, so the field is `missing` — records the
+ * upstream set holds that the local one does not. Digest compare first (the
+ * free yes/no), then an id walk for the count plus the names. */
+static void add_memory_freshness(hyp_mcp_server_t *srv, yyjson_mut_doc *doc, yyjson_mut_val *root) {
+    if (!srv || !srv->memory_local) {
+        return; /* no record store configured — `memory` ABSENT entirely */
+    }
+    yyjson_mut_val *memory = yyjson_mut_obj(doc);
+    if (srv->memory_feed) {
+        yyjson_mut_obj_add_strcpy(doc, memory, "feed", srv->memory_feed);
+    }
+    yyjson_mut_obj_add_uint(doc, memory, "records_local",
+                            (uint64_t)hyp_record_set_count(srv->memory_local));
+
+    const hyp_record_set_t *upstream =
+        srv->memory_upstream ? srv->memory_upstream(srv->memory_upstream_ctx) : NULL;
+    if (!upstream) {
+        /* No provider configured (the shipped state until C6u lands sync), or
+         * the provider could not read the upstream set. Either way the honest
+         * answer is the same: status "unknown" with `missing` and
+         * `records_upstream` ABSENT — never 0. "missing: 0" emitted when
+         * nobody could reach the feed is the exact confident wrong answer F3
+         * exists to prevent: an agent told it is current stops checking. */
+        yyjson_mut_obj_add_str(doc, memory, "status", "unknown");
+        yyjson_mut_obj_add_val(doc, root, "memory", memory);
+        return;
+    }
+
+    /* The upstream set was READ, so every count below is a checked fact and
+     * `missing: 0` means exactly "checked, and nothing is missing". */
+    char local_digest[HYP_RECORD_ID_LEN + 1];
+    char upstream_digest[HYP_RECORD_ID_LEN + 1];
+    hyp_record_set_digest(srv->memory_local, local_digest);
+    hyp_record_set_digest(upstream, upstream_digest);
+
+    size_t missing = 0U;
+    yyjson_mut_val *missing_ids = yyjson_mut_arr(doc);
+    if (strcmp(local_digest, upstream_digest) != 0) {
+        /* Digests differ: walk the upstream ids for the exact count and the
+         * names. Records only THIS side holds are deliberately not counted —
+         * they are writes a push has not delivered yet, not staleness here,
+         * and a union has no ordering that could call them anything else. */
+        size_t upstream_count = hyp_record_set_count(upstream);
+        for (size_t i = 0U; i < upstream_count; i++) {
+            const hyp_record_t *rec = hyp_record_set_at(upstream, i);
+            if (!rec || hyp_record_set_get(srv->memory_local, rec->id)) {
+                continue;
+            }
+            if (missing < (size_t)MCP_MEMORY_MISSING_IDS_MAX) {
+                yyjson_mut_arr_add_strcpy(doc, missing_ids, rec->id);
+            }
+            missing++;
+        }
+    }
+    yyjson_mut_obj_add_str(doc, memory, "status", missing > 0U ? "incomplete" : "current");
+    yyjson_mut_obj_add_uint(doc, memory, "records_upstream",
+                            (uint64_t)hyp_record_set_count(upstream));
+    yyjson_mut_obj_add_uint(doc, memory, "missing", (uint64_t)missing);
+    yyjson_mut_obj_add_val(doc, memory, "missing_ids", missing_ids);
+    if (missing > (size_t)MCP_MEMORY_MISSING_IDS_MAX) {
+        yyjson_mut_obj_add_uint(doc, memory, "missing_ids_withheld",
+                                (uint64_t)(missing - (size_t)MCP_MEMORY_MISSING_IDS_MAX));
+    }
+    char checked_at[32];
+    iso8601_utc_now(checked_at, sizeof(checked_at));
+    if (checked_at[0]) {
+        yyjson_mut_obj_add_strcpy(doc, memory, "checked_at", checked_at);
+    }
+    yyjson_mut_obj_add_val(doc, root, "memory", memory);
+}
+
 static char *handle_index_status(hyp_mcp_server_t *srv, const char *args) {
     project_choice_t choice;
     char *project = resolve_project_arg(srv, args, &choice);
+    if (!project) {
+        /* THE PHASE 0 DEAD BRANCH, MADE LIVE. The structured no_project answer
+         * below shipped dead: it needed store != NULL with project == NULL,
+         * and resolve_store returns NULL the moment project is NULL, so
+         * REQUIRE_STORE answered isError prose first, every time — an agent in
+         * an unindexed directory got an error where the tool documents a
+         * status. Answer BEFORE touching the store: "no project could be
+         * resolved" is not an error and not an empty project. The `memory`
+         * sibling still applies — records are global and their freshness does
+         * not depend on a project resolving. */
+        yyjson_mut_doc *doc = yyjson_mut_doc_new(NULL);
+        yyjson_mut_val *root = yyjson_mut_obj(doc);
+        yyjson_mut_doc_set_root(doc, root);
+        yyjson_mut_obj_add_str(doc, root, "status", "no_project");
+        add_memory_freshness(srv, doc, root);
+        char *json = yy_doc_to_str(doc);
+        yyjson_mut_doc_free(doc);
+        char *result = hyp_mcp_text_result(json, false);
+        free(json);
+        return result;
+    }
     hyp_store_t *store = resolve_store(srv, project);
     REQUIRE_STORE(store, project);
     /* The git context block (worktree/shadow path variants) only matters when
@@ -6702,34 +7238,45 @@ static char *handle_index_status(hyp_mcp_server_t *srv, const char *args) {
     yyjson_mut_val *root = yyjson_mut_obj(doc);
     yyjson_mut_doc_set_root(doc, root);
 
-    if (project) {
-        int nodes = hyp_store_count_nodes(store, project);
-        int edges = hyp_store_count_edges(store, project);
-        yyjson_mut_obj_add_str(doc, root, "project", project);
-        add_project_source_json(doc, root, &choice);
-        yyjson_mut_obj_add_int(doc, root, "nodes", nodes);
-        yyjson_mut_obj_add_int(doc, root, "edges", edges);
-        yyjson_mut_obj_add_str(doc, root, "status", nodes > 0 ? "ready" : "empty");
-        hyp_project_t proj_info = {0};
-        if (hyp_store_get_project(store, project, &proj_info) == HYP_STORE_OK) {
-            yyjson_mut_obj_add_strcpy(doc, root, "root_path",
-                                      proj_info.root_path ? proj_info.root_path : "");
-            if (verbose) {
-                add_git_context_json(doc, root, proj_info.root_path);
-            }
-            safe_str_free(&proj_info.name);
-            safe_str_free(&proj_info.indexed_at);
-            safe_str_free(&proj_info.root_path);
+    int nodes = hyp_store_count_nodes(store, project);
+    int edges = hyp_store_count_edges(store, project);
+    yyjson_mut_obj_add_str(doc, root, "project", project);
+    add_project_source_json(doc, root, &choice);
+    yyjson_mut_obj_add_int(doc, root, "nodes", nodes);
+    yyjson_mut_obj_add_int(doc, root, "edges", edges);
+    yyjson_mut_obj_add_str(doc, root, "status", nodes > 0 ? "ready" : "empty");
+    /* The same code-freshness answer, restated under its own `code` key
+     * as the sibling of `memory`. The top-level keys above are the shipped
+     * surface and stay byte-identical — this ADDS a key, renames nothing.
+     * `files_behind` is deliberately not emitted: it is not computed here, and
+     * a key must not appear until something computes it (absent = "not
+     * computed", which no invented value may impersonate). */
+    yyjson_mut_val *code = yyjson_mut_obj(doc);
+    yyjson_mut_obj_add_str(doc, code, "status", nodes > 0 ? "ready" : "empty");
+    hyp_project_t proj_info = {0};
+    if (hyp_store_get_project(store, project, &proj_info) == HYP_STORE_OK) {
+        yyjson_mut_obj_add_strcpy(doc, root, "root_path",
+                                  proj_info.root_path ? proj_info.root_path : "");
+        if (verbose) {
+            add_git_context_json(doc, root, proj_info.root_path);
         }
-        add_coverage_report(doc, root, store, project);
-        if (nodes == 0) {
-            yyjson_mut_obj_add_str(
-                doc, root, "hint",
-                "Project is empty. Re-run index_repository(repo_path=...) to populate.");
+        if (proj_info.indexed_at && proj_info.indexed_at[0]) {
+            yyjson_mut_obj_add_strcpy(doc, code, "indexed_at", proj_info.indexed_at);
         }
-    } else {
-        yyjson_mut_obj_add_str(doc, root, "status", "no_project");
+        safe_str_free(&proj_info.name);
+        safe_str_free(&proj_info.indexed_at);
+        safe_str_free(&proj_info.root_path);
     }
+    yyjson_mut_obj_add_int(doc, code, "nodes", nodes);
+    yyjson_mut_obj_add_int(doc, code, "edges", edges);
+    add_coverage_report(doc, root, store, project);
+    if (nodes == 0) {
+        yyjson_mut_obj_add_str(
+            doc, root, "hint",
+            "Project is empty. Re-run index_repository(repo_path=...) to populate.");
+    }
+    yyjson_mut_obj_add_val(doc, root, "code", code);
+    add_memory_freshness(srv, doc, root);
 
     char *json = yy_doc_to_str(doc);
     yyjson_mut_doc_free(doc);
@@ -11527,6 +12074,14 @@ static bool write_scoped_filelist(hyp_mcp_server_t *srv, const char *project, co
     int indexed_count = 0;
     if (hyp_store_list_files(pre_store, project, &indexed_files, &indexed_count) != HYP_STORE_OK ||
         indexed_count == 0) {
+        /* The listing is allocated before the row count is known, so an
+         * indexed project with nothing to list still owns an array. Freeing it
+         * only on the success path leaked it on every scoped search of an
+         * empty project. */
+        for (int fi = 0; fi < indexed_count; fi++) {
+            free(indexed_files[fi]);
+        }
+        free(indexed_files);
         return false;
     }
     bool ok = false;
@@ -13091,8 +13646,19 @@ static char *handle_manage_adr(hyp_mcp_server_t *srv, const char *args) {
     bool is_error = false;
     const char *adr_content = have_adr ? adr.content : legacy;
     if (write_request) {
-        if (hyp_store_adr_store(store, project, content) == HYP_STORE_OK) {
+        /* The ADR document goes into the append-only record set as a
+         * kind=decision record, and the project_summaries row is refreshed from
+         * that record as a projection the UI and mode:"get" read. A record
+         * store that will not open is a FAILED write: falling back to replacing
+         * the row would leave the mutable path in the tree with a different
+         * entry condition, which is not removing it. */
+        if (hyp_adr_write_via_records(store, project, content) == HYP_STORE_OK) {
             yyjson_mut_obj_add_str(doc, root_obj, "status", "updated");
+            /* Byte-identical to what a client has always read, deliberately.
+             * It describes the INTERFACE — this call does supply the whole
+             * document — and the deprecated row is not the place to move
+             * bytes. What changed is underneath: the superseded text is a
+             * permanent record instead of an overwrite. */
             yyjson_mut_obj_add_str(doc, root_obj, "semantics", "whole_document_replaced");
         } else {
             yyjson_mut_obj_add_str(doc, root_obj, "status", "write_error");
@@ -13168,11 +13734,642 @@ static char *handle_ingest_traces(hyp_mcp_server_t *srv, const char *args) {
     return result;
 }
 
+/* ── record_memory / search_memory ────────────────────────────────
+ *
+ * The write end and the read end of the append-only record store. The contract
+ * both implement — argument meanings, refusal modes, output shapes — is in
+ * mcp/tool_surface.h beside their rows; what follows is only how this build
+ * keeps it.
+ *
+ * TWO HONEST GAPS, refused by name rather than papered over:
+ *
+ *   anchor.  Resolving a span address to live code is a separate unit and does
+ *            not exist here. A supplied anchor is therefore UNVERIFIABLE, and
+ *            the contract's rule is that a record is never created
+ *            already-orphaned and never attached to a plausible neighbour — so
+ *            a supplied anchor is a confident error, not a stored string.
+ *   status.  Because no record can be written with an anchor, no record has
+ *            one, so "attached" and "orphaned" partition an empty set. The
+ *            reader says that instead of filtering on a property it cannot
+ *            compute; an ignored filter returns a superset that reads exactly
+ *            like a match, which is the worse of the two failures.
+ *
+ * MEMORY IS GLOBAL, and `project` does not scope it. Decisions outlive the
+ * repository layout they were taken in; scoping comes from resolving an anchor,
+ * and an unanchored decision genuinely has no project. The answer still reports
+ * project and project_source, because every other tool does and an agent
+ * comparing answers should not have to wonder which one resolved differently.
+ */
+
+/* Where the durable store lives. HYP_MEMORY_DIR overrides; otherwise it is a
+ * `memory` directory beside the indexes, which is the one location every venue
+ * on this machine already redirects together. The directory NAME is the
+ * contract; the parent is not. */
+static bool memory_store_dir(char *out, size_t cap) {
+    char configured[HYP_SZ_4K];
+    const char *set = hyp_safe_getenv("HYP_MEMORY_DIR", configured, sizeof(configured), NULL);
+    if (set && set[0]) {
+        int n = snprintf(out, cap, "%s", set);
+        return n > 0 && (size_t)n < cap;
+    }
+    const char *cache = hyp_resolve_cache_dir();
+    if (!cache || !cache[0]) {
+        return false;
+    }
+    int n = snprintf(out, cap, "%s/memory", cache);
+    return n > 0 && (size_t)n < cap;
+}
+
+/* Reload this server's snapshot of the store and hand it to the freshness
+ * seam. index_status and the memory tools then answer from the same bytes:
+ * a write that index_status cannot see would be the two-ends defect this
+ * repository keeps paying for, one layer down. */
+static void memory_refresh_snapshot(hyp_mcp_server_t *srv) {
+    if (!srv || !srv->memory_store) {
+        return;
+    }
+    hyp_record_set_t *loaded = NULL;
+    if (hyp_record_store_load(srv->memory_store, &loaded) != HYP_RECORD_STORE_OK || !loaded) {
+        return;
+    }
+    if (srv->memory_local == srv->memory_snapshot) {
+        srv->memory_local = loaded;
+    }
+    hyp_record_set_free(srv->memory_snapshot);
+    srv->memory_snapshot = loaded;
+}
+
+/* Open on first use, and remember a failure so a broken store is reported the
+ * same way every time instead of being retried per call. Returns NULL and
+ * writes the reason on failure.
+ *
+ * `create` is false for the READER, and that is not a detail: opening creates
+ * the directory, so a reader that opened would make every machine that has
+ * merely asked a question look like a machine with an empty memory. Absent and
+ * empty are different answers and only one of them is ever true. */
+static hyp_record_store_t *memory_store_open(hyp_mcp_server_t *srv, const char **why, bool create) {
+    if (!srv) {
+        *why = "no server";
+        return NULL;
+    }
+    if (srv->memory_store) {
+        return srv->memory_store;
+    }
+    if (srv->memory_open_failed) {
+        *why = srv->memory_open_error;
+        return NULL;
+    }
+    char dir[HYP_SZ_4K];
+    if (!create) {
+        char db[HYP_SZ_4K];
+        if (!memory_store_dir(dir, sizeof(dir)) ||
+            snprintf(db, sizeof(db), "%s/records.db", dir) < 0 || !hyp_file_exists(db)) {
+            *why = "no memory store on this machine yet — nothing has been recorded here";
+            return NULL;
+        }
+    }
+    if (!memory_store_dir(dir, sizeof(dir))) {
+        srv->memory_open_failed = true;
+        snprintf(srv->memory_open_error, sizeof(srv->memory_open_error),
+                 "no memory directory: set HYP_MEMORY_DIR, or HYP_CACHE_DIR, or HOME");
+        *why = srv->memory_open_error;
+        return NULL;
+    }
+    hyp_record_store_t *store = NULL;
+    hyp_record_store_status_t status = hyp_record_store_open(dir, &store);
+    if (status != HYP_RECORD_STORE_OK || !store) {
+        srv->memory_open_failed = true;
+        snprintf(srv->memory_open_error, sizeof(srv->memory_open_error),
+                 "memory store at %s could not be opened: %s", dir,
+                 hyp_record_store_status_reason(status));
+        *why = srv->memory_open_error;
+        return NULL;
+    }
+    srv->memory_store = store;
+    memory_refresh_snapshot(srv);
+    return store;
+}
+
+/* The accepted set, generated from the one kind table so a refusal can never
+ * name a set the checker does not enforce. */
+static void memory_authorable_kinds(char *out, size_t cap) {
+    out[0] = '\0';
+    size_t used = 0U;
+#define HYP_MEMORY_KIND_NAME_ROW(name, authorable)                                        \
+    if ((authorable) && used + 2U < cap) {                                                \
+        used += (size_t)snprintf(out + used, cap - used, "%s%s", used ? ", " : "", name); \
+    }
+    HYP_MEMORY_KINDS(HYP_MEMORY_KIND_NAME_ROW)
+#undef HYP_MEMORY_KIND_NAME_ROW
+}
+
+static void iso8601_utc_from_ms(int64_t ms, char *buf, size_t sz) {
+    time_t t = (time_t)(ms / 1000);
+    struct tm tm_utc;
+    if (!hyp_gmtime_r(&t, &tm_utc)) {
+        buf[0] = '\0';
+        return;
+    }
+    (void)strftime(buf, sz, "%Y-%m-%dT%H:%M:%SZ", &tm_utc);
+}
+
+/* Days since 1970-01-01 for a proleptic Gregorian date. Pure arithmetic
+ * because timegm() is not portable and the alternative — mktime plus a
+ * timezone guess — silently shifts a caller's `since` by hours. */
+static int64_t memory_days_from_civil(int64_t y, int64_t m, int64_t d) {
+    y -= m <= 2;
+    const int64_t era = (y >= 0 ? y : y - 399) / 400;
+    const int64_t yoe = y - era * 400;
+    const int64_t doy = (153 * (m + (m > 2 ? -3 : 9)) + 2) / 5 + d - 1;
+    const int64_t doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    return era * 146097 + doe - 719468;
+}
+
+/* "YYYY-MM-DD" or "YYYY-MM-DDThh:mm:ss" with an optional trailing Z, UTC.
+ * False on anything else — a timestamp filter that quietly parses to zero
+ * returns the whole store and reads exactly like a match. */
+static bool memory_parse_timestamp(const char *text, int64_t *out_ms) {
+    if (!text || !out_ms) {
+        return false;
+    }
+    int y = 0;
+    int mo = 0;
+    int d = 0;
+    int h = 0;
+    int mi = 0;
+    int s = 0;
+    int consumed = 0;
+    if (sscanf(text, "%4d-%2d-%2dT%2d:%2d:%2d%n", &y, &mo, &d, &h, &mi, &s, &consumed) != 6) {
+        consumed = 0;
+        if (sscanf(text, "%4d-%2d-%2d%n", &y, &mo, &d, &consumed) != 3) {
+            return false;
+        }
+        h = 0;
+        mi = 0;
+        s = 0;
+    }
+    const char *tail = text + consumed;
+    if (*tail == 'Z') {
+        tail++;
+    }
+    if (*tail != '\0') {
+        return false;
+    }
+    if (mo < 1 || mo > 12 || d < 1 || d > 31 || h > 23 || mi > 59 || s > 60) {
+        return false;
+    }
+    int64_t days = memory_days_from_civil(y, mo, d);
+    *out_ms = ((days * 86400) + h * 3600 + mi * 60 + s) * 1000;
+    return true;
+}
+
+static char *memory_error(const char *tool, const char *detail) {
+    char message[HYP_SZ_1K];
+    snprintf(message, sizeof(message), "%s: %s", tool, detail);
+    return hyp_mcp_text_result(message, true);
+}
+
+/* ── record_memory ────────────────────────────────────────────── */
+
+static char *handle_record_memory(hyp_mcp_server_t *srv, const char *args) {
+    char *kind_arg = hyp_mcp_get_string_arg(args, "kind");
+    char *title = hyp_mcp_get_string_arg(args, "title");
+    char *body = hyp_mcp_get_string_arg(args, "body");
+    char *anchor = hyp_mcp_get_string_arg(args, "anchor");
+    char *supersedes = hyp_mcp_get_string_arg(args, "supersedes");
+
+    char *fail = NULL;
+    char kinds[HYP_SZ_256];
+    memory_authorable_kinds(kinds, sizeof(kinds));
+    hyp_record_kind_t kind = HYP_RECORD_DECISION;
+    if (!kind_arg || !kind_arg[0]) {
+        char detail[HYP_SZ_512];
+        snprintf(detail, sizeof(detail), "kind is required. Accepted: %s.", kinds);
+        fail = memory_error("record_memory", detail);
+    } else if (!hyp_mcp_memory_kind_is_authorable(kind_arg) ||
+               !hyp_record_kind_from_name(kind_arg, &kind)) {
+        char detail[HYP_SZ_512];
+        snprintf(detail, sizeof(detail),
+                 "kind '%s' is not one this tool writes. Accepted: %s. Transcript kinds enter "
+                 "only through a feed, never through an agent.",
+                 kind_arg, kinds);
+        fail = memory_error("record_memory", detail);
+    } else if (!title || !title[0]) {
+        fail = memory_error("record_memory", "title is required and must not be empty.");
+    } else if (!body || !body[0]) {
+        fail = memory_error("record_memory", "body is required and must not be empty.");
+    } else if (anchor && anchor[0]) {
+        fail = memory_error("record_memory",
+                            "anchor was supplied, and this build has no anchor resolver, so it "
+                            "cannot be verified to point at live code. A record is never created "
+                            "already-orphaned and never attached to a plausible neighbour. Omit "
+                            "anchor to record this against the repository instead.");
+    } else if (supersedes && supersedes[0] && !hyp_record_id_is_valid(supersedes)) {
+        fail = memory_error("record_memory",
+                            "supersedes must be the id of an existing record, and that is not "
+                            "one. Supersession is a new record naming the old one; the old one "
+                            "is never edited.");
+    }
+    if (fail) {
+        free(kind_arg);
+        free(title);
+        free(body);
+        free(anchor);
+        free(supersedes);
+        return fail;
+    }
+
+    /* One record carries one text. `title` and `body` are how an agent is asked
+     * for it — a titled note is written differently from an untitled one — and
+     * they join here rather than becoming two fields, because the record shape
+     * is frozen and a second text field would be a second id space. `tags` join
+     * the same way: they are part of what was said, not metadata beside it, so
+     * they are visible to any reader and to any future embedding rather than
+     * being silently dropped. */
+    hyp_sb_t content;
+    hyp_sb_init(&content);
+    hyp_sb_append(&content, title);
+    hyp_sb_append(&content, "\n\n");
+    hyp_sb_append(&content, body);
+    yyjson_doc *adoc = args ? yyjson_read(args, strlen(args), 0) : NULL;
+    yyjson_val *tags = adoc ? yyjson_obj_get(yyjson_doc_get_root(adoc), "tags") : NULL;
+    if (tags && yyjson_is_arr(tags)) {
+        size_t ti = 0U;
+        size_t tmax = 0U;
+        yyjson_val *tag = NULL;
+        bool first = true;
+        yyjson_arr_foreach(tags, ti, tmax, tag) {
+            const char *text = yyjson_is_str(tag) ? yyjson_get_str(tag) : NULL;
+            if (!text || !text[0]) {
+                continue;
+            }
+            hyp_sb_append(&content, first ? "\n\ntags: " : ", ");
+            hyp_sb_append(&content, text);
+            first = false;
+        }
+    }
+    yyjson_doc_free(adoc);
+    char *content_text = hyp_sb_finish(&content);
+
+    project_choice_t choice;
+    char *project = resolve_project_arg(srv, args, &choice);
+
+    hyp_record_input_t in;
+    memset(&in, 0, sizeof(in));
+    in.kind = kind;
+    /* There is no author argument and there must never be one: an author a
+     * caller can state is an author a caller can forge. This names the writing
+     * surface, which is the only thing the server actually knows. */
+    in.author = "hyponoia-mcp";
+    in.timestamp_ms = hyp_record_wall_clock_ms();
+    in.content = content_text;
+    in.parent = supersedes && supersedes[0] ? supersedes : NULL;
+
+    const hyp_record_t *rec = NULL;
+    hyp_record_status_t built = content_text ? hyp_record_build(&in, &rec) : HYP_RECORD_ERR_ALLOC;
+    if (built != HYP_RECORD_OK || !rec) {
+        char detail[HYP_SZ_512];
+        snprintf(detail, sizeof(detail), "the record was refused: %s",
+                 hyp_record_status_reason(built));
+        free(content_text);
+        free(project);
+        free(kind_arg);
+        free(title);
+        free(body);
+        free(anchor);
+        free(supersedes);
+        return memory_error("record_memory", detail);
+    }
+
+    const char *why = "";
+    hyp_record_store_t *store = memory_store_open(srv, &why, true);
+    /* The append tells apart "new" from "the union absorbed a duplicate", and
+     * this path can never see the second: the id commits to the timestamp and
+     * the timestamp is read here, so two calls a millisecond apart are two
+     * records however identical their text. Reporting a field whose value is
+     * fixed would be bytes every write pays for nothing. Duplicates are real
+     * where records arrive from elsewhere — that is the store's own contract,
+     * and its own test. */
+    hyp_record_store_status_t wrote =
+        store ? hyp_record_store_append(store, rec, NULL) : HYP_RECORD_STORE_ERR_OPEN;
+    if (!store || wrote != HYP_RECORD_STORE_OK) {
+        char detail[HYP_SZ_1K];
+        snprintf(detail, sizeof(detail), "nothing was written: %s",
+                 store ? hyp_record_store_status_reason(wrote) : why);
+        hyp_record_free(rec);
+        free(content_text);
+        free(project);
+        free(kind_arg);
+        free(title);
+        free(body);
+        free(anchor);
+        free(supersedes);
+        return memory_error("record_memory", detail);
+    }
+    memory_refresh_snapshot(srv);
+
+    char written_at[32];
+    iso8601_utc_from_ms(in.timestamp_ms, written_at, sizeof(written_at));
+
+    yyjson_mut_doc *doc = yyjson_mut_doc_new(NULL);
+    yyjson_mut_val *root = yyjson_mut_obj(doc);
+    yyjson_mut_doc_set_root(doc, root);
+    yyjson_mut_obj_add_strcpy(doc, root, "id", rec->id);
+    yyjson_mut_obj_add_strcpy(doc, root, "kind", hyp_record_kind_name(rec->kind));
+    add_project_choice_json(doc, root, project, &choice);
+    /* Never "orphaned": the contract forbids creating one, and a supplied
+     * anchor was refused above, so the only truthful answer here is that this
+     * record is about the repository rather than about a span. */
+    yyjson_mut_obj_add_str(doc, root, "anchor_status", "unanchored");
+    yyjson_mut_obj_add_strcpy(doc, root, "written_at", written_at);
+
+    char *json = yy_doc_to_str(doc);
+    yyjson_mut_doc_free(doc);
+    hyp_record_free(rec);
+    free(content_text);
+    free(project);
+    free(kind_arg);
+    free(title);
+    free(body);
+    free(anchor);
+    free(supersedes);
+    char *result = hyp_mcp_text_result(json, false);
+    free(json);
+    return result;
+}
+
+/* ── search_memory ────────────────────────────────────────────── */
+
+/* Case-insensitive substring, for the free-text filter. */
+static bool memory_contains_fold(const char *haystack, const char *needle) {
+    if (!needle || !needle[0]) {
+        return true;
+    }
+    if (!haystack) {
+        return false;
+    }
+    size_t n = strlen(needle);
+    for (const char *p = haystack; *p; p++) {
+        size_t i = 0U;
+        while (i < n && p[i] && tolower((unsigned char)p[i]) == tolower((unsigned char)needle[i])) {
+            i++;
+        }
+        if (i == n) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static char *handle_search_memory(hyp_mcp_server_t *srv, const char *args) {
+    char *anchor = hyp_mcp_get_string_arg(args, "anchor");
+    if (anchor && anchor[0]) {
+        free(anchor);
+        return memory_error("search_memory",
+                            "anchor was supplied, and this build has no anchor resolver, so "
+                            "anchor_status cannot be reported. Filtering on an anchor without "
+                            "reporting its status would return a superset that reads like a "
+                            "match. Search by kind or free text instead.");
+    }
+    free(anchor);
+
+    char *status_arg = hyp_mcp_get_string_arg(args, "status");
+    if (status_arg && status_arg[0] && strcmp(status_arg, "any") != 0) {
+        char detail[HYP_SZ_512];
+        snprintf(detail, sizeof(detail),
+                 "status='%s' asks whether each record's anchor still resolves, and this build "
+                 "has no anchor resolver — so no record carries an anchor and 'attached' and "
+                 "'orphaned' partition an empty set. Only status='any' is answerable here.",
+                 status_arg);
+        free(status_arg);
+        return memory_error("search_memory", detail);
+    }
+    free(status_arg);
+
+    char *kind_arg = hyp_mcp_get_string_arg(args, "kind");
+    hyp_record_store_query_t query;
+    memset(&query, 0, sizeof(query));
+    if (kind_arg && kind_arg[0]) {
+        hyp_record_kind_t kind = HYP_RECORD_DECISION;
+        if (!hyp_record_kind_from_name(kind_arg, &kind)) {
+            char detail[HYP_SZ_512];
+            snprintf(detail, sizeof(detail),
+                     "kind '%s' is not a record kind. Omitting kind searches EVERY kind — it "
+                     "does not mean none.",
+                     kind_arg);
+            free(kind_arg);
+            return memory_error("search_memory", detail);
+        }
+        query.has_kind = true;
+        query.kind = kind;
+    }
+    free(kind_arg);
+
+    char *since = hyp_mcp_get_string_arg(args, "since");
+    char *until = hyp_mcp_get_string_arg(args, "until");
+    if (since && since[0] && !memory_parse_timestamp(since, &query.since_ms)) {
+        free(since);
+        free(until);
+        return memory_error("search_memory",
+                            "since must be YYYY-MM-DD or YYYY-MM-DDThh:mm:ss, in UTC.");
+    }
+    query.has_since = since && since[0];
+    if (until && until[0] && !memory_parse_timestamp(until, &query.until_ms)) {
+        free(since);
+        free(until);
+        return memory_error("search_memory",
+                            "until must be YYYY-MM-DD or YYYY-MM-DDThh:mm:ss, in UTC.");
+    }
+    query.has_until = until && until[0];
+    free(since);
+    free(until);
+
+    char *format_early = hyp_mcp_get_string_arg(args, "format");
+    bool want_json = format_early && strcmp(format_early, "json") == 0;
+    free(format_early);
+
+    const char *why = "";
+    hyp_record_store_t *store = memory_store_open(srv, &why, false);
+    /* No store at all is ABSENT, not empty. `records` is left out entirely
+     * rather than sent as [], because [] says "nothing was ever recorded" and
+     * the truth is "there is nowhere here it could have been recorded". Only
+     * one of those is ever true, and confusing them is how an agent comes to
+     * believe it has checked. */
+    if (!store) {
+        project_choice_t none;
+        char *project_only = resolve_project_arg(srv, args, &none);
+        char *answer_none = NULL;
+        if (want_json) {
+            yyjson_mut_doc *doc = yyjson_mut_doc_new(NULL);
+            yyjson_mut_val *root = yyjson_mut_obj(doc);
+            yyjson_mut_doc_set_root(doc, root);
+            add_project_choice_json(doc, root, project_only, &none);
+            yyjson_mut_obj_add_strcpy(doc, root, "memory", why);
+            answer_none = yy_doc_to_str(doc);
+            yyjson_mut_doc_free(doc);
+        } else {
+            hyp_sb_t sb;
+            hyp_sb_init(&sb);
+            emit_project_choice_toon(&sb, project_only, &none);
+            hyp_tree_scalar_str(&sb, "memory", why);
+            answer_none = hyp_sb_finish(&sb);
+        }
+        free(project_only);
+        if (!answer_none) {
+            return memory_error("search_memory", "the answer could not be built");
+        }
+        char *result_none = hyp_mcp_text_result(answer_none, false);
+        free(answer_none);
+        return result_none;
+    }
+    hyp_record_set_t *set = NULL;
+    if (hyp_record_store_query(store, &query, &set) != HYP_RECORD_STORE_OK) {
+        set = NULL;
+    }
+
+    char *text_query = hyp_mcp_get_string_arg(args, "query");
+    int limit = hyp_mcp_get_int_arg(args, "limit", 50);
+    int offset = hyp_mcp_get_int_arg(args, "offset", 0);
+    if (limit < 1) {
+        limit = 1;
+    }
+    if (limit > 500) {
+        limit = 500;
+    }
+    if (offset < 0) {
+        offset = 0;
+    }
+    bool as_json = want_json;
+
+    project_choice_t choice;
+    char *project = resolve_project_arg(srv, args, &choice);
+
+    /* Matching records, newest first: the store enumerates by id because its
+     * order is deliberately non-semantic, so time order is the caller's move
+     * and this is the caller. */
+    size_t total = set ? hyp_record_set_count(set) : 0U;
+    const hyp_record_t **matched =
+        total ? (const hyp_record_t **)calloc(total, sizeof(*matched)) : NULL;
+    size_t matches = 0U;
+    for (size_t i = 0U; matched && i < total; i++) {
+        const hyp_record_t *rec = hyp_record_set_at(set, i);
+        if (rec && memory_contains_fold(rec->content, text_query)) {
+            matched[matches++] = rec;
+        }
+    }
+    for (size_t i = 1U; i < matches; i++) {
+        const hyp_record_t *key = matched[i];
+        size_t j = i;
+        while (j > 0U && matched[j - 1U]->timestamp_ms < key->timestamp_ms) {
+            matched[j] = matched[j - 1U];
+            j--;
+        }
+        matched[j] = key;
+    }
+
+    size_t start = (size_t)offset < matches ? (size_t)offset : matches;
+    size_t shown = matches - start;
+    if (shown > (size_t)limit) {
+        shown = (size_t)limit;
+    }
+
+    char *answer = NULL;
+    if (as_json) {
+        yyjson_mut_doc *doc = yyjson_mut_doc_new(NULL);
+        yyjson_mut_val *root = yyjson_mut_obj(doc);
+        yyjson_mut_doc_set_root(doc, root);
+        add_project_choice_json(doc, root, project, &choice);
+        yyjson_mut_obj_add_uint(doc, root, "matched", (uint64_t)matches);
+        yyjson_mut_val *rows = yyjson_mut_arr(doc);
+        for (size_t i = 0U; i < shown; i++) {
+            const hyp_record_t *rec = matched[start + i];
+            char when[32];
+            iso8601_utc_from_ms(rec->timestamp_ms, when, sizeof(when));
+            yyjson_mut_val *row = yyjson_mut_obj(doc);
+            yyjson_mut_obj_add_strcpy(doc, row, "id", rec->id);
+            yyjson_mut_obj_add_strcpy(doc, row, "kind", hyp_record_kind_name(rec->kind));
+            yyjson_mut_obj_add_strcpy(doc, row, "author", rec->author);
+            yyjson_mut_obj_add_strcpy(doc, row, "written_at", when);
+            yyjson_mut_obj_add_strcpy(doc, row, "content", rec->content);
+            if (rec->parent) {
+                yyjson_mut_obj_add_strcpy(doc, row, "supersedes", rec->parent);
+            }
+            yyjson_mut_arr_add_val(rows, row);
+        }
+        yyjson_mut_obj_add_val(doc, root, "records", rows);
+        /* Say what was withheld and how to get it, and say NOTHING when nothing
+         * was held back — never `truncated:false`.
+         *
+         * `how` names `limit` and not `offset`, and that is measured rather
+         * than chosen: across 120 agent runs whose truncation disclosure
+         * offered BOTH, `offset` was used zero times and a raised `limit` was
+         * used in 27 of 91 truncated search calls. The parameter stays — a
+         * caller that wants stable paging has no other mechanism — but the
+         * words offering it are paid on every truncated answer and provably
+         * never acted on. An argument in the schema is not an argument the
+         * agent uses. */
+        if (start + shown < matches) {
+            yyjson_mut_obj_add_bool(doc, root, "truncated", true);
+            yyjson_mut_obj_add_uint(doc, root, "withheld", (uint64_t)(matches - start - shown));
+            yyjson_mut_obj_add_str(doc, root, "how", "re-call with a larger limit");
+        }
+        answer = yy_doc_to_str(doc);
+        yyjson_mut_doc_free(doc);
+    } else {
+        hyp_sb_t sb;
+        hyp_sb_init(&sb);
+        emit_project_choice_toon(&sb, project, &choice);
+        hyp_tree_scalar_int(&sb, "matched", (long long)matches);
+        static const char *const cols[] = {"id", "kind", "written_at", "content"};
+        hyp_tree_table_header(&sb, "records", (int)shown, cols, 4);
+        for (size_t i = 0U; i < shown; i++) {
+            const hyp_record_t *rec = matched[start + i];
+            char when[32];
+            iso8601_utc_from_ms(rec->timestamp_ms, when, sizeof(when));
+            hyp_tree_row_begin(&sb);
+            hyp_tree_cell_str(&sb, rec->id, true);
+            hyp_tree_cell_str(&sb, hyp_record_kind_name(rec->kind), false);
+            hyp_tree_cell_str(&sb, when, false);
+            hyp_tree_cell_str(&sb, rec->content, false);
+            hyp_tree_row_end(&sb);
+        }
+        if (start + shown < matches) {
+            hyp_tree_scalar_bool(&sb, "truncated", true);
+            hyp_tree_scalar_int(&sb, "withheld", (long long)(matches - start - shown));
+            hyp_tree_scalar_str(&sb, "how", "re-call with a larger limit");
+        }
+        answer = hyp_sb_finish(&sb);
+    }
+
+    free(matched);
+    free(text_query);
+    free(project);
+    hyp_record_set_free(set);
+    if (!answer) {
+        return memory_error("search_memory", "the answer could not be built");
+    }
+    char *result = hyp_mcp_text_result(answer, false);
+    free(answer);
+    return result;
+}
+
 /* ── Tool dispatch ────────────────────────────────────────────── */
 
 static char *dispatch_tool(hyp_mcp_server_t *srv, const char *tool_name, const char *args_json) {
     if (!tool_name) {
         return hyp_mcp_text_result("missing tool name", true);
+    }
+    /* A reserved row is refused under every profile including ALL, so it must
+     * be answered before the profile message — which would otherwise blame a
+     * restricted profile for a tool no profile has. A published signature with
+     * no implementation is a distinct state and says so. */
+    if (hyp_mcp_tool_surface_status(tool_name) == (int)HYP_TOOL_RESERVED) {
+        char message[HYP_SZ_256];
+        snprintf(message, sizeof(message),
+                 "tool '%s' has a published signature but is not implemented in this build "
+                 "(mcp/tool_surface.h marks it reserved)",
+                 tool_name);
+        return hyp_mcp_text_result(message, true);
     }
     if (srv && !mcp_tool_allowed(srv->tool_profile, tool_name)) {
         char message[HYP_SZ_256];
@@ -13230,6 +14427,12 @@ static char *dispatch_tool(hyp_mcp_server_t *srv, const char *tool_name, const c
     }
     if (strcmp(tool_name, "ingest_traces") == 0) {
         return handle_ingest_traces(srv, args_json);
+    }
+    if (strcmp(tool_name, "record_memory") == 0) {
+        return handle_record_memory(srv, args_json);
+    }
+    if (strcmp(tool_name, "search_memory") == 0) {
+        return handle_search_memory(srv, args_json);
     }
     char msg[HYP_SZ_256];
     snprintf(msg, sizeof(msg), "unknown tool: %s", tool_name);

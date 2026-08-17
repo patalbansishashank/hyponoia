@@ -37,9 +37,12 @@ Thumbs.db
 # MCP Registry auth tokens
 .mcpregistry_*
 
-# Local project memory (Claude Code auto-memory)
-memory/
-reference/
+# Local project memory (Claude Code auto-memory) — ANCHORED to the repo root.
+# Unanchored, "memory/" matches at every depth and silently swallowed
+# src/memory/ (the §4 Track C module), so anchor.c/anchor.h never appeared in
+# `git status` and would have been committed by nobody.
+/memory/
+/reference/
 
 # Local-only scratch / session notes (never pushed)
 private/

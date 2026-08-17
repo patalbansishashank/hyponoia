@@ -26,8 +26,19 @@ if [[ "$(uname)" != "Linux" ]]; then
 fi
 
 if ! command -v strace &>/dev/null; then
-    echo "SKIP: strace not installed"
-    exit 0
+    # On Linux, absent strace means this gate did not run — and a gate whose
+    # "pass" is produced by its own absence is indistinguishable from the
+    # property holding. CI installs strace; refuse rather than report a
+    # skip that reads as a pass. Set HYP_ALLOW_NO_STRACE=1 to run the rest
+    # of a local audit without it, knowingly.
+    if [ "${HYP_ALLOW_NO_STRACE:-}" = "1" ]; then
+        echo "SKIP: strace not installed (HYP_ALLOW_NO_STRACE=1 — egress NOT verified)"
+        exit 0
+    fi
+    echo "FAIL: strace not installed on Linux — the egress gate cannot run." >&2
+    echo "  install it (apt-get install -y strace) or set HYP_ALLOW_NO_STRACE=1" >&2
+    echo "  to acknowledge that network egress is going unverified." >&2
+    exit 1
 fi
 
 TMPDIR=$(mktemp -d)
