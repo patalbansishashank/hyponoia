@@ -212,8 +212,14 @@ bash "$ROOT/tests/test_ui_dev_proxy_security.sh"
 echo "=== Step 0d: daemon soak recovery contract ==="
 bash "$ROOT/tests/test_soak_daemon_recovery_contract.sh"
 
-echo "=== Step 0e: Windows runtime bundle contract ==="
-bash "$ROOT/tests/test_windows_bundle_contract.sh"
+
+# Step 0e (Windows runtime bundle contract) is not run: it asserts _build.yml
+# still produces a Windows archive via a specific toolchain, and Windows was
+# removed from the release entirely (linux-amd64 only, by explicit
+# instruction). tests/test_windows_bundle_contract.sh is left in the repo
+# unrun rather than deleted -- its header documents a real prior security
+# incident (a self-update launcher stub that drew Wacatac verdicts), which is
+# worth keeping on record even though the pipeline it guards no longer exists.
 
 echo "=== Step 0f: tree-sitter runtime Makefile dependencies ==="
 bash "$ROOT/tests/test_makefile_ts_runtime_dependencies.sh"
