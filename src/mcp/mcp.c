@@ -917,7 +917,7 @@ static const tool_def_t TOOLS[] = {
      * Pinned from both directions, by
      * the_published_signature_offers_nothing_this_build_refuses in
      * tests/test_g2_retrieval.c and by
-     * tool_surface_every_declared_default_is_one_the_handler_takes in
+     * tool_surface_every_advertised_property_is_one_the_handler_accepts in
      * tests/test_tool_surface.c. */
     {"search_memory", "Search memory",
      "Read the workspace memory store: decisions, verdicts, summaries, signals and ingested "
@@ -12071,6 +12071,14 @@ static bool write_scoped_filelist(hyp_mcp_server_t *srv, const char *project, co
     int indexed_count = 0;
     if (hyp_store_list_files(pre_store, project, &indexed_files, &indexed_count) != HYP_STORE_OK ||
         indexed_count == 0) {
+        /* The listing is allocated before the row count is known, so an
+         * indexed project with nothing to list still owns an array. Freeing it
+         * only on the success path leaked it on every scoped search of an
+         * empty project. */
+        for (int fi = 0; fi < indexed_count; fi++) {
+            free(indexed_files[fi]);
+        }
+        free(indexed_files);
         return false;
     }
     bool ok = false;
