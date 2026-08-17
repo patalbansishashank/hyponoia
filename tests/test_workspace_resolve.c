@@ -1,5 +1,5 @@
 /*
- * test_workspace_resolve.c.
+ * test_workspace_resolve.c — the resolver and the workspace registry.
  *
  * The two assertion rows the plan pins on A6, plus A1's own:
  *

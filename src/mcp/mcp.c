@@ -42,8 +42,8 @@ enum {
     /* index_status names the missing memory records. The names are the
      * point — "40 missing" with no ids is a number nobody can act on — but a
      * status answer must not become a context bomb, so the list is capped and
-     * the withheld remainder is DISCLOSED (: a truncated answer says what
-     * was withheld; it says nothing when nothing was). */
+     * the withheld remainder is DISCLOSED: a truncated answer says what was
+     * withheld, and it says nothing when nothing was. */
     MCP_MEMORY_MISSING_IDS_MAX = 64,
 };
 #define MCP_MS_TO_US 1000LL
@@ -832,7 +832,7 @@ static const tool_def_t TOOLS[] = {
      "\"count\":{\"type\":\"integer\"}},\"additionalProperties\":false}}," TOOL_PROJECT_ARG
      "},\"required\":[\"traces\"]}"},
 
-    /* ── RESERVED: 1 signatures ───────────────────────────────
+    /* ── RESERVED signatures ───────────────────────────────────────────
      *
      * These four rows carry a published, frozen signature for a tool that does
      * not exist yet. mcp/tool_surface.h marks them HYP_TOOL_RESERVED, so they
@@ -2104,7 +2104,7 @@ struct hyp_mcp_server {
     char *active_request_id_str;     /* string JSON-RPC id of the in-progress tool call */
     hyp_mcp_tool_profile_t tool_profile;
 
-    /* the memory freshness seam (see mcp.h). All borrowed except the
+    /* The memory freshness seam (see mcp.h). All borrowed except the
      * feed name; NULL local set means no record store is configured and the
      * `memory` block is ABSENT from index_status entirely. */
     const hyp_record_set_t *memory_local;
@@ -2305,7 +2305,7 @@ void hyp_mcp_server_free(hyp_mcp_server_t *srv) {
     free(srv);
 }
 
-/* ── memory freshness seam (contract in mcp.h) ─────────── */
+/* ── The memory freshness seam (contract in mcp.h) ────────────── */
 
 void hyp_mcp_server_set_memory_store(hyp_mcp_server_t *srv, const hyp_record_set_t *local) {
     if (srv) {
@@ -7104,7 +7104,7 @@ static char *handle_check_index_coverage(hyp_mcp_server_t *srv, const char *args
     return result;
 }
 
-/* ── two freshnesses, reported separately ──────────────────────
+/* ── Two freshnesses, reported separately ─────────────────────────────
  *
  * index_status answers "your code is current" and "your memory is missing N
  * records" as SIBLING objects, never merged into one verdict: they are
@@ -7242,7 +7242,7 @@ static char *handle_index_status(hyp_mcp_server_t *srv, const char *args) {
     yyjson_mut_obj_add_int(doc, root, "nodes", nodes);
     yyjson_mut_obj_add_int(doc, root, "edges", edges);
     yyjson_mut_obj_add_str(doc, root, "status", nodes > 0 ? "ready" : "empty");
-    /* the same code-freshness answer, restated under its own `code` key
+    /* The same code-freshness answer, restated under its own `code` key
      * as the sibling of `memory`. The top-level keys above are the shipped
      * surface and stay byte-identical — this ADDS a key, renames nothing.
      * `files_behind` is deliberately not emitted: it is not computed here, and

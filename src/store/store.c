@@ -1729,7 +1729,7 @@ int hyp_store_delete_project(hyp_store_t *s, const char *name) {
     return exec_sql(s, "COMMIT;");
 }
 
-/* ── Workspace registry ─────────────────────────────────── */
+/* ── Workspace registry ─────────────────────────────────────────── */
 
 /* Refusal detail into the caller's buffer (optional) AND the store's errbuf,
  * so a caller that passed no buffer still sees why via hyp_store_error. */

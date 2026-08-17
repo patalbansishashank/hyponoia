@@ -1,6 +1,5 @@
 /*
- * test_watched_ingest.c — watched-directory ingest, the generic feed adapter
- *.
+ * test_watched_ingest.c — watched-directory ingest, the generic feed adapter.
  *
  * The suite is organised by the claims the adapter makes, and the two that
  * matter most each carry the assertion a negative control must break:

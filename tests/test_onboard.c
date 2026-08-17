@@ -1,14 +1,14 @@
 /*
- * test_onboard.c — B: the probe (B1), the flow (B2), the TOML (B3)
+ * test_onboard.c — the probe (B1), the flow (B2), the TOML (B3)
  * and the zero-config path (B4).
  *
  * The two properties this file exists to hold:
  *
  *   1. The GPU answer is EVIDENCE. A verdict of `verified` requires the
  *      batching check to have RUN and PASSED on a GPU encoder — hardcoding the
- * answer (the assumption retraction forbids) fails the tests below,
- *      because they inject encoders whose runs are known-bad or known-CPU and
- *      assert the verdict follows the run.
+ *      answer (the assumption the GPU retraction forbids) fails the tests
+ *      below, because they inject encoders whose runs are known-bad or
+ *      known-CPU and assert the verdict follows the run.
  *
  *   2. The TOML is NEVER a prerequisite. The zero-config test resolves,
  *      indexes and answers on a fixture repo that has no TOML, no Multica and
@@ -56,8 +56,8 @@ static void ob_axis_vector(const char *text, float *out, int dim) {
 typedef struct {
     bool claims_gpu;
     /* When set, a document encoded in a batch of more than one lands on a
- * DIFFERENT axis than the same document alone — contamination class,
-     * reproduced on demand so the probe can be watched saying FAIL. */
+     * DIFFERENT axis than the same document alone — the batch-contamination
+     * class, reproduced on demand so the probe can be watched saying FAIL. */
     bool contaminate_batches;
 } ob_enc_state_t;
 
@@ -94,7 +94,7 @@ static int ob_enc_encode_documents(void *self, const char *const *texts, int cou
         ob_axis_vector(texts[i], out + (size_t)i * HYP_ASK_DIM, HYP_ASK_DIM);
         if (st->contaminate_batches && count > 1) {
             /* Shift the axis: the vector now depends on what shared its
- * forward pass, which is exactly the failure. */
+             * forward pass, which is exactly the retracted failure. */
             float *row = out + (size_t)i * HYP_ASK_DIM;
             for (int d = 0; d < HYP_ASK_DIM; d++) {
                 if (row[d] == 1.0f) {
@@ -263,9 +263,9 @@ TEST(onboard_the_four_questions_are_exactly_four) {
 /* ── B1 · GPU: the verdict follows the run ───────────────────────── */
 
 TEST(onboard_probe_gpu_failed_when_the_run_fails) {
- /* The contamination class, injected. A probe that ASSUMED the answer —
-     * hardcoded `verified`, never ran the check — cannot pass this test,
-     * which is the negative control's tripwire. */
+    /* The batch-contamination class, injected. A probe that ASSUMED the
+     * answer — hardcoded `verified`, never ran the check — cannot pass this
+     * test, which is the negative control's tripwire. */
     char *dir = ob_fixture_repo();
     ASSERT_NOT_NULL(dir);
     ob_enc_state_t st = {.claims_gpu = true, .contaminate_batches = true};

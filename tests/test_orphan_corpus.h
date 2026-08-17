@@ -2,9 +2,9 @@
  * test_orphan_corpus.h — the Track G G1 anchor corpus, as C data.
  *
  * GENERATED. Do not hand-edit: every span text, hash and qualified name
- * here comes from this repository's own history via the corpus
- * build, and re-extracted and re-hashed on the way into this file. The
- * expectations are the corpus's, not this suite's.
+ * here comes from this repository's own history via the corpus build, and is
+ * re-extracted and re-hashed on the way into this file. The expectations are
+ * the corpus's, not this suite's.
  *
  * THE PARSER CAVEAT, and how this file discharges it. The corpus parses
  * spans by brace-matching; the product parses them with tree-sitter. A

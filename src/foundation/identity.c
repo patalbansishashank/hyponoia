@@ -1,5 +1,5 @@
 /*
- * identity.c.
+ * identity.c — the address and span-hash contract.
  *
  * Pure functions over strings. No store, no allocation, no I/O. The design and
  * every "why" lives in identity.h; this file only has to be right.

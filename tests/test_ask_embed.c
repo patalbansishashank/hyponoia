@@ -254,7 +254,7 @@ TEST(ask_embed_reuses_byte_identical_declarations_on_a_rerun) {
     PASS();
 }
 
-/* ── The pull, at file granularity ──────────── */
+/* ── The pull, at file granularity ─────────────────────────────── */
 
 /* Twelve files, two declarations each. The clause under test is the
  * GRANULARITY of reuse: "a pull touching twelve files re-embeds twelve files'

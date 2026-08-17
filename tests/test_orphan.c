@@ -418,7 +418,7 @@ TEST(orphan_copy_paste_original_still_resolves_to_itself) {
 
 TEST(orphan_copy_paste_yields_two_candidates_and_attaches_to_neither) {
     /* THE ROW. A dead qualified name plus content that survives at more than
- * one address is the shape names, and NO COMMIT IN THIS HISTORY
+     * one address is the shape that row names, and NO COMMIT IN THIS HISTORY
      * PRODUCED IT — two exhaustive searches over the whole repository found
      * zero instances, and the corpus refused to fabricate one rather than
      * ship a plausible composite.

@@ -1,5 +1,5 @@
 /*
- * test_identity.c.
+ * test_identity.c — the address contract.
  *
  * The two acceptance tests the plan names, plus the properties everything in
  * Phase 1 will be written against.

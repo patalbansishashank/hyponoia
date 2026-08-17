@@ -1,5 +1,5 @@
 /*
- * onboard.c
+ * onboard.c — the probe (B1), the flow (B2), the TOML (B3), and
  * the zero-config resolution (B4). See onboard.h for the contract; comments
  * here are about the choices, not the plumbing.
  */
@@ -47,7 +47,7 @@ static const float ONBOARD_VERIFY_THRESHOLD = 0.999F;
 
 /* Fixture for the batching check: few texts, deliberately DIFFERENT lengths,
  * so the groups are ragged the way a real length-sorted pass is — the exact
- * shape that produced wrong batched vectors. */
+ * shape that produced the retracted run's wrong batched vectors. */
 /* Hoisted rather than inlined: wrapped to the column limit it becomes two
  * adjacent literals inside the initializer, which is indistinguishable from a
  * missing comma and which clang rejects under -Wstring-concatenation. A name

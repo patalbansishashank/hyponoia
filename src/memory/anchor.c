@@ -1,5 +1,5 @@
 /*
- * anchor.c.
+ * anchor.c — anchor resolution against the live index.
  *
  * Symbol identity + content hash, never line numbers. The design and every
  * "why" lives in anchor.h; the comparison semantics live in identity.h

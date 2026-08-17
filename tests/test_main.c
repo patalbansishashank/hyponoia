@@ -892,7 +892,7 @@ int main(int argc, char **argv) {
     RUN_SELECTED_SUITE(lock_registry);
     RUN_SELECTED_SUITE(dump_verify);
 
- /* Feed adapters */
+    /* Feed adapters */
     RUN_SELECTED_SUITE(watched_ingest);
     RUN_SELECTED_SUITE(transcript);
 
@@ -1078,7 +1078,7 @@ int main(int argc, char **argv) {
     /* `ask` lane: the batch rule, the vector store, the opt-in embed pass */
     RUN_SELECTED_SUITE(ask_batch);
     RUN_SELECTED_SUITE(ask_vectors);
- /* record-content vectors, content-hash keyed, shippable */
+    /* Record-content vectors, content-hash keyed, shippable */
     RUN_SELECTED_SUITE(record_vectors);
     RUN_SELECTED_SUITE(ask_provider);
     RUN_SELECTED_SUITE(ask_embed);
