@@ -29,13 +29,19 @@ name: CI
 # prefix you happen to be using fixes today's branch and leaves the next one
 # uncovered; all three are listed now.
 on:
+  # main/dev only: commits land there directly, with no PR to trigger
+  # coverage via pull_request below. integration and unit branches
+  # (feat/**, fix/**, chore/**) were here too, on the grounds that 82
+  # commits once ran no workflow at all while sitting on an uncovered
+  # branch -- but every push to one of those branches during active work
+  # also has an open PR against it (that's the normal shape of this
+  # project's workflow), so push+pull_request both fire for the identical
+  # commit and the whole suite runs twice for zero extra information.
+  # Narrower, accepted gap: a commit pushed to one of those branches
+  # BEFORE any PR exists against it gets no immediate coverage until a PR
+  # opens. main/dev still catch the original incident's shape.
   push:
-    # integration is here because it is the branch that ACCUMULATES units, and
-    # so the one whose combination nothing else builds. Unit branches match
-    # feat/**; the branch that merges them matched nothing, and 82 commits ran
-    # no workflow at all. Same shape as ci.yml once covering only [main, dev]
-    # while a whole section's work sat on a feat/ branch.
-    branches: [main, dev, integration, 'feat/**', 'fix/**', 'chore/**']
+    branches: [main, dev]
   pull_request:
     branches: [main, dev, integration, 'feat/**', 'fix/**', 'chore/**']
   workflow_dispatch:
