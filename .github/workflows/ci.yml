@@ -207,7 +207,18 @@ jobs:
           set -o pipefail
           rc=0
           if [ "${{ matrix.sanitize }}" = "none" ]; then
-            scripts/test.sh --suites g1_replay BUILD_DIR=build/measure SANITIZE= \
+            # NOT `SANITIZE=`. That mode is documented in test.sh --help and
+            # does not compile on gcc, x86 or arm: a test deliberately frees a
+            # poisoned sentinel pointer to prove the callee overwrote it, and
+            # -Wfree-nonheap-object sees it only when ASan is NOT instrumenting
+            # the same function. So the only build anyone runs is the sanitized
+            # one, and the plain one has been red without a venue to notice.
+            # One demotion buys the uninstrumented parse timings; keeping the
+            # flag non-empty leaves HYP_SANITIZED_BUILD defined, which reaches
+            # only thread-stack floors and two bench asserts, none in this
+            # suite, and no instrumentation.
+            scripts/test.sh --suites g1_replay BUILD_DIR=build/measure \
+              "SANITIZE=-fno-omit-frame-pointer -Wno-error=free-nonheap-object" \
               > measure.out 2> measure.err || rc=$?
           else
             scripts/test.sh --suites g1_replay BUILD_DIR=build/measure \
@@ -229,6 +240,67 @@ jobs:
           echo "── any parse that still aborted ──"
           grep '^HYPMEASURE' measure.err | grep 'aborted=1' || echo "(none — every parse ran to completion)"
 
+      # The g1 corpus tops out at a 534 KB file, and that is not the largest
+      # LEGITIMATE file the product is asked to parse. This repository vendors
+      # a 9.4 MB sqlite3 amalgamation, and a user's repository has no
+      # .hypignore keeping it out. Extrapolating its cost from the corpus would
+      # be a plausible story where a measurement is available, so measure it:
+      # the objects are already built, so this is one link away.
+      - name: What the largest legitimate file in this tree costs here
+        if: always()
+        run: |
+          set -x
+          SAN="-fsanitize=address,undefined -fno-omit-frame-pointer"
+          if [ "${{ matrix.sanitize }}" = "none" ]; then SAN="-fno-omit-frame-pointer"; fi
+          cat > probe_parse.c <<'PROBE'
+          #include "hyp.h"
+          #include <stdio.h>
+          #include <stdlib.h>
+          #include <time.h>
+          int main(int argc, char **argv) {
+              for (int i = 1; i < argc; i++) {
+                  FILE *f = fopen(argv[i], "rb");
+                  if (!f) { fprintf(stderr, "open fail %s\n", argv[i]); continue; }
+                  fseek(f, 0, SEEK_END); long n = ftell(f); fseek(f, 0, SEEK_SET);
+                  char *buf = malloc((size_t)n + 1);
+                  if (!buf) { fclose(f); continue; }
+                  size_t got = fread(buf, 1, (size_t)n, f); buf[got] = 0; fclose(f);
+                  struct timespec a, b;
+                  clock_gettime(CLOCK_MONOTONIC, &a);
+                  HYPFileResult *r = hyp_extract_file(buf, (int)got, HYP_LANG_C, "probe",
+                                                      argv[i], (int64_t)3600 * 1000000,
+                                                      NULL, NULL);
+                  clock_gettime(CLOCK_MONOTONIC, &b);
+                  double ms = (double)(b.tv_sec - a.tv_sec) * 1000.0
+                            + (double)(b.tv_nsec - a.tv_nsec) / 1e6;
+                  printf("PROBE %s bytes=%ld total_ms=%.1f defs=%d\n", argv[i], n, ms,
+                         r ? r->defs.count : -1);
+                  fflush(stdout);
+                  if (r) hyp_free_result(r);
+                  free(buf);
+              }
+              return 0;
+          }
+          PROBE
+          FS=$(ls src/foundation/*.c | grep -v 'mem_override_posix.c\|mem_override_win.c' | tr '\n' ' ')
+          gcc -std=c11 -D_DEFAULT_SOURCE -D_GNU_SOURCE -g -O1 -w \
+            -Isrc -Ivendored -Ivendored/sqlite3 -Ivendored/mimalloc/include \
+            -Iinternal/hyp -Iinternal/hyp/vendored/ts_runtime/include \
+            -Ibuild/measure/generated $SAN -o probe_parse probe_parse.c \
+            internal/hyp/hyp.c internal/hyp/extract_*.c internal/hyp/helpers.c \
+            internal/hyp/lang_specs.c internal/hyp/macro_table.c \
+            internal/hyp/iris_export_xml.c internal/hyp/service_patterns.c \
+            $FS src/semantic/ast_profile.c src/simhash/minhash.c \
+            vendored/yyjson/yyjson.c build/measure/mimalloc.o \
+            build/measure/grammar_*.o build/measure/ts_runtime.o \
+            build/measure/lsp_all.o build/measure/preprocessor.o \
+            -lm -lstdc++ -lpthread -lz > probe_build.log 2>&1 \
+            || { echo "probe link failed"; tail -20 probe_build.log; exit 0; }
+          ASAN_OPTIONS=detect_leaks=0 ./probe_parse vendored/sqlite3/sqlite3.c \
+            src/mcp/mcp.c > probe.out 2> probe.err || true
+          cat probe.out
+          grep '^HYPMEASURE' probe.err || true
+
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()
         with:
@@ -236,4 +308,6 @@ jobs:
           path: |
             measure.out
             measure.err
+            probe.out
+            probe.err
           retention-days: 3
