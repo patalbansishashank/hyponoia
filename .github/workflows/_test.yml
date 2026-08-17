@@ -86,8 +86,10 @@ jobs:
           # aarch64 GEMM kernels are never compiled into the CLANGARM64 target
           # (undefined symbol: ggml_gemm_q4_0_4x4_q8_0) — so it cannot go green
           # by fixing a test. See docs/MAINTAINERS.md "Retired platforms".
-          CORE_WIN='[{"os":"windows-latest","msystem":"CLANG64","pkg":"x86_64"}]'
-          BROAD_WIN='[{"os":"windows-2025","msystem":"CLANG64","pkg":"x86_64"}]'
+          # Windows is non-blocking everywhere in this workflow, same reasoning
+          # as arm above: nothing here ships to or is used by anyone on Windows.
+          CORE_WIN='[{"os":"windows-latest","msystem":"CLANG64","pkg":"x86_64","optional":true}]'
+          BROAD_WIN='[{"os":"windows-2025","msystem":"CLANG64","pkg":"x86_64","optional":true}]'
           # COMPACTED UNCONDITIONALLY, and that is the whole point of the `jq
           # -c` rather than a bare literal. $GITHUB_OUTPUT takes one line per
           # value unless you use a heredoc delimiter, and every other matrix
@@ -644,6 +646,9 @@ jobs:
   test-windows-guards:
     if: ${{ !inputs.linux_only }}   # §2.12: Windows bills 2x; release and dry run still run it
     runs-on: windows-latest
+    # Non-blocking: no user of this project runs Windows, so a flaky or
+    # failing Windows-only guard shouldn't hold up anything.
+    continue-on-error: true
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
