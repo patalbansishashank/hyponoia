@@ -27,6 +27,7 @@
 #include "test_framework.h"
 
 #include <cli/agent_profiles.h>
+#include <foundation/compat_fs.h>
 #include <foundation/record.h>
 #include <mcp/mcp.h>
 #include <mcp/tool_surface.h>
@@ -1513,201 +1514,895 @@ TEST(tool_surface_the_deprecated_adr_tool_shares_no_vocabulary_with_the_memory_s
     PASS();
 }
 
-/* ── G6 check C · every declared default is one the handler takes ──────
+/* ── G6 check C · every advertised property is one a handler takes ─────
  *
  * THE THIRD SURFACE OF "the repository asserts something no execution has
  * touched". A module with no caller is inert; a command absent from help is
- * unfindable; and an ARGUMENT IN A SCHEMA THAT THE HANDLER REFUSES is worse
- * than either, because a client generated from the schema sends it BY DEFAULT
- * and is refused for obeying the contract it was handed.
+ * unfindable; and an ARGUMENT IN A SCHEMA THAT NO CALL CAN USE is worse than
+ * either, because a client generated from the schema sends it and is refused
+ * for obeying the contract it was handed.
  *
- * The case this check was built on is search_memory's `status`, and the shape
- * of its close is the shape every later one takes. Its handler answers only
- * status="any", because this build has no anchor resolver and a filter it
- * cannot compute must be refused rather than ignored — an ignored filter
- * returns a superset that reads exactly like a match. That end is RIGHT and
- * stays. So the SIGNATURE is the end that moves: search_memory advertises no
- * `status` and no `anchor`, and it regains both in the one commit that wires
- * src/memory/orphan.c behind them. Neither end could see the gap alone,
- * because each has a test that agrees with itself; this walk is the only
- * reader that holds the two together.
+ * WHAT IS ASSERTED, and it is two things:
  *
- * DERIVED, NOT LISTED. The set is walked: every advertised tool, every
- * property of its own inputSchema, every property carrying a `default`. A
- * tool added tomorrow with a default nothing accepts is in the set without
- * this file learning its name.
+ *   (1) EVERY advertised property has at least one value the handler takes.
+ *       An advertised argument no call can ever use is a published promise
+ *       with nothing behind it.
+ *   (2) A property that DECLARES A DEFAULT is held to that exact value. A
+ *       generated client sends the default without being asked, so a refused
+ *       default fails a caller who did nothing but obey the schema.
+ *
+ * (1) is the larger property and (2) is not inside it: a handler can accept
+ * one value of an argument and refuse the value its own schema declares, and
+ * that passes (1) while failing every generated client. Both ship, because a
+ * check narrower than its name is the failure this walk exists to close.
+ *
+ * DERIVED, NOT LISTED, at three levels. The tools are the ones tools/list
+ * advertises; the properties are the ones each advertised inputSchema
+ * declares; and the tool set is narrowed by the ANNOTATIONS the same response
+ * carries — a row that says openWorldHint leaves this machine, and everything
+ * else is contained by the cache directory and the record store this fixture
+ * owns. Nothing here names a tool or a property, so a tool added tomorrow is
+ * in the set without this file learning its name.
+ *
+ * A SEEDED PROJECT, because the alternative measures nothing. With no project
+ * to resolve, most of this surface refuses every call for a reason that has
+ * nothing to do with any argument, and a probe whose baseline is already an
+ * error can conclude nothing about the argument it added. The fixture seeds
+ * exactly ONE project into a fresh cache, so the server's own resolution rule
+ * — the single indexed project, when it is single — supplies it to every call
+ * without the walk naming `project` anywhere.
+ *
+ * THE VALUES A WALK CAN TRY come from three places and no fourth: what the
+ * schema declares (its default, its enum, its type), what this fixture makes
+ * true (the seeded project's name and its root path), and WHAT THE SURFACE
+ * ITSELF SAYS — every token of every answer it gives and every refusal it
+ * writes. That last source is the one that does the work, and it is not a
+ * trick: this surface's refusals name what would work, so a walk that reads
+ * the refusal is using the contract rather than guessing. An id that came out
+ * of one answer is the value another argument wants; a refusal that lists the
+ * kinds it accepts hands the walk the kind it needs.
  *
  * ATTRIBUTED BY DIFFERENCE, so a refusal for an unrelated reason cannot be
- * blamed on an argument. Each tool is called twice: once with {} and once with
- * {property: default}. Only a tool that ANSWERS the empty call and REFUSES the
- * defaulted one is a finding. A tool that already refuses {} is skipped and
- * said so, because nothing about the argument can be concluded from it.
+ * blamed on an argument. The base call for a tool and the call with one
+ * property added differ in exactly that property, and the fixture is restored
+ * between them, so nothing else moved. A tool that already refuses its base
+ * call the same way is counted and never judged.
  *
- * READ THE REACH BEFORE READING THE COUNT, and this is why the summary line
- * prints OBSERVABLE rather than only the total. Most of the surface needs a
- * seeded project, so most tools refuse {} for reasons that have nothing to do
- * with any argument, and every default they carry is UNATTRIBUTABLE — counted,
- * never judged. Observable is walked minus unattributable, and it has been a
- * small fraction of walked, so "0 findings" means zero among the handful this
- * check can actually attribute, NOT zero among every declared default in the
- * tree. A gate that lets its clean result be read as full coverage is the next
- * silent failure, so the two numbers ship side by side and neither is dropped.
+ * AND SEPARATED FROM A REFUSAL OF THE VALUE, which is the distinction this
+ * check would be worthless without. `since` demanding a timestamp and `kind`
+ * demanding a known kind are properties a caller CAN use; they refuse a value
+ * this walk failed to guess, not the argument. The tell is whether the
+ * refusal MOVES WITH THE VALUE: two different values drawing two different
+ * refusals is a handler reading the value, and the property is reported as
+ * unattributable rather than flagged. A value-independent refusal that no
+ * value escapes is the finding — the argument itself is what is unsupported.
+ *
+ * READ THE REACH BEFORE READING THE COUNT. The summary prints OBSERVABLE
+ * beside the total and names every property it could not judge, because 0
+ * findings is 0 among the properties this walk can attribute, never 0 among
+ * every property in the tree. A gate that lets its clean result be read as
+ * full coverage is the next silent failure.
  *
  * WHAT IT STILL CANNOT SEE, stated because a stated hole is not a silent one:
- * an advertised property the handler refuses UNCONDITIONALLY but that declares
- * no `default` is invisible here, since the walk enters only on a `default`
- * being present. That is a strictly larger and more useful property — an
- * advertised argument no call can ever use — and it has live instances.
- *
- * PROBE-SAFE ONLY, derived from the annotation profile — a writer excludes
- * itself by its own row rather than by a skip list someone has to extend.
- *
- * ABSOLUTE, AND THAT IS THE RATCHET FINISHED. This check shipped as a ledger
- * in the shape of tests/test_wired_contract.sh's — known rows pinned with the
- * unit closing each, a new one failing by name, a row that stopped being a
- * violation ALSO failing so the count could only go down. The count is 0 and
- * the ledger is gone with it: EVERY declared default a handler refuses is a
- * finding, with nowhere to pin it. A ledger holding no rows is worse than no
- * ledger, because it reads as a gate while the first regression walks into an
- * exemption slot nobody is watching.
- *
- * Reintroducing an exemption means reintroducing BOTH halves — the row and the
- * strike-when-stale loop that makes the count converge — and a row without a
- * named unit to close it is a silent exemption wearing a gate's clothes. The
- * cheaper move is almost always the one search_memory took: withdraw the
- * advertisement until the handler can honour it.
+ * a property whose only legal values are ones neither the schema, this
+ * fixture nor any answer on this surface contains; a property on a tool whose
+ * base call cannot be made to answer at all; and any tool that leaves this
+ * machine, which no fixture can contain. Each of those is counted, named and
+ * printed on every run, pass or fail.
  */
 
-/* Call a tool on a fresh server and report only whether a CLIENT would read an
- * error. Not the emitted shape: the `isError` a client branches on. */
-static bool surface_call_is_error(const char *tool, const char *arguments_json, bool *answered) {
-    if (answered) {
-        *answered = false;
+enum {
+    PROBE_TEXT_CAP = 2048,   /* one refusal or answer, for comparison */
+    PROBE_VALUE_CAP = 256,   /* one JSON-encoded argument value */
+    PROBE_KEY_CAP = 48,      /* one property name */
+    PROBE_PAIR_CAP = 16,     /* arguments in one base call */
+    PROBE_CAND_CAP = 24,     /* values tried for one property */
+    PROBE_TOKEN_CAP = 96,    /* one harvested word */
+    PROBE_POOL_CAP = 48,     /* words kept from this surface's own answers */
+    PROBE_TOOL_CAP = 32,     /* advertised tools */
+    PROBE_REPAIR_CAP = 40,   /* calls spent making one base call answer */
+    PROBE_BORROW_CAP = 12,   /* words borrowed per source, per property */
+    PROBE_ARGS_CAP = 6144    /* one rendered arguments object */
+};
+
+/* Where a probed call's writes land, so "contained" is also restorable. */
+static char probe_cache_dir[256];
+static char probe_root_dir[256];
+static char probe_db_path[512];
+static char probe_project_json[80];
+static char probe_root_json[320];
+static int probe_calls;
+static int probe_unanswered;
+
+#define PROBE_PROJECT "hyp-g6-probe"
+
+/* One project, seeded, so the server's own single-project rule resolves it. */
+static bool probe_seed(void) {
+    hyp_store_t *store = hyp_store_open_path(probe_db_path);
+    bool ok = store != NULL && hyp_store_upsert_project(store, PROBE_PROJECT, probe_root_dir) ==
+                                   HYP_STORE_OK;
+    if (store) {
+        hyp_store_close(store);
+    }
+    return ok;
+}
+
+/* Put the fixture back to one project before every call. Two calls that differ
+ * only in the property under test must differ in nothing else, and a tool that
+ * deletes or creates a project would otherwise change what the NEXT call
+ * resolves — which would attribute one tool's writes to another tool's
+ * argument. */
+static void probe_reset(void) {
+    char doomed[8][256];
+    int doomed_count = 0;
+    hyp_dir_t *dir = hyp_opendir(probe_cache_dir);
+    if (dir) {
+        hyp_dirent_t *entry = NULL;
+        while ((entry = hyp_readdir(dir)) != NULL && doomed_count < 8) {
+            size_t len = strlen(entry->name);
+            if (entry->is_dir || len < 4U || strcmp(entry->name + len - 3, ".db") != 0) {
+                continue;
+            }
+            if (strcmp(entry->name, PROBE_PROJECT ".db") == 0) {
+                continue;
+            }
+            snprintf(doomed[doomed_count], sizeof(doomed[0]), "%s/%s", probe_cache_dir,
+                     entry->name);
+            doomed_count++;
+        }
+        hyp_closedir(dir);
+    }
+    for (int i = 0; i < doomed_count; i++) {
+        hyp_remove_db_sidecars(doomed[i]);
+        hyp_unlink(doomed[i]);
+    }
+    (void)probe_seed();
+}
+
+/* One call, read the way a CLIENT reads it: the `isError` it branches on and
+ * the text it renders. Never the emitted shape — four tests once asserted a
+ * broken MCP output because they checked what the server sent. */
+static bool probe_call(const char *tool, const char *args, char *text, size_t cap) {
+    probe_reset();
+    probe_calls++;
+    if (text && cap) {
+        text[0] = '\0';
     }
     hyp_mcp_server_t *srv = hyp_mcp_server_new(NULL);
     if (!srv) {
-        return false;
+        probe_unanswered++;
+        return true;
     }
-    char *resp = hyp_mcp_handle_tool(srv, tool, arguments_json);
+    /* No update checks and no session auto-index: a probe must not index the
+     * directory the test runner happens to be standing in. */
+    hyp_mcp_server_set_background_tasks(srv, false);
+    char *resp = hyp_mcp_handle_tool(srv, tool, args);
     hyp_mcp_server_free(srv);
     if (!resp) {
-        return false;
+        probe_unanswered++;
+        return true;
     }
     yyjson_doc *doc = yyjson_read(resp, strlen(resp), 0);
     yyjson_val *root = doc ? yyjson_doc_get_root(doc) : NULL;
+    if (!root) {
+        probe_unanswered++;
+    }
     yyjson_val *err = root ? yyjson_obj_get(root, "isError") : NULL;
-    bool is_error = err && yyjson_is_true(err);
-    if (answered && root) {
-        *answered = true;
+    bool is_error = err != NULL && yyjson_is_true(err);
+    if (text && cap) {
+        yyjson_val *content = root ? yyjson_obj_get(root, "content") : NULL;
+        yyjson_val *first = content && yyjson_is_arr(content) ? yyjson_arr_get_first(content) : NULL;
+        yyjson_val *body = first ? yyjson_obj_get(first, "text") : NULL;
+        if (body && yyjson_is_str(body)) {
+            snprintf(text, cap, "%s", yyjson_get_str(body));
+        }
     }
     yyjson_doc_free(doc);
     free(resp);
     return is_error;
 }
 
-TEST(tool_surface_every_declared_default_is_one_the_handler_takes) {
-    surface_memory_fixture_t fx;
-    if (!surface_memory_begin(&fx)) {
-        FAIL("could not create a temporary memory store directory");
+/* ── The words this surface says, kept as candidate values ─────────────
+ *
+ * Restricted to characters that need no JSON escaping, so a harvested word is
+ * a legal argument by construction rather than by a quoting routine nobody
+ * would test. */
+typedef struct {
+    char item[PROBE_POOL_CAP][PROBE_TOKEN_CAP];
+    int count;
+} probe_tokens_t;
+
+static probe_tokens_t probe_pool;
+
+static bool probe_token_char(char c) {
+    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') ||
+           c == '_' || c == '.' || c == '-' || c == ':' || c == '/' || c == '+' || c == '@';
+}
+
+static void probe_tokens_add(probe_tokens_t *set, const char *token) {
+    size_t len = token ? strlen(token) : 0U;
+    if (len < 2U || len >= PROBE_TOKEN_CAP || set->count >= PROBE_POOL_CAP) {
+        return;
     }
-    int walked_tools = 0;
-    int walked_defaults = 0;
-    int unattributable = 0;
-    int findings = 0;
-    char report[4096];
-    report[0] = '\0';
+    for (int i = 0; i < set->count; i++) {
+        if (strcmp(set->item[i], token) == 0) {
+            return;
+        }
+    }
+    snprintf(set->item[set->count], PROBE_TOKEN_CAP, "%s", token);
+    set->count++;
+}
 
-    for (int i = 0; i < hyp_mcp_tool_count(); i++) {
-        const char *name = hyp_mcp_tool_name(i);
-        if (!name || !hyp_mcp_tool_is_probe_safe(name)) {
+static void probe_tokens_scan(probe_tokens_t *set, const char *text) {
+    if (!text) {
+        return;
+    }
+    size_t i = 0U;
+    while (text[i] != '\0') {
+        if (!probe_token_char(text[i])) {
+            i++;
             continue;
         }
-        const char *schema = hyp_mcp_tool_input_schema(name);
-        if (!schema) {
-            continue;
+        size_t j = i;
+        while (text[j] != '\0' && probe_token_char(text[j])) {
+            j++;
         }
-        yyjson_doc *sdoc = yyjson_read(schema, strlen(schema), 0);
-        yyjson_val *sroot = sdoc ? yyjson_doc_get_root(sdoc) : NULL;
-        yyjson_val *props = sroot ? yyjson_obj_get(sroot, "properties") : NULL;
-        if (!props || !yyjson_is_obj(props)) {
-            yyjson_doc_free(sdoc);
-            continue;
+        size_t len = j - i;
+        if (len >= 2U && len < PROBE_TOKEN_CAP) {
+            char token[PROBE_TOKEN_CAP];
+            memcpy(token, text + i, len);
+            token[len] = '\0';
+            probe_tokens_add(set, token);
         }
-        walked_tools++;
+        i = j;
+    }
+}
 
-        /* The baseline. A tool that cannot answer an empty call tells us
-         * nothing about any argument, so it is counted and skipped rather than
-         * blamed. */
-        bool answered = false;
-        bool empty_is_error = surface_call_is_error(name, "{}", &answered);
-        if (!answered) {
-            yyjson_doc_free(sdoc);
-            FAIL("a probe-safe tool returned nothing a client can parse");
+/* ── One JSON value of a declared shape ────────────────────────────────
+ *
+ * `variant` walks the values this walk knows how to build; false ends the
+ * walk. An enum is walked member by member and nothing else is offered: a
+ * handler that refuses every member of its own enum is stating the argument
+ * is unusable, which is exactly the finding. */
+static bool probe_scalar(const char *type, int variant, char *out, size_t cap) {
+    if (type && (strcmp(type, "integer") == 0 || strcmp(type, "number") == 0)) {
+        if (variant == 0) {
+            snprintf(out, cap, "1");
+            return true;
         }
+        if (variant == 1) {
+            snprintf(out, cap, "2");
+            return true;
+        }
+        return false;
+    }
+    if (type && strcmp(type, "boolean") == 0) {
+        if (variant == 0) {
+            snprintf(out, cap, "false");
+            return true;
+        }
+        if (variant == 1) {
+            snprintf(out, cap, "true");
+            return true;
+        }
+        return false;
+    }
+    if (variant == 0) {
+        snprintf(out, cap, "\"hyponoia probe\"");
+        return true;
+    }
+    if (variant == 1) {
+        snprintf(out, cap, "%s", probe_project_json);
+        return true;
+    }
+    if (variant == 2) {
+        snprintf(out, cap, "%s", probe_root_json);
+        return true;
+    }
+    if (variant == 3) {
+        snprintf(out, cap, "\"probe\"");
+        return true;
+    }
+    return false;
+}
 
+static bool probe_flat_value(yyjson_val *spec, int variant, char *out, size_t cap) {
+    yyjson_val *type_val = spec ? yyjson_obj_get(spec, "type") : NULL;
+    const char *type = type_val && yyjson_is_str(type_val) ? yyjson_get_str(type_val) : NULL;
+    yyjson_val *choices = spec ? yyjson_obj_get(spec, "enum") : NULL;
+    if (choices && yyjson_is_arr(choices)) {
+        yyjson_val *member = yyjson_arr_get(choices, (size_t)variant);
+        if (!member) {
+            return false;
+        }
+        char *rendered = yyjson_val_write(member, 0, NULL);
+        if (!rendered) {
+            return false;
+        }
+        snprintf(out, cap, "%s", rendered);
+        free(rendered);
+        return true;
+    }
+    yyjson_val *props = spec ? yyjson_obj_get(spec, "properties") : NULL;
+    if (type && strcmp(type, "object") == 0 && props && yyjson_is_obj(props)) {
+        if (variant > 1) {
+            return false;
+        }
+        char body[PROBE_VALUE_CAP];
+        size_t used = 0U;
+        body[0] = '\0';
         yyjson_obj_iter it;
         yyjson_obj_iter_init(props, &it);
         yyjson_val *key = NULL;
-        while ((key = yyjson_obj_iter_next(&it)) != NULL) {
-            yyjson_val *spec = yyjson_obj_iter_get_val(key);
-            yyjson_val *dflt = yyjson_is_obj(spec) ? yyjson_obj_get(spec, "default") : NULL;
-            if (!dflt) {
+        int written = 0;
+        while ((key = yyjson_obj_iter_next(&it)) != NULL && written < 6) {
+            if (used + 8U >= sizeof(body)) {
+                break;
+            }
+            yyjson_val *sub = yyjson_obj_iter_get_val(key);
+            yyjson_val *sub_type = yyjson_is_obj(sub) ? yyjson_obj_get(sub, "type") : NULL;
+            const char *sub_name = sub_type && yyjson_is_str(sub_type) ? yyjson_get_str(sub_type)
+                                                                       : NULL;
+            char value[PROBE_VALUE_CAP];
+            if (!probe_scalar(sub_name, variant, value, sizeof(value))) {
                 continue;
             }
-            const char *prop = yyjson_get_str(key);
-            if (!prop) {
-                continue;
+            int wrote = snprintf(body + used, sizeof(body) - used, "%s\"%s\":%s",
+                                 written ? "," : "", yyjson_get_str(key), value);
+            if (wrote < 0 || (size_t)wrote >= sizeof(body) - used) {
+                break;
             }
-            char *rendered = yyjson_val_write(dflt, 0, NULL);
-            if (!rendered) {
-                continue;
-            }
-            walked_defaults++;
-            if (empty_is_error) {
-                unattributable++;
-                free(rendered);
-                continue;
-            }
-            char args[1024];
-            snprintf(args, sizeof(args), "{\"%s\":%s}", prop, rendered);
-            free(rendered);
-
-            if (!surface_call_is_error(name, args, NULL)) {
-                continue;
-            }
-            findings++;
-            char line[256];
-            snprintf(line, sizeof(line),
-                     "\n      %s advertises \"%s\" with a default its handler refuses (%s)", name,
-                     prop, args);
-            strncat(report, line, sizeof(report) - strlen(report) - 1U);
+            used += (size_t)wrote;
+            written++;
         }
-        yyjson_doc_free(sdoc);
+        snprintf(out, cap, "{%s}", body);
+        return true;
     }
-    surface_memory_end(&fx);
+    if (type && strcmp(type, "object") == 0) {
+        if (variant > 0) {
+            return false;
+        }
+        snprintf(out, cap, "{\"probe\":\"probe\"}");
+        return true;
+    }
+    return probe_scalar(type, variant, out, cap);
+}
+
+static bool probe_value_for(yyjson_val *spec, int variant, char *out, size_t cap) {
+    yyjson_val *type_val = spec ? yyjson_obj_get(spec, "type") : NULL;
+    const char *type = type_val && yyjson_is_str(type_val) ? yyjson_get_str(type_val) : NULL;
+    if (type && strcmp(type, "array") == 0) {
+        char inner[PROBE_VALUE_CAP];
+        if (!probe_flat_value(spec ? yyjson_obj_get(spec, "items") : NULL, variant, inner,
+                              sizeof(inner))) {
+            return false;
+        }
+        snprintf(out, cap, "[%s]", inner);
+        return true;
+    }
+    return probe_flat_value(spec, variant, out, cap);
+}
+
+typedef struct {
+    char text[PROBE_VALUE_CAP];
+} probe_value_t;
+
+static void probe_cand_push(probe_value_t *out, int cap, int *count, const char *json) {
+    if (!json || json[0] == '\0' || *count >= cap) {
+        return;
+    }
+    for (int i = 0; i < *count; i++) {
+        if (strcmp(out[i].text, json) == 0) {
+            return;
+        }
+    }
+    snprintf(out[*count].text, PROBE_VALUE_CAP, "%s", json);
+    (*count)++;
+}
+
+/* The declared default FIRST, always: it is the value a generated client sends
+ * without being asked, so it is the one whose refusal is a finding on its own. */
+static int probe_candidates(yyjson_val *spec, const char *refusal, probe_value_t *out, int cap) {
+    int count = 0;
+    yyjson_val *fallback = spec ? yyjson_obj_get(spec, "default") : NULL;
+    if (fallback) {
+        char *rendered = yyjson_val_write(fallback, 0, NULL);
+        if (rendered) {
+            probe_cand_push(out, cap, &count, rendered);
+            free(rendered);
+        }
+    }
+    for (int variant = 0; variant < 8; variant++) {
+        char buf[PROBE_VALUE_CAP];
+        if (!probe_value_for(spec, variant, buf, sizeof(buf))) {
+            break;
+        }
+        probe_cand_push(out, cap, &count, buf);
+    }
+
+    yyjson_val *type_val = spec ? yyjson_obj_get(spec, "type") : NULL;
+    const char *type = type_val && yyjson_is_str(type_val) ? yyjson_get_str(type_val) : NULL;
+    yyjson_val *items = spec ? yyjson_obj_get(spec, "items") : NULL;
+    yyjson_val *item_type_val = items ? yyjson_obj_get(items, "type") : NULL;
+    const char *item_type = item_type_val && yyjson_is_str(item_type_val)
+                                ? yyjson_get_str(item_type_val)
+                                : NULL;
+    bool enumerated = spec != NULL && yyjson_obj_get(spec, "enum") != NULL;
+    bool item_enumerated = items != NULL && yyjson_obj_get(items, "enum") != NULL;
+    bool string_like = type == NULL || strcmp(type, "string") == 0;
+    bool number_like = type != NULL &&
+                       (strcmp(type, "integer") == 0 || strcmp(type, "number") == 0);
+    bool string_array = type != NULL && strcmp(type, "array") == 0 && item_type != NULL &&
+                        strcmp(item_type, "string") == 0 && !item_enumerated;
+    if (enumerated || (!string_like && !number_like && !string_array)) {
+        return count;
+    }
+
+    probe_tokens_t words;
+    words.count = 0;
+    probe_tokens_scan(&words, refusal);
+    for (int source = 0; source < 2; source++) {
+        const probe_tokens_t *set = source == 0 ? &probe_pool : &words;
+        int borrowed = 0;
+        for (int i = 0; i < set->count && borrowed < PROBE_BORROW_CAP && count < cap; i++) {
+            const char *token = set->item[i];
+            char buf[PROBE_VALUE_CAP];
+            if (number_like) {
+                bool digits = true;
+                for (const char *p = token; *p != '\0'; p++) {
+                    if (*p < '0' || *p > '9') {
+                        digits = false;
+                        break;
+                    }
+                }
+                if (!digits) {
+                    continue;
+                }
+                snprintf(buf, sizeof(buf), "%s", token);
+            } else if (string_array) {
+                snprintf(buf, sizeof(buf), "[\"%s\"]", token);
+            } else {
+                snprintf(buf, sizeof(buf), "\"%s\"", token);
+            }
+            int before = count;
+            probe_cand_push(out, cap, &count, buf);
+            if (count != before) {
+                borrowed++;
+            }
+        }
+    }
+    return count;
+}
+
+/* ── The arguments object one call carries ─────────────────────────────── */
+typedef struct {
+    char key[PROBE_PAIR_CAP][PROBE_KEY_CAP];
+    char val[PROBE_PAIR_CAP][PROBE_VALUE_CAP];
+    int count;
+} probe_args_t;
+
+static void probe_args_set(probe_args_t *args, const char *key, const char *value) {
+    for (int i = 0; i < args->count; i++) {
+        if (strcmp(args->key[i], key) == 0) {
+            snprintf(args->val[i], PROBE_VALUE_CAP, "%s", value);
+            return;
+        }
+    }
+    if (args->count >= PROBE_PAIR_CAP) {
+        return;
+    }
+    snprintf(args->key[args->count], PROBE_KEY_CAP, "%s", key);
+    snprintf(args->val[args->count], PROBE_VALUE_CAP, "%s", value);
+    args->count++;
+}
+
+/* The base call, with one property overridden or added. That single difference
+ * is the whole instrument. */
+static void probe_args_render(const probe_args_t *args, const char *key, const char *value,
+                              char *out, size_t cap) {
+    size_t used = 1U;
+    bool present = false;
+    snprintf(out, cap, "{");
+    for (int i = 0; i < args->count; i++) {
+        if (used + 8U >= cap) {
+            break;
+        }
+        const char *use = args->val[i];
+        if (key && strcmp(args->key[i], key) == 0) {
+            use = value;
+            present = true;
+        }
+        int wrote = snprintf(out + used, cap - used, "%s\"%s\":%s", used > 1U ? "," : "",
+                             args->key[i], use);
+        if (wrote < 0 || (size_t)wrote >= cap - used - 2U) {
+            break;
+        }
+        used += (size_t)wrote;
+    }
+    if (key && !present && used + 8U < cap) {
+        int wrote = snprintf(out + used, cap - used, "%s\"%s\":%s", used > 1U ? "," : "", key,
+                             value);
+        if (wrote > 0 && (size_t)wrote < cap - used - 2U) {
+            used += (size_t)wrote;
+        }
+    }
+    snprintf(out + used, cap - used, "}");
+}
+
+static bool probe_is_required(yyjson_val *required, const char *name) {
+    if (!required || !yyjson_is_arr(required) || !name) {
+        return false;
+    }
+    size_t index = 0U;
+    size_t max = 0U;
+    yyjson_val *entry = NULL;
+    yyjson_arr_foreach(required, index, max, entry) {
+        if (yyjson_is_str(entry) && strcmp(yyjson_get_str(entry), name) == 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
+/* Can this refusal be blamed on the property? Three answers, and the third is
+ * the one a check that guesses gets wrong:
+ *
+ *   - the base call ANSWERED and this one refuses: the property is the only
+ *     thing that changed, so the property is why.
+ *   - the base call refused with the SAME words: nothing about this property
+ *     can be concluded.
+ *   - the base call refused DIFFERENTLY and the new words name this property:
+ *     the baseline refusal is not what was just read, and the new text says
+ *     what is. */
+static bool probe_attributable(bool base_error, const char *base_text, const char *text,
+                               const char *property) {
+    if (!base_error) {
+        return true;
+    }
+    if (strcmp(text, base_text) == 0) {
+        return false;
+    }
+    return strstr(text, property) != NULL;
+}
+
+static void probe_append(char *buf, size_t cap, const char *line) {
+    size_t used = strlen(buf);
+    if (used + strlen(line) + 1U < cap) {
+        strncat(buf, line, cap - used - 1U);
+    }
+}
+
+/* ── The base call, made as answerable as this surface allows ───────────
+ *
+ * Required properties are filled from the schema first. If the call still
+ * refuses, the refusal is read for words that would work and they are tried,
+ * property by property — a refusal on this surface names the accepted set, so
+ * this uses the contract rather than guessing at it. A base that cannot be
+ * made to answer is reported by name and every property of that tool is
+ * counted unattributable; it is never blamed. */
+static bool probe_build_base(const char *tool, yyjson_val *props, yyjson_val *required,
+                             probe_args_t *base, char *text, size_t cap) {
+    base->count = 0;
+    yyjson_obj_iter first;
+    yyjson_obj_iter_init(props, &first);
+    yyjson_val *key = NULL;
+    while ((key = yyjson_obj_iter_next(&first)) != NULL) {
+        const char *name = yyjson_get_str(key);
+        if (!name || !probe_is_required(required, name)) {
+            continue;
+        }
+        probe_value_t seeds[PROBE_CAND_CAP];
+        int seed_count = probe_candidates(yyjson_obj_iter_get_val(key), NULL, seeds,
+                                          PROBE_CAND_CAP);
+        if (seed_count > 0) {
+            probe_args_set(base, name, seeds[0].text);
+        }
+    }
+
+    char args[PROBE_ARGS_CAP];
+    probe_args_render(base, NULL, NULL, args, sizeof(args));
+    bool is_error = probe_call(tool, args, text, cap);
+    int spent = 1;
+
+    for (int round = 0; round < 4 && is_error && spent < PROBE_REPAIR_CAP; round++) {
+        bool moved = false;
+        for (int pass = 0; pass < 2 && !moved && spent < PROBE_REPAIR_CAP; pass++) {
+            yyjson_obj_iter it;
+            yyjson_obj_iter_init(props, &it);
+            yyjson_val *pkey = NULL;
+            while ((pkey = yyjson_obj_iter_next(&it)) != NULL && spent < PROBE_REPAIR_CAP) {
+                const char *name = yyjson_get_str(pkey);
+                if (!name) {
+                    continue;
+                }
+                bool wanted = probe_is_required(required, name);
+                if ((pass == 0) != wanted) {
+                    continue;
+                }
+                probe_value_t cands[PROBE_CAND_CAP];
+                int count = probe_candidates(yyjson_obj_iter_get_val(pkey), text, cands,
+                                             PROBE_CAND_CAP);
+                int nudge = -1;
+                char nudge_text[PROBE_TEXT_CAP];
+                nudge_text[0] = '\0';
+                for (int c = 0; c < count && spent < PROBE_REPAIR_CAP; c++) {
+                    char trial[PROBE_ARGS_CAP];
+                    char answer[PROBE_TEXT_CAP];
+                    probe_args_render(base, name, cands[c].text, trial, sizeof(trial));
+                    bool failed = probe_call(tool, trial, answer, sizeof(answer));
+                    spent++;
+                    if (!failed) {
+                        probe_args_set(base, name, cands[c].text);
+                        snprintf(text, cap, "%s", answer);
+                        return false;
+                    }
+                    if (nudge < 0 && wanted && strcmp(answer, text) != 0) {
+                        nudge = c;
+                        snprintf(nudge_text, sizeof(nudge_text), "%s", answer);
+                    }
+                }
+                if (nudge >= 0) {
+                    probe_args_set(base, name, cands[nudge].text);
+                    snprintf(text, cap, "%s", nudge_text);
+                    moved = true;
+                    break;
+                }
+            }
+        }
+        if (!moved) {
+            break;
+        }
+    }
+    return is_error;
+}
+
+static probe_args_t probe_base[PROBE_TOOL_CAP];
+static char probe_base_text[PROBE_TOOL_CAP][PROBE_TEXT_CAP];
+static bool probe_base_error[PROBE_TOOL_CAP];
+
+TEST(tool_surface_every_advertised_property_is_one_the_handler_accepts) {
+    surface_memory_fixture_t memory;
+    if (!surface_memory_begin(&memory)) {
+        FAIL("could not create a temporary memory store directory");
+    }
+    surface_cache_fixture_t cache;
+    if (!surface_cache_begin(&cache)) {
+        surface_memory_end(&memory);
+        FAIL("could not create a fresh cache directory");
+    }
+    char root[256];
+    snprintf(root, sizeof(root), "/tmp/hyp-tool-surface-root-XXXXXX");
+    if (!hyp_mkdtemp(root)) {
+        surface_cache_end(&cache);
+        surface_memory_end(&memory);
+        FAIL("could not create a project root for the probe");
+    }
+    snprintf(probe_cache_dir, sizeof(probe_cache_dir), "%s", cache.dir);
+    snprintf(probe_root_dir, sizeof(probe_root_dir), "%s", root);
+    snprintf(probe_db_path, sizeof(probe_db_path), "%s/%s.db", cache.dir, PROBE_PROJECT);
+    snprintf(probe_project_json, sizeof(probe_project_json), "\"%s\"", PROBE_PROJECT);
+    snprintf(probe_root_json, sizeof(probe_root_json), "\"%s\"", root);
+    char source[320];
+    snprintf(source, sizeof(source), "%s/probe.c", root);
+    FILE *seedfile = fopen(source, "w");
+    if (seedfile) {
+        fputs("int hyp_probe_symbol(void) { return 0; }\n", seedfile);
+        fclose(seedfile);
+    }
+    probe_pool.count = 0;
+    probe_calls = 0;
+    probe_unanswered = 0;
+    if (!probe_seed()) {
+        surface_cache_end(&cache);
+        surface_memory_end(&memory);
+        FAIL("could not seed the one project the probe resolves against");
+    }
+
+    /* The client's view of the surface: the names, the annotations and the
+     * schemas all come out of the one tools/list a client parses. */
+    char *listing = surface_call(HYP_MCP_TOOL_PROFILE_ALL, "tools/list", NULL);
+    yyjson_doc *ldoc = listing ? yyjson_read(listing, strlen(listing), 0) : NULL;
+    free(listing);
+    yyjson_val *result = ldoc ? yyjson_obj_get(yyjson_doc_get_root(ldoc), "result") : NULL;
+    yyjson_val *tools = result ? yyjson_obj_get(result, "tools") : NULL;
+    if (!tools || !yyjson_is_arr(tools)) {
+        yyjson_doc_free(ldoc);
+        surface_cache_end(&cache);
+        surface_memory_end(&memory);
+        FAIL("a client cannot read the advertised tool list at all");
+    }
+
+    int walked_tools = 0;
+    int walked_props = 0;
+    int accepted = 0;
+    int findings = 0;
+    int unattr_tool = 0;
+    int unattr_value = 0;
+    int open_world = 0;
+    int base_unanswered = 0;
+    char report[6000];
+    char blind_tool[2400];
+    char blind_value[2400];
+    char blind_base[600];
+    report[0] = '\0';
+    blind_tool[0] = '\0';
+    blind_value[0] = '\0';
+    blind_base[0] = '\0';
+
+    for (int phase = 0; phase < 2; phase++) {
+        size_t index = 0U;
+        size_t max = 0U;
+        yyjson_val *tool = NULL;
+        yyjson_arr_foreach(tools, index, max, tool) {
+            if (index >= (size_t)PROBE_TOOL_CAP) {
+                break;
+            }
+            yyjson_val *name_val = yyjson_obj_get(tool, "name");
+            const char *name = name_val && yyjson_is_str(name_val) ? yyjson_get_str(name_val)
+                                                                   : NULL;
+            yyjson_val *hints = yyjson_obj_get(tool, "annotations");
+            yyjson_val *open = hints ? yyjson_obj_get(hints, "openWorldHint") : NULL;
+            if (!name || !open) {
+                continue;
+            }
+            if (yyjson_is_true(open)) {
+                /* It leaves this machine; no fixture contains it. */
+                if (phase == 0) {
+                    open_world++;
+                }
+                continue;
+            }
+            yyjson_val *schema = yyjson_obj_get(tool, "inputSchema");
+            yyjson_val *props = schema ? yyjson_obj_get(schema, "properties") : NULL;
+            yyjson_val *required = schema ? yyjson_obj_get(schema, "required") : NULL;
+            if (!props || !yyjson_is_obj(props)) {
+                continue;
+            }
+            int slot = (int)index;
+
+            if (phase == 0) {
+                walked_tools++;
+                probe_base_error[slot] = probe_build_base(name, props, required, &probe_base[slot],
+                                                          probe_base_text[slot], PROBE_TEXT_CAP);
+                if (probe_base_error[slot]) {
+                    base_unanswered++;
+                    char line[128];
+                    snprintf(line, sizeof(line), "%s%s", blind_base[0] ? ", " : "", name);
+                    probe_append(blind_base, sizeof(blind_base), line);
+                } else {
+                    probe_tokens_scan(&probe_pool, probe_base_text[slot]);
+                }
+                continue;
+            }
+
+            yyjson_obj_iter it;
+            yyjson_obj_iter_init(props, &it);
+            yyjson_val *key = NULL;
+            while ((key = yyjson_obj_iter_next(&it)) != NULL) {
+                const char *prop = yyjson_get_str(key);
+                if (!prop) {
+                    continue;
+                }
+                yyjson_val *spec = yyjson_obj_iter_get_val(key);
+                bool declares_default = spec != NULL && yyjson_obj_get(spec, "default") != NULL;
+                probe_value_t cands[PROBE_CAND_CAP];
+                int count = probe_candidates(spec, probe_base_text[slot], cands, PROBE_CAND_CAP);
+                walked_props++;
+                if (count == 0) {
+                    unattr_value++;
+                    char line[160];
+                    snprintf(line, sizeof(line), "%s%s.%s", blind_value[0] ? ", " : "", name, prop);
+                    probe_append(blind_value, sizeof(blind_value), line);
+                    continue;
+                }
+
+                bool took_it = false;
+                bool attributed = false;
+                bool value_dependent = false;
+                bool default_refused = false;
+                char first_refusal[PROBE_TEXT_CAP];
+                char default_refusal[PROBE_TEXT_CAP];
+                first_refusal[0] = '\0';
+                default_refusal[0] = '\0';
+                for (int c = 0; c < count; c++) {
+                    char args[PROBE_ARGS_CAP];
+                    char answer[PROBE_TEXT_CAP];
+                    probe_args_render(&probe_base[slot], prop, cands[c].text, args, sizeof(args));
+                    bool failed = probe_call(name, args, answer, sizeof(answer));
+                    if (!failed) {
+                        took_it = true;
+                        break;
+                    }
+                    bool blame = probe_attributable(probe_base_error[slot], probe_base_text[slot],
+                                                    answer, prop);
+                    if (c == 0 && declares_default && blame) {
+                        default_refused = true;
+                        snprintf(default_refusal, sizeof(default_refusal), "%s", answer);
+                    }
+                    if (blame) {
+                        if (!attributed) {
+                            attributed = true;
+                            snprintf(first_refusal, sizeof(first_refusal), "%s", answer);
+                        } else if (strcmp(first_refusal, answer) != 0) {
+                            value_dependent = true;
+                        }
+                    }
+                }
+
+                if (default_refused) {
+                    findings++;
+                    char line[600];
+                    snprintf(line, sizeof(line),
+                             "\n      %s advertises \"%s\" with a DEFAULT its handler refuses: %.220s",
+                             name, prop, default_refusal);
+                    probe_append(report, sizeof(report), line);
+                }
+                if (took_it) {
+                    accepted++;
+                } else if (!attributed) {
+                    unattr_tool++;
+                    char line[160];
+                    snprintf(line, sizeof(line), "%s%s.%s", blind_tool[0] ? ", " : "", name, prop);
+                    probe_append(blind_tool, sizeof(blind_tool), line);
+                } else if (value_dependent) {
+                    unattr_value++;
+                    char line[160];
+                    snprintf(line, sizeof(line), "%s%s.%s", blind_value[0] ? ", " : "", name, prop);
+                    probe_append(blind_value, sizeof(blind_value), line);
+                } else {
+                    findings++;
+                    char line[600];
+                    snprintf(line, sizeof(line),
+                             "\n      %s advertises \"%s\", and NO value this walk can derive is "
+                             "one the handler takes (%d tried, one refusal for all): %.200s",
+                             name, prop, count, first_refusal);
+                    probe_append(report, sizeof(report), line);
+                }
+            }
+        }
+    }
+
+    yyjson_doc_free(ldoc);
+    surface_cache_end(&cache);
+    surface_memory_end(&memory);
 
     /* The instrument, before anything that trusts it. A walk that visited no
-     * declared default would pass this test on every tree forever. */
-    if (walked_tools == 0 || walked_defaults == 0) {
-        FAIL("check C walked no tool schema carrying a declared default; the set "
-             "derivation is broken, not the surface");
+     * schema, or that could not attribute a single property, would pass on
+     * every tree forever. */
+    if (walked_tools == 0 || walked_props == 0) {
+        FAIL("the walk visited no advertised property; the set derivation is "
+             "broken, not the surface");
+    }
+    if (accepted == 0) {
+        FAIL("the walk found no property any handler accepts, which is the "
+             "fixture failing rather than the surface");
+    }
+    if (probe_unanswered > 0) {
+        FAIL("an advertised tool returned nothing a client can parse");
     }
 
+    int observable = accepted + findings;
+    printf("\n    check C: %d tools walked (%d skipped: they leave this machine), %d advertised "
+           "properties, %d OBSERVABLE (%d accepted, %d refused), %d unattributable.\n"
+           "      %d unreachable through the tool: it refuses the base call the same way — %s\n"
+           "      %d unreachable through the value: the refusal moves with the value, and no "
+           "legal one was derivable — %s\n"
+           "      %d tools whose base call never answered: %s\n"
+           "      %d calls made. Read OBSERVABLE, never the total: the rest were counted and "
+           "never judged.\n",
+           walked_tools, open_world, walked_props, observable, accepted, findings,
+           unattr_tool + unattr_value, unattr_tool, blind_tool[0] ? blind_tool : "none",
+           unattr_value, blind_value[0] ? blind_value : "none", base_unanswered,
+           blind_base[0] ? blind_base : "none", probe_calls);
+
     if (findings > 0) {
-        printf("\n    check C: %d tool schemas walked, %d declared defaults, %d unattributable "
-               "(the tool refuses {} too), %d OBSERVABLE.%s\n"
-               "      A client generated from the schema sends the default and is refused "
-               "for obeying the contract. There is no exemption table to add a row to: "
-               "withdraw the advertisement, or make the handler take it.\n",
-               walked_tools, walked_defaults, unattributable, walked_defaults - unattributable,
+        printf("%s\n"
+               "      A client generated from the schema sends the argument and is refused for "
+               "obeying the contract. There is no exemption table to add a row to: withdraw the "
+               "advertisement, or make the handler take it.\n",
                report);
-        FAIL("a tool advertises a default its own handler will not take");
+        FAIL("a tool advertises a property no call of its own can use");
     }
-    printf("\n    check C: %d tool schemas walked, %d declared defaults, %d unattributable "
-           "(the tool refuses {} too), %d OBSERVABLE and 0 of those refused.\n"
-           "      Read the 0 against OBSERVABLE, never against the total: the rest were "
-           "counted and never judged.\n",
-           walked_tools, walked_defaults, unattributable, walked_defaults - unattributable);
     PASS();
 }
 
@@ -1731,5 +2426,5 @@ SUITE(tool_surface) {
     RUN_TEST(tool_surface_transcript_kinds_are_not_authorable);
     RUN_TEST(tool_surface_no_reserved_surface_depends_on_the_deprecated_tool);
     RUN_TEST(tool_surface_the_deprecated_adr_tool_shares_no_vocabulary_with_the_memory_surface);
-    RUN_TEST(tool_surface_every_declared_default_is_one_the_handler_takes);
+    RUN_TEST(tool_surface_every_advertised_property_is_one_the_handler_accepts);
 }

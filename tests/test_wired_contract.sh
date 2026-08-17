@@ -24,9 +24,9 @@
 #      output. That is the half a user sees, and it is the half that failed
 #      silently.
 #   C. A SCHEMA ARGUMENT WITH NO HANDLER — see tests/test_tool_surface.c,
-#      `tool_surface_every_declared_default_is_one_the_handler_takes`. It lives
-#      there and not here because it must assert what a CLIENT reads back from
-#      a live server, which no static scan can do.
+#      `tool_surface_every_advertised_property_is_one_the_handler_accepts`. It
+#      lives there and not here because it must assert what a CLIENT reads back
+#      from a live server, which no static scan can do.
 #
 # ─── Why a RATCHET, and the exit condition ─────────────────────────────
 #
