@@ -10,11 +10,11 @@
 #      merged Track C/D/F module had zero callers from any CLI, MCP handler,
 #      daemon or watcher: correct in isolation, inert in composition. A module
 #      with no callers cannot diverge from its callers, so its own suite is
-#      green forever. The pre-existing case is worse than uncalled —
-#      src/foundation/vmem.c is in NO SOURCE LIST, has never been compiled by
-#      anything, and carries an 810-line test suite registered nowhere. A
-#      caller-only check cannot see it, so this one checks COMPILED AT ALL
-#      first.
+#      green forever. Worse than uncalled is NEVER COMPILED: a module in no
+#      source list, which the build has not once fed to a compiler, and whose
+#      own suite is registered in no runner either. A caller-only check cannot
+#      see that case at all — it has no symbols to call because it has no
+#      object file — so this one checks COMPILED AT ALL first.
 #   B. A COMMAND THE DISPATCHER SWALLOWED. `hyp onboard` was dispatched in
 #      main.c, absent from the daemon's role table, fell through to MCP_CLIENT
 #      and exited 0 with no output — a defect whose signature is identical to
@@ -137,11 +137,6 @@ def fail(msg):
 
 # module path -> (closing unit, what is missing)
 NEVER_COMPILED_LEDGER = {
-    'src/foundation/vmem.c': (
-        'DECISION',
-        '196 lines, in no source list, compiled by nothing, referenced by nothing, '
-        'and tests/test_vmem.c (810 lines) is registered in neither tests/test_main.c '
-        'nor Makefile.hyp. Wire it or delete it; it has no owner to wait for.'),
     'src/foundation/mem_profile.c': (
         'DECISION',
         'allocation-site profiler for the #581 harness. Its only caller is '
@@ -205,10 +200,13 @@ UNREACHABLE_LEDGER = {
 # SET: every .c under src/. Derived by walking the tree.
 #
 # TEST 1 — COMPILED AT ALL. The file appears in the expansion of some
-#   Makefile.hyp variable. vmem.c is the reason this test exists and comes
-#   first: it has no callers because it has no object file, and a caller-only
-#   check reports it as one ordinary unwired module among many instead of as a
-#   file the build has never seen.
+#   Makefile.hyp variable. It runs FIRST because a never-compiled module has no
+#   callers for a trivial reason — no object file, so no symbol to call — and a
+#   caller-only check would file it as one ordinary unwired module among many
+#   instead of as a file the build has never seen. The distinction is not
+#   cosmetic: nothing has type-checked such a file, so it can be broken outright
+#   and stay green, and a repo-wide sweep can edit it into not compiling at all
+#   without a single gate noticing.
 #
 # TEST 2 — REACHABLE FROM THE PRODUCTION ENTRY POINT. NEXT-STEPS.md §4 words
 #   this as "at least one non-test caller". That is too weak, and this tree

@@ -1,9 +1,11 @@
 /*
  * mem.h — Unified memory management via mimalloc.
  *
- * Provides budget tracking based on actual RSS (not partial vmem tracking).
- * Uses mi_process_info() as the single source of truth for memory pressure.
- * Replaces the old vmem.h budget-tracked virtual memory allocator.
+ * Budget tracking is keyed on actual RSS, so it counts every byte the OS
+ * charges the process rather than only the bytes one allocator handed out —
+ * a budget that sees a subset of the memory is a budget that reports green
+ * while the machine swaps. mi_process_info() is the single source of truth
+ * for memory pressure.
  */
 #ifndef HYP_MEM_H
 #define HYP_MEM_H
