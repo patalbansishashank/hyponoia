@@ -751,7 +751,7 @@ static HYPFileResult *calls_get_or_extract(hyp_pipeline_ctx_t *ctx, int idx,
         return NULL;
     }
     HYPFileResult *r = hyp_extract_file_ex(src, slen, fi->language, ctx->project_name, fi->rel_path,
-                                           HYP_EXTRACT_BUDGET, NULL, NULL, ctx->macro_table,
+                                           HYP_PARSE_TIMEOUT_US, NULL, NULL, ctx->macro_table,
                                            ctx->return_type_table);
     free(src);
     if (r) {

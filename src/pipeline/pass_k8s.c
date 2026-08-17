@@ -111,7 +111,7 @@ static void handle_kustomize(hyp_pipeline_ctx_t *ctx, const char *path, const ch
         char *source = k8s_read_file(path, &src_len);
         if (source) {
             res = hyp_extract_file(source, src_len, HYP_LANG_KUSTOMIZE, ctx->project_name, rel_path,
-                                   HYP_EXTRACT_BUDGET, NULL, NULL);
+                                   HYP_PARSE_TIMEOUT_US, NULL, NULL);
             free(source);
             allocated = true;
         }
@@ -378,7 +378,7 @@ static void handle_k8s_manifest(hyp_pipeline_ctx_t *ctx, const char *path, const
     int resource_count = 0;
 
     HYPFileResult *res = hyp_extract_file(source, src_len, HYP_LANG_K8S, ctx->project_name,
-                                          rel_path, HYP_EXTRACT_BUDGET, NULL, NULL);
+                                          rel_path, HYP_PARSE_TIMEOUT_US, NULL, NULL);
     if (!res) {
         return;
     }

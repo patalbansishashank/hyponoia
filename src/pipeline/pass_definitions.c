@@ -617,7 +617,7 @@ HYPFileResult *hyp_pipeline_extract_objectscript_export(
     for (int ci = 0; ci < class_count; ci++) {
         HYPFileResult *part = hyp_extract_file_ex(
             udl_strings[ci], (int)strlen(udl_strings[ci]), HYP_LANG_OBJECTSCRIPT_UDL, project_name,
-            rel_path, HYP_EXTRACT_BUDGET, NULL, NULL, macro_table, return_type_table);
+            rel_path, HYP_PARSE_TIMEOUT_US, NULL, NULL, macro_table, return_type_table);
         if (!part) {
             continue;
         }
@@ -775,7 +775,7 @@ int hyp_pipeline_pass_definitions(hyp_pipeline_ctx_t *ctx, const hyp_file_info_t
                 ? hyp_pipeline_extract_objectscript_export(source, source_len, ctx->project_name,
                                                            rel, ctx->macro_table, NULL)
                 : hyp_extract_file_ex(
-                      source, source_len, lang, ctx->project_name, rel, HYP_EXTRACT_BUDGET, NULL,
+                      source, source_len, lang, ctx->project_name, rel, HYP_PARSE_TIMEOUT_US, NULL,
                       NULL /* no extra defines or include paths */, ctx->macro_table, NULL);
         free(source);
 

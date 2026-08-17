@@ -501,7 +501,7 @@ static HYPFileResult *sem_get_or_extract(hyp_pipeline_ctx_t *ctx, int file_idx,
         return NULL;
     }
     HYPFileResult *r = hyp_extract_file(source, source_len, fi->language, ctx->project_name,
-                                        fi->rel_path, HYP_EXTRACT_BUDGET, NULL, NULL);
+                                        fi->rel_path, HYP_PARSE_TIMEOUT_US, NULL, NULL);
     free(source);
     if (r) {
         *owned = true;
