@@ -69,17 +69,16 @@ PACK_MAX_PATH_BYTES = 255
 # RETIRED-PLATFORM(macos): darwin-amd64/darwin-arm64 dropped — see docs/MAINTAINERS.md "Retired platforms".
 UNIX_TARGETS = (
     "linux-amd64",
-    "linux-arm64",
     "linux-amd64-portable",
-    "linux-arm64-portable",
     # GPU (Vulkan) variant of the ui build — _build.yml build-linux-gpu.
     # Same members as every other ui archive; the binary is HYP_ASK_GPU=vulkan
     # STATIC=0, dynamically linked against libvulkan.so.1. It ships BESIDE the
     # static -portable archive, never instead of it.
     "linux-amd64-gpu",
 )
-# RETIRED-PLATFORM(windows-arm64): windows-arm64 dropped — see docs/MAINTAINERS.md "Retired platforms".
-WINDOWS_TARGETS = ("windows-amd64",)
+# linux-amd64 only, by explicit instruction: linux-arm64/linux-arm64-portable
+# and windows-amd64 dropped from the target list entirely.
+WINDOWS_TARGETS = ()
 UI_ARCHIVES = frozenset(
     [
         f"hyponoia-ui-{target}.tar.gz"
