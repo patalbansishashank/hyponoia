@@ -12071,6 +12071,14 @@ static bool write_scoped_filelist(hyp_mcp_server_t *srv, const char *project, co
     int indexed_count = 0;
     if (hyp_store_list_files(pre_store, project, &indexed_files, &indexed_count) != HYP_STORE_OK ||
         indexed_count == 0) {
+        /* The listing is allocated before the row count is known, so an
+         * indexed project with nothing to list still owns an array. Freeing it
+         * only on the success path leaked it on every scoped search of an
+         * empty project. */
+        for (int fi = 0; fi < indexed_count; fi++) {
+            free(indexed_files[fi]);
+        }
+        free(indexed_files);
         return false;
     }
     bool ok = false;
