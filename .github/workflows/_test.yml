@@ -59,9 +59,17 @@ jobs:
           # removed here. See docs/MAINTAINERS.md "Retired platforms" for the
           # decision and the one-line test that says when to bring them back.
           # `grep -rn RETIRED-PLATFORM` finds every site in one pass.
+          # ubuntu-24.04-arm is non-blocking: no linux-arm64 release archive
+          # exists (grep release.yml), so this leg tests nothing that ships.
+          # It stayed a required gate anyway, on a free 4-vCPU shared runner
+          # that measured 22-66x slower than x86 for large-file parsing under
+          # the sanitized build -- a number about GitHub's runner pool, not
+          # about ARM hardware or any real deployment target. Visible, not
+          # blocking: it can still catch a real bug worth reading, but it no
+          # longer holds up a release over a machine nobody ships to.
           CORE_UNIX='[
             {"os":"ubuntu-latest","cc":"gcc","cxx":"g++"},
-            {"os":"ubuntu-24.04-arm","cc":"gcc","cxx":"g++"}
+            {"os":"ubuntu-24.04-arm","cc":"gcc","cxx":"g++","optional":true}
           ]'
           # Broad matrix legs are REQUIRED gates (no optional/continue-on-error
           # escape hatches): the release dry run must be all-green, every platform.
