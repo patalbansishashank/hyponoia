@@ -32,10 +32,10 @@
 name: Full Suite
 
 on:
-  schedule:
-    # Mondays 05:00 UTC — an hour before scorecard.yml so the two do not
-    # contend for the same runner pool at the same minute.
-    - cron: '0 5 * * 1'
+  # No automatic trigger -- same instruction as ci.yml. This is the one
+  # with real prior cost recorded a few lines up (five months of drift
+  # before §2.13 gave it a venue); noted once, not re-litigated. Runnable
+  # by hand.
   workflow_dispatch:
 
 permissions:

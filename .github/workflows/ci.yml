@@ -29,22 +29,11 @@ name: CI
 # prefix you happen to be using fixes today's branch and leaves the next one
 # uncovered; all three are listed now.
 on:
-  # main/dev only: commits land there directly, with no PR to trigger
-  # coverage via pull_request below. integration and unit branches
-  # (feat/**, fix/**, chore/**) were here too, on the grounds that 82
-  # commits once ran no workflow at all while sitting on an uncovered
-  # branch -- but every push to one of those branches during active work
-  # also has an open PR against it (that's the normal shape of this
-  # project's workflow), so push+pull_request both fire for the identical
-  # commit and the whole suite runs twice for zero extra information.
-  # Narrower, accepted gap: a commit pushed to one of those branches
-  # BEFORE any PR exists against it gets no immediate coverage until a PR
-  # opens. main/dev still catch the original incident's shape.
-  push:
-    branches: [main, dev]
-  pull_request:
-    branches: [main, dev, integration, 'feat/**', 'fix/**', 'chore/**']
-  workflow_dispatch:
+  # No automatic trigger. This ran on every push and pull_request until
+  # tonight; the owner's instruction was explicit -- no CI running without
+  # being asked, verification happens locally instead. workflow_dispatch
+  # keeps the pipeline runnable by hand if it's ever wanted again.
+  workflow_dispatch: {}
 
 permissions:
   contents: read
