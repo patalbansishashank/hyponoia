@@ -22,8 +22,19 @@ jobs:
       - name: "Layer 8: Vendored dependency integrity"
         run: scripts/security-vendored.sh
 
-  # license-gate (dependency-license compliance + provenance audit) removed:
-  # this project isn't redistributed to anyone who'd need that guarantee.
-  # scripts/license-gate.sh and scripts/audit-license-provenance.py still
-  # exist and still work if that changes.
+  license-gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install ScanCode Toolkit
+        run: pipx install scancode-toolkit
+      - name: "Gate self-test (a planted violation must be detected)"
+        run: scripts/license-gate.sh --selftest
+      - name: "License compliance gate (one finding fails)"
+        run: scripts/license-gate.sh
+      - name: "License provenance audit (byte-identity vs upstream)"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: scripts/audit-license-provenance.py
 
