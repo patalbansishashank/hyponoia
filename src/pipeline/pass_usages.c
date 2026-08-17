@@ -323,7 +323,7 @@ int hyp_pipeline_pass_usages(hyp_pipeline_ctx_t *ctx, const hyp_file_info_t *fil
                 continue;
             }
             result = hyp_extract_file(source, source_len, files[i].language, ctx->project_name, rel,
-                                      HYP_EXTRACT_BUDGET, NULL, NULL);
+                                      HYP_PARSE_TIMEOUT_US, NULL, NULL);
             free(source);
             if (!result) {
                 errors++;
