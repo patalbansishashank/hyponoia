@@ -789,9 +789,16 @@ int hyp_pipeline_pass_definitions(hyp_pipeline_ctx_t *ctx, const hyp_file_info_t
          * still be reported (phase "extract", reason = the extractor's message).
          * The empty result flows through unchanged (the defs loop is a no-op). */
         if (result->has_error) {
-            hyp_pipeline_add_file_error(ctx->pipeline, rel,
-                                        result->error_msg ? result->error_msg : "extract failed",
-                                        "extract");
+            const char *why = result->error_msg ? result->error_msg : "extract failed";
+            hyp_pipeline_add_file_error(ctx->pipeline, rel, why, "extract");
+            /* Disclosed, not merely recorded — the same treatment the oversized
+             * skip above gets, for the same reason. Every definition in this
+             * file is absent from the graph and the run still reports success,
+             * so a record in a structure the caller has to know to ask for is
+             * the difference between an incomplete index a user can see and one
+             * they cannot. */
+            hyp_log_warn("index.file_extract_skipped", "path", rel, "reason", why, "phase",
+                         "extract");
             errors++;
         } else if (result->parse_incomplete) {
             /* Best-effort parse-coverage signal (#963): indexed, but with

@@ -296,6 +296,14 @@ bash "$ROOT/tests/test_fqn_contract.sh"
 echo "=== Step 0y: nothing ships unwired — modules and commands (G6) ==="
 bash "$ROOT/tests/test_wired_contract.sh"
 
+# A fixture that names a commit names one a clone of the remote can resolve.
+# Static, so it runs before the compiler: it walks tests/fixtures and asks git,
+# and it belongs here rather than inside a suite because more than one corpus
+# cites history and only one of them replays it — the one that does not
+# dereference its citations is exactly where an unresolvable commit survives.
+echo "=== Step 0z: fixture history is history a clone can resolve ==="
+bash "$ROOT/tests/test_fixture_lineage.sh"
+
 # Verify compiler supports target arch
 verify_compiler "$CC"
 

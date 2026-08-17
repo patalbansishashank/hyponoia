@@ -89,11 +89,25 @@ typedef struct {
 
     /* What the PRODUCT observed at the after commit for the symbol the
      * corpus says this one became (same name, or the renamed one). */
+    /* Does the corpus name a successor for this fixture at all? The copy
+     * fixtures name several and the census counts none of them, so "no
+     * successor named" and "a successor named and not found" are separate
+     * facts, and only the second is a defect. */
+    bool after_expected;
+    char pa_why[256];
     bool pa_found;
     int pa_start, pa_end;
     char pa_hash[G1_HASH];
     char pa_qn[G1_QN];
     hyp_addr_rel_t relate;
+
+    /* Did the after side of this fixture's pair actually get replayed? A pair
+     * that cannot be advanced leaves every field below at its zero value, and
+     * HYP_ANCHOR_ERROR is deliberately zero, so a zeroed struct is
+     * indistinguishable from a real refusal to classify. This flag is what
+     * tells the two apart: absent means look at why, empty means the product
+     * looked and found nothing. */
+    bool replayed;
 
     /* The classification. */
     hyp_anchor_status_t status;
@@ -125,7 +139,7 @@ static g1_fix_t g1_fix[G1_MAX_FIX];
 static int g1_n = 0;
 static bool g1_done = false;
 static bool g1_ok = false;
-static char g1_fatal[512];
+static char g1_fatal[2048];
 static char g1_tmp[256];
 static char g1_repo[HYP_PATH_MAX];
 
@@ -139,6 +153,10 @@ static int g1_index_runs = 0;
  * the corpus, never typed here: the live slug is derived from the checkout
  * path and is a per-machine fact, so only the part after it can be compared. */
 static const char *g1_corpus_slug = NULL;
+/* The lineage the corpus declares its commits belong to. Read from the corpus
+ * so the precondition quotes the claim it is enforcing rather than a copy of
+ * it that can drift. */
+static const char *g1_corpus_lineage = NULL;
 
 /* ── JSON accessors ──────────────────────────────────────────────── */
 
@@ -233,8 +251,23 @@ static bool g1_materialise(const char *commit, const char *rel, const char *tree
 
 /* ── Indexing ────────────────────────────────────────────────────── */
 
+/*
+ * Index one tree, and KEEP WHAT THE INDEXER SAID ABOUT IT.
+ *
+ * A run that skips a file still returns success, by design — the skip is
+ * surfaced rather than fatal. So a harness that reads only the return code
+ * indexes a tree with a file missing from it, then reports the consequence
+ * ("the index holds no node for this symbol") instead of the cause ("this
+ * file hit the extractor's per-file budget"). Those are two different
+ * sentences and only one of them is actionable, so the skip list is read
+ * here, while the pipeline still owns it, and carried into every message
+ * that could otherwise blame the symbol.
+ */
 static bool g1_index(const char *tree, const char *db, char *proj, size_t projsz, char *err,
-                     size_t errsz) {
+                     size_t errsz, char *skips, size_t skipsz) {
+    if (skips && skipsz) {
+        skips[0] = '\0';
+    }
     hyp_pipeline_t *p = hyp_pipeline_new(tree, db, HYP_MODE_FULL);
     if (!p) {
         snprintf(err, errsz, "pipeline_new failed for %s", tree);
@@ -243,6 +276,22 @@ static bool g1_index(const char *tree, const char *db, char *proj, size_t projsz
     const char *name = hyp_pipeline_project_name(p);
     snprintf(proj, projsz, "%s", name ? name : "");
     int rc = hyp_pipeline_run(p);
+    if (skips && skipsz) {
+        hyp_file_error_t *fe = NULL;
+        int nfe = 0;
+        hyp_pipeline_get_file_errors(p, &fe, &nfe);
+        size_t used = 0;
+        for (int i = 0; i < nfe && fe && used + 1 < skipsz; i++) {
+            int n = snprintf(skips + used, skipsz - used, "%s%s: %s (phase %s)",
+                             used ? "; " : "", fe[i].path ? fe[i].path : "(no path)",
+                             fe[i].reason ? fe[i].reason : "(no reason)",
+                             fe[i].phase ? fe[i].phase : "(no phase)");
+            if (n < 0 || (size_t)n >= skipsz - used) {
+                break;
+            }
+            used += (size_t)n;
+        }
+    }
     hyp_pipeline_free(p);
     g1_index_runs++;
     if (rc != 0) {
@@ -339,6 +388,9 @@ typedef struct {
 
 static g1_pair_t g1_pairs[G1_MAX_PAIRS];
 static int g1_npairs = 0;
+/* Why a pair stopped, kept per pair so a fixture's own, more specific reason
+ * for not reconstructing is not overwritten by the pair's. */
+static char g1_pair_err[G1_MAX_PAIRS][256];
 
 static const char *g1_after_commit(yyjson_val *f) {
     yyjson_val *a = yyjson_obj_get(f, "after");
@@ -422,6 +474,7 @@ static void g1_note_candidates(g1_fix_t *fx, const hyp_anchor_res_t *res, bool p
 /* One commit pair, end to end. */
 static bool g1_run_pair(int pair, const char *tree, const char *db, char *err, size_t errsz) {
     const char *files[G1_MAX_FILES];
+    char skips[512] = {0};
 
     /* ── the before tree ── */
     if (th_mkdir_p(tree) != 0) {
@@ -435,8 +488,12 @@ static bool g1_run_pair(int pair, const char *tree, const char *db, char *err, s
         }
     }
     char proj[HYP_ADDR_SLUG_MAX + 1];
-    if (!g1_index(tree, db, proj, sizeof(proj), err, errsz)) {
+    if (!g1_index(tree, db, proj, sizeof(proj), err, errsz, skips, sizeof(skips))) {
         return false;
+    }
+    if (skips[0]) {
+        printf("  [g1] pair %02d before tree, files the indexer skipped: %s\n", pair, skips);
+        fflush(stdout);
     }
 
     /* ── write one anchor per fixture, from the product's own span ── */
@@ -456,8 +513,12 @@ static bool g1_run_pair(int pair, const char *tree, const char *db, char *err, s
         hyp_node_t node = {0};
         int rc = g1_find(s, proj, rel, name, &node, fx->pb_qn, sizeof(fx->pb_qn));
         if (rc != HYP_STORE_OK) {
-            snprintf(fx->why, sizeof(fx->why), "before index holds no node for %s in %s (rc=%d)",
-                     name, rel, rc);
+            /* The skip list separates "the indexer never read this file" from
+             * "the indexer read it and this symbol is not a definition it
+             * recognises". Without it both print as an absent node. */
+            snprintf(fx->why, sizeof(fx->why),
+                     "before index holds no node for %s in %s (rc=%d)%s%s", name, rel, rc,
+                     skips[0] ? "; the indexer skipped " : "", skips[0] ? skips : "");
             continue;
         }
         fx->pb_start = node.start_line;
@@ -515,8 +576,13 @@ static bool g1_run_pair(int pair, const char *tree, const char *db, char *err, s
         }
     }
     char proj2[HYP_ADDR_SLUG_MAX + 1];
-    if (!g1_index(tree, db, proj2, sizeof(proj2), err, errsz)) {
+    skips[0] = '\0';
+    if (!g1_index(tree, db, proj2, sizeof(proj2), err, errsz, skips, sizeof(skips))) {
         return false;
+    }
+    if (skips[0]) {
+        printf("  [g1] pair %02d after tree, files the indexer skipped: %s\n", pair, skips);
+        fflush(stdout);
     }
     if (strcmp(proj, proj2) != 0) {
         snprintf(err, errsz, "the same tree indexed as \"%s\" then \"%s\"", proj, proj2);
@@ -536,6 +602,7 @@ static bool g1_run_pair(int pair, const char *tree, const char *db, char *err, s
             continue;
         }
         hyp_anchor_res_t res;
+        fx->replayed = true;
         fx->status = hyp_anchor_resolve(s, NULL, fx->anchor, &res);
         fx->cand_count = res.candidate_count;
         fx->scan_skipped = res.scan_skipped;
@@ -559,7 +626,15 @@ static bool g1_run_pair(int pair, const char *tree, const char *db, char *err, s
         if (after && aname) {
             const char *arel = g1_str(after, "file_path");
             hyp_node_t an = {0};
-            if (g1_find(s, proj, arel, aname, &an, fx->pa_qn, sizeof(fx->pa_qn)) == HYP_STORE_OK) {
+            fx->after_expected = true;
+            int arc = g1_find(s, proj, arel, aname, &an, fx->pa_qn, sizeof(fx->pa_qn));
+            if (arc != HYP_STORE_OK) {
+                snprintf(fx->pa_why, sizeof(fx->pa_why),
+                         "after index holds no node for %s in %s (rc=%d)%s%s", aname,
+                         arel ? arel : "(no path)", arc, skips[0] ? "; the indexer skipped " : "",
+                         skips[0] ? skips : "");
+            }
+            if (arc == HYP_STORE_OK) {
                 fx->pa_found = true;
                 fx->pa_start = an.start_line;
                 fx->pa_end = an.end_line;
@@ -624,7 +699,7 @@ static bool g1_run_pair(int pair, const char *tree, const char *db, char *err, s
         snprintf(fresh_db, sizeof(fresh_db), "%s.fresh.db", db);
         char fproj[HYP_ADDR_SLUG_MAX + 1];
         char ferr[256];
-        if (g1_index(tree, fresh_db, fproj, sizeof(fproj), ferr, sizeof(ferr))) {
+        if (g1_index(tree, fresh_db, fproj, sizeof(fproj), ferr, sizeof(ferr), NULL, 0)) {
             hyp_store_t *fs = hyp_store_open_path_query(fresh_db);
             if (fs) {
                 for (int i = 0; i < g1_n; i++) {
@@ -643,6 +718,136 @@ static bool g1_run_pair(int pair, const char *tree, const char *db, char *err, s
         }
     }
     return true;
+}
+
+/* Run one git command in the corpus's repository for its exit status alone. */
+static bool g1_git_ok(const char *args) {
+    char cmd[HYP_PATH_MAX * 2];
+    if (snprintf(cmd, sizeof(cmd), "git -C \"%s\" %s >/dev/null 2>&1", g1_repo, args) >=
+        (int)sizeof(cmd)) {
+        return false;
+    }
+    FILE *p = hyp_popen(cmd, "r");
+    if (!p) {
+        return false;
+    }
+    return hyp_pclose(p) == 0;
+}
+
+/* The first fixture that replays a commit, so a violation names a row and not
+ * just a hash. */
+static const char *g1_fixture_for_commit(const char *sha) {
+    for (int i = 0; i < g1_n; i++) {
+        int p = g1_fix[i].pair;
+        if (p >= 0 &&
+            (strcmp(g1_pairs[p].before, sha) == 0 || strcmp(g1_pairs[p].after, sha) == 0)) {
+            return g1_fix[i].id ? g1_fix[i].id : "(unnamed)";
+        }
+    }
+    return "(no fixture)";
+}
+
+/*
+ * THE PRECONDITION, checked against the objects rather than the apparatus.
+ *
+ * A git work tree is not the same thing as the commits this corpus replays.
+ * Asking `rev-parse --is-inside-work-tree` checks that git is willing to talk;
+ * it says nothing about whether these 28 commit pairs are reachable, and every
+ * pair it cannot supply degrades into a fixture that looks classified and
+ * never ran.
+ *
+ * Reachability is resolved against the REMOTE-TRACKING ref, deliberately. A
+ * commit that lives only on an unpushed local branch is present on the machine
+ * that mined the corpus and absent from every clone of it, so a check against
+ * local refs passes exactly where the defect is and fails only where it lands.
+ *
+ * The ref it resolves against is the one THIS CORPUS DECLARES, which is
+ * narrower than "published at all" on purpose. A commit carried only by a tag
+ * is resolvable in any clone and still refused here, correctly, because this
+ * corpus says its commits sit on one branch. The wider question — can a clone
+ * resolve this at all — belongs to the fixture-lineage contract, which sweeps
+ * every corpus, accepts a tag, and runs before the compiler. Two invariants,
+ * deliberately different, and each message names which one refused.
+ *
+ * Both classes are fatal, and both are printed as they are found, because a
+ * message buffer truncates and a count is always a floor.
+ */
+static void g1_check_lineage(void) {
+    static const char *published = "refs/remotes/origin/dev";
+    char args[HYP_PATH_MAX];
+    int nmissing = 0, nunpub = 0;
+    char first_missing[256] = {0}, first_unpub[256] = {0};
+
+    snprintf(args, sizeof(args), "show-ref --verify --quiet %s", published);
+    bool have_published = g1_git_ok(args);
+
+    for (int p = 0; p < g1_npairs; p++) {
+        const char *sides[2] = {g1_pairs[p].before, g1_pairs[p].after};
+        for (int k = 0; k < 2; k++) {
+            const char *sha = sides[k];
+            if (!g1_safe(sha)) {
+                snprintf(g1_fatal, sizeof(g1_fatal), "unsafe commit token \"%s\" in the corpus",
+                         sha ? sha : "(null)");
+                return;
+            }
+            snprintf(args, sizeof(args), "cat-file -e %s^{commit}", sha);
+            if (!g1_git_ok(args)) {
+                nmissing++;
+                if (!first_missing[0]) {
+                    snprintf(first_missing, sizeof(first_missing), "%s (%s)", sha,
+                             g1_fixture_for_commit(sha));
+                }
+                printf("  [g1] the checkout at \"%s\" does not contain %s, replayed by %s\n",
+                       g1_repo, sha, g1_fixture_for_commit(sha));
+                continue;
+            }
+            if (!have_published) {
+                continue;
+            }
+            snprintf(args, sizeof(args), "merge-base --is-ancestor %s %s", sha, published);
+            if (!g1_git_ok(args)) {
+                nunpub++;
+                if (!first_unpub[0]) {
+                    snprintf(first_unpub, sizeof(first_unpub), "%s (%s)", sha,
+                             g1_fixture_for_commit(sha));
+                }
+                printf("  [g1] %s, replayed by %s, is reachable from no published branch\n", sha,
+                       g1_fixture_for_commit(sha));
+            }
+        }
+    }
+    fflush(stdout);
+
+    if (nmissing > 0) {
+        snprintf(g1_fatal, sizeof(g1_fatal),
+                 "%d of the commits this corpus replays are absent from the checkout at "
+                 "\"%s\", the first being %s. The corpus declares \"%s\"; a venue whose clone "
+                 "cannot resolve them replays fewer pairs than the corpus names, and the "
+                 "fixtures in those pairs report an unclassified anchor that the product was "
+                 "never asked to classify. Every absent commit is listed above.",
+                 nmissing, g1_repo, first_missing,
+                 g1_corpus_lineage ? g1_corpus_lineage : "no lineage");
+        return;
+    }
+    if (!have_published) {
+        snprintf(g1_fatal, sizeof(g1_fatal),
+                 "%s is absent, so \"can a clone of the remote resolve this commit\" cannot be "
+                 "answered here, and the corpus's declared lineage \"%s\" goes unchecked. Fetch "
+                 "the remote's branches, or point HYP_G1_REPO at a checkout that tracks them.",
+                 published, g1_corpus_lineage ? g1_corpus_lineage : "no lineage");
+        return;
+    }
+    if (nunpub > 0) {
+        snprintf(g1_fatal, sizeof(g1_fatal),
+                 "%d of the commits this corpus replays are in this repository and reachable "
+                 "from %s by no path, the first being %s. The corpus declares \"%s\". A commit "
+                 "held only by a local branch replays on the machine that mined it and on no "
+                 "clone of the remote, so this corpus needs a commit pair the remote publishes. "
+                 "Every unreachable commit is listed above.",
+                 nunpub, published, first_unpub,
+                 g1_corpus_lineage ? g1_corpus_lineage : "no lineage");
+        return;
+    }
 }
 
 static void g1_cleanup(void) {
@@ -718,6 +923,14 @@ static void g1_run(void) {
                  corpus_path);
         return;
     }
+    g1_corpus_lineage = g1_str(root, "lineage");
+    if (!g1_corpus_lineage || !*g1_corpus_lineage) {
+        snprintf(g1_fatal, sizeof(g1_fatal),
+                 "%s names commits and declares no lineage for them, so nothing can check that "
+                 "a clone of the remote can resolve any of them",
+                 corpus_path);
+        return;
+    }
 
     /* History is a PRECONDITION, not an option. A venue that checked out one
      * commit cannot replay 28 pairs, and reporting green there would claim a
@@ -778,6 +991,11 @@ static void g1_run(void) {
         g1_n++;
     }
 
+    g1_check_lineage();
+    if (g1_fatal[0]) {
+        return;
+    }
+
     char *tmp = th_mktempdir("hyp_g1");
     if (!tmp) {
         snprintf(g1_fatal, sizeof(g1_fatal), "cannot create a scratch directory");
@@ -810,8 +1028,15 @@ static void g1_run(void) {
         snprintf(tree, sizeof(tree), "%s/p%02d/r", g1_tmp, p);
         snprintf(db, sizeof(db), "%s/p%02d/idx.db", g1_tmp, p);
         if (!g1_run_pair(p, tree, db, err, sizeof(err))) {
+            snprintf(g1_pair_err[p], sizeof(g1_pair_err[p]), "%s", err);
             for (int i = 0; i < g1_n; i++) {
-                if (g1_fix[i].pair == p && !g1_fix[i].reconstructed) {
+                /* A fixture that failed its own before-side lookup already
+                 * carries a reason, and it is a different one. Overwriting it
+                 * with the pair's stop reason files the second cause under the
+                 * first, which reads as one failure where there are two. Only
+                 * a fixture with no reason of its own inherits the pair's. */
+                if (g1_fix[i].pair == p && !g1_fix[i].reconstructed &&
+                    strcmp(g1_fix[i].why, "not replayed") == 0) {
                     snprintf(g1_fix[i].why, sizeof(g1_fix[i].why), "%s", err);
                 }
             }
@@ -853,7 +1078,21 @@ static const char *g1_verdict(const char *id) {
         return g1_msg;
     }
     if (!fx->reconstructed) {
-        snprintf(g1_msg, sizeof(g1_msg), "%s could not be reconstructed: %s", id, fx->why);
+        bool also = g1_pair_err[fx->pair][0] && strcmp(g1_pair_err[fx->pair], fx->why) != 0;
+        snprintf(g1_msg, sizeof(g1_msg), "%s could not be reconstructed: %s%s%s", id, fx->why,
+                 also ? " | and its commit pair stopped separately: " : "",
+                 also ? g1_pair_err[fx->pair] : "");
+        return g1_msg;
+    }
+    /* Nothing below this point is the product's answer unless the after tree
+     * was indexed and hyp_anchor_resolve actually ran. Reporting a zeroed
+     * struct as a classification prints a refusal the product never made. */
+    if (!fx->replayed) {
+        snprintf(g1_msg, sizeof(g1_msg),
+                 "%s: the after side of commit pair %d never replayed, so no anchor was "
+                 "resolved for it and the fields below carry no answer — %s",
+                 id, fx->pair,
+                 g1_pair_err[fx->pair][0] ? g1_pair_err[fx->pair] : "no reason recorded");
         return g1_msg;
     }
     yyjson_val *want = yyjson_obj_get(fx->val, "expected");
@@ -933,12 +1172,24 @@ TEST(g1_every_fixture_was_replayed_from_real_history) {
         FAIL(g1_fatal);
     }
     int by_cat[6] = {0};
-    int rebuilt = 0;
+    int rebuilt = 0, replayed = 0;
     for (int i = 0; i < g1_n; i++) {
         if (g1_fix[i].reconstructed) {
             rebuilt++;
         } else {
             printf("\n    UNRECONSTRUCTIBLE %s: %s", g1_fix[i].id, g1_fix[i].why);
+        }
+        /* Rebuilding the before side is half a replay. A pair that stops
+         * before its after tree is indexed leaves the fixture holding a zeroed
+         * result, which the contract defines as no classification and which
+         * reads downstream as one fewer span checked. Counting the second half
+         * separately is what names the pair instead of the count. */
+        if (g1_fix[i].replayed) {
+            replayed++;
+        } else if (g1_fix[i].reconstructed) {
+            printf("\n    NOT REPLAYED %s: pair %d stopped — %s", g1_fix[i].id, g1_fix[i].pair,
+                   g1_pair_err[g1_fix[i].pair][0] ? g1_pair_err[g1_fix[i].pair]
+                                                  : "no reason recorded");
         }
         const char *c = g1_fix[i].category;
         if (!c) {
@@ -952,10 +1203,12 @@ TEST(g1_every_fixture_was_replayed_from_real_history) {
                                                             : 5]++;
     }
     printf("\n    %d fixtures: moved %d, edited %d, renamed %d, cross-dir %d, copied %d, "
-           "file-renamed %d; %d index runs\n    ",
-           g1_n, by_cat[0], by_cat[1], by_cat[2], by_cat[3], by_cat[4], by_cat[5], g1_index_runs);
+           "file-renamed %d; %d rebuilt, %d replayed, %d index runs\n    ",
+           g1_n, by_cat[0], by_cat[1], by_cat[2], by_cat[3], by_cat[4], by_cat[5], rebuilt,
+           replayed, g1_index_runs);
     ASSERT_EQ(g1_n, 36);
     ASSERT_EQ(rebuilt, 36);
+    ASSERT_EQ(replayed, 36);
     ASSERT_EQ(g1_npairs, 28);
     ASSERT_TRUE(g1_ok);
     PASS();
@@ -979,6 +1232,35 @@ TEST(g1_span_agreement_census) {
     printf("\n    before spans %d/%d, hashes %d/%d, qualified names %d/%d, after spans %d/%d\n    ",
            g1_span_agree, g1_span_checked, g1_hash_agree, g1_hash_checked, g1_qn_agree,
            g1_qn_checked, g1_after_span_agree, g1_after_span_checked);
+    /* A census counts what it was shown. If a pair stopped before its after
+     * tree, the after-span totals below are short by exactly the fixtures in
+     * that pair, and the difference is a replay that did not happen rather
+     * than two parsers disagreeing. Say which, so the number is never the
+     * first thing a reader has to interpret. */
+    for (int i = 0; i < g1_n; i++) {
+        if (g1_fix[i].reconstructed && !g1_fix[i].replayed) {
+            snprintf(g1_msg, sizeof(g1_msg),
+                     "the after-span census is short because commit pair %d never replayed, "
+                     "taking %s with it: %s",
+                     g1_fix[i].pair, g1_fix[i].id ? g1_fix[i].id : "(unnamed)",
+                     g1_pair_err[g1_fix[i].pair][0] ? g1_pair_err[g1_fix[i].pair]
+                                                    : "no reason recorded");
+            FAIL(g1_msg);
+        }
+        /* The other way to be short: the pair replayed, the corpus named a
+         * successor, and the after index does not hold it. That is the index
+         * being incomplete, which is a third thing again — and it is the one
+         * that reaches a slow machine first, because the file it loses is the
+         * largest one. */
+        if (g1_fix[i].after_expected && !g1_fix[i].pa_found) {
+            snprintf(g1_msg, sizeof(g1_msg),
+                     "the after-span census is short because %s names a successor the after "
+                     "index does not hold: %s",
+                     g1_fix[i].id ? g1_fix[i].id : "(unnamed)",
+                     g1_fix[i].pa_why[0] ? g1_fix[i].pa_why : "no reason recorded");
+            FAIL(g1_msg);
+        }
+    }
     ASSERT_EQ(g1_span_checked, 36);
     ASSERT_EQ(g1_span_agree, 36);
     ASSERT_EQ(g1_hash_agree, 36);
