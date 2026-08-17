@@ -287,6 +287,13 @@ jobs:
     timeout-minutes: 120
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Same precondition as test-unix: this leg runs the full scripts/test.sh,
+          # which replays this repository's own history and asks whether every commit
+          # the fixtures name is reachable from a ref a clone would have. A depth-1
+          # checkout holds no remote-tracking branches and no tags, so both gates
+          # refuse rather than answer from what they cannot see.
+          fetch-depth: 0
 
       - name: Install deps
         run: sudo apt-get update && sudo apt-get install -y zlib1g-dev ccache
@@ -421,6 +428,11 @@ jobs:
     timeout-minutes: 120
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Same precondition as test-unix and test-diag: the full scripts/test.sh
+          # replays real history and resolves fixture commits against remote refs,
+          # neither of which a depth-1 checkout can supply.
+          fetch-depth: 0
 
       - name: Install deps (Ubuntu)
         if: runner.os == 'Linux'
