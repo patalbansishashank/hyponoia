@@ -226,11 +226,16 @@ jobs:
         with:
           merge-multiple: true
 
+      # linux-amd64 only, by explicit instruction: *.zip dropped from every
+      # glob below. It is not merely unused -- an unmatched glob under bash
+      # -e (this step's shell) makes `ls`/`sha256sum` exit nonzero even
+      # though the .tar.gz args it DID match are listed first, so leaving it
+      # in doesn't degrade gracefully, it hard-fails release-draft outright.
       - name: List artifacts
-        run: ls -la *.tar.gz *.zip
+        run: ls -la *.tar.gz
 
       - name: Generate checksums
-        run: sha256sum *.tar.gz *.zip > checksums.txt
+        run: sha256sum *.tar.gz > checksums.txt
 
       - name: Attest checksum provenance
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
@@ -253,7 +258,7 @@ jobs:
 
       - name: Sign artifacts
         run: |
-          for f in *.tar.gz *.zip checksums.txt; do
+          for f in *.tar.gz checksums.txt; do
             cosign sign-blob --yes --bundle "${f}.bundle" "$f"
           done
 
