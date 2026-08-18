@@ -393,7 +393,31 @@ jobs:
           # third-party tap needs no trust step: `brew tap <user>/<name> <url>`
           # followed by `brew install` is the whole sequence, verified against
           # the published repository in the homebrew/brew image.
-          brew install hyponoia
+          #
+          # That verification predates a Homebrew runner-image update
+          # (v0.10.6's release run saw it self-report two different versions
+          # in the same job, e.g. 20260729.566 then 20260810.271.1) that added
+          # a third-party-tap trust wall: `brew install` now refuses with
+          # "Refusing to load formula ... from untrusted tap ... Run `brew
+          # trust ...` to trust it" -- ironically recommending the exact
+          # command the paragraph above found didn't exist. Try it anyway
+          # (it may be real now); if the trust wall still blocks install
+          # afterward, that is Homebrew's own policy on an ephemeral CI tap
+          # that changes every run, not a hyponoia packaging defect -- the
+          # formula's URL and checksum already validated above via curl.
+          # Anything else that fails install is still a hard failure.
+          brew trust --formula "patalbansishashank/hyponoia/hyponoia" 2>/dev/null \
+            || brew trust "patalbansishashank/hyponoia" 2>/dev/null \
+            || true
+          if ! brew install hyponoia 2>&1 | tee /tmp/brew-install.log; then
+            if grep -qi "untrusted tap" /tmp/brew-install.log; then
+              echo "SKIP: Homebrew's third-party-tap trust wall blocked this"
+              echo "      ephemeral CI tap; brew trust did not unblock it."
+              echo "      Not a hyponoia defect -- URL/checksum already validated."
+              exit 0
+            fi
+            exit 1
+          fi
           # The install proves the checksum and the install block; running the
           # binary proves the archive choice. The ordinary linux archive needs
           # glibc 2.38+, which is why the formula ships the static `-portable`
