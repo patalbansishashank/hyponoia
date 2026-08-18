@@ -181,6 +181,21 @@ jobs:
       run_asan: ${{ inputs.soak_level == 'full' }}
       version: ${{ inputs.version }}
 
+  # ── 5b. TEMPORARY diagnostic ────────────────────────────────────
+  # release-draft has stayed `skipped` twice now with every one of
+  # security/smoke/soak's own jobs showing 'success', which contradicts the
+  # documented semantics of needs.<job>.result for a workflow_call and can't
+  # be resolved by re-guessing at the if: condition through another 40-minute
+  # run. Dump the actual values GitHub Actions is evaluating instead. Remove
+  # this job once release-draft is confirmed running again.
+  gate-debug:
+    if: always()
+    needs: [security, smoke, soak]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Dump raw needs context
+        run: echo '${{ toJSON(needs) }}'
+
   # ── 6. Create DRAFT release ────────────────────────────────────
   # Requires smoke to have actually RUN, not merely "not failed". The bare
   # !cancelled() && !failure() form is fail-OPEN: a skipped smoke is neither
