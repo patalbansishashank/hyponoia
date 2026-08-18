@@ -52,9 +52,13 @@ jobs:
           # now legitimately empty rather than accidentally empty. It is always
           # unioned with CORE_UNIX below, so the matrix never expands to zero.
           BROAD_UNIX='[]'
-          # windows removed entirely: not a target anyone uses this on. Empty
-          # matrix, same pattern already used above for the retired macOS list
-          # -- the smoke-windows job below simply gets zero entries and never runs.
+          # windows removed entirely: not a target anyone uses this on. Emptied
+          # here too, but unlike the RETIRED-PLATFORM(macos) case above this is
+          # NOT enough by itself -- an empty matrix with no if: guard errors the
+          # job invisibly instead of skipping it (see smoke-windows's own if:
+          # false below for what that cost). CORE_WIN/BROAD_WIN stay empty
+          # because smoke-windows never reads them when if: false short-circuits
+          # it, not because emptying them is what keeps it from running.
           CORE_WIN='[]'
           BROAD_WIN='[]'
           CORE_PORTABLE='[
@@ -172,6 +176,18 @@ jobs:
           clamscan --no-summary "$RUNNER_TEMP/hyp-artifact/hyponoia"
 
   smoke-windows:
+    # windows removed: no windows binary is built anymore to smoke. This is
+    # NOT redundant with the empty CORE_WIN/BROAD_WIN matrix above: a job
+    # with an empty strategy.matrix and no if: guard does not skip cleanly --
+    # GitHub Actions errors it at schedule time with NO job row (invisible in
+    # `gh run view`'s job list, no log, no annotation) and that failure still
+    # counts against the reusable workflow's own overall conclusion. That
+    # silently made needs.smoke.result read 'failure' on every release run
+    # even when every job that actually appeared was green, which blocked
+    # release-draft for reasons no log explained. if: false is what
+    # soak-quick-windows/soak-asan-windows in _soak.yml already do for the
+    # same retired platform -- mirror that instead of relying on the matrix.
+    if: false
     needs: setup-matrix
     strategy:
       fail-fast: false
