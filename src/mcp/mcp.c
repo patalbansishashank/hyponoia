@@ -56,6 +56,9 @@ enum {
 #include "mcp/tool_surface.h"
 #include "store/record_store.h"
 #include "memory/adr_records.h"
+#include "foundation/identity.h" /* C1's address, under every anchor */
+#include "memory/anchor.h"       /* C3u: qualified name -> live span, or a refusal */
+#include "memory/orphan.h"       /* C4u: the read path over anchored memory */
 #include "store/store.h"
 #include <sqlite3.h>
 #include "cypher/cypher.h"
@@ -849,23 +852,24 @@ static const tool_def_t TOOLS[] = {
      * because a signature kept somewhere else is a signature someone has to
      * remember to move. */
 
-    /* NO `anchor` PROPERTY BELOW, and no prose about resolution or ambiguity.
-     * Same defect as search_memory's, and the worse half of it: a declared
-     * default the handler refuses at least fails as a refusal, but the anchor
-     * prose here described an ALGORITHM — supplied-and-unresolvable is an
-     * error, supplied-and-ambiguous lists the candidates — and no resolver
-     * exists to produce an unresolvable, an ambiguous or a candidate list. An
-     * agent reading it builds calls around a tri-state nothing has ever
-     * computed. handle_record_memory refuses every non-empty anchor instead,
-     * which is right and stays: a record is never created already-orphaned and
-     * never attached to the nearest plausible symbol, and storing one
-     * unverified is how it would become both. Absent already means repo-scoped,
-     * so nothing a caller can do today is lost by not offering the argument.
+    /* `anchor` IS live here, and the resolver behind it is src/memory/anchor.c.
+     * It takes a QUALIFIED NAME -- the same currency get_code_snippet and
+     * trace_path already take -- not an address and not an anchor string, so
+     * anchoring a decision needs no vocabulary an agent does not already have.
      *
-     * Both memory tools lose their anchor surface in one commit on purpose:
-     * they are one feature, and letting them drift apart is the failure this
-     * closes. Both regain it in the commit that wires src/memory/orphan.c —
-     * C8u's remaining work — with the full contract in tool_surface.h. */
+     * The three outcomes named in the description are an algorithm that now
+     * actually runs: the name is resolved against the live index before the
+     * record is built (it must be, since the anchor is in the id preimage and
+     * cannot be attached afterwards), unresolvable is an error, and ambiguous
+     * is an error that NAMES the candidates instead of choosing. A record is
+     * never created already-orphaned and never attached to the nearest
+     * plausible symbol -- a false negative makes a decision unfindable, a false
+     * positive staples last month's reasoning to code that never had it, and
+     * the second is worse.
+     *
+     * Both memory tools regained their anchor surface in ONE commit, with the
+     * resolver, because they are one feature and two of the three is the
+     * divergence this repository keeps paying for. */
     {"record_memory", "Record memory",
      "Append one record to the workspace memory store: a decision, a verdict, a summary or a "
      "signal. APPEND-ONLY — there is no mode that edits or deletes, because merging two stores "
@@ -873,49 +877,50 @@ static const tool_def_t TOOLS[] = {
      "one naming it in 'supersedes'; the earlier record is never mutated. The 'kind' must be one "
      "the tool accepts (transcript kinds are refused: transcripts enter only through a feed, and "
      "a forgeable transcript writer would make the ingest completeness audit meaningless) — a "
-     "refusal names the accepted set. Records are repo-scoped; there is no way to attach one to "
-     "a particular span. There is no author argument; the server derives provenance.",
+     "refusal names the accepted set. Pass 'anchor' to attach the record to one symbol; omit it "
+     "to record against the repository. There is no author argument; the server derives "
+     "provenance.",
      "{\"type\":\"object\",\"properties\":{" TOOL_PROJECT_ARG ","
      "\"kind\":{\"type\":\"string\",\"description\":\"The record kind. Must be one of the "
      "agent-authorable kinds; a refusal names them. Transcript kinds are refused.\"},"
      "\"title\":{\"type\":\"string\"},"
      "\"body\":{\"type\":\"string\"},"
+     "\"anchor\":{\"type\":\"string\",\"description\":\"OPTIONAL qualified name of the "
+     "symbol this record is about -- the same qualified_name search_graph reports. Resolved "
+     "against the live index BEFORE the record is written: a name nothing matches is an ERROR "
+     "(a record is never created already-orphaned) and a name several nodes match is an ERROR "
+     "naming the candidates (this tool does not choose among them). Omit it to record against "
+     "the repository, which is what a decision about code not yet written must do.\"},"
      "\"supersedes\":{\"type\":\"string\",\"description\":\"OPTIONAL record id this one "
      "replaces. The named record is not modified.\"},"
      "\"tags\":{\"type\":\"array\",\"items\":{\"type\":\"string\"}}},"
      "\"required\":[\"kind\",\"title\",\"body\"]}"},
 
-    /* THE PROPERTIES BELOW CARRY NO `anchor` AND NO `status`, and the RESPONSE
-     * prose teaches no `anchor_status=resolved|orphaned|ambiguous` tri-state.
-     * Both absences are deliberate, and this is where the reason lives.
+    /* `anchor` and `status` ARE live here, and src/memory/orphan.c is the read
+     * path behind them -- built once per call, classifying every anchored
+     * record this query matched against the live index.
      *
-     * WHY. This build has no anchor resolver, so handle_search_memory refuses
-     * a non-empty `anchor` and refuses every `status` but "any". Those refusals
-     * are RIGHT and they stay: filtering on an anchor whose state cannot be
-     * reported returns a superset that reads exactly like a match, which is the
-     * silent wrong answer this surface exists to refuse. The SIGNATURE is the
-     * half that must agree with them. Advertise an argument the handler
-     * refuses, and a client generated from the schema sends it — sends the
-     * declared default, even — and is refused for obeying the contract it was
-     * handed, while the prose teaches an agent to reach for precisely the
-     * arguments that fail. An unimplemented surface is advertised nowhere (C3).
+     * Orphan-ness is derived at READ TIME and is never a flag on the record.
+     * It could not be one: the anchor is in the id preimage, so marking a
+     * record would mint a different record. It is a property of (record, index
+     * state), which is also why two machines may legitimately disagree about
+     * it -- one has indexed the rename, the other has not, and both are right
+     * about the tree they can see.
      *
-     * The refusals are deliberately NOT deleted: a caller who sends `anchor`
-     * or `status` anyway — from an older cached tool list, or by hand — still
-     * gets a named error rather than a silent superset. Fail closed at both
-     * ends, advertise at neither.
+     * `anchor` here does NOT require the name to resolve, and that asymmetry
+     * with record_memory is the point rather than an inconsistency: "what was
+     * decided about a function that has since been deleted" is exactly the
+     * question the orphaned half of this surface exists to answer, and
+     * demanding resolution first would make it unaskable through the very
+     * filter meant to reach it. Writing demands a live target; reading does
+     * not.
      *
-     * RESTORING THEM. `anchor` and `status` come back in the SAME COMMIT that
-     * wires an anchor resolver behind them — src/memory/orphan.c exists and is
-     * unwired, and that is C8u's remaining work — and record_memory's `anchor`
-     * comes back in that commit too, because one resolver is what both tools
-     * are waiting on and a half-restored pair is this defect with one fewer
-     * tool. The contract they must implement is unchanged and still written
-     * down in tool_surface.h under "search_memory": anchor_status "resolved" +
-     * records:[] means resolved and nothing attached, "orphaned" means records
-     * ABSENT, "ambiguous" returns candidates and never a neighbour. Restore
-     * schema, prose and resolver together or not at all; two of the three is
-     * this defect again.
+     * `status` defaults to "attached" ONLY when an anchor was supplied. With no
+     * anchor there is nothing to be attached to, and defaulting would silently
+     * hide every repo-scoped record -- the majority of them -- behind a filter
+     * nobody asked for. Unanchored is not orphaned: a record about the
+     * repository has no anchor to have lost, so it is absent from both
+     * partitions rather than sorted into one.
      *
      * Pinned from both directions, by
      * the_published_signature_offers_nothing_this_build_refuses in
@@ -928,13 +933,27 @@ static const tool_def_t TOOLS[] = {
      "is the way it is — get_code_snippet returns the code, this returns the reasoning. "
      "RESPONSE: 'records' ABSENT means there is nowhere on this machine a record could have been "
      "kept — look elsewhere; an EMPTY 'records' list means the store was read and nothing "
-     "matched. Truncated answers state what was withheld and how to get it, and say nothing when "
-     "nothing was withheld.",
+     "matched. Each anchored record carries 'anchor_status': attached (the symbol is still "
+     "there), attached_edited (still there, span changed since), orphaned (the name resolves to "
+     "nothing now), ambiguous, or unknown (no index for that project — not checked, which is "
+     "neither attached nor orphaned). Unanchored records carry no anchor_status at all, because "
+     "a record about the repository has no anchor to have lost. Truncated answers state what was "
+     "withheld and how to get it, and say nothing when nothing was withheld.",
      "{\"type\":\"object\",\"properties\":{" TOOL_PROJECT_ARG ","
      "\"kind\":{\"type\":\"string\",\"description\":\"OPTIONAL. Absent means every kind — it "
      "does not mean none.\"},"
      "\"query\":{\"type\":\"string\",\"description\":\"OPTIONAL free-text search over record "
      "text.\"},"
+     "\"anchor\":{\"type\":\"string\",\"description\":\"OPTIONAL qualified name to search "
+     "by. Unlike record_memory's, this one does NOT have to resolve: asking what was decided "
+     "about a symbol that has since been deleted is the question the orphaned half of this tool "
+     "exists to answer. Matching is on the symbol's address, ignoring which revision of its text "
+     "each record was written against.\"},"
+     "\"status\":{\"type\":\"string\",\"enum\":[\"attached\",\"orphaned\",\"any\"],"
+     "\"description\":\"OPTIONAL. Defaults to 'attached' when anchor is supplied and to 'any' "
+     "otherwise — with no anchor there is nothing to be attached to, and defaulting would hide "
+     "every repo-scoped record. 'orphaned' is how an anchor that no longer resolves becomes "
+     "VISIBLE; an orphan no query can list is a silent drop by another name.\"},"
      "\"since\":{\"type\":\"string\"},\"until\":{\"type\":\"string\"},"
      "\"limit\":{\"type\":\"integer\",\"default\":50,\"minimum\":1,\"maximum\":500},"
      "\"offset\":{\"type\":\"integer\",\"default\":0,\"minimum\":0},"
@@ -13931,6 +13950,167 @@ static char *memory_error(const char *tool, const char *detail) {
 
 /* ── record_memory ────────────────────────────────────────────── */
 
+/* ── The anchor seam (C3u/C4u, wired) ──────────────────────────────
+ *
+ * A caller supplies a QUALIFIED NAME, not an address and not an anchor string.
+ * That is the same currency get_code_snippet and trace_path already take, so an
+ * agent that can name a symbol for one tool can anchor a decision to it with no
+ * new vocabulary — and the anchor grammar stays an internal representation
+ * rather than something a client has to learn to spell.
+ *
+ * The qn is turned into an anchor in two passes, and the second pass is the
+ * point. Pass one formats a HASHLESS anchor and resolves it, which is the only
+ * way to learn where that name currently lives and what its span says right
+ * now. Pass two re-formats the anchor carrying that observed hash. So the
+ * stored anchor records both WHERE the symbol was named and WHAT it said when
+ * the decision was taken, which is exactly the pair C4u needs later: the name
+ * finds it while it keeps its name, and the hash finds it after a rename.
+ *
+ * Refusal is the default. RESOLVED and RESOLVED_EDITED are the only statuses
+ * that yield an anchor; every other one becomes an error naming what happened.
+ * A record is never created already-orphaned and never attached to a plausible
+ * neighbour — a false negative makes a decision unfindable, a false positive
+ * staples last month's reasoning to code that never had it, and the second is
+ * worse. AMBIGUOUS in particular refuses and lists candidates rather than
+ * choosing, the same way project resolution refuses to choose.
+ */
+/* Build an address from either spelling. A caller naturally holds a qualified
+ * name (that is what search_graph reports), but anchors already stored, and
+ * anything that has round-tripped through the identity contract, are canonical
+ * ADDRESSES. Accepting only one spelling would mean the string this surface
+ * hands back is a string it will not take. "hyp1:" is the scheme prefix and
+ * cannot begin a qualified name, so the two grammars cannot be confused. */
+static bool memory_addr_from_arg(const char *arg, const char *project, hyp_addr_t *out) {
+    if (!arg || !arg[0]) {
+        return false;
+    }
+    if (strncmp(arg, "hyp1:", 5) == 0) {
+        return hyp_addr_parse(arg, out) == HYP_ADDR_OK;
+    }
+    if (!project || !project[0]) {
+        return false;
+    }
+    return hyp_addr_init(out, NULL, project, arg) == HYP_ADDR_OK;
+}
+
+typedef enum {
+    MEM_ANCHOR_OK = 0,
+    MEM_ANCHOR_NO_INDEX,
+    MEM_ANCHOR_BAD_QN,
+    MEM_ANCHOR_UNRESOLVED,
+    MEM_ANCHOR_AMBIGUOUS,
+    MEM_ANCHOR_FAILED
+} mem_anchor_status_t;
+
+/* Resolve `qn` in `project` to a verified anchor string in `out`.
+ * `detail` always receives a caller-facing explanation on any non-OK return.
+ * `workspace` is NULL throughout: a single repository is a workspace of one,
+ * and there must not be a second code path that could disagree with that. */
+static mem_anchor_status_t memory_anchor_from_qn(hyp_mcp_server_t *srv, const char *project,
+                                                 const char *qn, char *out, size_t out_sz,
+                                                 char *detail, size_t detail_sz) {
+    out[0] = '\0';
+    detail[0] = '\0';
+    if (!project || !project[0]) {
+        snprintf(detail, detail_sz,
+                 "an anchor names a symbol, and a symbol lives in a project, but none was "
+                 "supplied and none could be derived. Pass project explicitly.");
+        return MEM_ANCHOR_NO_INDEX;
+    }
+    hyp_store_t *store = resolve_store(srv, project);
+    if (!store) {
+        snprintf(detail, detail_sz,
+                 "project '%s' has no code index on this machine, so '%s' cannot be verified to "
+                 "name live code. Index it first, or omit anchor to record this against the "
+                 "repository instead.",
+                 project, qn);
+        return MEM_ANCHOR_NO_INDEX;
+    }
+
+    hyp_addr_t addr;
+    if (!memory_addr_from_arg(qn, project, &addr)) {
+        snprintf(detail, detail_sz,
+                 "'%s' is neither a usable qualified name in project '%s' nor a canonical "
+                 "address (identity contract refused it). Use the qualified_name search_graph "
+                 "reports.",
+                 qn, project);
+        return MEM_ANCHOR_BAD_QN;
+    }
+
+    /* Pass one: hashless, purely to observe where this name lives now. */
+    char probe[HYP_ANCHOR_MAX + 1];
+    if (!hyp_anchor_format(&addr, NULL, probe, sizeof(probe))) {
+        snprintf(detail, detail_sz, "'%s' does not fit an anchor and was refused, not truncated.",
+                 qn);
+        return MEM_ANCHOR_BAD_QN;
+    }
+
+    hyp_anchor_res_t res;
+    memset(&res, 0, sizeof(res));
+    hyp_anchor_status_t status = hyp_anchor_resolve(store, NULL, probe, &res);
+
+    mem_anchor_status_t rc = MEM_ANCHOR_FAILED;
+    switch (status) {
+    case HYP_ANCHOR_RESOLVED:
+    case HYP_ANCHOR_RESOLVED_EDITED:
+        /* Pass two: carry the hash we just observed, when the span was
+         * readable. A hashless anchor is legitimate (the contract says so) but
+         * strictly weaker — it cannot survive a rename — so it is the fallback,
+         * never the default, and the caller is told which one it got. */
+        if (res.current_hash[0] && hyp_anchor_format(&addr, res.current_hash, out, out_sz)) {
+            rc = MEM_ANCHOR_OK;
+        } else if (hyp_anchor_format(&addr, NULL, out, out_sz)) {
+            snprintf(detail, detail_sz,
+                     "the span could not be read, so this anchor carries no content hash and "
+                     "will not survive a rename of '%s'.",
+                     qn);
+            rc = MEM_ANCHOR_OK;
+        } else {
+            snprintf(detail, detail_sz, "'%s' resolved but its anchor does not fit.", qn);
+            rc = MEM_ANCHOR_FAILED;
+        }
+        break;
+    case HYP_ANCHOR_ORPHANED:
+        snprintf(detail, detail_sz,
+                 "nothing in project '%s' is named '%s' right now, so a record anchored to it "
+                 "would be born orphaned. Check the qualified name with search_graph, or omit "
+                 "anchor to record this against the repository.",
+                 project, qn);
+        rc = MEM_ANCHOR_UNRESOLVED;
+        break;
+    case HYP_ANCHOR_AMBIGUOUS: {
+        /* Name them. "Ambiguous" without the candidates is a dead end; with
+         * them it is one more call to a decision. */
+        int shown = res.candidate_count < 5 ? res.candidate_count : 5;
+        int n = snprintf(detail, detail_sz,
+                         "'%s' names %d nodes in project '%s', and this tool does not choose "
+                         "among them. Disambiguate with the fuller qualified name of the one "
+                         "you mean",
+                         qn, res.candidate_count, project);
+        for (int i = 0; i < shown && n > 0 && (size_t)n < detail_sz; i++) {
+            n += snprintf(detail + n, detail_sz - (size_t)n, "%s %s (%s:%d)", i == 0 ? ":" : ";",
+                          res.candidates[i].qn, res.candidates[i].file_path,
+                          res.candidates[i].start_line);
+        }
+        if (res.candidate_count > shown && n > 0 && (size_t)n < detail_sz) {
+            snprintf(detail + n, detail_sz - (size_t)n, "; and %d more",
+                     res.candidate_count - shown);
+        }
+        rc = MEM_ANCHOR_AMBIGUOUS;
+        break;
+    }
+    case HYP_ANCHOR_UNKNOWN_WORKSPACE:
+    case HYP_ANCHOR_ERROR:
+    default:
+        snprintf(detail, detail_sz, "'%s' could not be resolved: %s", qn,
+                 res.reason[0] ? res.reason : hyp_anchor_status_str(status));
+        rc = MEM_ANCHOR_FAILED;
+        break;
+    }
+    hyp_anchor_res_free(&res);
+    return rc;
+}
+
 static char *handle_record_memory(hyp_mcp_server_t *srv, const char *args) {
     char *kind_arg = hyp_mcp_get_string_arg(args, "kind");
     char *title = hyp_mcp_get_string_arg(args, "title");
@@ -13958,12 +14138,6 @@ static char *handle_record_memory(hyp_mcp_server_t *srv, const char *args) {
         fail = memory_error("record_memory", "title is required and must not be empty.");
     } else if (!body || !body[0]) {
         fail = memory_error("record_memory", "body is required and must not be empty.");
-    } else if (anchor && anchor[0]) {
-        fail = memory_error("record_memory",
-                            "anchor was supplied, and this build has no anchor resolver, so it "
-                            "cannot be verified to point at live code. A record is never created "
-                            "already-orphaned and never attached to a plausible neighbour. Omit "
-                            "anchor to record this against the repository instead.");
     } else if (supersedes && supersedes[0] && !hyp_record_id_is_valid(supersedes)) {
         fail = memory_error("record_memory",
                             "supersedes must be the id of an existing record, and that is not "
@@ -14014,9 +14188,35 @@ static char *handle_record_memory(hyp_mcp_server_t *srv, const char *args) {
     project_choice_t choice;
     char *project = resolve_project_arg(srv, args, &choice);
 
+    /* Resolve the anchor BEFORE building the record. The anchor is in the id
+     * preimage, so it cannot be attached afterwards — a record with an anchor
+     * and the same record without one are two different records with two
+     * different ids, not one record in two states. */
+    char anchor_str[HYP_ANCHOR_MAX + 1];
+    char anchor_note[HYP_SZ_1K];
+    anchor_str[0] = '\0';
+    anchor_note[0] = '\0';
+    if (anchor && anchor[0]) {
+        mem_anchor_status_t astat = memory_anchor_from_qn(
+            srv, project, anchor, anchor_str, sizeof(anchor_str), anchor_note, sizeof(anchor_note));
+        if (astat != MEM_ANCHOR_OK) {
+            char detail[HYP_SZ_1K + HYP_SZ_256];
+            snprintf(detail, sizeof(detail), "nothing was written. %s", anchor_note);
+            free(content_text);
+            free(project);
+            free(kind_arg);
+            free(title);
+            free(body);
+            free(anchor);
+            free(supersedes);
+            return memory_error("record_memory", detail);
+        }
+    }
+
     hyp_record_input_t in;
     memset(&in, 0, sizeof(in));
     in.kind = kind;
+    in.anchor = anchor_str[0] ? anchor_str : NULL;
     /* There is no author argument and there must never be one: an author a
      * caller can state is an author a caller can forge. This names the writing
      * surface, which is the only thing the server actually knows. */
@@ -14077,10 +14277,18 @@ static char *handle_record_memory(hyp_mcp_server_t *srv, const char *args) {
     yyjson_mut_obj_add_strcpy(doc, root, "id", rec->id);
     yyjson_mut_obj_add_strcpy(doc, root, "kind", hyp_record_kind_name(rec->kind));
     add_project_choice_json(doc, root, project, &choice);
-    /* Never "orphaned": the contract forbids creating one, and a supplied
-     * anchor was refused above, so the only truthful answer here is that this
-     * record is about the repository rather than about a span. */
-    yyjson_mut_obj_add_str(doc, root, "anchor_status", "unanchored");
+    /* Never "orphaned": the contract forbids creating one. "attached" now means
+     * the qualified name was resolved against the live index a moment ago, not
+     * that an anchor argument was accepted on trust. */
+    yyjson_mut_obj_add_str(doc, root, "anchor_status", anchor_str[0] ? "attached" : "unanchored");
+    if (anchor_str[0]) {
+        yyjson_mut_obj_add_strcpy(doc, root, "anchor", anchor_str);
+    }
+    /* A disclosure, not a warning to be ignored: a hashless anchor is a weaker
+     * claim and the caller is the only one who can decide whether that matters. */
+    if (anchor_note[0]) {
+        yyjson_mut_obj_add_strcpy(doc, root, "anchor_note", anchor_note);
+    }
     yyjson_mut_obj_add_strcpy(doc, root, "written_at", written_at);
 
     char *json = yy_doc_to_str(doc);
@@ -14121,32 +14329,125 @@ static bool memory_contains_fold(const char *haystack, const char *needle) {
     return false;
 }
 
+/* "attached" | "orphaned" | "any" — the three answers status can ask for. */
+typedef enum { MEM_WANT_ATTACHED = 0, MEM_WANT_ORPHANED, MEM_WANT_ANY } mem_want_t;
+
+/* The entry in `view` carrying `rec`, or NULL. Linear: a view holds the
+ * anchored records of one query, which is tens, not thousands. */
+static const hyp_orphan_entry_t *memory_view_lookup(const hyp_orphan_view_t *view,
+                                                    const hyp_record_t *rec) {
+    if (!view || !rec) {
+        return NULL;
+    }
+    int n = hyp_orphan_view_count(view);
+    for (int i = 0; i < n; i++) {
+        const hyp_orphan_entry_t *e = hyp_orphan_view_at(view, i);
+        if (e && e->record && strcmp(e->record->id, rec->id) == 0) {
+            return e;
+        }
+    }
+    return NULL;
+}
+
+/* What a record's anchor resolves to right now, as one stable word, or NULL
+ * when the record carries no anchor at all. "unanchored" is deliberately NOT a
+ * value here: absent means "there is nothing to look at", and the caller must
+ * be able to tell that apart from an anchor that resolved or failed to. */
+static const char *memory_anchor_word(const hyp_record_t *rec, const hyp_orphan_view_t *view) {
+    if (!rec || !rec->anchor) {
+        return NULL;
+    }
+    const hyp_orphan_entry_t *e = memory_view_lookup(view, rec);
+    if (!e) {
+        /* Anchored, but nothing classified it -- no index for this project.
+         * "unknown" is the honest word: not attached, not orphaned, not
+         * checked. Reporting either of the other two would be a claim about
+         * code this answer never looked at. */
+        return "unknown";
+    }
+    switch (e->res.status) {
+    case HYP_ANCHOR_RESOLVED:
+        return "attached";
+    case HYP_ANCHOR_RESOLVED_EDITED:
+        return "attached_edited";
+    case HYP_ANCHOR_ORPHANED:
+        return "orphaned";
+    case HYP_ANCHOR_AMBIGUOUS:
+        return "ambiguous";
+    case HYP_ANCHOR_UNKNOWN_WORKSPACE:
+        return "unknown_workspace";
+    case HYP_ANCHOR_ERROR:
+    default:
+        return "unknown";
+    }
+}
+
+/* Does `anchor` address the same node as the canonical address `addr_str`?
+ *
+ * Compared on the ADDRESS ALONE, with the recorded hash deliberately ignored.
+ * The hash says what the span held when the decision was taken; two decisions
+ * about one function taken a month apart carry different hashes and are both
+ * about that function. Matching on the whole anchor string would return only
+ * the ones written when the code happened to look the way it looks now, which
+ * is a subset no caller could predict and none would want. */
+static bool memory_anchor_addresses(const char *anchor, const char *addr_str) {
+    if (!anchor || !anchor[0] || !addr_str || !addr_str[0]) {
+        return false;
+    }
+    hyp_anchor_t parsed;
+    if (hyp_anchor_parse(anchor, &parsed) != HYP_ADDR_OK) {
+        return false;
+    }
+    char buf[HYP_ADDR_MAX + 1];
+    if (!hyp_addr_format(&parsed.addr, buf, sizeof(buf))) {
+        return false;
+    }
+    return strcmp(buf, addr_str) == 0;
+}
+
 static char *handle_search_memory(hyp_mcp_server_t *srv, const char *args) {
     char *anchor = hyp_mcp_get_string_arg(args, "anchor");
-    if (anchor && anchor[0]) {
-        free(anchor);
-        return memory_error("search_memory",
-                            "anchor was supplied, and this build has no anchor resolver, so "
-                            "anchor_status cannot be reported. Filtering on an anchor without "
-                            "reporting its status would return a superset that reads like a "
-                            "match. Search by kind or free text instead.");
-    }
-    free(anchor);
 
+    /* status defaults to "attached" only when an anchor was given. With no
+     * anchor there is nothing to be attached TO, and defaulting would silently
+     * hide every unanchored record — the majority of them — behind a filter the
+     * caller never asked for. So: no anchor means no anchor filtering at all. */
+    mem_want_t want = anchor && anchor[0] ? MEM_WANT_ATTACHED : MEM_WANT_ANY;
     char *status_arg = hyp_mcp_get_string_arg(args, "status");
-    if (status_arg && status_arg[0] && strcmp(status_arg, "any") != 0) {
-        char detail[HYP_SZ_512];
-        snprintf(detail, sizeof(detail),
-                 "status='%s' asks whether each record's anchor still resolves, and this build "
-                 "has no anchor resolver — so no record carries an anchor and 'attached' and "
-                 "'orphaned' partition an empty set. Only status='any' is answerable here.",
-                 status_arg);
-        free(status_arg);
-        return memory_error("search_memory", detail);
+    if (status_arg && status_arg[0]) {
+        if (strcmp(status_arg, "attached") == 0) {
+            want = MEM_WANT_ATTACHED;
+        } else if (strcmp(status_arg, "orphaned") == 0) {
+            want = MEM_WANT_ORPHANED;
+        } else if (strcmp(status_arg, "any") == 0) {
+            want = MEM_WANT_ANY;
+        } else {
+            char detail[HYP_SZ_512];
+            snprintf(detail, sizeof(detail),
+                     "status='%s' is not one this tool answers. Use 'attached' (the anchor still "
+                     "resolves), 'orphaned' (it does not, and that is the answer), or 'any'.",
+                     status_arg);
+            free(status_arg);
+            free(anchor);
+            return memory_error("search_memory", detail);
+        }
     }
     free(status_arg);
 
     char *kind_arg = hyp_mcp_get_string_arg(args, "kind");
+    /* An anchor filter on transcripts is a category error, not a narrower
+     * query: transcripts carry no anchor, so it would return an empty set that
+     * reads exactly like "nothing was ever recorded about this symbol". */
+    if (anchor && anchor[0] && kind_arg && strcmp(kind_arg, "transcript") == 0) {
+        free(kind_arg);
+        free(anchor);
+        return memory_error("search_memory",
+                            "anchor with kind='transcript' asks which transcript messages are "
+                            "attached to a symbol, and none ever are — transcripts enter through "
+                            "a feed and carry no anchor. An empty answer here would read as "
+                            "'nothing was recorded about this symbol', which is a different and "
+                            "false claim.");
+    }
     hyp_record_store_query_t query;
     memset(&query, 0, sizeof(query));
     if (kind_arg && kind_arg[0]) {
@@ -14247,15 +14548,74 @@ static char *handle_search_memory(hyp_mcp_server_t *srv, const char *args) {
     /* Matching records, newest first: the store enumerates by id because its
      * order is deliberately non-semantic, so time order is the caller's move
      * and this is the caller. */
+    /* C4u, wired: classify every anchored record this query matched against the
+     * live index, once, before filtering. Orphan-ness is a property of (record,
+     * index state) derived at read time — never a flag on the record, which
+     * could not carry one anyway since the anchor is in the id preimage. */
+    hyp_store_t *index = project && project[0] ? resolve_store(srv, project) : NULL;
+    hyp_orphan_view_t *view = NULL;
+    if (index) {
+        hyp_record_store_query_t anchored = query;
+        anchored.anchored_only = true;
+        anchored.unanchored_only = false;
+        if (hyp_orphan_view_build(store, index, NULL, &anchored, &view) != HYP_ORPHAN_OK) {
+            view = NULL;
+        }
+    }
+
+    /* The address being asked about, when one was. Built WITHOUT requiring it
+     * to resolve: "what was decided about a function that has since been
+     * deleted" is a real question, and refusing it would make the orphaned
+     * half of this surface unreachable through the very filter meant to reach
+     * it. Resolution is what status reports, not a precondition of asking. */
+    char want_addr[HYP_ADDR_MAX + 1];
+    want_addr[0] = '\0';
+    if (anchor && anchor[0]) {
+        hyp_addr_t wa;
+        if (!memory_addr_from_arg(anchor, project, &wa) ||
+            !hyp_addr_format(&wa, want_addr, sizeof(want_addr))) {
+            want_addr[0] = '\0';
+        }
+    }
+    if (anchor && anchor[0] && !want_addr[0]) {
+        char detail[HYP_SZ_512];
+        snprintf(detail, sizeof(detail),
+                 "anchor '%s' is neither a usable qualified name in project '%s' nor a canonical "
+                 "address, so this is not a narrower search — it is an unanswerable one. Use the "
+                 "qualified_name search_graph reports.",
+                 anchor, project && project[0] ? project : "-");
+        hyp_orphan_view_free(view);
+        free(anchor);
+        free(text_query);
+        free(project);
+        hyp_record_set_free(set);
+        return memory_error("search_memory", detail);
+    }
+
     size_t total = set ? hyp_record_set_count(set) : 0U;
     const hyp_record_t **matched =
         total ? (const hyp_record_t **)calloc(total, sizeof(*matched)) : NULL;
     size_t matches = 0U;
     for (size_t i = 0U; matched && i < total; i++) {
         const hyp_record_t *rec = hyp_record_set_at(set, i);
-        if (rec && memory_contains_fold(rec->content, text_query)) {
-            matched[matches++] = rec;
+        if (!rec || !memory_contains_fold(rec->content, text_query)) {
+            continue;
         }
+        const hyp_orphan_entry_t *entry = rec->anchor ? memory_view_lookup(view, rec) : NULL;
+        bool attached = entry && (entry->res.status == HYP_ANCHOR_RESOLVED ||
+                                  entry->res.status == HYP_ANCHOR_RESOLVED_EDITED);
+        if (want == MEM_WANT_ATTACHED && !attached) {
+            continue;
+        }
+        /* Unanchored is NOT orphaned. A record about the repository has no
+         * anchor to have lost; calling it orphaned would invent a claim. */
+        if (want == MEM_WANT_ORPHANED && (!rec->anchor || attached)) {
+            continue;
+        }
+        if (want_addr[0] && !memory_anchor_addresses(rec->anchor, want_addr)) {
+            continue;
+        }
+        matched[matches++] = rec;
     }
     for (size_t i = 1U; i < matches; i++) {
         const hyp_record_t *key = matched[i];
@@ -14291,6 +14651,16 @@ static char *handle_search_memory(hyp_mcp_server_t *srv, const char *args) {
             yyjson_mut_obj_add_strcpy(doc, row, "author", rec->author);
             yyjson_mut_obj_add_strcpy(doc, row, "written_at", when);
             yyjson_mut_obj_add_strcpy(doc, row, "content", rec->content);
+            /* Both keys absent on an unanchored record. An unanchored record is
+             * not an orphaned one and not an attached one; emitting a value
+             * would force it into a partition it does not belong to. */
+            {
+                const char *word = memory_anchor_word(rec, view);
+                if (word) {
+                    yyjson_mut_obj_add_strcpy(doc, row, "anchor", rec->anchor);
+                    yyjson_mut_obj_add_str(doc, row, "anchor_status", word);
+                }
+            }
             if (rec->parent) {
                 yyjson_mut_obj_add_strcpy(doc, row, "supersedes", rec->parent);
             }
@@ -14320,8 +14690,17 @@ static char *handle_search_memory(hyp_mcp_server_t *srv, const char *args) {
         hyp_sb_init(&sb);
         emit_project_choice_toon(&sb, project, &choice);
         hyp_tree_scalar_int(&sb, "matched", (long long)matches);
-        static const char *const cols[] = {"id", "kind", "written_at", "content"};
-        hyp_tree_table_header(&sb, "records", (int)shown, cols, 4);
+        /* The anchor column appears only when a shown record actually has one.
+         * A column of "-" on every row costs bytes on every answer to say
+         * nothing, and this surface pays for what it discloses. */
+        bool any_anchored = false;
+        for (size_t i = 0U; i < shown && !any_anchored; i++) {
+            any_anchored = matched[start + i]->anchor != NULL;
+        }
+        static const char *const cols4[] = {"id", "kind", "written_at", "content"};
+        static const char *const cols5[] = {"id", "kind", "written_at", "anchor_status", "content"};
+        hyp_tree_table_header(&sb, "records", (int)shown, any_anchored ? cols5 : cols4,
+                              any_anchored ? 5 : 4);
         for (size_t i = 0U; i < shown; i++) {
             const hyp_record_t *rec = matched[start + i];
             char when[32];
@@ -14330,6 +14709,10 @@ static char *handle_search_memory(hyp_mcp_server_t *srv, const char *args) {
             hyp_tree_cell_str(&sb, rec->id, true);
             hyp_tree_cell_str(&sb, hyp_record_kind_name(rec->kind), false);
             hyp_tree_cell_str(&sb, when, false);
+            if (any_anchored) {
+                const char *word = memory_anchor_word(rec, view);
+                hyp_tree_cell_str(&sb, word ? word : "-", false);
+            }
             hyp_tree_cell_str(&sb, rec->content, false);
             hyp_tree_row_end(&sb);
         }
@@ -14344,6 +14727,8 @@ static char *handle_search_memory(hyp_mcp_server_t *srv, const char *args) {
     free(matched);
     free(text_query);
     free(project);
+    free(anchor);
+    hyp_orphan_view_free(view);
     hyp_record_set_free(set);
     if (!answer) {
         return memory_error("search_memory", "the answer could not be built");

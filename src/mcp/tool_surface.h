@@ -504,23 +504,23 @@ typedef enum {
  *                resolution and no merge UI.
  *    tags        OPTIONAL array of strings.
  *
- *  ── NOT LIVE: record_memory's anchor ────────────────────────────────
+ *  ── LIVE: record_memory's anchor ────────────────────────────────────
  *
- *  `anchor` is SPECIFIED here and ADVERTISED NOWHERE, for the reason spelled
- *  out under search_memory below and for one that is sharper here: the three
- *  outcomes named next are an ALGORITHM, and no resolver exists to run it.
- *  There is no unresolvable, no ambiguous and no candidate list in this build,
- *  so a signature naming them describes a computation that has never once
- *  happened. handle_record_memory refuses every non-empty anchor instead, and
- *  that refusal is right and stays — storing one unverified is exactly how a
- *  record becomes already-orphaned or attached to a neighbour.
+ *  The three outcomes below are an ALGORITHM, and src/memory/anchor.c now runs
+ *  it. The argument takes a QUALIFIED NAME rather than an address object: it is
+ *  the currency get_code_snippet and trace_path already take, so an agent that
+ *  can name a symbol for one tool can anchor a decision to it without learning
+ *  the anchor grammar, which stays internal.
  *
- *    anchor      OPTIONAL object, C1's address of a span.
+ *  Resolution happens BEFORE the record is built, and it has to: the anchor is
+ *  in the id preimage, so an anchor cannot be attached to an existing record --
+ *  the same text with and without one are two records with two ids, not one
+ *  record in two states.
+ *
+ *    anchor      OPTIONAL qualified name.
  *                  ABSENT      -> a repo-scoped record. Legitimate: a decision
  *                                 about code not yet written has nothing to
- *                                 attach to. This is what EVERY record in this
- *                                 build is, which is why withdrawing the
- *                                 argument costs a caller nothing.
+ *                                 attach to.
  *                  SUPPLIED and unresolvable -> ERROR. A record is never
  *                                 created already-orphaned, and never attached
  *                                 to the nearest plausible symbol. Rule (3).
@@ -528,7 +528,13 @@ typedef enum {
  *                                 The tool does not choose among several, the
  *                                 same way project resolution does not.
  *
- *  ── end NOT LIVE ────────────────────────────────────────────────────
+ *  The stored anchor carries the span's content hash as observed at write time,
+ *  so the name finds the record while the symbol keeps its name and the hash
+ *  finds it after a rename. When the span cannot be read the anchor is stored
+ *  hashless -- legitimate, strictly weaker, and DISCLOSED in `anchor_note`
+ *  rather than silently accepted.
+ *
+ *  ── end LIVE ────────────────────────────────────────────────────────
  *
  *  There is NO `author` argument and there must never be one. A record id is
  *  derived from content + author + timestamp; an author a caller can state
@@ -554,45 +560,44 @@ typedef enum {
  *    since/until OPTIONAL timestamps.
  *    limit/offset, format  as elsewhere.
  *
- *  ── NOT LIVE: the anchor half of this contract ──────────────────────
+ *  ── LIVE: the anchor half of this contract ──────────────────────────
  *
- *  This row is HYP_TOOL_LIVE, so read the next paragraph before believing
- *  the paragraph after it. `anchor` and `status` are SPECIFIED here and
- *  ADVERTISED NOWHERE: TOOLS[] in mcp.c deliberately does not carry them,
- *  because this build has no anchor resolver behind them and the handler
- *  refuses both fail-closed. A signature is not the place to keep a promise
- *  nothing implements — a client generated from one sends the declared
- *  default and is refused for obeying the contract it was handed. So the
- *  three-state output below is the SHAPE C8u MUST SHIP, not a shape this
- *  build produces: no answer it can build carries `anchor_status` at all.
+ *  src/memory/orphan.c is the read path behind these, built once per call.
+ *  Orphan-ness is derived at READ TIME and never stored -- it could not be
+ *  stored, since the anchor is in the id preimage -- so it is a property of
+ *  (record, index state), and two machines may legitimately disagree about it.
  *
- *  It stays written down, in this header and only in this header, for the
- *  same reason a reserved row does: an unlanded contract is documented where
- *  the contract lives and published where nothing generates a caller from it.
- *  The schema arguments and this output go live in the SAME COMMIT that wires
- *  src/memory/orphan.c behind them. Two of the three is the divergence again.
+ *    anchor      OPTIONAL qualified name. Does NOT have to resolve, unlike
+ *                record_memory's: "what was decided about a function that has
+ *                since been deleted" is precisely the orphaned question, and
+ *                requiring resolution would make it unaskable through the
+ *                filter meant to reach it. Matched on the symbol's ADDRESS,
+ *                ignoring the recorded content hash -- two decisions about one
+ *                function taken a month apart carry different hashes and are
+ *                both about that function. Supplying it with kind="transcript"
+ *                is an ERROR, not a silently ignored argument.
+ *    status      OPTIONAL: "attached" | "orphaned" | "any". Defaults to
+ *                "attached" ONLY when an anchor was supplied; with no anchor
+ *                there is nothing to be attached to and the default is "any",
+ *                because defaulting otherwise would hide every repo-scoped
+ *                record behind a filter nobody asked for. "orphaned" is how an
+ *                orphaned anchor becomes VISIBLE. An orphan no query can list
+ *                is a silent drop by another name.
  *
- *    anchor      OPTIONAL, C1's address. Valid only for kinds that carry an
- *                anchor; supplying it with kind="transcript" is an ERROR and
- *                not a silently ignored argument, because an ignored filter
- *                returns a superset that reads exactly like a match.
- *    status      OPTIONAL: "attached" (default) | "orphaned" | "any".
- *                "orphaned" is how an orphaned anchor becomes VISIBLE. An
- *                orphan no query can list is a silent drop by another name.
+ *  Output. Every anchored record carries `anchor_status`; an UNANCHORED record
+ *  carries none, because it is neither attached nor orphaned and forcing it
+ *  into either partition would invent a claim about it.
  *
- *  Output, and this is the part that carries the unit:
+ *    attached         the symbol is still there.
+ *    attached_edited  still there, span changed since the record was written.
+ *    orphaned         the name resolves to nothing now.
+ *    ambiguous        the name resolves to several. No neighbour is returned.
+ *    unknown          no index for that project: NOT CHECKED. Distinct from
+ *                     both of the first two, and it must stay distinct -- an
+ *                     unchecked anchor reported as attached or orphaned is a
+ *                     claim about code this answer never looked at.
  *
- *    anchor_status "resolved"  + records: []   -> THE ANCHOR RESOLVED AND
- *                                 NOTHING IS ATTACHED. An empty list here is a
- *                                 real answer and the agent should believe it.
- *    anchor_status "orphaned"  + records ABSENT -> the anchor did not resolve.
- *                                 Look elsewhere. An empty list here would
- *                                 read as "nothing was ever recorded", which
- *                                 is a different and false claim.
- *    anchor_status "ambiguous" + candidates[] + records ABSENT -> fail closed.
- *                                 No nearest neighbour is ever returned.
- *
- *  ── end NOT LIVE ────────────────────────────────────────────────────
+ *  ── end LIVE ────────────────────────────────────────────────────────
  *
  *  Truncation follows this surface's disclosure convention: a truncated answer
  *  states what was withheld and how to get it, and says NOTHING when nothing

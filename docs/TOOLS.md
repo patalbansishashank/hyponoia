@@ -80,14 +80,34 @@ so Analysis admits it and Scout — the small surface where every tool answers
 fast — does not.
 
 The store lives in a `memory` directory beside the indexes (`HYP_MEMORY_DIR`
-overrides). Anchoring a record to a specific span is **not** available yet, and
-neither tool advertises an argument for it: there is no anchor resolver in this
-build, so `record_memory` takes no `anchor` and `search_memory` takes neither
-`anchor` nor `status`. Every record is repo-scoped. Both handlers still refuse a
-supplied `anchor` rather than storing or filtering on one unverified — a record
-is never created already-orphaned and never attached to a plausible neighbour,
-and a filter whose result cannot be reported returns a superset that reads
-exactly like a match. The arguments return together with the resolver.
+overrides). **Note that `HYP_MEMORY_DIR` alone does not isolate a store when a
+daemon is running**: the daemon does the work, with its own environment, so an
+isolated run needs `HYP_DAEMON_RUNTIME_PARENT` and `HYP_CACHE_DIR` too.
+
+Anchoring a record to one symbol IS available. Both tools take an `anchor` — a
+qualified name, the same one `search_graph` reports, or a canonical address —
+and the resolver behind them is `src/memory/anchor.c`.
+
+The two tools treat it asymmetrically, on purpose. `record_memory` resolves the
+name against the live index **before** the record is built (it must: the anchor
+is in the id preimage, so it cannot be attached afterwards) and REFUSES a name
+that matches nothing or matches several, naming the candidates in the second
+case. A record is never created already-orphaned and never attached to a
+plausible neighbour. `search_memory` does **not** require the name to resolve,
+because "what was decided about a function that has since been deleted" is
+exactly the question the orphaned half of this surface exists to answer.
+
+Every anchored answer carries `anchor_status`: `attached`, `attached_edited`
+(still there, span changed since), `orphaned`, `ambiguous`, or `unknown` (no
+index for that project — not checked, which is neither attached nor orphaned).
+Unanchored records carry none, because a record about the repository has no
+anchor to have lost. `status` filters on it, defaulting to `attached` only when
+an `anchor` was supplied — with no anchor there is nothing to be attached to,
+and defaulting otherwise would hide every repo-scoped record.
+
+Records are still **not** scoped by project: the store is one per machine, the
+record carries no project field, and `project` on these two tools selects the
+index an anchor resolves against rather than partitioning the results.
 
 ## The `project` argument
 

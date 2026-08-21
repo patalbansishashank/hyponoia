@@ -169,16 +169,13 @@ UNREACHABLE_LEDGER = {
     'src/ingest/watched_ingest.c': (
         'D5', 'the on-disk feed format parses; the inotify/kqueue trigger is the '
               'watcher\'s, and does not call it.'),
-    'src/memory/anchor.c': (
-        'C8u', 'reached only from orphan.c, which is itself unreachable -- a dead '
-               'cluster. It closes when orphan.c does.'),
-    'src/memory/orphan.c': (
-        'C8u', 'the read path over anchored memory; search_memory\'s handler does '
-               'not call it, which is why the handler refuses every status but "any". '
-               'Check C has no row for that refusal precisely because this one is '
-               'open: with no resolver to reach, search_memory advertises no '
-               '`status` and no `anchor`, so there is no declared default left to '
-               'refuse. Wiring this file is what puts both arguments back.'),
+    # src/memory/anchor.c and src/memory/orphan.c were BOTH here, tagged C8u,
+    # as a dead cluster: anchor.c reached only from orphan.c, orphan.c reached
+    # by nobody. They are gone from this ledger because they are wired --
+    # src/mcp/mcp.c calls hyp_anchor_resolve from record_memory's handler and
+    # hyp_orphan_view_build from search_memory's, in the same commit that put
+    # `anchor` and `status` back into both schemas. Two of the three was the
+    # divergence; this is the third.
     # ── Pre-existing: predates Phase 1, no unit owns it ────────────────
     'src/foundation/str_intern.c': (
         'DECISION', 'added 2026-03-15, in FOUNDATION_SRCS, called by tests only.'),

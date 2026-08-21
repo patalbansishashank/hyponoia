@@ -1351,7 +1351,11 @@ TEST(tool_surface_memory_surface_is_live_and_fails_closed) {
                         "{\"kind\":\"transcript\",\"title\":\"t\",\"body\":\"b\"}", text,
                         sizeof(text), &is_error);
     bool refused_transcript = is_error && strstr(text, "decision") && strstr(text, "verdict");
-    /* A supplied anchor is refused rather than stored unverified. */
+    /* An anchor that resolves to nothing is refused rather than stored, which
+     * is what "a record is never created already-orphaned" means in practice.
+     * This fixture has no index behind it, so the refusal here is the
+     * no-index one — still a refusal, still naming the anchor, and still the
+     * property under test: an unverifiable anchor is never written. */
     surface_memory_text(srv, "record_memory",
                         "{\"kind\":\"decision\",\"title\":\"t\",\"body\":\"b\","
                         "\"anchor\":\"hyp1:w/r#foo\"}",
@@ -1375,11 +1379,18 @@ TEST(tool_surface_memory_surface_is_live_and_fails_closed) {
                         sizeof(text), &is_error);
     bool read_back = !is_error && strstr(text, "Chose the id-keyed set") &&
                      strstr(text, "\"matched\":1") && strstr(text, "store");
-    /* A filter this build cannot compute is refused, never ignored: an ignored
-     * filter returns a superset that reads exactly like a match. */
-    surface_memory_text(srv, "search_memory", "{\"status\":\"orphaned\"}", text, sizeof(text),
+    /* status is answered now, not refused. "orphaned" over a store whose only
+     * record is unanchored must return an EMPTY set rather than that record:
+     * unanchored is not orphaned, and a record with no anchor has none to have
+     * lost. An answer that swept it in would be the superset the old refusal
+     * existed to prevent, arriving by a different route. */
+    surface_memory_text(srv, "search_memory", "{\"status\":\"orphaned\",\"format\":\"json\"}",
+                        text, sizeof(text), &is_error);
+    bool status_answered = !is_error && strstr(text, "\"matched\":0") != NULL;
+    /* And an unknown value is still refused, naming the three that work. */
+    surface_memory_text(srv, "search_memory", "{\"status\":\"lapsed\"}", text, sizeof(text),
                         &is_error);
-    bool refused_status = is_error && strstr(text, "orphaned") != NULL;
+    bool refused_bad_status = is_error && strstr(text, "orphaned") != NULL;
 
     hyp_mcp_server_free(srv);
     surface_memory_end(&fx);
@@ -1389,7 +1400,8 @@ TEST(tool_surface_memory_surface_is_live_and_fails_closed) {
              "kinds it accepts");
     }
     if (!refused_anchor) {
-        FAIL("record_memory accepted an anchor nothing in this build can resolve");
+        FAIL("record_memory stored an anchor it could not verify — a record must never be "
+             "created already-orphaned");
     }
     if (!wrote) {
         FAIL("record_memory is live and a client gets no id back");
@@ -1397,8 +1409,13 @@ TEST(tool_surface_memory_surface_is_live_and_fails_closed) {
     if (!read_back) {
         FAIL("search_memory cannot see what record_memory just wrote");
     }
-    if (!refused_status) {
-        FAIL("search_memory silently ignored a status filter it cannot compute");
+    if (!status_answered) {
+        FAIL("search_memory did not answer status='orphaned' with an empty set over an "
+             "unanchored-only store — unanchored is not orphaned");
+    }
+    if (!refused_bad_status) {
+        FAIL("search_memory accepted a status value it does not answer, or refused it without "
+             "naming the ones that work");
     }
     PASS();
 }
