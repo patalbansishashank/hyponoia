@@ -139,32 +139,45 @@ for entry in "${VARIANTS[@]}"; do
     bash scripts/build.sh --with-ui --version "$VERSION" --build-sha "$SHA" \
         CC=gcc CXX=g++ $args
 
+    # ldd EXITS 1 on a static binary, and this script runs under `set -o
+    # pipefail`, so `ldd ... | grep -q ...` returns 1 even when grep matched.
+    # That reported a correctly-static portable build as not static and refused
+    # a good release. CI never hit it because GitHub's plain `run:` steps are
+    # `bash -e` without pipefail. Capture once, match against the variable.
+    linkage="$(ldd build/c/hyponoia 2>&1 || true)"
+    kind="$(file -b build/c/hyponoia 2>/dev/null || true)"
+
     case "$suffix" in
         *-portable)
-            # CI's own check: static or it is not portable.
-            if ! { ldd build/c/hyponoia 2>&1 | grep -q "not a dynamic executable" ||
-                ldd build/c/hyponoia 2>&1 | grep -q "statically linked"; }; then
-                echo "release-local: $suffix is NOT statically linked — refusing." >&2
-                exit 1
-            fi
-            echo "  verified: statically linked"
+            # Static or it is not portable. Two independent witnesses, because
+            # this is the property the whole variant exists for: ldd's own
+            # words and file(1)'s classification.
+            case "$linkage$kind" in
+                *"not a dynamic executable"* | *"statically linked"*)
+                    echo "  verified: statically linked" ;;
+                *)
+                    echo "release-local: $suffix is NOT statically linked — refusing." >&2
+                    exit 1 ;;
+            esac
             ;;
         *-gpu)
             # The property this variant exists for.
-            if ! ldd build/c/hyponoia 2>&1 | grep -q 'libvulkan\.so\.1'; then
-                echo "release-local: $suffix does not link libvulkan.so.1 — refusing." >&2
-                exit 1
-            fi
-            echo "  verified: links libvulkan.so.1"
+            case "$linkage" in
+                *libvulkan.so.1*) echo "  verified: links libvulkan.so.1" ;;
+                *)
+                    echo "release-local: $suffix does not link libvulkan.so.1 — refusing." >&2
+                    exit 1 ;;
+            esac
             ;;
         *)
-            # The ordinary build must NOT be static and must NOT pull Vulkan in;
-            # otherwise it is silently one of the other two under a third name.
-            if ldd build/c/hyponoia 2>&1 | grep -q 'libvulkan\.so\.1'; then
-                echo "release-local: the plain variant links libvulkan — refusing." >&2
-                exit 1
-            fi
-            echo "  verified: dynamic, no Vulkan"
+            # The ordinary build must NOT pull Vulkan in; otherwise it is
+            # silently the gpu variant under a different name.
+            case "$linkage" in
+                *libvulkan.so.1*)
+                    echo "release-local: the plain variant links libvulkan — refusing." >&2
+                    exit 1 ;;
+                *) echo "  verified: dynamic, no Vulkan" ;;
+            esac
             ;;
     esac
 
