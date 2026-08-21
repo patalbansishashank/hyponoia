@@ -45,6 +45,35 @@ SCAN="$ROOT/scripts/check-secret-history.sh"
 LINT_IMAGE="hyp-lint"
 LINT_DOCKERFILE="$ROOT/test-infrastructure/Dockerfile.lint"
 
+# ── Deleting a ref publishes nothing ─────────────────────────────────────
+#
+# `git push --delete <branch>` sends an all-zero LOCAL sha for that ref. There
+# is no commit being published, so there is no tree to format-check and no
+# history to scan: gating it costs minutes to verify a claim about content that
+# does not exist, and the failure mode is worse than the cost -- a hook that
+# refuses a deletion makes branch cleanup impossible without exporting around
+# the hook, which is how a hook stops being run at all.
+#
+# stdin is read ONCE, here, and replayed to the scan below, because it is a pipe
+# and a second read would get nothing. Only a push where EVERY ref is a deletion
+# is skipped; a mixed push still runs the whole gate on what it publishes.
+REFS="$(cat)"
+all_deletions=1
+have_refs=0
+while read -r _local_ref local_sha _remote_ref _remote_sha; do
+    [ -n "${local_sha:-}" ] || continue
+    have_refs=1
+    case "$local_sha" in
+        *[!0]*) all_deletions=0 ;;
+    esac
+done <<EOF
+$REFS
+EOF
+if [ "$have_refs" -eq 1 ] && [ "$all_deletions" -eq 1 ]; then
+    echo "pre-push: deletion only, nothing is being published — gate skipped." >&2
+    exit 0
+fi
+
 # ── Formatting, in CI's environment ──────────────────────────────────────
 #
 # `lint-format` ONLY, deliberately — not the whole lint job. Measured: the full
@@ -80,4 +109,6 @@ if [ ! -x "$SCAN" ]; then
     exit 1
 fi
 
-exec "$SCAN"
+exec "$SCAN" <<EOF
+$REFS
+EOF
