@@ -79,10 +79,46 @@ rather than widen it. It is available on the full server. `search_memory` reads,
 so Analysis admits it and Scout — the small surface where every tool answers
 fast — does not.
 
-The store lives in a `memory` directory beside the indexes (`HYP_MEMORY_DIR`
-overrides). **Note that `HYP_MEMORY_DIR` alone does not isolate a store when a
-daemon is running**: the daemon does the work, with its own environment, so an
-isolated run needs `HYP_DAEMON_RUNTIME_PARENT` and `HYP_CACHE_DIR` too.
+**The memory store is per WORKSPACE**, at
+`<cache>/memory/<workspace-id>/records.db`. That is the design sentence taken
+literally — "the database is workspace-level; a single repo is a workspace of
+one" — and it is what keeps one project's reasoning out of another's answers.
+
+Which workspace a call belongs to is decided by `hyp_wsr_resolve`, the same and
+only resolver the indexer uses, starting from the project's own indexed root
+(so `--project beta` reads beta's workspace, not whichever one the server is
+sitting in) and falling back to the session's working directory. Its precedence
+is fixed: an explicit `hyponoia.toml` governs; then a provider; then
+zero-config, which makes the directory a workspace of one.
+
+The workspace id is deterministic and is a pure function of the member SET:
+the TOML `name` when given, else the single member's slug, else
+`ws-<sha256 over the sorted member slugs>`. Neither declaration order nor "the
+first repo" can reach it, so two machines resolving the same set agree — which
+is what lets two stores merge as a union.
+
+What that means in practice:
+
+| Shape | Memory |
+|---|---|
+| One repo, no config | Its own workspace; nothing else can see it. |
+| Several repos in one `hyponoia.toml` | **One shared memory.** A decision recorded in `backend` is returned when working in `frontend` — that is the point of declaring them together. |
+| A member with role `reference` / `upstream` / `vendored` (read-only) | Still a member: it reads and is read by the workspace. Role governs whether an agent may EDIT the tree, never who may see a decision. |
+| Members coupled by a C-ABI/DLL call, or over HTTP | Identical. Coupling is a property of the code graph (`CROSS_*` edges), not of memory scope. Neither needs a special case. |
+
+If the workspace cannot be determined the tools **refuse** rather than falling
+back to a shared store — a silent fallback is exactly the bleed this removes,
+and its answer would look identical to a correct one.
+
+`HYP_MEMORY_DIR` still overrides the whole path outright, for tests and
+isolated runs. **Note it does not isolate a store while a daemon is running**:
+the daemon does the work with its own environment, so an isolated run needs
+`HYP_DAEMON_RUNTIME_PARENT` and `HYP_CACHE_DIR` too.
+
+A store written before this change sits at `<cache>/memory/records.db`. It is
+not read: its records carry no workspace, so splitting it is impossible and
+adopting it wholesale would restore the bleed. The tools say it is there rather
+than reporting "nothing was ever recorded".
 
 Anchoring a record to one symbol IS available. Both tools take an `anchor` — a
 qualified name, the same one `search_graph` reports, or a canonical address —
@@ -104,10 +140,6 @@ Unanchored records carry none, because a record about the repository has no
 anchor to have lost. `status` filters on it, defaulting to `attached` only when
 an `anchor` was supplied — with no anchor there is nothing to be attached to,
 and defaulting otherwise would hide every repo-scoped record.
-
-Records are still **not** scoped by project: the store is one per machine, the
-record carries no project field, and `project` on these two tools selects the
-index an anchor resolves against rather than partitioning the results.
 
 ## The `project` argument
 

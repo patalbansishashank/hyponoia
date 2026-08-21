@@ -56,9 +56,10 @@ enum {
 #include "mcp/tool_surface.h"
 #include "store/record_store.h"
 #include "memory/adr_records.h"
-#include "foundation/identity.h" /* C1's address, under every anchor */
-#include "memory/anchor.h"       /* C3u: qualified name -> live span, or a refusal */
-#include "memory/orphan.h"       /* C4u: the read path over anchored memory */
+#include "foundation/identity.h"     /* C1's address, under every anchor */
+#include "memory/anchor.h"           /* C3u: qualified name -> live span, or a refusal */
+#include "memory/orphan.h"           /* C4u: the read path over anchored memory */
+#include "store/workspace_resolve.h" /* the one resolver: which workspace is this? */
 #include "store/store.h"
 #include <sqlite3.h>
 #include "cypher/cypher.h"
@@ -2143,6 +2144,12 @@ struct hyp_mcp_server {
      * the freshness seam above borrows — so the tool that writes and the
      * status that reports cannot disagree about what is on disk. */
     hyp_record_store_t *memory_store;
+    /* The directory srv->memory_store was opened from. The store is per
+     * WORKSPACE now, so one cached handle is only reusable while the call is
+     * about the same workspace -- caching by presence alone would answer a
+     * second workspace out of the first one's store, which is the bleed this
+     * whole change removes, reintroduced one layer down. */
+    char memory_store_dir_open[HYP_SZ_4K];
     hyp_record_set_t *memory_snapshot;
     bool memory_open_failed;
     char memory_open_error[HYP_SZ_256];
@@ -13784,7 +13791,90 @@ static char *handle_ingest_traces(hyp_mcp_server_t *srv, const char *args) {
  * `memory` directory beside the indexes, which is the one location every venue
  * on this machine already redirects together. The directory NAME is the
  * contract; the parent is not. */
-static bool memory_store_dir(char *out, size_t cap) {
+/* ── Which workspace does this call's memory belong to? ─────────────
+ *
+ * "The database is workspace-level; a single repo is a workspace of one."
+ * That sentence is the design, and the memory store did not honour it: every
+ * record on the machine went into one global bag, so a decision recorded while
+ * working on one project came back when asking about an unrelated one — with
+ * `project_source: supplied` in the answer, which reads exactly like it had
+ * been filtered. Cross-project bleed is not a cosmetic problem: the reasoning
+ * for one system arriving as context for another is worse than no memory,
+ * because it is confidently wrong rather than absent.
+ *
+ * The fix is the design sentence taken literally: the STORE is per workspace.
+ * That is why the record carries no workspace field and the store has no
+ * workspace column -- both were correct, and neither was the missing piece.
+ * The record field set is frozen (its id commits to every field, so adding one
+ * rewrites every id ever written) and a store column could not survive sync: a
+ * union deduplicates on id, so a column outside the id would have to be chosen
+ * between, and choosing between payloads is last-writer-wins by another name.
+ * Scoping by PATH costs neither.
+ *
+ * Everything the owner asked for falls out of it with no per-shape code:
+ *   - one repo            zero-config resolves it as a workspace of one
+ *   - many repos in a TOML   all members resolve to ONE id, so they share one
+ *                            memory, which is the point of declaring them
+ *   - a member that is read-only / reference / vendored   still a member, so
+ *                            its reasoning is visible to the workspace
+ *   - members coupled by a C-ABI DLL, or by HTTP   coupling is a property of
+ *                            the code graph, not of who may read a decision;
+ *                            both are one workspace and neither needs a case
+ *
+ * Resolution goes through hyp_wsr_resolve and nothing else -- one resolver,
+ * never two code paths that can disagree about what a directory belongs to.
+ * The start directory is the PROJECT's own root when a project is in play, so
+ * `--project beta` reads beta's workspace rather than whichever workspace the
+ * server happens to be sitting in; otherwise the session root. */
+static bool memory_workspace_id(hyp_mcp_server_t *srv, const char *project, char *out,
+                                size_t out_sz) {
+    out[0] = '\0';
+    char start[HYP_SZ_1K];
+    start[0] = '\0';
+
+    /* The project's indexed root, when there is a project and it is known. */
+    if (project && project[0]) {
+        hyp_store_t *pstore = resolve_store(srv, project);
+        if (pstore) {
+            hyp_project_t proj = {0};
+            if (hyp_store_get_project(pstore, project, &proj) == HYP_STORE_OK) {
+                if (proj.root_path && proj.root_path[0]) {
+                    snprintf(start, sizeof(start), "%s", proj.root_path);
+                }
+                /* hyp_project_t owns heap fields; the copy above is what this
+                 * function keeps. */
+                hyp_project_free_fields(&proj);
+            }
+        }
+    }
+    if (!start[0]) {
+        const char *root = hyp_mcp_server_session_root(srv);
+        if (root && root[0]) {
+            snprintf(start, sizeof(start), "%s", root);
+        }
+    }
+    if (!start[0]) {
+        return false;
+    }
+    /* No existence pre-check: hyp_wsr_resolve refuses a start directory it
+     * cannot use, and one resolver deciding is the point of having one. */
+
+    char toml[HYP_SZ_1K];
+    const char *toml_arg = hyp_wsr_toml_find(start, toml, sizeof(toml)) ? toml : NULL;
+    hyp_wsr_resolved_t ws;
+    memset(&ws, 0, sizeof(ws));
+    if (hyp_wsr_resolve(start, toml_arg, NULL, &ws, NULL, 0) != HYP_WSR_OK || !ws.id[0]) {
+        return false;
+    }
+    int n = snprintf(out, out_sz, "%s", ws.id);
+    return n > 0 && (size_t)n < out_sz;
+}
+
+static bool memory_store_dir_for(hyp_mcp_server_t *srv, const char *project, char *out,
+                                 size_t cap) {
+    /* HYP_MEMORY_DIR still wins outright. It is the escape hatch tests and
+     * isolated runs use, and an override that silently grew a subdirectory
+     * would stop being an override. */
     char configured[HYP_SZ_4K];
     const char *set = hyp_safe_getenv("HYP_MEMORY_DIR", configured, sizeof(configured), NULL);
     if (set && set[0]) {
@@ -13795,7 +13885,15 @@ static bool memory_store_dir(char *out, size_t cap) {
     if (!cache || !cache[0]) {
         return false;
     }
-    int n = snprintf(out, cap, "%s/memory", cache);
+    char ws[HYP_ADDR_SLUG_MAX + 1];
+    if (!memory_workspace_id(srv, project, ws, sizeof(ws))) {
+        /* Fail CLOSED. Falling back to a shared directory is precisely the
+         * defect being fixed: it would put this workspace's decisions where
+         * another workspace reads them, and the answer would look identical to
+         * a correct one. No workspace means no store, said out loud. */
+        return false;
+    }
+    int n = snprintf(out, cap, "%s/memory/%s", cache, ws);
     return n > 0 && (size_t)n < cap;
 }
 
@@ -13826,33 +13924,65 @@ static void memory_refresh_snapshot(hyp_mcp_server_t *srv) {
  * the directory, so a reader that opened would make every machine that has
  * merely asked a question look like a machine with an empty memory. Absent and
  * empty are different answers and only one of them is ever true. */
-static hyp_record_store_t *memory_store_open(hyp_mcp_server_t *srv, const char **why, bool create) {
+static hyp_record_store_t *memory_store_open(hyp_mcp_server_t *srv, const char *project,
+                                             const char **why, bool create) {
     if (!srv) {
         *why = "no server";
         return NULL;
     }
+    char dir[HYP_SZ_4K];
+    if (!memory_store_dir_for(srv, project, dir, sizeof(dir))) {
+        /* Deliberately NOT sticky: this depends on the project argument, so a
+         * call that cannot name its workspace must not poison the next call
+         * that can. Only a genuine open failure below latches. */
+        *why = "could not tell which workspace this belongs to, and memory is workspace-scoped. "
+               "Pass project, or run from inside a workspace (a hyponoia.toml above the "
+               "directory, or the repository itself).";
+        return NULL;
+    }
+
+    /* Same workspace as the cached handle? Then reuse it. Different workspace?
+     * Close and reopen -- answering from the previous one is the bug. */
     if (srv->memory_store) {
-        return srv->memory_store;
+        if (strcmp(srv->memory_store_dir_open, dir) == 0) {
+            return srv->memory_store;
+        }
+        hyp_record_store_close(srv->memory_store);
+        srv->memory_store = NULL;
+        srv->memory_store_dir_open[0] = '\0';
+        srv->memory_open_failed = false;
     }
     if (srv->memory_open_failed) {
         *why = srv->memory_open_error;
         return NULL;
     }
-    char dir[HYP_SZ_4K];
     if (!create) {
         char db[HYP_SZ_4K];
-        if (!memory_store_dir(dir, sizeof(dir)) ||
-            snprintf(db, sizeof(db), "%s/records.db", dir) < 0 || !hyp_file_exists(db)) {
-            *why = "no memory store on this machine yet — nothing has been recorded here";
+        if (snprintf(db, sizeof(db), "%s/records.db", dir) < 0 || !hyp_file_exists(db)) {
+            /* A store written before memory was workspace-scoped sits at
+             * <cache>/memory/records.db, one level above the per-workspace
+             * directories. It is NOT read: it holds records from every
+             * workspace mixed together and nothing in them says which, so
+             * splitting it is not possible and adopting it wholesale would
+             * restore the bleed. Say it exists rather than answer "nothing was
+             * ever recorded", which would be false and unfalsifiable. */
+            char legacy[HYP_SZ_4K];
+            const char *cache = hyp_resolve_cache_dir();
+            if (cache && cache[0] &&
+                snprintf(legacy, sizeof(legacy), "%s/memory/records.db", cache) > 0 &&
+                hyp_file_exists(legacy)) {
+                snprintf(srv->memory_open_error, sizeof(srv->memory_open_error),
+                         "no memory store for this workspace yet. A pre-workspace store still "
+                         "exists at %s; it is not read, because its records carry no workspace "
+                         "and mixing them back in is the cross-project bleed this scoping "
+                         "removed.",
+                         legacy);
+                *why = srv->memory_open_error;
+                return NULL;
+            }
+            *why = "no memory store for this workspace yet — nothing has been recorded here";
             return NULL;
         }
-    }
-    if (!memory_store_dir(dir, sizeof(dir))) {
-        srv->memory_open_failed = true;
-        snprintf(srv->memory_open_error, sizeof(srv->memory_open_error),
-                 "no memory directory: set HYP_MEMORY_DIR, or HYP_CACHE_DIR, or HOME");
-        *why = srv->memory_open_error;
-        return NULL;
     }
     hyp_record_store_t *store = NULL;
     hyp_record_store_status_t status = hyp_record_store_open(dir, &store);
@@ -13865,6 +13995,7 @@ static hyp_record_store_t *memory_store_open(hyp_mcp_server_t *srv, const char *
         return NULL;
     }
     srv->memory_store = store;
+    snprintf(srv->memory_store_dir_open, sizeof(srv->memory_store_dir_open), "%s", dir);
     memory_refresh_snapshot(srv);
     return store;
 }
@@ -14242,7 +14373,7 @@ static char *handle_record_memory(hyp_mcp_server_t *srv, const char *args) {
     }
 
     const char *why = "";
-    hyp_record_store_t *store = memory_store_open(srv, &why, true);
+    hyp_record_store_t *store = memory_store_open(srv, project, &why, true);
     /* The append tells apart "new" from "the union absorbed a duplicate", and
      * this path can never see the second: the id commits to the timestamp and
      * the timestamp is read here, so two calls a millisecond apart are two
@@ -14489,33 +14620,37 @@ static char *handle_search_memory(hyp_mcp_server_t *srv, const char *args) {
     bool want_json = format_early && strcmp(format_early, "json") == 0;
     free(format_early);
 
+    /* project is resolved BEFORE the store opens now: the store is per
+     * workspace, and the project is what says which workspace. */
+    project_choice_t choice;
+    char *project = resolve_project_arg(srv, args, &choice);
+
     const char *why = "";
-    hyp_record_store_t *store = memory_store_open(srv, &why, false);
+    hyp_record_store_t *store = memory_store_open(srv, project, &why, false);
     /* No store at all is ABSENT, not empty. `records` is left out entirely
      * rather than sent as [], because [] says "nothing was ever recorded" and
      * the truth is "there is nowhere here it could have been recorded". Only
      * one of those is ever true, and confusing them is how an agent comes to
      * believe it has checked. */
     if (!store) {
-        project_choice_t none;
-        char *project_only = resolve_project_arg(srv, args, &none);
         char *answer_none = NULL;
         if (want_json) {
             yyjson_mut_doc *doc = yyjson_mut_doc_new(NULL);
             yyjson_mut_val *root = yyjson_mut_obj(doc);
             yyjson_mut_doc_set_root(doc, root);
-            add_project_choice_json(doc, root, project_only, &none);
+            add_project_choice_json(doc, root, project, &choice);
             yyjson_mut_obj_add_strcpy(doc, root, "memory", why);
             answer_none = yy_doc_to_str(doc);
             yyjson_mut_doc_free(doc);
         } else {
             hyp_sb_t sb;
             hyp_sb_init(&sb);
-            emit_project_choice_toon(&sb, project_only, &none);
+            emit_project_choice_toon(&sb, project, &choice);
             hyp_tree_scalar_str(&sb, "memory", why);
             answer_none = hyp_sb_finish(&sb);
         }
-        free(project_only);
+        free(project);
+        free(anchor);
         if (!answer_none) {
             return memory_error("search_memory", "the answer could not be built");
         }
@@ -14541,9 +14676,6 @@ static char *handle_search_memory(hyp_mcp_server_t *srv, const char *args) {
         offset = 0;
     }
     bool as_json = want_json;
-
-    project_choice_t choice;
-    char *project = resolve_project_arg(srv, args, &choice);
 
     /* Matching records, newest first: the store enumerates by id because its
      * order is deliberately non-semantic, so time order is the caller's move
