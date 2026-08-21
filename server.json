@@ -2,7 +2,7 @@
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.patalbansishashank/hyponoia",
   "title": "Hyponoia",
-  "description": "Code context engine for AI coding agents — indexes repositories into a queryable graph and returns exact code spans instead of whole files.",
+  "description": "Find code and the reasoning behind it before acting; record decisions and verdicts after.",
   "repository": {
     "url": "https://github.com/patalbansishashank/hyponoia",
     "source": "github"
