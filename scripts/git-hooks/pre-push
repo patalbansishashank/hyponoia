@@ -27,6 +27,20 @@
 set -euo pipefail
 
 ROOT="$(git rev-parse --show-toplevel)"
+
+# git exports GIT_DIR, GIT_INDEX_FILE and friends into every hook, and they are
+# INHERITED by everything the hook runs. Several contract tests build a throwaway
+# repository in a temp directory and commit into it; with GIT_DIR still pointing
+# at this repository those commits target the wrong git dir and the test fails
+# for a reason that has nothing to do with the tree being pushed.
+#
+# Found the first time this hook ran the contract set: the comment-lint contract
+# passed standalone and failed under the hook, reporting a missing dco-signed.sh
+# inside /tmp. Unset them here, once, rather than teaching each test to defend
+# itself -- the leak has one source and this is it. The push range on stdin is
+# unaffected: it is data on a pipe, not environment.
+unset GIT_DIR GIT_INDEX_FILE GIT_WORK_TREE GIT_PREFIX GIT_OBJECT_DIRECTORY
+unset GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_COMMON_DIR GIT_QUARANTINE_PATH
 SCAN="$ROOT/scripts/check-secret-history.sh"
 LINT_IMAGE="hyp-lint"
 LINT_DOCKERFILE="$ROOT/test-infrastructure/Dockerfile.lint"
