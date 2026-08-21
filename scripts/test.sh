@@ -10,7 +10,7 @@ cd "$ROOT"
 
 usage() {
     cat <<'EOF'
-Usage: scripts/test.sh [--suites LIST] [--arch ARCH] [VAR=VAL ...]
+Usage: scripts/test.sh [--suites LIST] [--contracts-only] [--arch ARCH] [VAR=VAL ...]
 
 The canonical test entry: identical in local CI, PR CI, dry run and release.
 DEFAULT (no --suites) is exactly what CI runs: static contract checks
@@ -20,6 +20,10 @@ then the prod-binary regression guards (Steps 4-6).
 Modes:
   (default)      The venue leg. Clean build (scripts/clean.sh) + all suites +
                  all contract steps. This is the shape every gate runs.
+  --contracts-only
+                 Run the Step-0 static contract gates and stop, before any
+                 compilation. Seconds, not hours. This is the tier the pre-push
+                 hook runs now that there is no CI.
   --suites LIST  ITERATION mode: comma- or space-separated suite names, e.g.
                  --suites daemon,daemon_ipc. Rebuilds the test-runner
                  INCREMENTALLY (make dependency tracking, no clean) and runs
@@ -64,10 +68,12 @@ EOF
 # silently swallowed — agents must know exactly what a run will do.
 SUITES=""
 TSAN=0
+CONTRACTS_ONLY=0
 prev_arg=""
 for arg in "$@"; do
     case "$arg" in
         -h|--help) usage; exit 0 ;;
+        --contracts-only) CONTRACTS_ONLY=1 ;;
         --tsan) :;;
         --suites) :;; # next arg is the value, handled below
         --suites=*) SUITES="${arg#--suites=}" ;;
@@ -213,13 +219,11 @@ echo "=== Step 0d: daemon soak recovery contract ==="
 bash "$ROOT/tests/test_soak_daemon_recovery_contract.sh"
 
 
-# Step 0e (Windows runtime bundle contract) is not run: it asserts _build.yml
-# still produces a Windows archive via a specific toolchain, and Windows was
-# removed from the release entirely (linux-amd64 only, by explicit
-# instruction). tests/test_windows_bundle_contract.sh is left in the repo
-# unrun rather than deleted -- its header documents a real prior security
-# incident (a self-update launcher stub that drew Wacatac verdicts), which is
-# worth keeping on record even though the pipeline it guards no longer exists.
+# Step 0e (Windows runtime bundle contract) is gone with its subject. It
+# asserted _build.yml still produced a Windows archive via a specific
+# toolchain; Windows is a retired platform and there are no workflows left to
+# assert against. The security incident its header recorded (a self-update
+# launcher stub that drew Wacatac verdicts) survives in git history.
 
 echo "=== Step 0f: tree-sitter runtime Makefile dependencies ==="
 bash "$ROOT/tests/test_makefile_ts_runtime_dependencies.sh"
@@ -233,8 +237,10 @@ bash "$ROOT/tests/test_smoke_fixture_contract.sh"
 echo "=== Step 0i: parallel suite scheduler contract ==="
 bash "$ROOT/tests/test_parallel_harness_contract.sh"
 
-echo "=== Step 0j: venue parity contract (one harness, every venue) ==="
-bash "$ROOT/tests/test_venue_parity_contract.sh"
+# Step 0j (venue parity) is gone with its subject: it existed to stop a venue
+# hand-copying leg logic instead of calling the canonical script. There is now
+# exactly one venue -- this script, on this machine -- so parity is structural
+# rather than checked.
 
 echo "=== Step 0k: spawn console-window contract (#1427) ==="
 bash "$ROOT/tests/test_spawn_no_window_contract.sh"
@@ -263,11 +269,9 @@ bash "$ROOT/tests/test_vt_release_notes_contract.sh"
 # NEXT-STEPS.md §3.2 step 6. Both of these existed and NOTHING RAN THEM: no
 # workflow, no Makefile target, no script referenced either file. A contract
 # test nobody invokes is a comment. They are wired here, beside the other
-# Step 0 contracts, because that is where every other one is wired — and the
-# gate-chain contract in particular now guards the `skip_lint` input added in
-# the same step, which is precisely the class of change it exists to catch.
-echo "=== Step 0s: release gate-chain contract (optional phases) ==="
-bash "$ROOT/tests/test_release_gate_chain_contract.sh"
+# Step 0s (release gate-chain contract) is gone with its subject: it walked
+# release.yml's job graph to prove an optional phase could not silently disable
+# the phases after it. There is no release workflow and no job graph any more.
 
 echo "=== Step 0t: script exec-bit contract ==="
 bash "$ROOT/tests/test_script_exec_bit_contract.sh"
@@ -309,6 +313,18 @@ bash "$ROOT/tests/test_wired_contract.sh"
 # dereference its citations is exactly where an unresolvable commit survives.
 echo "=== Step 0z: fixture history is history a clone can resolve ==="
 bash "$ROOT/tests/test_fixture_lineage.sh"
+
+# --contracts-only stops here, and this is the whole Step-0 set by construction:
+# the exit is placed at the boundary rather than duplicating a list of contracts
+# somewhere else. A contract added above is in the fast tier automatically; there
+# is no second enumeration to forget to update. Added for scripts/gate.sh, which
+# needs exactly this prefix for the pre-push tier -- CI is gone, so the fast
+# local gate is the only thing standing between a mistake and the remote.
+if [ "${CONTRACTS_ONLY:-0}" = "1" ]; then
+    echo ""
+    echo "=== Step 0 complete (--contracts-only): every static contract passed ==="
+    exit 0
+fi
 
 # Verify compiler supports target arch
 verify_compiler "$CC"

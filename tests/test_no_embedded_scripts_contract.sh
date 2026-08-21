@@ -137,11 +137,12 @@ if "#ifdef HYP_ENABLE_TEST_SEAMS\n    hyp_test_fault_inject(rel_path);\n#endif" 
 for needle in ("HYP_TEST_CRASH_ON", "HYP_TEST_HANG_ON"):
     if needle not in composition.split("SEAM_NEEDLES=(", 1)[-1].split(")", 1)[0]:
         failures.append(f"binary composition gate does not forbid {needle}")
-smoke_workflow = (root / ".github/workflows/smoke.yml").read_text(
-    encoding="utf-8", errors="replace"
-)
-if smoke_workflow.count("TEST_SEAMS=1") != 3:
-    failures.append("wide smoke matrix must opt into test seams on all three build jobs")
+# The wide-smoke-matrix seam opt-in was asserted here against
+# .github/workflows/smoke.yml. CI is gone entirely (owner's instruction: no
+# GitHub Actions, every gate runs locally), so that workflow no longer exists
+# and there is nothing left to assert. The seam gate itself is unaffected --
+# the HYP_ENABLE_TEST_SEAMS checks above and the binary composition needles
+# below are the part that guards the product, and they never needed a venue.
 
 # Standard production must not acquire the parser's pack/file-I/O surface just
 # because tests need it. One stub substitution keeps each link topology exact:

@@ -531,65 +531,21 @@ for ceiling in ("MAX_ARCHIVE_BYTES", "MAX_MEMBER_BYTES", "MAX_TOTAL_MEMBER_BYTES
     if ceiling not in source:
         fail(f"extractor lost required size ceiling {ceiling}")
 
-release = (root / ".github/workflows/release.yml").read_text(encoding="utf-8")
-dry_run = (root / ".github/workflows/dry-run.yml").read_text(encoding="utf-8")
-build = (root / ".github/workflows/_build.yml").read_text(encoding="utf-8")
-smoke = (root / ".github/workflows/_smoke.yml").read_text(encoding="utf-8")
-if "ui_only" in build or "Build standard binary" in build:
-    fail("canonical build workflow must not retain a non-UI release path")
-# linux-amd64 only, by explicit instruction: build-windows and
-# build-windows-arm64 were deleted outright (not held disabled), and
-# linux-arm64 was dropped from build-unix's and build-linux-portable's
-# matrices. Three job definitions remain, each with one packaging call:
-# build-unix, build-linux-portable, build-linux-gpu.
-if build.count("--variant ui") != 3:
-    fail("canonical build workflow must package exactly its three UI-enabled build families")
-if "ui_only" in smoke or "VARIANTS='[\"ui\"]'" not in smoke or "standard" in smoke.split("VARIANTS=", 1)[1].split("\n", 1)[0]:
-    fail("release smoke matrix must expose only the UI-enabled runtime")
-if "ui_only" in dry_run or "--archive-scope=ui" not in dry_run:
-    fail("dry-run must use the canonical UI-only build/smoke/extraction path")
-if "--archive-scope=ui" not in release:
-    fail("release verification must accept only the shipped UI-enabled archives")
-if (
-    "path: ${{ runner.temp }}/release-archives" not in dry_run
-    or 'extract-release-archives.sh "$RUNNER_TEMP/release-archives" binaries' not in dry_run
-    or "path: assets" in dry_run
-    or "extract-release-archives.sh assets binaries" in dry_run
-):
-    fail("dry-run must isolate downloaded archives from tracked checkout assets")
-if (
-    'ARCHIVE_DIR="$RUNNER_TEMP/release-archives"' not in release
-    or '--dir "$ARCHIVE_DIR"' not in release
-    or 'extract-release-archives.sh "$ARCHIVE_DIR" binaries' not in release
-    or "--dir assets" in release
-    or "extract-release-archives.sh assets binaries" in release
-):
-    fail("release verification must isolate downloaded archives from tracked checkout assets")
-for workflow_name, workflow, arguments in (
-    ("release", release, ui_count_args),
-    ("dry-run", dry_run, ui_count_args),
-):
-    for argument in arguments:
-        if argument not in workflow:
-            fail(f"{workflow_name} workflow does not assert {argument}")
-    for required in (
-        "files: binaries/objects/*",
-        "request_rate: 4",
-        "VT_EXPECTED_SCAN_SET: binaries/scan-set.tsv",
-        "VT_ASSOCIATIONS: binaries/associations.tsv",
-        "VT_RESULTS_PATH: binaries/vt-results.tsv",
-        "MIN_ENGINES: 50",
-        "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a",
-        "virustotal-evidence-",
-    ):
-        if required not in workflow:
-            fail(f"{workflow_name} workflow is missing exact scan/gate contract: {required}")
-    lowered = workflow.lower()
-    for forbidden in ("false-positive", "false positive", "submission", "reputation"):
-        if forbidden in lowered:
-            fail(f"{workflow_name} workflow prescribes forbidden scan-cleaning policy: {forbidden}")
-    if "naturally clean" not in lowered:
-        fail(f"{workflow_name} workflow must state the naturally-clean baseline")
+# Everything from here to the VT-notes check used to assert the shape of
+# release.yml, dry-run.yml, _build.yml and _smoke.yml: that the build packaged
+# exactly three UI families, that both release paths passed --archive-scope=ui,
+# that the VirusTotal gate kept its exact-set arguments, and that neither
+# workflow prescribed scan-cleaning policy. CI is gone entirely -- no GitHub
+# Actions, every gate local, by the owner's instruction -- so all four files
+# are deleted and every one of those assertions has lost its subject. They are
+# not weakened here, they are unhosted: the extractor's own behaviour is still
+# fully exercised above (the fixture walk, the exact-set counts, the failure
+# cases), and that is the part that was ever about the product.
+#
+# What genuinely lapses with the workflows: nothing now re-checks that a
+# release path passes --archive-scope=ui or keeps MIN_ENGINES at 50, because
+# there is no release path in this repository any more. A future local release
+# script is where those re-attach, and it does not exist yet.
 
 notes = (root / "scripts/ci/append-vt-notes.sh").read_text(encoding="utf-8")
 for required in (

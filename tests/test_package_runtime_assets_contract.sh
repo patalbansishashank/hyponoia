@@ -40,7 +40,6 @@ def require(condition: bool, message: str) -> None:
 
 
 package_release = read("scripts/package-release.sh")
-test_workflow = read(".github/workflows/_test.yml")
 strip_position = package_release.find('strip_release_binary "$STAGED_BINARY"')
 probe_position = package_release.find('"$STAGED_BINARY" --verify-runtime-assets')
 tar_position = package_release.find('tar -czf "$OUT_DIR/$NAME.tar.gz"')
@@ -68,15 +67,12 @@ require(
     and 'zip -q "$OUT_DIR/$NAME.zip" "${ARCHIVE_MEMBERS[@]}"' in package_release,
     "Windows release archive must be created from the same private directory that was probed",
 )
-windows_test_job = re.search(
-    r"(?ms)^  test-windows:\n(?P<body>.*?)(?=^  [a-zA-Z0-9_-]+:\n)",
-    test_workflow,
-)
-require(
-    windows_test_job is not None
-    and re.search(r"(?m)^\s+zip\s*$", windows_test_job.group("body")) is not None,
-    "Windows test jobs that exercise package-release.sh must install zip",
-)
+# "Windows test jobs must install zip" was asserted against
+# .github/workflows/_test.yml. There are no workflows any more (owner's
+# instruction: no GitHub Actions at all), and Windows is a retired platform on
+# top of that, so the assertion has neither a subject nor a platform. The
+# packaging requirements above are the part that guards the product and they
+# hold in every venue, because there is now only one.
 
 
 homebrew = read("pkg/homebrew/Formula/hyponoia.rb")

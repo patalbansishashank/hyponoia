@@ -47,8 +47,6 @@ compose = read("test-infrastructure/docker-compose.yml")
 local_ci = read("test-infrastructure/run.sh")
 windows_vm = read("test-infrastructure/vm/win.sh")
 windows_vm_runner = read("test-infrastructure/vm/vm-run-tests.sh")
-pr_workflow = read(".github/workflows/pr.yml")
-release_workflow = read(".github/workflows/release.yml")
 release_extractor = read("scripts/ci/extract-release-archives.sh")
 test_driver = read("scripts/test.sh")
 cli_source = read("src/cli/cli.c")
@@ -346,22 +344,12 @@ require(
 # built by _build.yml and smoked by _smoke.yml, and
 # tests/test_windows_bundle_contract.sh asserts that there rather than here.
 # So this pins ONE Ubuntu smoke, in the ui variant that actually ships.
-pr_smoke_local_calls = re.findall(r"scripts/smoke-local\.sh[^\n]*", pr_workflow)
-require(
-    len(pr_smoke_local_calls) == 1,
-    "PR smoke must run smoke-local.sh exactly once — one reachable Ubuntu leg, "
-    f"found {len(pr_smoke_local_calls)}",
-)
-require(
-    all(call.rstrip().endswith(" ui") for call in pr_smoke_local_calls),
-    "the PR smoke must stage the ui variant, because the release publishes only "
-    "-ui archives and install.sh refuses --standard by name",
-)
-require(
-    "vm-smoke.sh" not in pr_workflow.split("pr-smoke:")[-1].split("\n  ci-ok:")[0],
-    "pr.yml must not invoke vm-smoke.sh: no reachable job can run it, and an "
-    "unreachable copy drifts out of step with _smoke.yml's real Windows leg",
-)
+# The three assertions here pinned pr.yml's smoke leg: exactly one
+# smoke-local.sh call, staged as the ui variant, and no unreachable
+# vm-smoke.sh copy. CI is gone entirely by the owner's instruction, so pr.yml
+# does not exist and none of the three has a subject. scripts/smoke-local.sh
+# itself is unchanged and still the canonical leg -- what lapsed is the check
+# that a venue invoked it correctly, and there is no venue.
 smoke_test = read("scripts/smoke-test.sh")
 require(
     "SMOKE_UI_PACK_CANDIDATES" in smoke_test
@@ -488,11 +476,9 @@ require(
     "native install must stage sidecars, activate the binary, GC verified stale packs, and "
     "finalize while the activation callback still owns the guard",
 )
-require(
-    'ARCHIVE_DIR="$RUNNER_TEMP/release-archives"' in release_workflow
-    and 'scripts/ci/extract-release-archives.sh "$ARCHIVE_DIR" binaries' in release_workflow,
-    "release verification must feed the canonical extractor from an isolated archive directory",
-)
+# Dropped with CI: this asserted release.yml fed the canonical extractor from
+# an isolated archive directory. The extractor's own guarantees are asserted
+# immediately below against the script itself, which is where they belong.
 require(
     "hyp-release-scan-associations-v3" in release_extractor
     and "hyp-release-scan-set-v2" in release_extractor
@@ -553,24 +539,11 @@ require(
 # unreachable step failed a check about change detection. The filter writes the
 # pair as an alternation — test-infrastructure/vm/(vm-smoke\.sh|...) — so the
 # needles below are matched against the filter with its grouping removed.
-detector_line = next(
-    (line for line in pr_workflow.splitlines() if "grep -qE" in line and "src/" in line),
-    "",
-)
-require(bool(detector_line), "pr.yml must carry a product-change path filter")
-detector_flat = detector_line.replace("(", "").replace(")", "").replace("|", " ")
-for changed_path in (
-    "install\\.sh",
-    "scripts/smoke-local",
-    "scripts/smoke-fixture-server",
-    "scripts/gen-third-party-notices",
-    "test-infrastructure/vm/vm-smoke",
-    "windows-user-path-guard",
-):
-    require(
-        changed_path in detector_flat,
-        f"PR product-change detector must include {changed_path}",
-    )
+# Dropped with CI: this walked pr.yml's grep -qE product-change path filter and
+# required each smoke-relevant path to appear in it, so a changed installer or
+# fixture server could not silently skip the smoke leg. With no PR venue there
+# is no path filter and nothing to skip -- scripts/test.sh runs the whole gate
+# every time, which is strictly stronger than the filter this checked.
 require(
     "tests/test_smoke_fixture_contract.sh" in test_driver,
     "scripts/test.sh must run the smoke fixture contract",

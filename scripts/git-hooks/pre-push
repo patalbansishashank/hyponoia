@@ -1,11 +1,23 @@
 #!/usr/bin/env bash
-# Refuse to push a commit carrying a vendor API key, or code CI's linter will
-# reject. NEXT-STEPS.md §2.13 (secrets) and §3 (the CI round trip).
+# Refuse to push a commit carrying a vendor API key, or code that fails a gate.
+# NEXT-STEPS.md §2.13 (secrets).
 #
 # pre-push, not pre-commit, deliberately: a key in a local commit is a mistake,
 # a key in a pushed commit is an incident. This is the last point at which it is
-# still only the former. The same logic covers lint — a red `lint` job costs an
-# hour to learn something that takes seconds to check here.
+# still only the former.
+#
+# THERE IS NO CI BEHIND THIS HOOK ANY MORE. The workflows are deleted and
+# GitHub Actions is off for this repository, by the owner's instruction. Every
+# sentence below that used to end "and CI will catch it" now ends here instead,
+# so the hook runs the Step-0 contract set as well as format and secrets --
+# scripts/gate.sh --fast, which is the same set by construction rather than a
+# second list. It is still seconds, because Step 0 runs before any compiler.
+#
+# What this hook deliberately does NOT run is cppcheck (~10 min) and the suite
+# (hours). That is not an oversight and not a gap left to CI: a ten-minute hook
+# gets exported around rather than run, which is worse than a fast one that is
+# always honoured. Those are `gate.sh --full` before a merge and `gate.sh --all`
+# before a release, and they are a human's call, not a push's.
 #
 # stdin carries "<local ref> <local sha> <remote ref> <remote sha>" per ref, so
 # the scan sees exactly the commits this push would publish. It walks those
@@ -32,25 +44,20 @@ LINT_DOCKERFILE="$ROOT/test-infrastructure/Dockerfile.lint"
 # with the wrong version is worse than not checking — it reports green while CI
 # reports red. The image is the only thing that reproduces the pinned version.
 if [ "${HYP_SKIP_PREPUSH_LINT:-}" = "1" ]; then
-    echo "pre-push: format check skipped (HYP_SKIP_PREPUSH_LINT=1)." >&2
+    echo "pre-push: gate skipped (HYP_SKIP_PREPUSH_LINT=1). Nothing else will check this." >&2
 elif ! command -v docker >/dev/null 2>&1; then
-    echo "pre-push: docker not found, so CI's clang-format cannot be reproduced here." >&2
-    echo "  Install docker, or push with HYP_SKIP_PREPUSH_LINT=1 and let CI judge it." >&2
+    echo "pre-push: docker not found, so the pinned clang-format cannot be reproduced here." >&2
+    echo "  This machine's clang-format is a different major and rewrites code the pinned" >&2
+    echo "  one accepts, so checking with it reports green on code that is not." >&2
+    echo "  Install docker, or push with HYP_SKIP_PREPUSH_LINT=1 and nothing checks it." >&2
     exit 1
-else
-    if ! docker image inspect "$LINT_IMAGE" >/dev/null 2>&1; then
-        echo "pre-push: building $LINT_IMAGE (first run only; cppcheck compiles from source)..." >&2
-        docker build -t "$LINT_IMAGE" -f "$LINT_DOCKERFILE" "$ROOT/test-infrastructure/" >&2
-    fi
-    echo "pre-push: clang-format-20 (CI's exact version)..." >&2
-    if ! docker run --rm -v "$ROOT":/src --entrypoint make "$LINT_IMAGE" \
-        -f Makefile.hyp lint-format CLANG_FORMAT=clang-format-20 >&2; then
-        echo "" >&2
-        echo "pre-push: FORMATTING FAILED — CI would reject this. Fix it here, not in an hour." >&2
-        echo "  Rewrite in place:  docker run --rm -v \"\$PWD\":/src --entrypoint make $LINT_IMAGE \\" >&2
-        echo "                       -f Makefile.hyp format CLANG_FORMAT=clang-format-20" >&2
-        exit 1
-    fi
+elif ! bash "$ROOT/scripts/gate.sh" --fast >&2; then
+    echo "" >&2
+    echo "pre-push: GATE FAILED — refusing the push." >&2
+    echo "  Reformat in place:  docker run --rm --user \"\$(id -u):\$(id -g)\" -v \"\$PWD\":/src \\" >&2
+    echo "                        --entrypoint make $LINT_IMAGE -f Makefile.hyp format \\" >&2
+    echo "                        CLANG_FORMAT=clang-format-20" >&2
+    exit 1
 fi
 
 # ── Secrets ──────────────────────────────────────────────────────────────
