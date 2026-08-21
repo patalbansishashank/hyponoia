@@ -55,7 +55,11 @@ cd "$ROOT"
 
 VERSION="${1:-}"
 PUBLISH=0
-[ "${2:-}" = "--publish" ] && PUBLISH=1
+UNSIGNED=0
+for a in "$@"; do
+    [ "$a" = "--publish" ] && PUBLISH=1
+    [ "$a" = "--unsigned" ] && UNSIGNED=1
+done
 
 if [ -z "$VERSION" ]; then
     sed -n '2,52p' "${BASH_SOURCE[0]}" | sed 's/^# \?//'
@@ -208,11 +212,32 @@ cat checksums.txt
 # bundle is what a verifier reads, and it goes beside its archive with the name
 # the previous CI-built releases used, so nothing downstream has to learn a new
 # one.
-step "sign (cosign keyless)"
-for f in "${ARCHIVES[@]}" checksums.txt; do
-    COSIGN_EXPERIMENTAL=1 cosign sign-blob --yes --bundle "${f}.bundle" "$f" >/dev/null
-    echo "  signed $f"
-done
+# Keyless cosign needs an OIDC identity. CI had one ambiently (GitHub's
+# id-token); on a workstation cosign falls back to an INTERACTIVE browser
+# flow, which cannot run unattended and fails at the token POST.
+#
+# --unsigned exists so that shipping unsigned is a decision someone typed,
+# never something that quietly happened because auth was unavailable. A
+# script that degraded to unsigned on error would produce unsigned releases
+# forever and never say so -- the same shape as the bug this file exists to
+# prevent.
+if [ "$UNSIGNED" -eq 1 ]; then
+    step "sign — SKIPPED (--unsigned)"
+    echo "  No .bundle files. The release will say so." >&2
+else
+    step "sign (cosign keyless)"
+    for f in "${ARCHIVES[@]}" checksums.txt; do
+        if ! COSIGN_EXPERIMENTAL=1 cosign sign-blob --yes --bundle "${f}.bundle" "$f" \
+            >/dev/null 2>&1; then
+            echo "release-local: cosign could not sign $f." >&2
+            echo "  Keyless signing needs an OIDC identity and opens a browser; there is" >&2
+            echo "  none here. Either run it interactively, or re-run with --unsigned to" >&2
+            echo "  publish without signatures deliberately." >&2
+            exit 1
+        fi
+        echo "  signed $f"
+    done
+fi
 
 step "staged"
 ls -la "$OUT"
@@ -225,9 +250,12 @@ if [ "$PUBLISH" -ne 1 ]; then
 fi
 
 step "publish $VERSION"
+UPLOAD=("${ARCHIVES[@]}" checksums.txt)
+if [ "$UNSIGNED" -eq 0 ]; then
+    UPLOAD+=(./*.bundle)
+fi
 gh release create "$VERSION" --repo patalbansishashank/hyponoia \
-    --title "$VERSION" --generate-notes \
-    "${ARCHIVES[@]}" checksums.txt ./*.bundle
+    --title "$VERSION" --generate-notes "${UPLOAD[@]}"
 
 echo ""
 echo "published: https://github.com/patalbansishashank/hyponoia/releases/tag/$VERSION"
